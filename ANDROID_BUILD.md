@@ -156,6 +156,9 @@ The workflow installs locked dependencies, runs tests, builds Vite, syncs
 Capacitor, uses Java 21/Android SDK 36, builds a signed release APK, and verifies
 its signature. A failing check prevents artifact upload.
 
+SDK setup explicitly requests `platform-tools`, `platforms;android-36`, and
+`build-tools;36.0.0`, overriding the action's deprecated `tools` package default.
+
 After a successful run:
 
 1. Open **Hidden-chat > Actions > Build Android test APK**.

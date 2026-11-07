@@ -33,3 +33,16 @@ test('APK workflow tests the app, signs release output and verifies its signatur
     assert.ok(workflow.includes(contract), `Missing workflow requirement: ${contract}`);
   }
 });
+
+test('Android SDK setup overrides deprecated defaults with the declared SDK packages', async () => {
+  const workflow = await readFile(new URL('../.github/workflows/build-apk.yml', import.meta.url), 'utf8');
+  const sdk = await readFile(new URL('../android/variables.gradle', import.meta.url), 'utf8');
+  const setup = workflow.match(/- uses: android-actions\/setup-android@v3\r?\n\s+with:\r?\n\s+packages: '([^']+)'/);
+  assert.ok(setup, 'SDK setup must explicitly override the action default packages');
+  const packages = setup[1].split(/\s+/);
+  assert.deepEqual(packages, ['platform-tools', 'platforms;android-36', 'build-tools;36.0.0']);
+  assert.ok(!packages.includes('tools'), 'The deprecated tools package must not be requested');
+  assert.match(sdk, /compileSdkVersion = 36\b/);
+  assert.match(sdk, /targetSdkVersion = 36\b/);
+  assert.ok(!workflow.includes('run: sdkmanager'), 'SDK installation is owned by the setup action');
+});
