@@ -27,6 +27,7 @@
     "@capacitor/core": "8.6.0",
     "@mediapipe/tasks-vision": "^1.2.2",
     "@tailwindcss/vite": "^4.1.13",
+    "@vitejs/plugin-react": "^5.0.2",
     "express": "^5.1.0",
     "idb-keyval": "^6.2.2",
     "leaflet": "^1.9.4",
@@ -35,6 +36,7 @@
     "qrcode.react": "^4.2.0",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
+    "vite": "^7.1.5",
     "ws": "^8.18.3",
     "zustand": "^5.0.8"
   },
@@ -42,8 +44,6 @@
     "@capacitor/cli": "8.6.0",
     "@electric-sql/pglite": "^0.3.14",
     "@roamhq/wrtc": "^0.10.0",
-    "@vitejs/plugin-react": "^5.0.2",
-    "concurrently": "^9.2.1",
-    "vite": "^7.1.5"
+    "concurrently": "^9.2.1"
   }
 }
