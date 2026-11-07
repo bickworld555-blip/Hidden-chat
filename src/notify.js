@@ -1,0 +1,73 @@
+// Device-facing notification effects: vibration, system notifications, the app badge and reminders.
+// Each one checks the settings and degrades silently where the browser lacks the capability.
+import { badgeCount, getNotificationSettings, shouldRemind, soundPlan, systemNotificationAllowed } from './notificationSettings.js';
+
+export function vibrateFor(category) {
+  const plan = soundPlan(category, getNotificationSettings());
+  if (!plan.vibrate.length || typeof navigator === 'undefined' || !navigator.vibrate) return false;
+  try { return navigator.vibrate(plan.vibrate); } catch { return false; }
+}
+
+export function stopVibration() {
+  try { navigator.vibrate?.(0); } catch { /* unsupported */ }
+}
+
+export function notificationPermission() {
+  if (typeof Notification === 'undefined') return 'unsupported';
+  return Notification.permission;
+}
+
+export async function requestNotificationPermission() {
+  if (typeof Notification === 'undefined') return 'unsupported';
+  if (Notification.permission !== 'default') return Notification.permission;
+  try { return await Notification.requestPermission(); } catch { return Notification.permission; }
+}
+
+// Shows a system notification for a category while the app is not being looked at. Sound and
+// vibration are handled by the app itself, so the system notification is silent.
+export function showSystemNotification(category, { title, body, tag, onClick } = {}) {
+  if (typeof document !== 'undefined' && document.visibilityState === 'visible' && document.hasFocus?.()) return null;
+  if (notificationPermission() !== 'granted') return null;
+  if (!systemNotificationAllowed(category, getNotificationSettings())) return null;
+  try {
+    const notification = new Notification(title, { body, tag, silent: true });
+    notification.onclick = () => {
+      window.focus();
+      onClick?.();
+      notification.close();
+    };
+    return notification;
+  } catch {
+    return null;
+  }
+}
+
+const TITLE_PATTERN = /^\(\d+\)\s*/;
+
+// Badging API for installed apps, with the tab title as the fallback everyone can see.
+export function applyAppBadge({ chats, callLogs, callsSeenAt }) {
+  const count = badgeCount({ enabled: getNotificationSettings().appBadge, chats, callLogs, callsSeenAt });
+  try {
+    if (count > 0) navigator.setAppBadge?.(count);
+    else navigator.clearAppBadge?.();
+  } catch { /* not installed */ }
+  if (typeof document !== 'undefined') {
+    const base = document.title.replace(TITLE_PATTERN, '');
+    document.title = count > 0 ? `(${count}) ${base}` : base;
+  }
+  return count;
+}
+
+let lastReminderAt = 0;
+
+export function maybeRemind({ unseenCount, now = Date.now() }) {
+  const settings = getNotificationSettings();
+  const hidden = typeof document !== 'undefined' && document.visibilityState !== 'visible';
+  if (!shouldRemind({ enabled: settings.reminders, unseenCount, hidden, lastRemindedAt: lastReminderAt, now })) return false;
+  lastReminderAt = now;
+  if (notificationPermission() !== 'granted') return false;
+  try {
+    new Notification('Relay', { body: `You have ${unseenCount} unseen ${unseenCount === 1 ? 'update' : 'updates'}.`, tag: 'relay-reminder', silent: true });
+  } catch { /* ignore */ }
+  return true;
+}

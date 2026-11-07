@@ -1,0 +1,49 @@
+{
+  "name": "relay-chat-app",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -k -n web,api -c cyan,magenta \"vite\" \"node --watch-path=server server/index.mjs\"",
+    "dev:web": "vite",
+    "dev:server": "node --watch-path=server server/index.mjs",
+    "tunnel:ngrok": "node scripts/tunnel-ngrok.mjs",
+    "build": "vite build",
+    "preview": "vite preview",
+    "start": "node server/index.mjs",
+    "test": "node --test server/*.test.mjs",
+    "db:migrate": "node --env-file=.env scripts/migrate-postgres.mjs",
+    "db:import": "node --env-file=.env scripts/import-sqlite.mjs",
+    "start:production": "node --env-file=.env server/index.mjs",
+    "android:configure": "node scripts/configure-android.mjs",
+    "android:sync": "npm run android:configure && cap sync android",
+    "mediapipe:sync": "node scripts/sync-mediapipe.mjs",
+    "prebuild": "node scripts/sync-mediapipe.mjs",
+    "predev": "node scripts/sync-mediapipe.mjs",
+    "predev:web": "node scripts/sync-mediapipe.mjs"
+  },
+  "dependencies": {
+    "@capacitor/android": "8.6.0",
+    "@capacitor/core": "8.6.0",
+    "@mediapipe/tasks-vision": "^1.2.2",
+    "@tailwindcss/vite": "^4.1.13",
+    "express": "^5.1.0",
+    "idb-keyval": "^6.2.2",
+    "leaflet": "^1.9.4",
+    "pg": "^8.16.3",
+    "lucide-react": "^0.468.0",
+    "qrcode.react": "^4.2.0",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "ws": "^8.18.3",
+    "zustand": "^5.0.8"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "8.6.0",
+    "@electric-sql/pglite": "^0.3.14",
+    "@roamhq/wrtc": "^0.10.0",
+    "@vitejs/plugin-react": "^5.0.2",
+    "concurrently": "^9.2.1",
+    "vite": "^7.1.5"
+  }
+}
