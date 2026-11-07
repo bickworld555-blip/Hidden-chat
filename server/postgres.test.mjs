@@ -8,8 +8,7 @@ import { after, before, beforeEach, test } from 'node:test';
 import { PGlite } from '@electric-sql/pglite';
 import WebSocket from 'ws';
 import { createChatServer } from './index.mjs';
-import { createPostgresDatabase, postgresOptions, postgresParameters } from './database.mjs';
-import { migratePostgres } from '../scripts/migrate-postgres.mjs';
+import { createPostgresDatabase, migratePostgres, postgresOptions, postgresParameters } from './database.mjs';
 import { IMPORT_TABLES, importSqlite, planImport } from '../scripts/import-sqlite.mjs';
 
 let engine;
@@ -24,6 +23,7 @@ const pool = {
     return { ...result, rowCount: result.affectedRows };
   },
   async end() {},
+  async connect() { return { query: (...args) => pool.query(...args), release() {} }; },
 };
 before(async () => {
   engine = new PGlite();
@@ -318,6 +318,34 @@ test('missing PostgreSQL schema prevents startup and reports the migration comma
   t.after(async () => { await service.close(); rmSync(directory, { recursive: true, force: true }); });
   await assert.rejects(service.listen(), /npm run db:migrate/);
   assert.equal(service.server.listening, false);
+});
+
+test('startup migration creates a missing schema once and refuses an unsupported one', async (t) => {
+  await engine.exec('DROP SCHEMA relay CASCADE');
+  const logged = [];
+  const originalLog = console.log;
+  console.log = (...args) => logged.push(args.join(' '));
+  t.after(() => { console.log = originalLog; });
+  const start = async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'relay-auto-migrate-'));
+    const service = createChatServer({ port: 0, host: '127.0.0.1', database: createPostgresDatabase({ pool }), dataDirectory: directory, migrate: true });
+    t.after(async () => { await service.close(); rmSync(directory, { recursive: true, force: true }); });
+    return service;
+  };
+  const first = await start();
+  const address = await first.listen();
+  assert.equal((await fetch(`http://127.0.0.1:${address.port}/api/v1/ready`)).status, 200);
+  assert.equal((await fetch(`http://127.0.0.1:${address.port}/api/v1/auth/availability?username=fresh`)).status, 200);
+  assert.deepEqual(logged, ['Created the Relay database schema.']);
+  await first.close();
+  logged.length = 0;
+  await (await start()).listen();
+  assert.deepEqual(logged, []);
+  await engine.exec('UPDATE relay.schema_version SET version = 99');
+  const unsupported = await start();
+  await assert.rejects(unsupported.listen(), /unsupported/);
+  assert.equal(unsupported.server.listening, false);
+  assert.equal((await pool.query('SELECT version FROM relay.schema_version')).rows[0].version, 99);
 });
 
 test('production requires PostgreSQL, a fixed port and exact HTTPS origins', async (t) => {

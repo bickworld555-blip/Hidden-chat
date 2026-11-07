@@ -5,7 +5,9 @@ import { createChatServer } from './index.mjs';
 // so an "is this the main module" check would never call listen().
 let service;
 try {
-  service = createChatServer();
+  // The schema migration is transactional and never replaces an existing schema;
+  // RELAY_AUTO_MIGRATE=false leaves schema changes to `npm run db:migrate`.
+  service = createChatServer({ migrate: process.env.RELAY_AUTO_MIGRATE !== 'false' });
   const address = await service.listen();
   console.log(`Relay API listening on ${address.address}:${address.port}`);
   const lanAddresses = Object.values(networkInterfaces()).flatMap((interfaces) => interfaces ?? [])

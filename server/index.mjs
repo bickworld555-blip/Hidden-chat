@@ -86,6 +86,7 @@ export function createChatServer({
   callTimeoutMs = Number(process.env.CALL_RING_TIMEOUT_MS) || 0,
   allowedOrigins = process.env.RELAY_ALLOWED_ORIGINS ?? '',
   webDirectory = join(directory, '..', 'dist'),
+  migrate = false,
 } = {}) {
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('PORT must be an integer from 0 to 65535.');
   if (process.env.NODE_ENV === 'production' && port === 0) throw new Error('Production requires a fixed nonzero PORT.');
@@ -1490,6 +1491,7 @@ export function createChatServer({
         server.listen(port, host, resolve);
       });
       try {
+        if (migrate && db.migrate && await db.migrate()) console.log('Created the Relay database schema.');
         await db.ready?.();
         await seedDemoUsers();
         await discardStaleUploads();

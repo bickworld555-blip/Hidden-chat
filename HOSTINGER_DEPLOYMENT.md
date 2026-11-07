@@ -28,6 +28,7 @@ credentials in chat, command history or workflow logs.
 | `RELAY_TURN_USERNAME`, `RELAY_TURN_CREDENTIAL` | Credentials for the configured TURN relay |
 | `RELAY_ICE_SERVERS=[]` | Optional JSON array of additional ICE servers |
 | `CALL_RING_TIMEOUT_MS=0` | Optional ringing timeout in milliseconds; 0 retains existing behavior |
+| `RELAY_AUTO_MIGRATE=false` | Optional: skip the startup schema migration and run `npm run db:migrate` yourself |
 | `ANDROID_APP_URL` | **Android build only**: public HTTPS app origin, not an APK URL |
 
 `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_ANON_KEY` and `JWT_SECRET`
@@ -51,8 +52,10 @@ Follow [Supabase setup and migration](SUPABASE_SETUP.md) to:
    `sslrootcert` and `ssl` query parameters; the app owns verified TLS configuration.
 4. Enable database SSL enforcement. Do not disable certificate verification to
    work around errors; correct the CA, hostname, URI or network configuration.
-5. Run the versioned migration before first startup. It is transactional and
-   idempotent. The `relay` schema is private and RLS-enabled; do not expose it in
+5. Create the schema. `server/main.mjs` applies the versioned migration on
+   startup unless `RELAY_AUTO_MIGRATE=false`; `npm run db:migrate` applies it
+   manually. It is transactional and idempotent and never replaces an existing
+   schema. The `relay` schema is private and RLS-enabled; do not expose it in
    the Supabase Data API. A database owner connection bypasses RLS, so Express
    session authorization remains mandatory.
 6. If importing old SQLite data, follow the guide's backup/import procedure

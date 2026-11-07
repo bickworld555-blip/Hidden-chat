@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import pg from 'pg';
 
 export const DATABASE_SCHEMA_VERSION = 1;
@@ -81,8 +82,31 @@ export function isDatabaseUnavailable(error) {
   return /^Connection terminated|timeout exceeded when trying to connect/i.test(error?.message ?? '');
 }
 
-export function postgresOptions(env = process.env) {
-  if (!env.DATABASE_URL) throw new Error('DATABASE_URL is required for PostgreSQL.');
+// Applies the versioned schema once under an advisory lock; an existing schema is never replaced.
+// Returns true when the schema was created.
+export async function migratePostgres(client) {
+  await client.query('BEGIN');
+  try {
+    await client.query("SELECT pg_advisory_xact_lock(hashtext('relay-schema-migration'))");
+    const existing = await client.query("SELECT to_regclass('relay.schema_version') AS version_table");
+    let created = false;
+    if (existing.rows[0].version_table) {
+      const version = await client.query('SELECT version FROM relay.schema_version WHERE singleton = 1');
+      if (version.rows[0]?.version !== DATABASE_SCHEMA_VERSION) throw new Error('Existing schema version is unsupported. Do not overwrite it.');
+    } else {
+      const sql = await readFile(new URL('../supabase/migrations/001_relay.sql', import.meta.url), 'utf8');
+      await client.query(sql);
+      created = true;
+    }
+    await client.query('COMMIT');
+    return created;
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  }
+}
+
+export function postgresOptions(env = process.env) {  if (!env.DATABASE_URL) throw new Error('DATABASE_URL is required for PostgreSQL.');
   const url = new URL(env.DATABASE_URL);
   if (!['postgres:', 'postgresql:'].includes(url.protocol)) throw new Error('DATABASE_URL must be a PostgreSQL URI.');
   // pg connection-string SSL options can override the verified TLS configuration.
@@ -126,6 +150,14 @@ export function createPostgresDatabase({ env = process.env, pool = new pg.Pool(p
         async get(...values) { return (await pool.query(text, values)).rows[0]; },
         async run(...values) { return { changes: (await pool.query(text, values)).rowCount }; },
       };
+    },
+    async migrate() {
+      const client = await pool.connect();
+      try {
+        return await migratePostgres(client);
+      } finally {
+        client.release();
+      }
     },
     async ready() {
       let result;

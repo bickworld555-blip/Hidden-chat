@@ -122,6 +122,12 @@ in a transaction, and records its version. Re-running the same migration does
 not drop tables or overwrite data. Existing incompatible schemas cause an error.
 Do not also run the raw SQL file manually outside a transaction.
 
+The production entry (`server/main.mjs`) applies the same migration on startup
+after binding its port, so a first deploy creates the schema itself. Set
+`RELAY_AUTO_MIGRATE=false` to require the manual command instead. With an
+existing schema, startup migration only takes the lock and reads the version,
+which the least-privilege `relay_app` role below is allowed to do.
+
 The schema is intentionally separate from `public`. All tables enable RLS, and
 the `anon`/`authenticated` roles have no schema/table permissions. Do not add
 `relay` to Supabase's exposed Data API schemas. The owner connection used for
