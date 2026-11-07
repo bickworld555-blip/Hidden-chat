@@ -11,7 +11,9 @@ On Hostinger's managed Node.js hosting, select the **Express** preset with entry
 file `server/main.mjs` and build script `build`. The server binds
 `process.env.PORT` and serves the Vite `dist/` build itself. Set
 `RELAY_DATA_DIRECTORY` to a persistent path outside the deployed release; the
-default `.data` directory lives inside each deployed version.
+default `.data` directory lives inside each deployed version. Managed hosting
+cannot hold a certificate file, so paste the Supabase CA certificate text into
+`DATABASE_SSL_CA`; a single line with `\n` or spaces instead of newlines works.
 
 ## Android device testing
 

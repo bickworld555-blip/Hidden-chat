@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { X509Certificate } from 'node:crypto';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { rootCertificates } from 'node:tls';
 import { after, before, beforeEach, test } from 'node:test';
 import { PGlite } from '@electric-sql/pglite';
 import WebSocket from 'ws';
@@ -102,6 +104,69 @@ test('PostgreSQL parameter ownership preserves literals, TLS verification and sa
   assert.throws(() => postgresOptions({ DATABASE_URL: 'postgresql://user:password@localhost/db?sslmode=disable' }), /Remove sslmode/);
   assert.throws(() => postgresOptions({ DATABASE_URL: 'https://localhost' }), /PostgreSQL URI/);
   assert.throws(() => postgresOptions({ DATABASE_URL: 'postgresql://localhost/db', DATABASE_POOL_MAX: '0' }), /POOL_MAX/);
+});
+
+test('DATABASE_SSL_CA accepts PEM text from hosting panels or a PEM file path', (t) => {
+  const certificate = rootCertificates[0];
+  const fingerprint = new X509Certificate(certificate).fingerprint256;
+  const trusted = (value) => {
+    const { ca } = postgresOptions({ DATABASE_URL: 'postgresql://localhost/db', DATABASE_SSL_CA: value }).ssl;
+    return new X509Certificate(ca).fingerprint256;
+  };
+  assert.equal(trusted(certificate), fingerprint);
+  assert.equal(trusted(certificate.trim().replace(/\n/g, '\\n')), fingerprint);
+  assert.equal(trusted(certificate.trim().replace(/\n/g, ' ')), fingerprint);
+  const directory = mkdtempSync(join(tmpdir(), 'relay-ca-'));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const path = join(directory, 'supabase-ca.crt');
+  writeFileSync(path, certificate.replace(/\n/g, '\r\n'));
+  assert.equal(trusted(path), fingerprint);
+  assert.equal(trusted(` ${path} `), fingerprint);
+  assert.equal(postgresOptions({ DATABASE_URL: 'postgresql://localhost/db', DATABASE_SSL_CA: '' }).ssl.ca, undefined);
+  assert.throws(() => trusted(join(directory, 'missing.crt')), /DATABASE_SSL_CA file could not be read \(ENOENT\)/);
+  assert.throws(() => trusted('-----BEGIN CERTIFICATE-----\nnot base64!\n-----END CERTIFICATE-----'), /malformed PEM/);
+  writeFileSync(path, 'not a certificate');
+  assert.throws(() => trusted(path), /does not contain a PEM certificate/);
+});
+
+test('an untrusted database TLS chain prevents startup with the DATABASE_SSL_CA remedy', async (t) => {
+  const tlsError = Object.assign(new Error('self-signed certificate in certificate chain'), { code: 'SELF_SIGNED_CERT_IN_CHAIN' });
+  const failing = { on() {}, async query() { throw tlsError; }, async end() {} };
+  const directory = mkdtempSync(join(tmpdir(), 'relay-untrusted-tls-'));
+  const service = createChatServer({ port: 0, database: createPostgresDatabase({ pool: failing }), dataDirectory: directory });
+  t.after(async () => { await service.close(); rmSync(directory, { recursive: true, force: true }); });
+  await assert.rejects(service.listen(), (error) => /DATABASE_SSL_CA/.test(error.message) && error.cause === tlsError);
+  assert.equal(service.server.listening, false);
+});
+
+test('database outages during requests are logged with their reason and reported as unavailable', async (t) => {
+  let outage = null;
+  const flaky = { ...pool, async query(...args) { if (outage) throw outage; return pool.query(...args); } };
+  const { url } = await startServer(t, createPostgresDatabase({ pool: flaky }));
+  const logged = [];
+  const originalError = console.error;
+  console.error = (...args) => logged.push(args.join(' '));
+  t.after(() => { console.error = originalError; });
+  for (const [error, expected] of [
+    [Object.assign(new Error('connect ECONNREFUSED 10.0.0.1:5432'), { code: 'ECONNREFUSED' }), /ECONNREFUSED - connect ECONNREFUSED 10\.0\.0\.1:5432/],
+    [Object.assign(new Error('self-signed certificate in certificate chain'), { code: 'SELF_SIGNED_CERT_IN_CHAIN' }), /SELF_SIGNED_CERT_IN_CHAIN - .*DATABASE_SSL_CA/],
+    [Object.assign(new Error('password authentication failed for user "postgres"'), { code: '28P01' }), /28P01 - password authentication failed/],
+  ]) {
+    outage = error;
+    logged.length = 0;
+    const response = await fetch(`${url}/api/v1/ready`);
+    assert.equal(response.status, 503);
+    assert.deepEqual(await response.json(), { error: 'The service is temporarily unavailable. Please retry shortly.' });
+    assert.match(logged.join('\n'), /API request failed: GET \/api\/v1\/ready/);
+    assert.match(logged.join('\n'), expected);
+  }
+  outage = Object.assign(new Error('duplicate key value violates unique constraint: Key (handle)=(secret)'), { code: '23505' });
+  logged.length = 0;
+  const failed = await fetch(`${url}/api/v1/ready`);
+  assert.deepEqual(await failed.json(), { error: 'The server could not complete this request. Please retry.' });
+  assert.doesNotMatch(logged.join('\n'), /secret/);
+  outage = null;
+  assert.equal((await fetch(`${url}/api/v1/ready`)).status, 200);
 });
 
 test('PostgreSQL public login, profile, contacts, one-use pairing and logout preserve the protocol', async (t) => {

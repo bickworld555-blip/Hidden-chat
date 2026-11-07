@@ -15,7 +15,7 @@ import { DEFAULT_ICE_SERVERS, normalizeIceServers, turnServerFromEnv } from '../
 import { DOWNLOAD_LINK_TTL_MS, UPLOAD_CHUNK_BYTES, UPLOAD_STALE_MS } from '../src/transfer.js';
 import { LIVE_DURATIONS } from '../src/geo.js';
 import { displayNameError, initialsFor, normalizeDisplayName } from '../src/profile.js';
-import { createPostgresDatabase } from './database.mjs';
+import { createPostgresDatabase, describeDatabaseError, isDatabaseUnavailable } from './database.mjs';
 import { DEMO_USERS } from './demo.mjs';
 
 const directory = dirname(fileURLToPath(import.meta.url));
@@ -1459,10 +1459,18 @@ export function createChatServer({
     app.get(/^(?!\/api\/|\/ws$)/, (_request, response) => response.sendFile('index.html', { root: webDirectory }));
   }
 
-  app.use((error, _request, response, next) => {
-    console.error('API request failed:', error.code ?? error.name);
+  app.use((error, request, response, next) => {
+    const databaseUnavailable = isDatabaseUnavailable(error);
+    // Query errors can echo user data, so only connection-level failures log their message.
+    const reason = databaseUnavailable ? (describeDatabaseError(error) ?? error.message) : '';
+    console.error(`API request failed: ${request.method} ${request.path} ${error.code ?? error.name}${reason ? ` - ${reason}` : ''}`);
     if (response.headersSent) return next(error);
-    response.status(error.status ?? 503).json({ error: error.status ? error.message : 'The server could not complete this request. Please retry.' });
+    if (error.status) return response.status(error.status).json({ error: error.message });
+    response.status(503).json({
+      error: databaseUnavailable
+        ? 'The service is temporarily unavailable. Please retry shortly.'
+        : 'The server could not complete this request. Please retry.',
+    });
   });
 
   return {

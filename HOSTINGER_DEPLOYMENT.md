@@ -17,7 +17,7 @@ credentials in chat, command history or workflow logs.
 | --- | --- |
 | `NODE_ENV=production` | Required: prohibits SQLite and demo seeding |
 | `DATABASE_URL` | Required: exact Supabase direct or **session** pooler URI |
-| `DATABASE_SSL_CA` | Absolute downloaded CA path; omit only if Node trusts the endpoint |
+| `DATABASE_SSL_CA` | Absolute downloaded CA path or the PEM certificate text; omit only if Node trusts the endpoint |
 | `DATABASE_POOL_MAX=5` | Optional, integer 1-20; keep within Supabase connection capacity |
 | `HOST=127.0.0.1` | VPS loopback binding behind Nginx |
 | `PORT=4174` | Fixed nonzero port; must match both Nginx upstreams |

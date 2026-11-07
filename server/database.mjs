@@ -29,6 +29,58 @@ export function postgresParameters(sql) {
   return output;
 }
 
+const PEM_BLOCK = /-----BEGIN CERTIFICATE-----([\s\S]*?)-----END CERTIFICATE-----/g;
+const UNTRUSTED_TLS_CODES = new Set([
+  'SELF_SIGNED_CERT_IN_CHAIN',
+  'DEPTH_ZERO_SELF_SIGNED_CERT',
+  'UNABLE_TO_GET_ISSUER_CERT',
+  'UNABLE_TO_GET_ISSUER_CERT_LOCALLY',
+  'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
+]);
+
+// Hosting panels often store multi-line values with literal "\n" or collapsed whitespace,
+// so PEM text is rebuilt from its base64 body rather than trusted as-is.
+function normalizePem(text) {
+  const blocks = [...text.replace(/\\n/g, '\n').matchAll(PEM_BLOCK)].map(([, body]) => {
+    const base64 = body.replace(/\s+/g, '');
+    if (!base64 || !/^[A-Za-z0-9+/]+={0,2}$/.test(base64)) throw new Error('DATABASE_SSL_CA contains a malformed PEM certificate.');
+    return `-----BEGIN CERTIFICATE-----\n${base64.match(/.{1,64}/g).join('\n')}\n-----END CERTIFICATE-----\n`;
+  });
+  if (!blocks.length) throw new Error('DATABASE_SSL_CA does not contain a PEM certificate.');
+  return blocks.join('');
+}
+
+// DATABASE_SSL_CA accepts either PEM certificate text or a path to a PEM file.
+export function databaseCertificateAuthority(value) {
+  if (!value?.trim()) return undefined;
+  if (value.includes('-----BEGIN CERTIFICATE-----')) return normalizePem(value);
+  let text;
+  try {
+    text = readFileSync(value.trim(), 'utf8');
+  } catch (error) {
+    throw new Error(`DATABASE_SSL_CA file could not be read (${error.code ?? error.name}): ${value.trim()}`, { cause: error });
+  }
+  return normalizePem(text);
+}
+
+export function describeDatabaseError(error) {
+  if (UNTRUSTED_TLS_CODES.has(error?.code)) {
+    return 'Database TLS certificate is not trusted. Set DATABASE_SSL_CA to the Supabase CA certificate (PEM text or file path).';
+  }
+  return null;
+}
+
+const NETWORK_ERROR_CODES = new Set(['ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'ENOTFOUND', 'EAI_AGAIN', 'ENETUNREACH', 'EHOSTUNREACH']);
+
+// Connection, authentication and capacity failures (SQLSTATE classes 08, 28, 53, 57P) mean the
+// database cannot serve any request, as opposed to a failure of one query.
+export function isDatabaseUnavailable(error) {
+  const code = error?.code;
+  if (UNTRUSTED_TLS_CODES.has(code) || NETWORK_ERROR_CODES.has(code)) return true;
+  if (typeof code === 'string' && /^(08|28|53|57P)/.test(code)) return true;
+  return /^Connection terminated|timeout exceeded when trying to connect/i.test(error?.message ?? '');
+}
+
 export function postgresOptions(env = process.env) {
   if (!env.DATABASE_URL) throw new Error('DATABASE_URL is required for PostgreSQL.');
   const url = new URL(env.DATABASE_URL);
@@ -37,6 +89,7 @@ export function postgresOptions(env = process.env) {
   for (const key of ['sslmode', 'sslcert', 'sslkey', 'sslrootcert', 'ssl']) {
     if (url.searchParams.has(key)) throw new Error(`Remove ${key} from DATABASE_URL; configure TLS with DATABASE_SSL_CA.`);
   }
+  const ca = databaseCertificateAuthority(env.DATABASE_SSL_CA);
   const max = Number(env.DATABASE_POOL_MAX ?? 5);
   if (!Number.isInteger(max) || max < 1 || max > 20) throw new Error('DATABASE_POOL_MAX must be an integer from 1 to 20.');
   const types = {
@@ -52,7 +105,7 @@ export function postgresOptions(env = process.env) {
   return {
     connectionString: env.DATABASE_URL,
     max,
-    ssl: { rejectUnauthorized: true, ...(env.DATABASE_SSL_CA ? { ca: readFileSync(env.DATABASE_SSL_CA, 'utf8') } : {}) },
+    ssl: { rejectUnauthorized: true, ...(ca ? { ca } : {}) },
     options: '-c search_path=relay',
     connectionTimeoutMillis: 10_000,
     idleTimeoutMillis: 30_000,
@@ -79,6 +132,8 @@ export function createPostgresDatabase({ env = process.env, pool = new pg.Pool(p
       try {
         result = await pool.query('SELECT version FROM relay.schema_version WHERE singleton = 1');
       } catch (error) {
+        const described = describeDatabaseError(error);
+        if (described) throw Object.assign(new Error(described, { cause: error }), { code: error.code });
         if (!['42P01', '3F000'].includes(error.code)) throw error;
         throw new Error('Database schema is missing. Run npm run db:migrate before starting the server.', { cause: error });
       }

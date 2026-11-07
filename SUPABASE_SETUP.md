@@ -85,7 +85,8 @@ RELAY_TURN_CREDENTIAL=
 
 Replace every placeholder with your values. For the direct endpoint, use the
 exact direct URI instead. Remove SSL query parameters such as `sslmode` from
-`DATABASE_URL`; `DATABASE_SSL_CA` owns TLS configuration. The CA variable can be
+`DATABASE_URL`; `DATABASE_SSL_CA` owns TLS configuration and accepts either a
+certificate file path or the PEM certificate text itself. The CA variable can be
 omitted only when the endpoint's certificate is trusted by Node's CA store.
 On the eventual Linux VPS, use Linux paths for the certificate/data directory
 (for example `/etc/relay/supabase-ca.crt` and `/var/lib/relay`).
