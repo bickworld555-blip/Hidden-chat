@@ -58,7 +58,8 @@ Follow [Supabase setup and migration](SUPABASE_SETUP.md) to:
 6. If importing old SQLite data, follow the guide's backup/import procedure
    during a scheduled outage and separately copy attachment/avatar bytes.
 
-The service checks schema readiness before listening. `/api/v1/health` is
+The service binds its port, then checks schema readiness before serving; if the
+check fails it releases the port and exits with the reason logged. `/api/v1/health` is
 liveness; `/api/v1/ready` checks the current schema/database and returns HTTP 503
 on failure without exposing credentials. Migration/connection failures stop
 deployment rather than fall back to SQLite.

@@ -1,9 +1,8 @@
 import { createHash, randomBytes, randomUUID, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto';
-import { copyFileSync, createWriteStream, linkSync, mkdirSync } from 'node:fs';
+import { copyFileSync, createWriteStream, existsSync, linkSync, mkdirSync } from 'node:fs';
 import { stat, unlink, writeFile } from 'node:fs/promises';
 import { pipeline } from 'node:stream/promises';
 import { createServer } from 'node:http';
-import { networkInterfaces } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
@@ -86,6 +85,7 @@ export function createChatServer({
   seedDemo = process.env.NODE_ENV !== 'production' && process.env.RELAY_SEED_DEMO === 'true',
   callTimeoutMs = Number(process.env.CALL_RING_TIMEOUT_MS) || 0,
   allowedOrigins = process.env.RELAY_ALLOWED_ORIGINS ?? '',
+  webDirectory = join(directory, '..', 'dist'),
 } = {}) {
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('PORT must be an integer from 0 to 65535.');
   if (process.env.NODE_ENV === 'production' && port === 0) throw new Error('Production requires a fixed nonzero PORT.');
@@ -1453,6 +1453,12 @@ export function createChatServer({
       console.error('Database maintenance failed:', error.code ?? error.name);
     });
   }
+  // Serves the Vite build when present, for hosts without a separate web server in front of the API.
+  if (existsSync(join(webDirectory, 'index.html'))) {
+    app.use(express.static(webDirectory, { index: 'index.html' }));
+    app.get(/^(?!\/api\/|\/ws$)/, (_request, response) => response.sendFile('index.html', { root: webDirectory }));
+  }
+
   app.use((error, _request, response, next) => {
     console.error('API request failed:', error.code ?? error.name);
     if (response.headersSent) return next(error);
@@ -1468,14 +1474,21 @@ export function createChatServer({
     avatarDirectory,
     liveSessions,
     expireLiveSession: (sessionId) => endLiveSession(sessionId, 'expired'),
+    // Binds before the database checks: managed hosts (Hostinger) require listen() within seconds of start.
+    // A failed check still rejects, after releasing the port, so startup fails instead of serving a broken app.
     async listen() {
-      await db.ready?.();
-      await seedDemoUsers();
-      await discardStaleUploads();
       await new Promise((resolve, reject) => {
         server.once('error', reject);
         server.listen(port, host, resolve);
       });
+      try {
+        await db.ready?.();
+        await seedDemoUsers();
+        await discardStaleUploads();
+      } catch (error) {
+        await new Promise((resolve) => server.close(resolve));
+        throw error;
+      }
       expiryTimer = setInterval(() => sweep(expireMessages), EXPIRY_SWEEP_MS);
       expiryTimer.unref();
       uploadSweep = setInterval(() => sweep(discardStaleUploads), 60 * 60 * 1000);
@@ -1500,17 +1513,4 @@ export function createChatServer({
       await db.close();
     },
   };
-}
-
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  const service = createChatServer();
-  const address = await service.listen();
-  const lanAddresses = Object.values(networkInterfaces()).flatMap((interfaces) => interfaces ?? [])
-    .filter((entry) => entry.family === 'IPv4' && !entry.internal)
-    .map((entry) => `http://${entry.address}:${address.port}`);
-  console.log(`Relay API listening on ${address.address}:${address.port}`);
-  for (const url of lanAddresses) console.log(`Relay API LAN address: ${url}`);
-  for (const signal of ['SIGINT', 'SIGTERM']) {
-    process.on(signal, async () => { await service.close(); process.exit(0); });
-  }
 }

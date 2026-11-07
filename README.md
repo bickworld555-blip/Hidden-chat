@@ -7,6 +7,12 @@ environment-variable list, Supabase TLS connection, Nginx and systemd templates,
 and gated GitHub Actions auto-deployment. The service is a single persistent
 Node.js process; static/shared hosting alone cannot run its WebSocket backend.
 
+On Hostinger's managed Node.js hosting, select the **Express** preset with entry
+file `server/main.mjs` and build script `build`. The server binds
+`process.env.PORT` and serves the Vite `dist/` build itself. Set
+`RELAY_DATA_DIRECTORY` to a persistent path outside the deployed release; the
+default `.data` directory lives inside each deployed version.
+
 ## Android device testing
 
 See [GitHub push and Android APK builds](ANDROID_BUILD.md) for creating the
