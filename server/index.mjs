@@ -77,7 +77,7 @@ const json = (socket, event) => {
 };
 
 export function createChatServer({
-  port = Number(process.env.PORT) || 4174,
+  port = Number(process.env.PORT ?? 4174),
   host = process.env.HOST || '0.0.0.0',
   databasePath,
   databaseUrl = process.env.DATABASE_URL,
@@ -87,6 +87,8 @@ export function createChatServer({
   callTimeoutMs = Number(process.env.CALL_RING_TIMEOUT_MS) || 0,
   allowedOrigins = process.env.RELAY_ALLOWED_ORIGINS ?? '',
 } = {}) {
+  if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('PORT must be an integer from 0 to 65535.');
+  if (process.env.NODE_ENV === 'production' && port === 0) throw new Error('Production requires a fixed nonzero PORT.');
   if (process.env.NODE_ENV === 'production' && !databaseUrl && !database) throw new Error('Production requires DATABASE_URL; SQLite is development-only.');
   if (process.env.NODE_ENV === 'production' && seedDemo) throw new Error('Demo seeding is not allowed in production.');
   if (process.env.NODE_ENV === 'production') {
@@ -496,6 +498,11 @@ export function createChatServer({
   }
 
   app.get('/api/v1/health', (_request, response) => response.json({ status: 'ok' }));
+  app.get('/api/v1/ready', async (_request, response) => {
+    response.set('Cache-Control', 'no-store');
+    await db.ready?.();
+    response.json({ status: 'ok' });
+  });
 
   app.get('/api/v1/rtc-config', requireSession, (_request, response) => {
     let configured = [];

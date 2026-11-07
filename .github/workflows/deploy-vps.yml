@@ -1,0 +1,70 @@
+name: Validate and deploy Relay VPS
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: relay-vps-production
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+      - run: bash -n scripts/deploy-vps.sh
+      - name: Package the validated runtime without secrets or local data
+        run: tar -czf relay.tgz package.json package-lock.json server src scripts supabase dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: relay-runtime-${{ github.sha }}
+          path: relay.tgz
+          retention-days: 7
+          if-no-files-found: error
+
+  deploy:
+    needs: validate
+    if: github.ref == 'refs/heads/main' && vars.RELAY_DEPLOY_ENABLED == 'true'
+    environment: production
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: relay-runtime-${{ github.sha }}
+      - name: Deploy with pinned SSH host identity
+        env:
+          VPS_HOST: ${{ vars.RELAY_VPS_HOST }}
+          VPS_PORT: ${{ vars.RELAY_VPS_PORT || '22' }}
+          VPS_USER: ${{ vars.RELAY_VPS_USER }}
+          SSH_PRIVATE_KEY: ${{ secrets.RELAY_SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.RELAY_SSH_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          [[ "$VPS_HOST" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*$ ]]
+          [[ "$VPS_USER" =~ ^[a-z_][a-z0-9_-]*$ ]]
+          [[ "$VPS_PORT" =~ ^[0-9]+$ ]] && (( VPS_PORT > 0 && VPS_PORT <= 65535 ))
+          test -n "$SSH_PRIVATE_KEY"
+          test -n "$SSH_KNOWN_HOSTS"
+          install -d -m 700 "$HOME/.ssh"
+          trap 'rm -f "$HOME/.ssh/relay_key" "$HOME/.ssh/known_hosts"' EXIT
+          printf '%s\n' "$SSH_PRIVATE_KEY" > "$HOME/.ssh/relay_key"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/relay_key" "$HOME/.ssh/known_hosts"
+          options=(-i "$HOME/.ssh/relay_key" -o BatchMode=yes -o StrictHostKeyChecking=yes -o IdentitiesOnly=yes)
+          scp "${options[@]}" -P "$VPS_PORT" relay.tgz "$VPS_USER@$VPS_HOST:relay-$GITHUB_SHA.tgz"
+          ssh "${options[@]}" -p "$VPS_PORT" "$VPS_USER@$VPS_HOST" "bash -s -- '$GITHUB_SHA'" < scripts/deploy-vps.sh

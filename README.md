@@ -1,5 +1,12 @@
 # Relay Chat
 
+## Hostinger production deployment
+
+Use [Hostinger VPS deployment](HOSTINGER_DEPLOYMENT.md) for the production
+environment-variable list, Supabase TLS connection, Nginx and systemd templates,
+and gated GitHub Actions auto-deployment. The service is a single persistent
+Node.js process; static/shared hosting alone cannot run its WebSocket backend.
+
 ## Android device testing
 
 See [GitHub push and Android APK builds](ANDROID_BUILD.md) for creating the

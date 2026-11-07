@@ -254,3 +254,45 @@ test('missing PostgreSQL schema prevents startup and reports the migration comma
   await assert.rejects(service.listen(), /npm run db:migrate/);
   assert.equal(service.server.listening, false);
 });
+
+test('production requires PostgreSQL, a fixed port and exact HTTPS origins', async (t) => {
+  const original = { NODE_ENV: process.env.NODE_ENV, RELAY_ALLOWED_ORIGINS: process.env.RELAY_ALLOWED_ORIGINS };
+  t.after(() => {
+    for (const [key, value] of Object.entries(original)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+  process.env.NODE_ENV = 'production';
+  process.env.RELAY_ALLOWED_ORIGINS = 'https://chat.example.com';
+  const database = createPostgresDatabase({ pool });
+  assert.throws(() => createChatServer({ databaseUrl: null }), /Production requires DATABASE_URL/);
+  assert.throws(() => createChatServer({ database, port: 0 }), /fixed nonzero PORT/);
+  assert.throws(() => createChatServer({ database, seedDemo: true }), /Demo seeding/);
+  assert.throws(() => createChatServer({ database, allowedOrigins: '' }), /RELAY_ALLOWED_ORIGINS/);
+  for (const allowedOrigins of ['http://chat.example.com', 'https://chat.example.com/path', 'https://user:password@chat.example.com']) {
+    assert.throws(() => createChatServer({ database, allowedOrigins }), /exact HTTPS origins/);
+  }
+  // Select an available port in development, then exercise production request policy.
+  process.env.NODE_ENV = 'test';
+  const { api } = await startServer(t, database);
+  process.env.NODE_ENV = 'production';
+  assert.equal((await api('/api/v1/health', { headers: { Origin: 'https://chat.example.com' } })).status, 200);
+  for (const Origin of ['https://attacker.example', 'http://localhost:5173', 'https://other.ngrok-free.dev']) {
+    assert.equal((await api('/api/v1/health', { headers: { Origin } })).status, 403);
+  }
+});
+
+test('readiness checks the live PostgreSQL schema without changing liveness', async (t) => {
+  const { url } = await startServer(t);
+  const ready = await fetch(`${url}/api/v1/ready`);
+  assert.equal(ready.status, 200);
+  assert.equal(ready.headers.get('cache-control'), 'no-store');
+  assert.deepEqual(await ready.json(), { status: 'ok' });
+  await engine.exec('DROP SCHEMA relay CASCADE');
+  const unavailable = await fetch(`${url}/api/v1/ready`);
+  assert.equal(unavailable.status, 503);
+  assert.equal(unavailable.headers.get('cache-control'), 'no-store');
+  assert.deepEqual(await unavailable.json(), { error: 'The server could not complete this request. Please retry.' });
+  assert.equal((await fetch(`${url}/api/v1/health`)).status, 200);
+});

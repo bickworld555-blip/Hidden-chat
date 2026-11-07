@@ -1,5 +1,9 @@
 # 🚀 Deployment Readiness Checklist
 
+> Historical feature checklist, not evidence of a live production deployment.
+> For the current VPS/Supabase prerequisites and unverified rollout checks, use
+> [Hostinger VPS deployment](HOSTINGER_DEPLOYMENT.md).
+
 **Status**: ✅ **READY TO DEPLOY**  
 **Date**: November 5, 2024  
 **Build Version**: Vite 7.3.7  

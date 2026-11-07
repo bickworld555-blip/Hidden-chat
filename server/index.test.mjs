@@ -73,9 +73,24 @@ test('rejects invalid registration data and unauthenticated profile requests', a
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ username: 'external-account', dob: '2999-01-01', password: 'short' }),
   });
+
   assert.equal(invalid.status, 400);
   const profile = await fetch(`${baseUrl}/api/v1/me`);
   assert.equal(profile.status, 401);
+});
+
+test('rejects invalid ports instead of silently using a fallback', () => {
+  for (const port of [NaN, -1, 65536, 1.5]) {
+    assert.throws(() => createChatServer({ port }), /PORT must be an integer/);
+  }
+  const original = process.env.PORT;
+  try {
+    process.env.PORT = 'invalid';
+    assert.throws(() => createChatServer(), /PORT must be an integer/);
+  } finally {
+    if (original === undefined) delete process.env.PORT;
+    else process.env.PORT = original;
+  }
 });
 
 test('rejects WebSocket upgrades without a valid session', async () => {

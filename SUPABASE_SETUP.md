@@ -2,6 +2,8 @@
 
 This guide preserves Relay's existing username/password login and device sessions.
 Supabase is the PostgreSQL host, **not** the authentication provider in this phase.
+For production service/proxy configuration and gated auto-deployment, continue
+with [Hostinger VPS deployment](HOSTINGER_DEPLOYMENT.md).
 The browser continues to use `/api` and `/ws` on the app origin. Do not bypass the
 Express authorization checks by querying Supabase from the browser.
 
