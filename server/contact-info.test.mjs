@@ -258,7 +258,7 @@ test('export uses the WhatsApp text format without media', () => {
   assert.match(lines[0], /^\d{2}\/\d{2}\/\d{4}, \d{2}:\d{2} - Sam: Hello$/);
   assert.match(lines[1], / - Ava: <attached: Plan\.pdf>$/);
   assert.match(lines[2], / - Ava: Missed video call$/);
-  assert.equal(exportFilename('A/B: "C"'), 'Relay chat with A B C.txt');
+  assert.equal(exportFilename('A/B: "C"'), 'Hidden Messenger chat with A B C.txt');
 });
 
 test('in-chat search matches text and file names but not internal payloads', () => {
@@ -337,7 +337,7 @@ test('chat header opens the contact info drawer with WhatsApp sections and no ph
   assert.equal((drawer.match(/title="(Clear chat|Delete chat)" danger/g) ?? []).length, 2);
   assert.ok(drawer.includes('`Report ${name}`} danger'));
   assert.doesNotMatch(drawer, /phone number|\.phone\b/i);
-  assert.ok(drawer.includes('<small>Messages are stored on your Relay server and are not end-to-end encrypted.</small>'));
+  assert.ok(drawer.includes('<small>Messages are stored on your Hidden Messenger server and are not end-to-end encrypted.</small>'));
   assert.doesNotMatch(drawer, /Messages are end-to-end encrypted/);
 
   const css = read('src/styles.css');

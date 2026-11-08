@@ -12,7 +12,7 @@ export default class AppErrorBoundary extends Component {
   }
 
   componentDidCatch(error, info) {
-    console.error('Relay view crashed', error, info.componentStack);
+    console.error('Hidden Messenger view crashed', error, info.componentStack);
   }
 
   render() {
@@ -22,7 +22,7 @@ export default class AppErrorBoundary extends Component {
           <div className="recovery-mark">!</div>
           <h1>This view couldn’t load.</h1>
           <p>Your saved messages are still intact. Reload the chat view to continue.</p>
-          <button onClick={() => window.location.reload()}><RotateCcw size={16} />Reload Relay</button>
+          <button onClick={() => window.location.reload()}><RotateCcw size={16} />Reload Hidden Messenger</button>
         </main>
       );
     }

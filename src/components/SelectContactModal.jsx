@@ -138,7 +138,7 @@ export default function SelectContactModal({ isOpen, onClose, onSelectContact })
         const results = await searchPeople(sessionToken, handle);
         match = results.find((person) => person.username?.toLowerCase() === handle.toLowerCase()) ?? null;
       }
-      if (!match) throw new Error(`User @${handle} was not found on Relay.`);
+      if (!match) throw new Error(`User @${handle} was not found on Hidden Messenger.`);
       await openWith(match, { save: true });
     } catch (error) {
       setAddError(error.message || 'Failed to add contact.');
@@ -190,7 +190,7 @@ export default function SelectContactModal({ isOpen, onClose, onSelectContact })
         <div className="wa-sc-scroll-body">
           {!normalizedQuery && (
             <div className="wa-sc-quick-actions">
-              <button type="button" className="wa-sc-action-row" onClick={() => alert('Group chat creation is coming soon in Relay!')}>
+              <button type="button" className="wa-sc-action-row" onClick={() => alert('Group chat creation is coming soon in Hidden Messenger!')}>
                 <div className="wa-sc-action-icon green"><Users size={22} /></div>
                 <div className="wa-sc-action-label"><strong>New group</strong></div>
               </button>
@@ -199,7 +199,7 @@ export default function SelectContactModal({ isOpen, onClose, onSelectContact })
                 <div className="wa-sc-action-label"><strong>New contact</strong></div>
                 <div className="wa-sc-action-extra"><QrCode size={20} /></div>
               </button>
-              <button type="button" className="wa-sc-action-row" onClick={() => alert('Community creation is coming soon in Relay!')}>
+              <button type="button" className="wa-sc-action-row" onClick={() => alert('Community creation is coming soon in Hidden Messenger!')}>
                 <div className="wa-sc-action-icon green"><Building2 size={22} /></div>
                 <div className="wa-sc-action-label"><strong>New community</strong></div>
               </button>
@@ -242,14 +242,14 @@ export default function SelectContactModal({ isOpen, onClose, onSelectContact })
             </form>
           )}
 
-          <div className="wa-sc-section-heading"><span>Contacts on Relay</span></div>
+          <div className="wa-sc-section-heading"><span>Contacts on Hidden Messenger</span></div>
           <div className="wa-sc-contacts-list">
             {filteredSaved.map((contact) => (
               <button type="button" key={contact.id} className="wa-sc-contact-item" onClick={() => chatWith(contact)} disabled={busyId === contact.id}>
                 <Avatar name={contact.name} initials={contact.initials ?? contact.name?.slice(0, 2)?.toUpperCase() ?? '?'} color={contact.color} image={contact.avatar} online={presence?.[contact.id] === 'online'} />
                 <div className="wa-sc-contact-info">
                   <strong className="wa-sc-contact-name">{contact.name ?? 'Unknown'}</strong>
-                  <span className="wa-sc-contact-status">{contact.username ? `@${contact.username}` : 'Hey there! I am using Relay'}</span>
+                  <span className="wa-sc-contact-status">{contact.username ? `@${contact.username}` : 'Hey there! I am using Hidden Messenger'}</span>
                 </div>
                 <span className="wa-sc-saved-badge" aria-hidden="true"><Check size={14} /></span>
               </button>
@@ -274,7 +274,7 @@ export default function SelectContactModal({ isOpen, onClose, onSelectContact })
 
           {normalizedQuery && (globalResults.length > 0 || global.searching) && (
             <div className="wa-sc-global-section">
-              <div className="wa-sc-section-heading"><span>Find people on Relay</span></div>
+              <div className="wa-sc-section-heading"><span>Find people on Hidden Messenger</span></div>
               {global.searching && <div className="wa-sc-loading-note">Searching...</div>}
               {globalResults.map((person) => (
                 <PersonRow key={person.id} person={person} onChat={chatWith} onAdd={addPerson} busy={busyId === person.id} />

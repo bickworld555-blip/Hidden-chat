@@ -1,28 +1,7 @@
-import { useEffect, useId, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ArrowRight, AtSign, Copy, Eye, EyeOff, ShieldAlert, ShieldCheck } from 'lucide-react';
+import ShieldMark from './ShieldMark.jsx';
 import './UsernameGate.css';
-
-function ShieldMark({ className = '' }) {
-  const id = useId();
-  return (
-    <svg className={className} viewBox="0 0 100 112" aria-hidden="true">
-      <defs>
-        <linearGradient id={`${id}-metal`} x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stopColor="#e9fff4" /><stop offset=".23" stopColor="#526f64" />
-          <stop offset=".48" stopColor="#effff6" /><stop offset=".7" stopColor="#405c52" />
-          <stop offset="1" stopColor="#b6e0cb" />
-        </linearGradient>
-        <linearGradient id={`${id}-green`} x1="0" y1="0" x2="0" y2="1">
-          <stop stopColor="#318a64" /><stop offset="1" stopColor="#071e18" />
-        </linearGradient>
-      </defs>
-      <path d="M50 4 91 19v41c0 23-15 35-41 48C24 95 9 83 9 60V19Z" fill="#061a15" stroke={`url(#${id}-metal)`} strokeWidth="5" />
-      <path d="M50 12 83 24v36c0 18-12 29-33 40C29 89 17 78 17 60V24Z" fill={`url(#${id}-green)`} stroke="#8ab7a0" strokeWidth="2" />
-      <path d="M25 29 50 53 75 29v39L62 78V53L50 64 38 53v25L25 68Z" fill={`url(#${id}-metal)`} stroke="#112c23" strokeWidth="3" strokeLinejoin="round" />
-      <path d="M36 17 50 12l14 5-3 15-11 12-11-12Z" fill="#3ba77c" stroke="#d3f5e1" strokeWidth="2" />
-    </svg>
-  );
-}
 
 function IdentityBrand() {
   return (
@@ -134,7 +113,7 @@ export default function UsernameGate({ onAuthenticated, onClose }) {
               <AtSign size={17} />
               <input id="relay-username" value={username} onChange={(event) => setUsername(event.target.value)} placeholder="yourname" autoComplete="username" maxLength={25} aria-describedby="username-availability" />
               <ShieldCheck className="handle-shield" size={19} aria-hidden="true" />
-              <span className="handle-domain">on relay</span>
+              <span className="handle-domain" aria-label="Hidden Messenger">HM</span>
             </div>
             <div id="username-availability" className={`availability ${error || (availability?.valid && !availability.available) ? 'availability-error' : ''}`} aria-live="polite">
               {error || (availability?.valid && !availability.available

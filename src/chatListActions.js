@@ -20,8 +20,8 @@ export function deleteChatPrompt(chats) {
     return {
       title: `Delete chat with ${name}?`,
       body: isSavedContact(chat)
-        ? `Messages on this device and your Relay server copy are removed for you. ${name} stays in your contacts.`
-        : `Messages on this device and your Relay server copy are removed for you. ${name} is not in your contacts, so the thread disappears until one of you messages again.`,
+        ? `Messages on this device and your Hidden Messenger server copy are removed for you. ${name} stays in your contacts.`
+        : `Messages on this device and your Hidden Messenger server copy are removed for you. ${name} is not in your contacts, so the thread disappears until one of you messages again.`,
       confirm: 'Delete chat',
     };
   }

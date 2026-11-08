@@ -1,4 +1,4 @@
-# GoChat / Relay: Hostinger VPS + Supabase
+# Hidden Messenger: Hostinger VPS + Supabase
 
 This setup targets a **Hostinger Linux VPS**, not static/shared hosting. It runs
 one Node.js process behind Nginx; active calls, sockets and live location are

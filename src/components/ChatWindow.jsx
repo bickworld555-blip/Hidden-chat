@@ -1221,7 +1221,7 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
         {chat.disappearSeconds > 0 ? (
           <span><Timer size={12} aria-hidden="true" /> Disappearing messages are on. New messages disappear from this chat after {disappearingLabel(chat.disappearSeconds)}.</span>
         ) : (
-          <span>Messages are delivered through your Relay workspace.</span>
+          <span>Messages are delivered through your Hidden Messenger workspace.</span>
         )}
       </div>
 

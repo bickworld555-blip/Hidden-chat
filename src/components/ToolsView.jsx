@@ -261,7 +261,7 @@ export default function ToolsView({ darkMode, onToggleTheme, onLogout, onNotific
         {/* Workspace Info Footer */}
         <div className="tools-footer">
           <div className="workspace-info">
-            <span><i /> Relay workspace</span>
+            <span><i /> Hidden Messenger workspace</span>
             <small>Demo mode</small>
           </div>
         </div>

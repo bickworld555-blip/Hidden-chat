@@ -309,10 +309,10 @@ export default function ContactInfoDrawer({
       <SubView title="Encryption" onBack={() => setView('main')}>
         <div className="wa-info-hero-icon"><LockOpen size={48} /></div>
         <p className="wa-info-note">
-          Relay does not use end-to-end encryption. Messages, media and call setup are sent over your connection to
-          your Relay server and stored there, so anyone who runs or can read that server can read this chat.
+          Hidden Messenger does not use end-to-end encryption. Messages, media and call setup are sent over your connection to
+          your Hidden Messenger server and stored there, so anyone who runs or can read that server can read this chat.
         </p>
-        <p className="wa-info-note">Use HTTPS to protect messages in transit, and only use Relay servers you trust.</p>
+        <p className="wa-info-note">Use HTTPS to protect messages in transit, and only use Hidden Messenger servers you trust.</p>
       </SubView>
     );
   } else {
@@ -358,7 +358,7 @@ export default function ContactInfoDrawer({
               <LockOpen size={20} aria-hidden="true" />
               <span>
                 <strong>Encryption</strong>
-                <small>Messages are stored on your Relay server and are not end-to-end encrypted.</small>
+                <small>Messages are stored on your Hidden Messenger server and are not end-to-end encrypted.</small>
               </span>
             </button>
           </section>
@@ -422,7 +422,7 @@ export default function ContactInfoDrawer({
         >
           <p>
             Their new messages and calls won&apos;t reach this device. Blocking only applies here: {name} is not told and
-            can still send to your Relay account.
+            can still send to your Hidden Messenger account.
           </p>
         </ConfirmDialog>
       )}
@@ -436,7 +436,7 @@ export default function ContactInfoDrawer({
           onCancel={() => setDialog(null)}
         >
           <p>
-            Relay has no moderation team, so reports are not sent anywhere. {blocked ? `${name} is already blocked on this device.` : `You can block ${name} so their messages and calls stop reaching this device.`}
+            Hidden Messenger has no moderation team, so reports are not sent anywhere. {blocked ? `${name} is already blocked on this device.` : `You can block ${name} so their messages and calls stop reaching this device.`}
           </p>
           <label className="wa-info-check">
             <input type="checkbox" checked={deleteAfterReport} onChange={(event) => setDeleteAfterReport(event.target.checked)} />

@@ -53,7 +53,7 @@ test('main.mjs exits with the startup failure reason instead of hanging', async 
   });
   const { code, stderr } = await exited;
   assert.equal(code, 1);
-  assert.match(stderr, /Relay server failed to start: Production requires DATABASE_URL/);
+  assert.match(stderr, /Hidden Messenger server failed to start: Production requires DATABASE_URL/);
 });
 
 test('serves the built frontend with an SPA fallback without shadowing the API', async (t) => {

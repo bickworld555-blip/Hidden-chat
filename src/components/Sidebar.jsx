@@ -6,6 +6,7 @@ import ProfilePhoto from './ProfilePhoto.jsx';
 import { useAccounts } from '../accounts.js';
 import { presentName } from '../profile.js';
 import { linkContact, searchPeople } from '../contactsApi.js';
+import ShieldMark from './ShieldMark.jsx';
 
 export default function Sidebar({ onPair, onSounds, onNotifications, onSelectChat, onOpenAuth, onLogout, onAccounts }) {
   const [query, setQuery] = useState('');
@@ -79,8 +80,8 @@ export default function Sidebar({ onPair, onSounds, onNotifications, onSelectCha
   return (
     <aside className="sidebar">
       <header className="sidebar-top">
-        <div className="brand-mark"><MessageSquarePlus size={19} strokeWidth={2.2} /></div>
-        <div className="brand-copy"><strong>relay</strong><span>YOUR WORK, IN FLOW</span></div>
+        <ShieldMark className="brand-mark" />
+        <div className="brand-copy"><strong>Hidden Messenger</strong><span>No Email. No Number. Only Privacy.</span></div>
         <div className="top-actions">
           <button className="icon-button" title="Pair a device" onClick={onPair}><Settings2 size={18} /></button>
           <button className="icon-button" title="Notification sounds" onClick={onSounds}><Volume2 size={18} /></button>
@@ -106,7 +107,7 @@ export default function Sidebar({ onPair, onSounds, onNotifications, onSelectCha
         </div>}
       </div>
 
-      <div className="search-box"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search chats or @handle" aria-label="Search chats and Relay handles" /><kbd>⌘ K</kbd></div>
+      <div className="search-box"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search chats or @handle" aria-label="Search chats and Hidden Messenger handles" /><kbd>⌘ K</kbd></div>
       <div className="list-toolbar">
         <div className="filter-tabs" role="tablist" aria-label="Conversation filter">
           {['All', 'Unread'].map((tab) => <button key={tab} role="tab" aria-selected={filter === tab} className={filter === tab ? 'selected' : ''} onClick={() => setFilter(tab)}>{tab}</button>)}
@@ -124,7 +125,7 @@ export default function Sidebar({ onPair, onSounds, onNotifications, onSelectCha
               <span className="discovery-action">{addingId === contact.id ? 'Opening…' : isContact ? 'Open' : <><UserRoundPlus size={14} />Add</>}</span>
             </button>;
           })}
-          {searching && <p className="search-hint">Searching Relay…</p>}
+          {searching && <p className="search-hint">Searching Hidden Messenger…</p>}
           {!searching && searchResults.length === 0 && !searchError && <p className="search-hint">No handles found for “@{normalizedQuery}”.</p>}
           {searchError && <p className="search-error">{searchError}</p>}
         </>}

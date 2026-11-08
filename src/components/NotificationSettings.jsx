@@ -137,7 +137,7 @@ function TonePicker({ title, kind, value, volume, onChange, onVolume, onBack }) 
         {error && <p className="notif-error" role="alert">{error}</p>}
       </section>
       <section className="wa-info-section notif-card">
-        <h3>Relay</h3>
+        <h3>Hidden Messenger</h3>
         {toneLibrary(kind).map((tone) => option(tone.id, tone.name))}
       </section>
       <div className="notif-volume" role="group" aria-label="Preview volume">

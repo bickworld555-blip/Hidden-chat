@@ -9,6 +9,7 @@ import { orderChats } from '../chatOrder.js';
 import { uploadFile } from '../upload.js';
 import Avatar from './Avatar.jsx';
 import SelectContactModal from './SelectContactModal.jsx';
+import ShieldMark from './ShieldMark.jsx';
 
 export default function ChatsList({ onOpenChat, onStartCall }) {
   const rawChats = useChatStore((state) => state.chats);
@@ -276,7 +277,7 @@ export default function ChatsList({ onOpenChat, onStartCall }) {
         </header>
       ) : (
         <header className="wa-list-header">
-          <h1>Relay</h1>
+          <div className="wa-list-brand"><ShieldMark className="wa-list-brand-mark" /><h1>Hidden Messenger</h1></div>
           <span className="wa-list-header-actions">
             <button type="button" className="wa-icon-btn" onClick={() => { setCameraError(''); cameraInputRef.current?.click(); }} aria-label="Camera" title="Take a photo and send it"><Camera size={20} /></button>
             <button type="button" className="wa-icon-btn" onClick={() => searchRef.current?.focus()} aria-label="Search"><Search size={20} /></button>
@@ -397,7 +398,7 @@ export default function ChatsList({ onOpenChat, onStartCall }) {
 
         {normalizedQuery && (
           <>
-            <div className="wa-section-label">Find people on Relay</div>
+            <div className="wa-section-label">Find people on Hidden Messenger</div>
             {isSearching && <div className="wa-note">Searching…</div>}
             {searchError && <div className="wa-note error">{searchError}</div>}
             {!isSearching && !searchError && newResults.length === 0 && visibleChats.length === 0 && <div className="wa-note">No people found</div>}

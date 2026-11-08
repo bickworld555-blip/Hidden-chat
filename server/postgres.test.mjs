@@ -336,7 +336,7 @@ test('startup migration creates a missing schema once and refuses an unsupported
   const address = await first.listen();
   assert.equal((await fetch(`http://127.0.0.1:${address.port}/api/v1/ready`)).status, 200);
   assert.equal((await fetch(`http://127.0.0.1:${address.port}/api/v1/auth/availability?username=fresh`)).status, 200);
-  assert.deepEqual(logged, ['Created the Relay database schema.']);
+  assert.deepEqual(logged, ['Created the Hidden Messenger database schema.']);
   await first.close();
   logged.length = 0;
   await (await start()).listen();

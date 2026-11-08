@@ -70,7 +70,7 @@ export function exportChatText(messages, { userId, selfName = 'You', peerName = 
 
 export function exportFilename(peerName) {
   const safe = String(peerName ?? '').replace(/[\\/:*?"<>|\u0000-\u001f]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60);
-  return `Relay chat with ${safe || 'contact'}.txt`;
+  return `Hidden Messenger chat with ${safe || 'contact'}.txt`;
 }
 
 export const CHAT_THEMES = Object.freeze([

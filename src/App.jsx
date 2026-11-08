@@ -144,7 +144,7 @@ export default function App() {
         await hydratePreferences(userId);
         if (cancelled) return;
         const contactResponse = await fetch('/api/v1/contacts', { headers: { Authorization: `Bearer ${sessionToken}` } });
-        if (!contactResponse.ok) throw new Error('Could not load your Relay contacts.');
+        if (!contactResponse.ok) throw new Error('Could not load your Hidden Messenger contacts.');
         const contacts = await contactResponse.json();
         if (cancelled) return;
         setContacts(contacts);
@@ -479,7 +479,7 @@ export default function App() {
         ) : activeTab === 'tools' ? (
           <ToolsView darkMode={darkMode} onToggleTheme={toggleTheme} onLogout={() => { logout(); }} onNotifications={() => setNotificationsOpen(true)} onAccounts={() => setAccountsOpen(true)} onAvatarStudio={() => setAvatarStudioOpen(true)} />
         ) : null}
-        {activeTab === 'chats' && !isMobile && <footer className="workspace-footer"><span><i /> Relay workspace</span><span className="workspace-footer-right">Demo mode <span>·</span><button onClick={toggleTheme} title={`Switch to ${darkMode ? 'light' : 'dark'} theme`}>{darkMode ? <Sun size={14} /> : <Moon size={14} />}{darkMode ? 'Light' : 'Dark'}</button><ChevronRight size={13} /></span></footer>}
+        {activeTab === 'chats' && !isMobile && <footer className="workspace-footer"><span><i /> Hidden Messenger workspace</span><span className="workspace-footer-right">Demo mode <span>·</span><button onClick={toggleTheme} title={`Switch to ${darkMode ? 'light' : 'dark'} theme`}>{darkMode ? <Sun size={14} /> : <Moon size={14} />}{darkMode ? 'Light' : 'Dark'}</button><ChevronRight size={13} /></span></footer>}
       </div>
       {isMobile && !chatOpenOnMobile && <MobileBottomNav activeTab={mobileActiveTab} onTabChange={setMobileActiveTab} unreadCount={unreadChats} />}
       {fatalError && <div className="status-toast"><Bell size={15} /><span>{fatalError}</span><button onClick={() => setFatalError('')}>Dismiss</button></div>}

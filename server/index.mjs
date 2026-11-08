@@ -902,10 +902,10 @@ export function createChatServer({
   app.post('/api/v1/contacts', requireSession, async (request, response) => {
     const contactId = typeof request.body?.userId === 'string' ? request.body.userId : '';
     if (!contactId || contactId === request.session.user_id) {
-      return response.status(400).json({ error: 'Choose a different Relay user.' });
+      return response.status(400).json({ error: 'Choose a different Hidden Messenger user.' });
     }
     const contact = (await db.prepare(`SELECT ${USER_COLUMNS} FROM users WHERE id = ?`).get(contactId));
-    if (!contact) return response.status(404).json({ error: 'That Relay handle was not found.' });
+    if (!contact) return response.status(404).json({ error: 'That Hidden Messenger handle was not found.' });
     (await linkUsers(request.session.user_id, contactId, { save: request.body?.save !== false }));
     const link = (await linkRow.get(request.session.user_id, contactId));
     response.status(200).json({ ...publicUser(contact), saved: Boolean(link?.saved), hidden: false });
@@ -1491,7 +1491,7 @@ export function createChatServer({
         server.listen(port, host, resolve);
       });
       try {
-        if (migrate && db.migrate && await db.migrate()) console.log('Created the Relay database schema.');
+        if (migrate && db.migrate && await db.migrate()) console.log('Created the Hidden Messenger database schema.');
         await db.ready?.();
         await seedDemoUsers();
         await discardStaleUploads();

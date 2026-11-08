@@ -9,13 +9,13 @@ try {
   // RELAY_AUTO_MIGRATE=false leaves schema changes to `npm run db:migrate`.
   service = createChatServer({ migrate: process.env.RELAY_AUTO_MIGRATE !== 'false' });
   const address = await service.listen();
-  console.log(`Relay API listening on ${address.address}:${address.port}`);
+  console.log(`Hidden Messenger API listening on ${address.address}:${address.port}`);
   const lanAddresses = Object.values(networkInterfaces()).flatMap((interfaces) => interfaces ?? [])
     .filter((entry) => entry.family === 'IPv4' && !entry.internal)
     .map((entry) => `http://${entry.address}:${address.port}`);
-  for (const url of lanAddresses) console.log(`Relay API LAN address: ${url}`);
+  for (const url of lanAddresses) console.log(`Hidden Messenger API LAN address: ${url}`);
 } catch (error) {
-  console.error('Relay server failed to start:', error.message, error.code ? `(${error.code})` : '');
+  console.error('Hidden Messenger server failed to start:', error.message, error.code ? `(${error.code})` : '');
   await service?.db?.close?.().catch(() => {});
   process.exit(1);
 }

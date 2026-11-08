@@ -67,7 +67,7 @@ export function maybeRemind({ unseenCount, now = Date.now() }) {
   lastReminderAt = now;
   if (notificationPermission() !== 'granted') return false;
   try {
-    new Notification('Relay', { body: `You have ${unseenCount} unseen ${unseenCount === 1 ? 'update' : 'updates'}.`, tag: 'relay-reminder', silent: true });
+    new Notification('Hidden Messenger', { body: `You have ${unseenCount} unseen ${unseenCount === 1 ? 'update' : 'updates'}.`, tag: 'relay-reminder', silent: true });
   } catch { /* ignore */ }
   return true;
 }

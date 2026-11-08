@@ -1,4 +1,4 @@
-# Relay Chat
+# Hidden Messenger
 
 ## Hostinger production deployment
 
@@ -69,7 +69,7 @@ Files up to 100 GB can be shared. Anything above 8 MB is uploaded in resumable 8
 
 ## Location and contact sharing
 
-The location picker uses Leaflet with OpenStreetMap tiles, Nominatim for the address of the chosen spot and public Overpass instances for "Nearby places". These are keyless public services: the chosen coordinates are sent to them, they are rate-limited (nearby places may show as unavailable when the instances are busy), and the attribution shown in the UI is required. Live location is consent-based: the recipient must accept before either side's position is shared; positions are relayed over the WebSocket for the chosen duration and are never stored on the server. Contact cards share a Relay contact's name, handle and photo (no phone numbers).
+The location picker uses Leaflet with OpenStreetMap tiles, Nominatim for the address of the chosen spot and public Overpass instances for "Nearby places". These are keyless public services: the chosen coordinates are sent to them, they are rate-limited (nearby places may show as unavailable when the instances are busy), and the attribution shown in the UI is required. Live location is consent-based: the recipient must accept before either side's position is shared; positions are relayed over the WebSocket for the chosen duration and are never stored on the server. Contact cards share a Hidden Messenger contact's name, handle and photo (no phone numbers).
 
 ## Sounds
 

@@ -28,12 +28,13 @@ button { color: inherit; }
 button:focus-visible, input:focus-visible { outline: 2px solid #718a28; outline-offset: 2px; }
 .app-shell { display: grid; grid-template-columns: 350px minmax(0, 1fr); height: 100dvh; min-height: 580px; max-width: 1760px; margin: auto; overflow: hidden; background: var(--paper); box-shadow: var(--shadow); }
 .sidebar { display: flex; flex-direction: column; min-width: 0; border-right: 1px solid var(--line); background: #fbfcfc; position: relative; z-index: 2; }
-.sidebar-top { height: 70px; padding: 0 18px 0 22px; display: flex; align-items: center; gap: 11px; border-bottom: 1px solid var(--line); }
-.brand-mark { width: 35px; height: 35px; display: grid; place-items: center; border-radius: 11px; background: #203d37; color: #d7ed79; transform: rotate(-3deg); }
-.brand-copy { display: flex; flex-direction: column; gap: 2px; }
-.brand-copy strong { font-family: Georgia, "Times New Roman", serif; font-size: 21px; font-weight: 600; line-height: 1; letter-spacing: 0; }
-.brand-copy span, .menu-caption, .eyebrow { font-size: 9px; color: #9aa5aa; font-weight: 700; letter-spacing: 1.15px; }
-.top-actions { display: flex; gap: 1px; margin-left: auto; }
+.sidebar-top { min-height: 76px; padding: 9px 10px 9px 12px; display: flex; align-items: center; gap: 7px; border-bottom: 1px solid var(--line); }
+.brand-mark { width: 37px; height: 42px; flex: none; filter: drop-shadow(0 2px 2px #001c1255); }
+.brand-copy { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.brand-copy strong { font-family: Georgia, "Times New Roman", serif; font-size: 14px; font-weight: 700; line-height: 1.1; white-space: nowrap; }
+.brand-copy span { color: #71847a; font-size: 8px; line-height: 1.3; }
+.menu-caption, .eyebrow { font-size: 9px; color: #9aa5aa; font-weight: 700; letter-spacing: 1.15px; }
+.top-actions { display: flex; flex: none; gap: 0; margin-left: auto; }
 .icon-button { border: 0; background: transparent; padding: 8px; border-radius: 8px; display: inline-grid; place-items: center; color: #75828a; cursor: pointer; transition: background .16s ease, color .16s ease; }
 .icon-button:hover { color: var(--ink); background: #edf1f0; }
 .account-wrap { margin: 15px 15px 12px; position: relative; }
@@ -235,7 +236,7 @@ button.file-message { border: 0; background: transparent; color: inherit; text-a
   .call-panel.video-call .local-video { width: 110px; height: 110px; right: 12px; bottom: 12px; }
   .video-placeholder { padding: 14px; gap: 10px; }.video-placeholder strong { font-size: 14px; }
 }
-@media (max-height: 700px) { .sidebar-top { height: 62px; }.account-wrap { margin-top: 10px; margin-bottom: 9px; }.chat-row { min-height: 65px; }.message-scroll { padding-top: 17px; padding-bottom: 17px; } }
+@media (max-height: 700px) { .account-wrap { margin-top: 10px; margin-bottom: 9px; }.chat-row { min-height: 65px; }.message-scroll { padding-top: 17px; padding-bottom: 17px; } }
 
 /* Voice messages: recording bar and chat bubbles */
 .composer.recording-mode { min-height: 56px; gap: 12px; padding: 6px 8px 6px 14px; border-radius: 28px; background: #fff; box-shadow: 0 1px 4px #253c3314; }
@@ -1623,6 +1624,8 @@ html, body { overflow-x: hidden; }
 
 .wa-list { flex: 1; min-height: 0; display: flex; flex-direction: column; position: relative; background: var(--wa-bg); color: var(--wa-text); }
 .wa-list-header { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px 6px; }
+.wa-list-brand { min-width: 0; display: flex; align-items: center; gap: 7px; }
+.wa-list-brand-mark { width: 29px; height: 33px; flex: none; filter: drop-shadow(0 2px 2px #001c1255); }
 .wa-list-header-actions { display: flex; align-items: center; gap: 4px; }
 .wa-camera-error { margin: 0 16px 8px; }
 
