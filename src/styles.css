@@ -4118,3 +4118,5 @@ button.groups-setting:hover, label.groups-setting:hover { background: rgba(134, 
 .wa-video-stage:not(.is-group) .wa-video-element.remote-video:not(.is-screen) { object-fit: cover; }
 .wa-call-status-badge { display: inline-flex; align-items: center; justify-content: center; }
 .wa-video-stage:not(.is-group) .wa-video-element.local-video:not(.is-screen) { object-fit: cover; }
+.avatar-choice-group h3 { margin: 14px 2px 8px; color: #8696a0; font-size: 13px; font-weight: 600; letter-spacing: .02em; text-transform: uppercase; }
+.avatar-choice-group:first-of-type h3 { margin-top: 4px; }

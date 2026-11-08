@@ -1594,15 +1594,9 @@ export function createChatServer({
       FROM messages JOIN users AS "sender" ON sender.id = messages.sender_id
       JOIN users AS "receiver" ON receiver.id = messages.receiver_id
       WHERE messages.receiver_id = ? AND messages.status = 'sent' AND messages.deleted_at IS NULL`).all(userId));
-    if (pendingMessages.length) {
-      (await db.prepare(`UPDATE messages SET status = 'delivered'
-        WHERE receiver_id = ? AND status = 'sent'`).run(userId));
-      for (const message of pendingMessages) {
-        json(socket, { type: 'message:new', message: { ...(await presentMessage(message)), status: 'delivered' } });
-        const event = { type: 'message:status', messageId: message.id, status: 'delivered' };
-        broadcastUser(message.senderId, event);
-        broadcastUser(userId, event, socket);
-      }
+    // Re-sent on every connect until the device acknowledges them with message:delivered.
+    for (const message of pendingMessages) {
+      json(socket, { type: 'message:new', message: { ...(await presentMessage(message)), status: 'sent' } });
     }
 
     }
@@ -1872,6 +1866,20 @@ export function createChatServer({
         return;
       }
 
+      // The recipient's device confirms it has these messages: one tick becomes two for the sender.
+      if (event.type === 'message:delivered') {
+        const ids = Array.isArray(event.messageIds) ? event.messageIds.filter((id) => typeof id === 'string' && id.length < 80).slice(0, 200) : [];
+        for (const messageId of ids) {
+          const updated = await db.prepare(`UPDATE messages SET status = 'delivered'
+            WHERE id = ? AND receiver_id = ? AND status = 'sent' RETURNING sender_id AS "senderId"`).get(messageId, userId);
+          if (!updated) continue;
+          const statusEvent = { type: 'message:status', messageId, status: 'delivered' };
+          broadcastUser(updated.senderId, statusEvent);
+          broadcastUser(userId, statusEvent, socket);
+        }
+        return;
+      }
+
       if (event.type === 'message:read') {
         const { messageId } = event;
         const result = (await db.prepare(`UPDATE messages SET status = 'read'
@@ -1958,7 +1966,8 @@ export function createChatServer({
         receiverColor: recipient.color,
         timestamp: new Date().toISOString(),
         content: storedContent,
-        status: userSockets(receiverId).size ? 'delivered' : 'sent',
+        // One tick until the recipient's device acknowledges it (message:delivered), even if they look online.
+        status: 'sent',
         replyToId,
         forwarded: payload.forwarded === true,
         expiresAt: disappearSeconds > 0 ? Date.now() + disappearSeconds * 1000 : null,

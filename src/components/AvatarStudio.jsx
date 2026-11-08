@@ -3,7 +3,7 @@ import { Check, RefreshCw, ScanFace, X } from 'lucide-react';
 import { loadFaceTracker } from '../avatar/faceTracker.js';
 import { expressionFromResult, smoothExpression } from '../avatar/expression.js';
 import { CALIBRATION_STEPS, advanceCalibration, calibrationProgress, createCalibration, currentStep, personalize, profileFromCalibration } from '../avatar/calibration.js';
-import { CHARACTERS, drawAvatar, idleExpression } from '../avatar/characters.js';
+import { CHARACTERS, CHARACTER_GROUPS, drawAvatar, idleExpression } from '../avatar/characters.js';
 import { getPersona, savePersona } from '../avatar/persona.js';
 
 const PREVIEW_SIZE = 160;
@@ -11,16 +11,28 @@ const PREVIEW_SIZE = 160;
 // One live canvas per character; all of them mirror the same expression so the choice is made "in motion".
 function CharacterPreview({ character, expressionRef, selected, onSelect }) {
   const canvasRef = useRef(null);
+  const selectedRef = useRef(selected);
+  selectedRef.current = selected;
   useEffect(() => {
     const ctx = canvasRef.current?.getContext('2d');
     if (!ctx) return undefined;
     let frame = 0;
+    let last = -Infinity;
+    // Fifteen live previews: the chosen one animates every frame, the rest at ~20 fps, and off-screen ones rest.
+    let visible = true;
+    const observer = typeof IntersectionObserver === 'function'
+      ? new IntersectionObserver(([entry]) => { visible = entry.isIntersecting; })
+      : null;
+    observer?.observe(canvasRef.current);
     const draw = (now) => {
-      drawAvatar(ctx, character, expressionRef.current ?? idleExpression(now), PREVIEW_SIZE);
+      if (visible && (selectedRef.current || now - last >= 50)) {
+        last = now;
+        drawAvatar(ctx, character, expressionRef.current ?? idleExpression(now), PREVIEW_SIZE);
+      }
       frame = requestAnimationFrame(draw);
     };
     frame = requestAnimationFrame(draw);
-    return () => cancelAnimationFrame(frame);
+    return () => { cancelAnimationFrame(frame); observer?.disconnect(); };
   }, [character, expressionRef]);
   return (
     <button type="button" className={`avatar-choice${selected ? ' is-selected' : ''}`} onClick={() => onSelect(character.id)} aria-pressed={selected} aria-label={`${character.name}: ${character.tagline}`}>
@@ -179,11 +191,16 @@ export default function AvatarStudio({ onClose, onSaved, startAt = 'scan' }) {
           {phase === 'choose' && (
             <div className="avatar-choose">
               <p className="avatar-choose-lead">Each character is already following your face. Pick the one that feels like you.</p>
-              <div className="avatar-choice-grid">
-                {CHARACTERS.map((character) => (
-                  <CharacterPreview key={character.id} character={character} expressionRef={expressionRef} selected={character.id === characterId} onSelect={setCharacterId} />
-                ))}
-              </div>
+              {CHARACTER_GROUPS.map((group) => (
+                <section key={group.id} className="avatar-choice-group" aria-label={group.label}>
+                  <h3>{group.label}</h3>
+                  <div className="avatar-choice-grid">
+                    {CHARACTERS.filter((character) => character.group === group.id).map((character) => (
+                      <CharacterPreview key={character.id} character={character} expressionRef={expressionRef} selected={character.id === characterId} onSelect={setCharacterId} />
+                    ))}
+                  </div>
+                </section>
+              ))}
             </div>
           )}
         </div>

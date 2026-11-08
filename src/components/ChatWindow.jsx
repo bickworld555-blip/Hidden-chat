@@ -32,6 +32,16 @@ import { EventBubble, EventComposer, PollBubble, PollComposer, ViewOnceVoice } f
 import { parsePollContent } from '../polls.js';
 import { parseEventContent } from '../calendarEvents.js';
 
+function usePageVisible() {
+  const [visible, setVisible] = useState(() => typeof document === 'undefined' || document.visibilityState === 'visible');
+  useEffect(() => {
+    const update = () => setVisible(document.visibilityState === 'visible');
+    document.addEventListener('visibilitychange', update);
+    return () => document.removeEventListener('visibilitychange', update);
+  }, []);
+  return visible;
+}
+
 // Re-renders once a minute so "last seen today" rolls over to "yesterday" without new presence events.
 function useMinuteClock() {
   const [now, setNow] = useState(() => new Date());
@@ -702,8 +712,10 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
 
   useEffect(() => () => clearTimeout(autoScrollTimerRef.current), []);
 
+  // Blue ticks only for what the person can actually see: this chat open, on a visible screen.
+  const pageVisible = usePageVisible();
   useEffect(() => {
-    if (!chatId) return;
+    if (!chatId || !pageVisible) return;
     for (const message of messages) {
       if (message?.senderId === chatId && message.status !== 'read' && !readSentRef.current.has(message.id)) {
         readSentRef.current.add(message.id);
@@ -712,7 +724,7 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
       }
     }
     markRead(chatId);
-  }, [messages, chatId, client, markRead, updateMessage]);
+  }, [messages, chatId, client, markRead, updateMessage, pageVisible]);
 
   useEffect(() => () => clearTimeout(typingTimerRef.current), []);
 

@@ -194,6 +194,10 @@ export default function App() {
               || hiddenByBlock(event.message, blockedChats[event.message.senderId], userId);
             addMessage(event.message);
             if (event.type === 'message:ack') acknowledgeMessage(event.message);
+            // This device has it: tell the sender (one tick → two). Reading it is a separate, explicit step.
+            if (incoming && event.message.receiverId === userId && event.message.status === 'sent') {
+              realtime?.send({ type: 'message:delivered', messageIds: [event.message.id] });
+            }
             if (incoming && !silenced) {
               playNotificationTone('message');
               vibrateFor('message');
@@ -324,14 +328,6 @@ export default function App() {
     return () => controller.abort();
   }, [activeChatId, mergeHistory, sessionToken]);
   
-  useEffect(() => {
-    if (!sessionToken) return;
-    const peerId = activeChatId;
-    const incoming = useChatStore.getState().messages[peerId] ?? [];
-    incoming.filter((message) => message.receiverId === userId && message.status !== 'read')
-      .forEach((message) => client?.send({ type: 'message:read', messageId: message.id }));
-  }, [activeChatId, client, sessionToken, userId]);
-
   useEffect(() => {
     if (call?.status === 'connected' && !callStartTimeRef.current) {
       callStartTimeRef.current = Date.now();

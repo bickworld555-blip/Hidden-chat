@@ -387,8 +387,14 @@ test('authenticates sockets, delivers messages, and persists read status', async
   const ack = waitForEvent(sender, 'message:ack');
   sender.send(JSON.stringify({ type: 'message:send', message: { id: 'test-message', receiverId: jordan.user.id, content: 'Hello in real time' } }));
   const [incoming, accepted] = await Promise.all([delivered, ack]);
-  assert.equal(incoming.message.status, 'delivered');
+  assert.equal(incoming.message.status, 'sent', 'one tick until the device confirms');
+  assert.equal(accepted.message.status, 'sent');
   assert.equal(accepted.message.senderId, ava.user.id);
+  // Only the recipient can confirm delivery; then the sender sees two ticks.
+  sender.send(JSON.stringify({ type: 'message:delivered', messageIds: ['test-message'] }));
+  const deliveredUpdate = waitForEvent(sender, 'message:status', (event) => event.messageId === 'test-message');
+  receiver.send(JSON.stringify({ type: 'message:delivered', messageIds: ['test-message'] }));
+  assert.equal((await deliveredUpdate).status, 'delivered');
   assert.equal(incoming.message.senderUsername, 'messageava');
   const recipientContacts = await fetch(`${baseUrl}/api/v1/contacts`, { headers: { Authorization: `Bearer ${jordan.token}` } });
   assert.ok((await recipientContacts.json()).some((contact) => contact.id === ava.user.id));
@@ -407,7 +413,7 @@ test('authenticates sockets, delivers messages, and persists read status', async
   receiver.close();
 });
 
-test('marks queued messages delivered when the recipient reconnects', async () => {
+test('queued messages are re-sent on every reconnect until the recipient device confirms them', async () => {
   const ava = await createSession('offlineava');
   const jordan = await createSession('offlinejordan');
   const sender = await connect(ava.token);
@@ -415,12 +421,18 @@ test('marks queued messages delivered when the recipient reconnects', async () =
   sender.send(JSON.stringify({ type: 'message:send', message: { id: 'offline-message', receiverId: jordan.user.id, content: 'Catch you later' } }));
   assert.equal((await acknowledgement).message.status, 'sent');
 
+  // A device that connects but never confirms (lost the message) leaves it at one tick and gets it again.
+  const silent = await connect(jordan.token);
+  assert.equal((await waitForEvent(silent, 'message:new', (event) => event.message.id === 'offline-message')).message.status, 'sent');
+  silent.close();
+  await new Promise((resolve) => setTimeout(resolve, 100));
   const deliveryUpdate = waitForEvent(sender, 'message:status', (event) => event.messageId === 'offline-message');
   const receiver = await connect(jordan.token);
-  assert.equal((await deliveryUpdate).status, 'delivered');
   const replayedMessage = await waitForEvent(receiver, 'message:new', (event) => event.message.id === 'offline-message');
   assert.equal(replayedMessage.message.content, 'Catch you later');
-  assert.equal(replayedMessage.message.status, 'delivered');
+  assert.equal(replayedMessage.message.status, 'sent');
+  receiver.send(JSON.stringify({ type: 'message:delivered', messageIds: ['offline-message'] }));
+  assert.equal((await deliveryUpdate).status, 'delivered');
 
   const history = await fetch(`${baseUrl}/api/v1/messages?peerId=${ava.user.id}`, { headers: { Authorization: `Bearer ${jordan.token}` } });
   assert.equal((await history.json())[0].status, 'delivered');

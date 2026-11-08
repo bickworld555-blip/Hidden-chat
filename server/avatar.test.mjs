@@ -6,7 +6,7 @@ import { readFile } from 'node:fs/promises';
 import { createCallEngine } from '../src/callEngine.js';
 import { NEUTRAL_EXPRESSION, blendshapeMap, expressionFromResult, headPoseFromMatrix, mouthFromAudioLevel, smoothExpression } from '../src/avatar/expression.js';
 import { CALIBRATION_STEPS, CALIBRATION_THRESHOLDS, advanceCalibration, calibrationProgress, createCalibration, currentStep, personalize, profileFromCalibration } from '../src/avatar/calibration.js';
-import { CHARACTERS, characterById, drawAvatar, idleExpression } from '../src/avatar/characters.js';
+import { CHARACTERS, CHARACTER_GROUPS, characterById, drawAvatar, idleExpression } from '../src/avatar/characters.js';
 import { normalizePersona } from '../src/avatar/persona.js';
 import { createStats } from '../src/avatar/avatarStream.js';
 import { LOCAL_MODEL_URL, MODEL_CACHE, REMOTE_MODEL_URL, WASM_BASE, loadModelBuffer } from '../src/avatar/faceTracker.js';
@@ -115,11 +115,22 @@ function recordingContext() {
   return ctx;
 }
 
-test('five distinct characters render for any expression, and the mouth/eyes follow jaw and blink', () => {
-  assert.equal(CHARACTERS.length, 5);
-  assert.equal(new Set(CHARACTERS.map((c) => c.id)).size, 5);
-  assert.equal(new Set(CHARACTERS.map((c) => c.name)).size, 5);
-  assert.equal(new Set(CHARACTERS.map((c) => `${c.shape}/${c.hairStyle}/${c.skin}`)).size, 5, 'each looks different');
+test('ten human characters (five men, five women) plus five fun ones render for any expression, and the mouth/eyes follow jaw and blink', () => {
+  assert.equal(CHARACTERS.length, 15);
+  assert.equal(CHARACTERS.filter((c) => c.group === 'male').length, 5);
+  assert.equal(CHARACTERS.filter((c) => c.group === 'female').length, 5);
+  assert.equal(CHARACTERS.filter((c) => c.group === 'fun').length, 5);
+  assert.deepEqual(CHARACTER_GROUPS.map((group) => group.id), ['male', 'female', 'fun']);
+  assert.equal(new Set(CHARACTERS.map((c) => c.id)).size, 15);
+  assert.equal(new Set(CHARACTERS.map((c) => c.name)).size, 15);
+  assert.equal(new Set(CHARACTERS.map((c) => `${c.shape}/${c.hairStyle}/${c.skin}`)).size, 15, 'each looks different');
+  assert.equal(CHARACTERS[0].group, 'male', 'a person is the default, not a creature');
+  // Facial hair is part of the face: a beard is drawn and moves with the jaw (more ellipse work when open).
+  const bearded = characterById('kofi');
+  const shut = recordingContext(); drawAvatar(shut, bearded, { ...look(), jawOpen: 0 }, 240);
+  const talking = recordingContext(); drawAvatar(talking, bearded, { ...look(), jawOpen: 1 }, 240);
+  const ellipseArgs = (ctx) => JSON.stringify(ctx.calls.filter(([name]) => name === 'ellipse'));
+  assert.notEqual(ellipseArgs(shut), ellipseArgs(talking));
   assert.equal(characterById('momo').name, 'Momo');
   assert.equal(characterById('nope'), null);
 
@@ -320,7 +331,7 @@ test('the UI wires the scan, the character choice, the Animation Video Call swit
   const styles = await read('../src/styles.css');
 
   assert.ok(studio.includes('advanceCalibration(calibrationRef.current, expression, dt)') && studio.includes('CALIBRATION_STEPS.map(') && studio.includes('profileFromCalibration(next)'), 'the studio drives the scan steps from live tracking');
-  assert.ok(studio.includes('CHARACTERS.map((character) => (') && studio.includes('<CharacterPreview') && studio.includes('savePersona({ characterId: selected.id'), 'all characters preview live and the choice is saved');
+  assert.ok(studio.includes('CHARACTER_GROUPS.map((group)') && studio.includes('CHARACTERS.filter((character) => character.group === group.id)') && studio.includes('<CharacterPreview') && studio.includes('savePersona({ characterId: selected.id'), 'every character previews live, grouped, and the choice is saved');
   assert.ok(studio.includes('Nothing from the scan is uploaded'), 'privacy note');
   assert.ok(tools.includes('<strong>Animation Video Call</strong>') && tools.includes('setAvatarCallsEnabled(!avatarCalls)') && tools.includes('<strong>Call screen animations</strong>') && tools.includes('<strong>Your avatar</strong>'), 'settings: the avatar switch, the renamed motion switch and the avatar row');
   assert.ok(overlay.includes('engine.setVideoFilter?.(factory)') && overlay.includes('engine.setVideoFilter?.(null)') && overlay.includes('createAvatarFilter({') && overlay.includes('loadFaceTracker()'), 'the call applies the avatar filter to every pair engine');
