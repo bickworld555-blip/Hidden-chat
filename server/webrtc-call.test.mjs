@@ -356,8 +356,12 @@ test('answering on one device stops the others and pins later negotiation to tha
   // Renegotiation from the caller after the answer reaches only the answering device.
   await caller.engine.upgradeToVideo();
   await until(() => remoteKinds(answering.engine).length === 2, { label: 'video on phone' });
-  const laptopAfter = laptop.events.slice(laptopCountBefore).filter((event) => event.type === 'call:signal' && event.callId === callId);
-  assert.deepEqual(laptopAfter.map((event) => event.signal.type), ['end']);
+  // Candidates the caller sent before the answer fan out to every device (timing decides where they land);
+  // once the laptop is told "answered elsewhere", nothing more reaches it, and the renegotiation never does.
+  const laptopSignals = laptop.events.filter((event) => event.type === 'call:signal' && event.callId === callId);
+  const afterElsewhere = laptopSignals.slice(laptopSignals.indexOf(elsewhere) + 1);
+  assert.deepEqual(afterElsewhere.map((event) => event.signal.type), []);
+  assert.ok(!laptop.events.slice(laptopCountBefore).some((event) => event.signal?.type === 'offer'), 'the renegotiation offer reaches only the answering device');
 
   caller.engine.hangUp();
   await until(() => answering.engine.state.status === 'ended', { label: 'ended' });
