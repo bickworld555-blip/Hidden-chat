@@ -20,7 +20,8 @@
     "mediapipe:sync": "node scripts/sync-mediapipe.mjs",
     "prebuild": "node scripts/sync-mediapipe.mjs",
     "predev": "node scripts/sync-mediapipe.mjs",
-    "predev:web": "node scripts/sync-mediapipe.mjs"
+    "predev:web": "node scripts/sync-mediapipe.mjs",
+    "eas-build-post-install": "node scripts/eas-build-post-install.mjs"
   },
   "dependencies": {
     "@capacitor/android": "8.6.0",

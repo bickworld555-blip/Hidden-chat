@@ -1,0 +1,15 @@
+{
+  "expo": {
+    "name": "Hidden Messenger",
+    "slug": "hidden-messenger",
+    "version": "1.0.0",
+    "android": {
+      "package": "io.github.bickworld555.hiddenchat"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "ab86e74b-7b2d-4125-ac05-b01991a43a29"
+      }
+    }
+  }
+}

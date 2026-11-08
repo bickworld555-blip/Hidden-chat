@@ -48,7 +48,8 @@ android {
 tasks.configureEach {
     if (name == 'preReleaseBuild') {
         doFirst {
-            if (!releaseSigningReady) {
+            // Expo EAS builds sign with the EAS-managed keystore it injects; everywhere else our own keystore is required.
+            if (!releaseSigningReady && System.getenv('EAS_BUILD') != 'true') {
                 throw new GradleException('Release APK requires ANDROID_KEYSTORE_PATH, ANDROID_STORE_PASSWORD, ANDROID_KEY_ALIAS and ANDROID_KEY_PASSWORD.')
             }
         }
