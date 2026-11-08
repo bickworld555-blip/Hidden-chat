@@ -9,7 +9,7 @@ import { uploadFile } from '../upload.js';
 import { MAX_CALL_PARTICIPANTS } from '../callRoom.js';
 import { groupPreviewText, unreadBadge } from '../groupRows.js';
 import { exportGroupChat, parseScheduledCall, scheduledCallContent, senderColor, withDaySeparators } from '../groupChat.js';
-import { setGroupMuted, useMutedGroups } from '../groupPrefs.js';
+import { setGroupMuted, setViewingGroup, useMutedGroups } from '../groupPrefs.js';
 import Avatar from './Avatar.jsx';
 import MediaRenderer from './MediaRenderer.jsx';
 
@@ -219,6 +219,13 @@ export default function GroupsView({ token, userId, revision, onClose, onStartGr
     const timer = setTimeout(() => setNotice(''), 4000);
     return () => clearTimeout(timer);
   }, [notice]);
+
+  // Lets the app skip this group's sound while it is open on screen.
+  const viewingId = group && !settings && !creating ? selected : '';
+  useEffect(() => {
+    setViewingGroup(viewingId);
+    return () => setViewingGroup('');
+  }, [viewingId]);
 
   async function perform(action) {
     setBusy(true);

@@ -10,7 +10,8 @@ import { clearAvatarCache } from './avatar.js';
 import { RealtimeClient } from './realtime.js';
 import { initialTabFromUrl } from './pwa.js';
 import { countUnreadConversations, groupRow } from './groupRows.js';
-import { useMutedGroups } from './groupPrefs.js';
+import { getViewingGroup, readMutedGroups, useMutedGroups } from './groupPrefs.js';
+import { classifyIncoming, groupNotificationText, parseConversationOpenParam, shouldAlertGroup } from './notificationChannels.js';
 import Sidebar from './components/Sidebar.jsx';
 import ChatWindow from './components/ChatWindow.jsx';
 import PairingModal from './components/PairingModal.jsx';
@@ -92,6 +93,7 @@ export default function App() {
   const [switchingId, setSwitchingId] = useState(null);
   const [callsSeenAt, setCallsSeenAt] = useState(() => Number(localStorage.getItem('relay:calls-seen-at')) || 0);
   const openChatRef = useRef(null);
+  const openGroupRef = useRef(null);
   const [authOpen, setAuthOpen] = useState(false);
   const [darkMode, setDarkMode] = useState(() => {
     const stored = localStorage.getItem('relay:theme');
@@ -167,6 +169,15 @@ export default function App() {
         if (cancelled) return;
         realtime = new RealtimeClient(sessionToken, (event) => {
           if (event.type === 'connection:ready' || (typeof event.type === 'string' && event.type.startsWith('group:'))) setGroupRevision((current) => current + 1);
+          // Group messages use their own channel: the group tone, vibration and a "<group>" / "<sender>: text" notification.
+          if (event.type === 'group:message') {
+            const alert = classifyIncoming(event, userId);
+            if (alert && shouldAlertGroup({ groupId: alert.conversation.id, mutedGroupIds: readMutedGroups(userId), viewingGroupId: getViewingGroup(), pageVisible: document.visibilityState === 'visible' })) {
+              playNotificationTone('group');
+              vibrateFor('group');
+              showSystemNotification('group', { ...groupNotificationText(event), conversation: alert.conversation, onClick: () => openGroupRef.current?.(alert.conversation.id) });
+            }
+          }
           if (event.type === 'connection:ready') event.presence.forEach((item) => setPresence(item.userId, item.status));
           if (event.type === 'presence:update') setPresence(event.userId, event.status);
           if (event.type === 'presence:typing') setTyping(event.userId, event.active);
@@ -185,6 +196,7 @@ export default function App() {
                 title: sender?.name ?? 'New message',
                 body: previewFor(event.message.content),
                 tag: `relay-message-${event.message.senderId}`,
+                conversation: { kind: 'chat', id: event.message.senderId },
                 onClick: () => openChatRef.current?.(event.message.senderId),
               });
             }
@@ -212,6 +224,7 @@ export default function App() {
                 title: reactor?.name ?? 'Reaction',
                 body: `Reacted ${event.emoji} to your message`,
                 tag: `relay-reaction-${event.messageId}`,
+                conversation: { kind: 'chat', id: event.userId },
                 onClick: () => openChatRef.current?.(event.userId),
               });
             }
@@ -503,6 +516,28 @@ export default function App() {
     setGroupsOpen(true);
   }
   openChatRef.current = (id) => openChat({ id });
+  openGroupRef.current = (id) => openGroups(false, id);
+
+  // Notification clicks: the service worker posts the conversation to open; a cold start passes ?open=.
+  useEffect(() => {
+    const open = (value) => {
+      const target = parseConversationOpenParam(value);
+      if (target?.kind === 'group') openGroupRef.current?.(target.id);
+      else if (target) openChatRef.current?.(target.id);
+    };
+    const onMessage = (event) => { if (event.data?.type === 'notification:open') open(event.data.open); };
+    navigator.serviceWorker?.addEventListener?.('message', onMessage);
+    if (userId) {
+      const url = new URL(window.location.href);
+      const pending = url.searchParams.get('open');
+      if (pending) {
+        url.searchParams.delete('open');
+        window.history.replaceState(null, '', url.pathname + url.search + url.hash);
+        open(pending);
+      }
+    }
+    return () => navigator.serviceWorker?.removeEventListener?.('message', onMessage);
+  }, [userId]);
 
   // Motion preference goes on <html> so overlays rendered outside the shell follow it too.
   const appearance = useAppearance();

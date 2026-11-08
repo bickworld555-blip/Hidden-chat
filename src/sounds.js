@@ -2,7 +2,7 @@
 // then plays either a synthesized library tone or an uploaded file. Custom files live in IndexedDB.
 import { get, set } from 'idb-keyval';
 import { getNotificationSettings, soundPlan } from './notificationSettings.js';
-import { ALERT_TONE, RINGBACK_TONE, SENT_TONE, TIMBRES, resolveToneChoice, toneDuration } from './tones.js';
+import { ALERT_TONE, RINGBACK_TONE, SENT_TONE, TIMBRES, defaultToneForCategory, defaultToneId, resolveToneChoice, toneDuration } from './tones.js';
 
 const CUSTOM_TONES_KEY = 'relay:custom-tones';
 const LEGACY_PREFERENCES_KEY = 'relay:sound-preferences';
@@ -132,11 +132,11 @@ function playSynth(key, record, tone, { loop, volume }) {
 }
 
 // Plays an explicit choice (used by the picker previews). `key` lets the caller stop it later.
-export async function playToneChoice(choice, kind, { loop = false, volume, key = `preview:${kind}` } = {}) {
+export async function playToneChoice(choice, kind, { loop = false, volume, key = `preview:${kind}`, defaultId = defaultToneId(kind) } = {}) {
   const record = newRecord(key);
   const custom = await getCustomTones();
   if (record.stopped || activeTones.get(key) !== record) return;
-  const resolved = resolveToneChoice(choice, kind, custom);
+  const resolved = resolveToneChoice(choice, kind, custom, defaultId);
   const settings = getNotificationSettings();
   const level = volume ?? (kind === 'ringtone' ? settings.volume.ringtone : settings.volume.notification);
   if (resolved.kind === 'silent') return stopTone(key);
@@ -158,7 +158,8 @@ export async function playStoredTone(categoryId, { loop = categoryId === 'incomi
     return playSynth(categoryId, record, categoryId === 'sent' ? SENT_TONE : ALERT_TONE, { loop: false, volume: plan.volume });
   }
   if (plan.tone === 'silent') return stopTone(categoryId);
-  return playToneChoice(plan.tone, CATEGORY_KINDS[categoryId] ?? 'notification', { loop, volume: plan.volume, key: categoryId });
+  const kind = CATEGORY_KINDS[categoryId] ?? 'notification';
+  return playToneChoice(plan.tone, kind, { loop, volume: plan.volume, key: categoryId, defaultId: defaultToneForCategory(categoryId, kind) });
 }
 
 export function stopTone(key) {

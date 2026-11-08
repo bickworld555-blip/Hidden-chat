@@ -1,6 +1,7 @@
 // Device-facing notification effects: vibration, system notifications, the app badge and reminders.
 // Each one checks the settings and degrades silently where the browser lacks the capability.
 import { badgeCount, getNotificationSettings, shouldRemind, soundPlan, systemNotificationAllowed } from './notificationSettings.js';
+import { channelForCategory, conversationOpenParam } from './notificationChannels.js';
 
 export function vibrateFor(category) {
   const plan = soundPlan(category, getNotificationSettings());
@@ -24,13 +25,31 @@ export async function requestNotificationPermission() {
 }
 
 // Shows a system notification for a category while the app is not being looked at. Sound and
-// vibration are handled by the app itself, so the system notification is silent.
-export function showSystemNotification(category, { title, body, tag, onClick } = {}) {
+// vibration are handled by the app itself (each channel has its own tone), so the notification is silent.
+// Android Chrome only allows notifications from the service worker (the Notification constructor throws
+// there), so the registration is used whenever one is active; clicks then arrive via postMessage.
+export async function showSystemNotification(category, { title, body, tag, conversation, onClick } = {}) {
   if (typeof document !== 'undefined' && document.visibilityState === 'visible' && document.hasFocus?.()) return null;
   if (notificationPermission() !== 'granted') return null;
   if (!systemNotificationAllowed(category, getNotificationSettings())) return null;
+  const channel = channelForCategory(category);
+  const options = {
+    body,
+    tag: `${channel.id}:${tag ?? conversationOpenParam(conversation)}`,
+    silent: true,
+    renotify: true,
+    icon: '/icons/icon-192.png?v=2',
+    data: { channel: channel.id, open: conversationOpenParam(conversation) },
+  };
   try {
-    const notification = new Notification(title, { body, tag, silent: true });
+    const registration = await navigator.serviceWorker?.getRegistration?.();
+    if (registration?.showNotification) {
+      await registration.showNotification(title, options);
+      return 'service-worker';
+    }
+  } catch { /* fall back to the page notification below */ }
+  try {
+    const notification = new Notification(title, options);
     notification.onclick = () => {
       window.focus();
       onClick?.();

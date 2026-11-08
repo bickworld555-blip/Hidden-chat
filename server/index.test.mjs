@@ -157,7 +157,10 @@ test('group message events reach members and reconnecting members see permanent 
   const newMessage = waitForEvent(memberSocket, 'group:message');
   const sentResponse = await call(`/api/v1/groups/${id}/messages`, admin, 'POST', { content: 'hello members' });
   const message = await sentResponse.json();
-  assert.equal((await newMessage).message.id, message.id);
+  const delivered = await newMessage;
+  assert.equal(delivered.message.id, message.id);
+  assert.equal(delivered.groupName, 'Events', 'notifications can be titled with the group');
+  assert.equal(delivered.senderName, admin.user.name);
   assert.equal(outsiderSocket.eventBuffer.some((event) => event.type === 'group:message'), false);
   const deleted = waitForEvent(memberSocket, 'group:message-deleted');
   assert.equal((await call(`/api/v1/groups/${id}/messages/${message.id}`, admin, 'DELETE')).status, 204);

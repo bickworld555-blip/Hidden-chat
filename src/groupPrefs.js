@@ -37,3 +37,8 @@ export function useMutedGroups(userId) {
   }, [userId]);
   return muted;
 }
+
+// The group conversation currently on screen (one GroupsView at a time), so its alerts stay quiet.
+let viewingGroupId = '';
+export function setViewingGroup(groupId) { viewingGroupId = groupId || ''; }
+export function getViewingGroup() { return viewingGroupId; }

@@ -190,5 +190,6 @@ test('the panel and the app are wired: sections, pickers, tones on events, vibra
   assert.ok(tools.includes('onClick={() => onNotifications?.()}') && sidebar.includes('title="Notifications" onClick={onNotifications}'));
   assert.ok(overlay.includes("vibrateFor('incomingCall')") && overlay.includes('stopVibration()'), 'incoming calls vibrate with the call pattern');
   assert.ok(chatWindow.includes("playNotificationTone('sent')"), 'outgoing messages play the conversation tone');
-  assert.ok(sounds.includes("if (plan.tone === 'silent') return stopTone(categoryId)") && sounds.includes('playToneChoice(plan.tone, CATEGORY_KINDS[categoryId]'), 'playback follows the resolved choice');
+  assert.ok(sounds.includes("if (plan.tone === 'silent') return stopTone(categoryId)") && sounds.includes('playToneChoice(plan.tone, kind, { loop, volume: plan.volume, key: categoryId, defaultId: defaultToneForCategory(categoryId, kind) })'), 'playback follows the resolved choice');
+  assert.ok(app.includes("playNotificationTone('group')") && app.includes("vibrateFor('group')") && app.includes("showSystemNotification('group'"), 'group messages use the group channel tone, vibration and notification');
 });

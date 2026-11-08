@@ -775,7 +775,10 @@ export function createChatServer({
     if (!row) return response.status(404).json({ error: 'Group not found.' });
     // The sender has seen their own message; it must not count as unread for them.
     await db.prepare('UPDATE group_members SET last_read_at = ? WHERE group_id = ? AND user_id = ? AND last_read_at < ?').run(now, groupId, userId, now);
-    await notifyGroup(groupId, { type: 'group:message', message: row });
+    // Names travel with the event so clients can title notifications without another request.
+    const names = await db.prepare(`SELECT g.name AS "groupName", u.name AS "senderName" FROM groups g JOIN users u ON u.id = ?
+      WHERE g.id = ?`).get(userId, groupId);
+    await notifyGroup(groupId, { type: 'group:message', message: row, groupName: names?.groupName ?? null, senderName: names?.senderName ?? null });
     response.status(201).json(row);
   });
 

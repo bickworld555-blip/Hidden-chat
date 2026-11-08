@@ -7,7 +7,7 @@ import {
   updateNotificationSettings,
   useNotificationSettings,
 } from '../notificationSettings.js';
-import { defaultToneId, isCustomChoice, libraryTone, toneChoiceLabel, toneLibrary } from '../tones.js';
+import { defaultToneForCategory, defaultToneId, isCustomChoice, libraryTone, toneChoiceLabel, toneLibrary } from '../tones.js';
 import { addCustomTone, getCustomTones, playToneChoice, removeCustomTone, stopTone } from '../sounds.js';
 import { notificationPermission, requestNotificationPermission, vibrateFor } from '../notify.js';
 
@@ -65,12 +65,12 @@ function RadioList({ title, options, value, onChange, onBack, render = (option) 
 }
 
 // Default / Silent, uploaded files, then the built-in library; choosing anything previews it.
-function TonePicker({ title, kind, value, volume, onChange, onVolume, onBack }) {
+function TonePicker({ title, kind, defaultId = defaultToneId(kind), value, volume, onChange, onVolume, onBack }) {
   const [custom, setCustom] = useState([]);
   const [error, setError] = useState('');
   const fileRef = useRef(null);
   const previewKey = `preview:${kind}`;
-  const defaultTone = libraryTone(kind, defaultToneId(kind));
+  const defaultTone = libraryTone(kind, defaultId) ?? libraryTone(kind, defaultToneId(kind));
 
   useEffect(() => {
     let mounted = true;
@@ -82,7 +82,7 @@ function TonePicker({ title, kind, value, volume, onChange, onVolume, onBack }) 
     onChange(choice);
     stopTone(previewKey);
     if (choice === 'silent') return;
-    playToneChoice(choice, kind, { loop: kind === 'ringtone', volume, key: previewKey });
+    playToneChoice(choice, kind, { loop: kind === 'ringtone', volume, key: previewKey, defaultId });
     if (kind === 'ringtone') window.setTimeout(() => stopTone(previewKey), RINGTONE_PREVIEW_MS);
   }
 
@@ -175,7 +175,8 @@ export default function NotificationSettings({ onClose }) {
     if (enabled) setPermission(await requestNotificationPermission());
   }
 
-  const toneLabel = (choice, kind) => toneChoiceLabel(choice, kind, custom);
+  const toneLabel = (choice, kind, defaultId) => toneChoiceLabel(choice, kind, custom, defaultId);
+  const sectionDefault = (section) => (section === 'groups' ? defaultToneForCategory('group', 'notification') : undefined);
   const vibrateLabel = (id) => VIBRATE_OPTIONS.find((option) => option.id === id)?.label ?? 'Default';
   const lightLabel = (id) => LIGHT_OPTIONS.find((option) => option.id === id)?.label ?? 'White';
   const permissionNote = permission === 'denied'
@@ -186,7 +187,7 @@ export default function NotificationSettings({ onClose }) {
     const values = settings[section];
     return (
       <>
-        {tones && <Row title="Notification tone" subtitle={toneLabel(values.tone, 'notification')} onClick={() => setView({ type: 'tone', section, key: 'tone', kind: 'notification', title: 'Notification tone' })} />}
+        {tones && <Row title="Notification tone" subtitle={toneLabel(values.tone, 'notification', sectionDefault(section))} onClick={() => setView({ type: 'tone', section, key: 'tone', kind: 'notification', title: section === 'groups' ? 'Group notification tone' : 'Notification tone' })} />}
         <Row title="Vibrate" subtitle={vibrateLabel(values.vibrate)} onClick={() => setView({ type: 'vibrate', section })} />
         {section === 'messages' && <Row title="Popup notification" subtitle="Not available" disabled />}
         {light && <Row title="Light" subtitle={`${lightLabel(values.light)} · Not available in a browser`} disabled />}
@@ -203,6 +204,7 @@ export default function NotificationSettings({ onClose }) {
       <TonePicker
         title={view.title}
         kind={kind}
+        defaultId={sectionDefault(view.section)}
         value={settings[view.section][view.key]}
         volume={kind === 'ringtone' ? settings.volume.ringtone : settings.volume.notification}
         onChange={(choice) => setSectionValue(view.section, view.key, choice)}

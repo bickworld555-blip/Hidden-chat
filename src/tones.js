@@ -70,6 +70,8 @@ export const RINGTONES = Object.freeze([
 
 export const DEFAULT_NOTIFICATION_TONE = 'pulse-beam';
 export const DEFAULT_RINGTONE = 'beyond-the-skyline';
+// Group messages default to a different tone so a glance-free listener can tell them from direct chats.
+export const DEFAULT_GROUP_TONE = 'crystal-bells';
 export const SENT_TONE = Object.freeze({ id: 'sent', name: 'Sent', wave: 'sine', notes: [N(1047, 0, 0.05, 0.4), N(1568, 0.05, 0.08, 0.4)] });
 export const RINGBACK_TONE = Object.freeze({ id: 'ringback', name: 'Ringback', wave: 'sine', period: 3, notes: [N(440, 0, 1, 0.5), N(480, 0, 1, 0.5)] });
 export const ALERT_TONE = Object.freeze({ id: 'alert', name: 'Alert', wave: 'sine', notes: [N(520, 0, 0.16), N(760, 0.2, 0.2)] });
@@ -80,6 +82,11 @@ export function toneLibrary(kind) {
 
 export function defaultToneId(kind) {
   return kind === 'ringtone' ? DEFAULT_RINGTONE : DEFAULT_NOTIFICATION_TONE;
+}
+
+// The library tone a playback category's "Default" choice means.
+export function defaultToneForCategory(category, kind) {
+  return category === 'group' ? DEFAULT_GROUP_TONE : defaultToneId(kind);
 }
 
 export function libraryTone(kind, id) {
@@ -100,7 +107,7 @@ export function customChoiceId(choice) {
 
 // Turns a stored choice into something playable: { kind: 'silent' } | { kind: 'synth', tone } | { kind: 'file', custom }.
 // Missing custom files or unknown ids fall back to the library default rather than silence.
-export function resolveToneChoice(choice, kind, customTones = []) {
+export function resolveToneChoice(choice, kind, customTones = [], defaultId = defaultToneId(kind)) {
   if (choice === 'silent') return { kind: 'silent', label: 'Silent' };
   if (isCustomChoice(choice)) {
     const custom = customTones.find((item) => item.id === customChoiceId(choice));
@@ -110,10 +117,10 @@ export function resolveToneChoice(choice, kind, customTones = []) {
     const tone = libraryTone(kind, choice);
     if (tone) return { kind: 'synth', tone, label: tone.name };
   }
-  const tone = libraryTone(kind, defaultToneId(kind));
+  const tone = libraryTone(kind, defaultId) ?? libraryTone(kind, defaultToneId(kind));
   return { kind: 'synth', tone, label: `Default (${tone.name})` };
 }
 
-export function toneChoiceLabel(choice, kind, customTones = []) {
-  return resolveToneChoice(choice, kind, customTones).label;
+export function toneChoiceLabel(choice, kind, customTones = [], defaultId = defaultToneId(kind)) {
+  return resolveToneChoice(choice, kind, customTones, defaultId).label;
 }
