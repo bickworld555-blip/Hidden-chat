@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, BellOff, Camera, Check, Heart, MessageSquarePlus, MoreVertical, Phone, Pin, Plus, Search, Trash2, Video, Volume2, VolumeX, X } from 'lucide-react';
+import { ArrowLeft, BellOff, Camera, Check, Heart, MessageSquarePlus, MoreVertical, Phone, Pin, Plus, Search, Trash2, Users, Video, Volume2, VolumeX, X } from 'lucide-react';
 import { useChatStore } from '../store.js';
 import { deleteChatOnServer } from '../chatApi.js';
 import { linkContact, searchPeople } from '../contactsApi.js';
@@ -11,7 +11,7 @@ import Avatar from './Avatar.jsx';
 import SelectContactModal from './SelectContactModal.jsx';
 import ShieldMark from './ShieldMark.jsx';
 
-export default function ChatsList({ onOpenChat, onStartCall }) {
+export default function ChatsList({ onOpenChat, onStartCall, onGroups }) {
   const rawChats = useChatStore((state) => state.chats);
   const presence = useChatStore((state) => state.presence);
   const sessionToken = useChatStore((state) => state.sessionToken);
@@ -279,6 +279,7 @@ export default function ChatsList({ onOpenChat, onStartCall }) {
         <header className="wa-list-header">
           <div className="wa-list-brand"><ShieldMark className="wa-list-brand-mark" /><h1>Hidden Messenger</h1></div>
           <span className="wa-list-header-actions">
+            <button type="button" className="wa-icon-btn" onClick={() => onGroups?.()} disabled={!sessionToken} aria-label="Groups"><Users size={20} /></button>
             <button type="button" className="wa-icon-btn" onClick={() => { setCameraError(''); cameraInputRef.current?.click(); }} aria-label="Camera" title="Take a photo and send it"><Camera size={20} /></button>
             <button type="button" className="wa-icon-btn" onClick={() => searchRef.current?.focus()} aria-label="Search"><Search size={20} /></button>
           </span>
@@ -438,6 +439,7 @@ export default function ChatsList({ onOpenChat, onStartCall }) {
 
       <SelectContactModal
         isOpen={contactModalOpen}
+        onNewGroup={() => onGroups?.(true)}
         onClose={() => { setContactModalOpen(false); setCapturedPhoto(null); }}
         onSelectContact={(contact) => {
           if (capturedPhoto) sendCapturedPhoto(contact, capturedPhoto);

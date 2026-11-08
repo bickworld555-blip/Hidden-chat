@@ -79,7 +79,7 @@ function useMediaElement(ref, stream, enabled = true) {
 function ParticipantTile({ info, snapshot, video, speakerOn }) {
   const videoRef = useRef(null);
   const audioRef = useRef(null);
-  const live = Boolean(snapshot.remoteStream) && snapshot.remoteHasVideo && !snapshot.remoteVideoOff;
+  const live = video && Boolean(snapshot.remoteStream) && snapshot.remoteHasVideo && !snapshot.remoteVideoOff;
   useMediaElement(videoRef, snapshot.remoteStream, video);
   useMediaElement(audioRef, snapshot.remoteStream);
   useEffect(() => { if (audioRef.current) audioRef.current.muted = !speakerOn; }, [speakerOn, snapshot.remoteStream]);
@@ -298,6 +298,26 @@ export default function CallOverlay({
     };
   }, [call.id]);
 
+  // Group call started from a group: once the first leg is connected, the remaining chosen members are invited one
+  // at a time, so each newcomer's participant list already names everyone who accepted before them.
+  const inviteQueueRef = useRef(null);
+  const nameOf = (peerId) => chats.find((chat) => chat.id === peerId)?.name ?? call.members?.find((member) => member.id === peerId)?.name ?? 'them';
+  function sendNextInvite() {
+    const queue = inviteQueueRef.current;
+    if (!queue) return;
+    const next = queue.pending.shift();
+    if (!next) { queue.current = null; return; }
+    queue.current = next;
+    const participants = [...new Set([userId, call.peerId, ...extrasRef.current.peerIds, ...queue.accepted])];
+    const sent = latest.current.client?.send({ type: 'call:invite', roomId: call.roomId ?? call.id, targetId: next, mode: callMode, participants });
+    setNotice(sent === false ? 'You are offline.' : `Inviting ${nameOf(next)}…`);
+  }
+  useEffect(() => {
+    if (status !== 'connected' || inviteQueueRef.current || !call.pendingInvites?.length) return;
+    inviteQueueRef.current = { pending: [...call.pendingInvites], accepted: [], current: null };
+    sendNextInvite();
+  }, [status]);
+
   // Signals are forwarded in arrival order and routed by pair id; new room offers create a peer that
   // joins immediately (we are already in the room), invite replies become notices.
   useEffect(() => {
@@ -305,8 +325,13 @@ export default function CallOverlay({
       const done = () => latest.current.onSignalHandled?.(event.signalId);
       if (event.type === 'call:invite-reply') {
         if (!event.accepted) {
-          const who = chats.find((chat) => chat.id === event.from)?.name ?? 'They';
+          const who = nameOf(event.from);
           setNotice(event.reason === 'busy' ? `${who} is on another call` : event.reason === 'offline' ? `${who} is offline` : `${who} declined`);
+        }
+        const queue = inviteQueueRef.current;
+        if (queue && queue.current === event.from) {
+          if (event.accepted) queue.accepted.push(event.from);
+          sendNextInvite();
         }
         done();
         continue;
@@ -564,7 +589,9 @@ export default function CallOverlay({
   }, [minimized]);
 
   const peerName = peer?.name ?? 'Unknown';
-  const extraPeers = Object.entries(extraSnapshots).map(([peerId, item]) => ({ peerId, snapshot: item, info: chats.find((chat) => chat.id === peerId) ?? { id: peerId, name: `@${peerId.slice(0, 6)}`, initials: '??' } }));
+  const extraPeers = Object.entries(extraSnapshots).map(([peerId, item]) => ({ peerId, snapshot: item, info: chats.find((chat) => chat.id === peerId) ?? call.members?.find((member) => member.id === peerId) ?? { id: peerId, name: `@${peerId.slice(0, 6)}`, initials: '??' } }));
+  const groupGrid = extraPeers.length > 0;
+  const canSwapTile = !groupGrid || minimized;
   const label = getStatusLabel({ status, direction: call.direction, mode: callMode, isOnline, answered, elapsed, group: Boolean(call.invite) || extraPeers.length > 0 });
   const incomingRinging = call.direction === 'incoming' && status === 'idle';
   // The remote tile shows the peer's avatar until their video is live, and again whenever they cover their camera.
@@ -590,13 +617,13 @@ export default function CallOverlay({
       <div className={`wa-call-screen ${isVideo ? 'is-video' : 'is-audio'}`} role="dialog" aria-modal={!minimized} aria-label={`${callMode} call with ${peerName}`}>
         {/* VIDEO CALL VIEWPORT */}
         {isVideo && (
-          <div className="wa-video-stage" ref={stageRef}>
+          <div className={`wa-video-stage ${groupGrid ? 'is-group' : ''}`} ref={stageRef}>
             {/* Remote video tile (Full by default, or PiP when swapped) */}
             <div
               className={`wa-video-tile ${swapped ? 'is-pip' : 'is-full'} ${!remoteVideoLive ? 'waiting-remote' : ''}`}
-              {...(swapped && remoteStream ? tileProps : {})}
-              aria-label={swapped ? 'Swap remote video to full screen' : undefined}
-              title={swapped ? 'Tap to enlarge' : undefined}
+              {...(canSwapTile && swapped && remoteStream ? tileProps : {})}
+              aria-label={canSwapTile && swapped ? 'Swap remote video to full screen' : undefined}
+              title={canSwapTile && swapped ? 'Tap to enlarge' : undefined}
             >
               <video
                 ref={remoteVideoRef}
@@ -620,17 +647,18 @@ export default function CallOverlay({
               {remoteMuted && status === 'connected' && (
                 <span className="wa-remote-muted-badge" title={`${peerName} is muted`}><MicOff size={14} /></span>
               )}
-              {swapped && remoteStream && (
+              {canSwapTile && swapped && remoteStream && (
                 <div className="wa-pip-label-overlay">Tap to swap</div>
               )}
+              {groupGrid && <span className="wa-grid-participant-name">{peerName}</span>}
             </div>
 
             {/* Local video tile (PiP by default when remote is connected, or Full while waiting/swapped) */}
             <div
               className={`wa-video-tile ${swapped ? 'is-full' : (remoteStream ? 'is-pip' : 'is-full')} ${cameraOff ? 'camera-off' : ''}`}
-              {...(!swapped && remoteStream ? tileProps : {})}
-              aria-label={!swapped && remoteStream ? 'Swap self view to full screen' : undefined}
-              title={!swapped && remoteStream ? 'Tap to enlarge' : undefined}
+              {...(canSwapTile && !swapped && remoteStream ? tileProps : {})}
+              aria-label={canSwapTile && !swapped && remoteStream ? 'Swap self view to full screen' : undefined}
+              title={canSwapTile && !swapped && remoteStream ? 'Tap to enlarge' : undefined}
             >
               <video
                 ref={localVideoRef}
@@ -653,10 +681,14 @@ export default function CallOverlay({
                   <span>Camera off</span>
                 </div>
               )}
-              {!swapped && remoteStream && (
+              {canSwapTile && !swapped && remoteStream && (
                 <div className="wa-pip-label-overlay">Tap to swap</div>
               )}
+              {groupGrid && <span className="wa-grid-participant-name">You{muted ? ' · Muted' : ''}</span>}
             </div>
+            {extraPeers.map(({ peerId, info, snapshot: item }) => (
+              <ParticipantTile key={peerId} info={info} snapshot={item} video speakerOn={speakerOn} />
+            ))}
           </div>
         )}
 
@@ -677,7 +709,7 @@ export default function CallOverlay({
           )}
 
           <div className="wa-call-header-info">
-            <h1 className="wa-call-peer-title">{extraPeers.length ? `${peerName} +${extraPeers.length}` : peerName}</h1>
+            <h1 className="wa-call-peer-title">{call.groupName ? call.groupName : extraPeers.length ? `${peerName} +${extraPeers.length}` : peerName}</h1>
             <span className="wa-call-status-badge">{label}</span>
           </div>
 
@@ -771,10 +803,10 @@ export default function CallOverlay({
         )}
 
         {/* OTHER PARTICIPANTS (GROUP CALL) */}
-        {extraPeers.length > 0 && (
-          <div className={`wa-call-participants ${isVideo ? 'is-video' : 'is-audio'}`} aria-label="Other participants">
+        {!isVideo && extraPeers.length > 0 && (
+          <div className="wa-call-participants is-audio" aria-label="Other participants">
             {extraPeers.map(({ peerId, info, snapshot: item }) => (
-              <ParticipantTile key={peerId} info={info} snapshot={item} video={isVideo} speakerOn={speakerOn} />
+              <ParticipantTile key={peerId} info={info} snapshot={item} video={false} speakerOn={speakerOn} />
             ))}
           </div>
         )}
@@ -788,7 +820,8 @@ export default function CallOverlay({
 
         {addOpen && (
           <AddParticipantPicker
-            contacts={chats.filter((chat) => chat.id !== userId && chat.id !== call.peerId && !extrasRef.current.forPeer(chat.id))}
+            contacts={[...chats, ...(call.members ?? []).filter((member) => !chats.some((chat) => chat.id === member.id))]
+              .filter((person) => person.id !== userId && person.id !== call.peerId && !extrasRef.current.forPeer(person.id))}
             onSelect={inviteParticipant}
             onClose={() => setAddOpen(false)}
           />

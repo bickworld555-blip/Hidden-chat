@@ -117,15 +117,15 @@ This phase neither pushes code nor deploys it.
 npm run db:migrate
 ```
 
-The command loads `.env`, acquires a migration lock, creates the `relay` schema
-in a transaction, and records its version. Re-running the same migration does
+The command loads `.env`, acquires a migration lock, applies the versioned `relay`
+schema changes in a transaction, and records the version. Re-running the same migration does
 not drop tables or overwrite data. Existing incompatible schemas cause an error.
 Do not also run the raw SQL file manually outside a transaction.
 
 The production entry (`server/main.mjs`) applies the same migration on startup
 after binding its port, so a first deploy creates the schema itself. Set
-`RELAY_AUTO_MIGRATE=false` to require the manual command instead. With an
-existing schema, startup migration only takes the lock and reads the version,
+`RELAY_AUTO_MIGRATE=false` to require the manual command instead. With a
+current schema, startup migration only takes the lock and reads the version,
 which the least-privilege `relay_app` role below is allowed to do.
 
 The schema is intentionally separate from `public`. All tables enable RLS, and
@@ -143,7 +143,9 @@ migration can access the data; this is **not** a per-user Supabase Auth policy.
 | Disappearing-message settings | `relay.chat_settings` |
 | Messages, deletion tombstones and replies | `relay.messages` |
 | Reactions and per-user hidden messages | `relay.message_reactions`, `relay.message_hidden` |
-| Attachment metadata / resumable uploads | `relay.media`, `relay.uploads` |
+| Attachment metadata / resumable uploads (direct or group target) | `relay.media`, `relay.uploads` |
+| Groups, membership roles, per-member auto-delete / read / clear markers | `relay.groups`, `relay.group_members` |
+| Group messages (rows are deleted outright on expiry or deletion) and reports | `relay.group_messages`, `relay.group_reports` |
 | One-time pairing codes | `relay.pairing_codes` |
 | Call history | Existing per-user browser IndexedDB; no server table |
 | Active calls / signaling ownership | Memory-only; no migration |
@@ -280,7 +282,10 @@ privately; use `relay_app` for a direct connection or `relay_app.PROJECT_REF` fo
 the shared session pooler, with the exact dashboard host. Replace the runtime
 `DATABASE_URL`, then repeat the real-project tests. This role's RLS policies are
 backend-only; Express still enforces individual users' access. Keep a separate
-owner URI privately for future maintenance.
+owner URI privately for future maintenance. For later migrations, use the owner
+connection to run `npm run db:migrate`, then grant the backend role access and
+create a `relay_backend` policy on each new table before restarting with
+`relay_app`. The runtime role cannot create tables or install those policies.
 
 If cutover fails, stop the new server and return to the backed-up SQLite instance
 in a private development/staging environment (`NODE_ENV=development`, unset

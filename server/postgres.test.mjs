@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { X509Certificate } from 'node:crypto';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { rootCertificates } from 'node:tls';
@@ -10,12 +10,14 @@ import WebSocket from 'ws';
 import { createChatServer } from './index.mjs';
 import { createPostgresDatabase, migratePostgres, postgresOptions, postgresParameters } from './database.mjs';
 import { IMPORT_TABLES, importSqlite, planImport } from '../scripts/import-sqlite.mjs';
+import { checkGroupAttachments, checkGroupContract } from './group-contract.mjs';
 
 let engine;
 const pool = {
   on() {},
   async query(sql, values) {
-    if (sql.startsWith('-- Private')) {
+    // Migration files are multi-statement scripts; everything else is a single parameterised query.
+    if (sql.startsWith('--')) {
       await engine.exec(sql);
       return { rows: [], rowCount: 0 };
     }
@@ -75,7 +77,7 @@ async function startServer(t, database = createPostgresDatabase({ pool })) {
     await wait('connection:ready');
     return { socket, wait, send: (event) => socket.send(JSON.stringify(event)) };
   };
-  return { service, api, register, connect, url };
+  return { service, api, register, connect, url, directory };
 }
 
 test('schema migration is idempotent, private, RLS-enabled and case-insensitive', async () => {
@@ -91,6 +93,53 @@ test('schema migration is idempotent, private, RLS-enabled and case-insensitive'
   await database.ready();
   await database.prepare('INSERT INTO users (id, username, name, initials, color, created_at) VALUES (?, ?, ?, ?, ?, ?)').run('one', 'Mixed', 'Name', 'NM', 'blue', Date.now());
   await assert.rejects(database.prepare('INSERT INTO users (id, username, name, initials, color, created_at) VALUES (?, ?, ?, ?, ?, ?)').run('two', 'mixed', 'Name', 'NM', 'blue', Date.now()), { code: '23505' });
+});
+
+test('upgrading a version 1 database preserves data and adds private group tables', async () => {
+  await engine.exec('DROP SCHEMA relay CASCADE');
+  await engine.exec(readFileSync(new URL('../supabase/migrations/001_relay.sql', import.meta.url), 'utf8'));
+  await engine.exec("INSERT INTO relay.users(id, username, name, initials, color, created_at) VALUES ('existing', 'existing', 'Existing', 'EX', 'blue', 1)");
+  await engine.exec("INSERT INTO relay.media(id, sender_id, receiver_id, filename, content_type, byte_size, disk_name, created_at) VALUES ('old', 'existing', 'existing', 'old.bin', 'application/octet-stream', 3, 'old.blob', 1)");
+  assert.equal(await migratePostgres(pool), false);
+  assert.equal((await pool.query('SELECT version FROM relay.schema_version WHERE singleton = 1')).rows[0].version, 3);
+  assert.equal((await pool.query("SELECT name FROM relay.users WHERE id = 'existing'")).rows[0].name, 'Existing');
+  assert.deepEqual((await pool.query("SELECT receiver_id, group_id FROM relay.media WHERE id = 'old'")).rows[0], { receiver_id: 'existing', group_id: null });
+  const tables = await pool.query("SELECT relname, relrowsecurity FROM pg_class JOIN pg_namespace n ON n.oid = relnamespace WHERE n.nspname = 'relay' AND relname IN ('groups', 'group_members', 'group_messages', 'group_reports')");
+  assert.equal(tables.rows.length, 4);
+  assert.ok(tables.rows.every((row) => row.relrowsecurity));
+  await assert.rejects(pool.query("INSERT INTO relay.media(id, sender_id, receiver_id, group_id, filename, content_type, byte_size, disk_name, created_at) VALUES ('bad', 'existing', NULL, NULL, 'f', 't', 1, 'bad.blob', 1)"), { code: '23514' });
+  assert.equal(await migratePostgres(pool), false);
+});
+
+test('a version 2 database upgrades to version 3 with its groups intact', async () => {
+  await engine.exec('DROP SCHEMA relay CASCADE');
+  await engine.exec(readFileSync(new URL('../supabase/migrations/001_relay.sql', import.meta.url), 'utf8'));
+  await engine.exec(`BEGIN;\n${readFileSync(new URL('../supabase/migrations/002_groups.sql', import.meta.url), 'utf8')}\nCOMMIT;`);
+  await engine.exec("INSERT INTO relay.users(id, username, name, initials, color, created_at) VALUES ('owner', 'owner', 'Owner', 'OW', 'blue', 1)");
+  await engine.exec("INSERT INTO relay.groups(id, name, created_by, created_at) VALUES ('g1', 'Kept', 'owner', 1)");
+  await engine.exec("INSERT INTO relay.group_members(group_id, user_id, role, auto_delete, joined_at) VALUES ('g1', 'owner', 'admin', 1, 1)");
+  assert.equal((await pool.query('SELECT version FROM relay.schema_version WHERE singleton = 1')).rows[0].version, 2);
+  assert.equal(await migratePostgres(pool), false);
+  assert.equal((await pool.query('SELECT version FROM relay.schema_version WHERE singleton = 1')).rows[0].version, 3);
+  assert.deepEqual((await pool.query("SELECT auto_delete, last_read_at, cleared_at FROM relay.group_members WHERE group_id = 'g1'")).rows[0], { auto_delete: 1, last_read_at: 0, cleared_at: 0 });
+});
+
+test('a conflicting group migration rolls back and leaves the existing version intact', async () => {
+  await engine.exec('DROP SCHEMA relay CASCADE');
+  await engine.exec(readFileSync(new URL('../supabase/migrations/001_relay.sql', import.meta.url), 'utf8'));
+  await engine.exec('CREATE TABLE relay.groups (original TEXT)');
+  await assert.rejects(migratePostgres(pool), { code: '42P07' });
+  assert.equal((await pool.query('SELECT version FROM relay.schema_version WHERE singleton = 1')).rows[0].version, 1);
+  assert.equal((await pool.query("SELECT to_regclass('relay.group_members') AS name")).rows[0].name, null);
+});
+
+test('PostgreSQL group text messages enforce roles and member expiration', async (t) => {
+  await checkGroupContract(await startServer(t));
+});
+
+test('PostgreSQL group attachments are member-scoped and purged with their last reference', async (t) => {
+  const started = await startServer(t);
+  await checkGroupAttachments({ ...started, mediaDirectory: join(started.directory, 'media') });
 });
 
 test('PostgreSQL parameter ownership preserves literals, TLS verification and safe bigint decoding', () => {
@@ -243,13 +292,35 @@ test('SQLite import verifies every row across batches, excludes demo and rejects
   }
   source.db.prepare('INSERT INTO messages(id, sender_id, receiver_id, created_at, content, status) VALUES (?, ?, ?, ?, ?, ?)').run('demo-message', 'ava', 'real-a', new Date().toISOString(), 'Demo', 'sent');
   source.db.prepare('INSERT INTO message_reactions VALUES (?, ?, ?)').run('demo-message', 'real-a', 'ok');
-  source.db.prepare('INSERT INTO media VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run('large-file', 'real-a', 'real-b', '100gb.bin', 'application/octet-stream', 100000000000, 'large-file.blob', 1700000000000);
+  source.db.prepare('INSERT INTO media(id, sender_id, receiver_id, filename, content_type, byte_size, disk_name, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run('large-file', 'real-a', 'real-b', '100gb.bin', 'application/octet-stream', 100000000000, 'large-file.blob', 1700000000000);
+  source.db.prepare('INSERT INTO groups VALUES (?, ?, ?, ?)').run('group-a', 'Example', 'real-a', 1);
+  const addMember = source.db.prepare('INSERT INTO group_members(group_id, user_id, role, auto_delete, joined_at) VALUES (?, ?, ?, ?, ?)');
+  addMember.run('group-a', 'real-a', 'admin', 0, 1);
+  addMember.run('group-a', 'real-b', 'member', 1, 2);
+  source.db.prepare('INSERT INTO group_messages VALUES (?, ?, ?, ?, ?, ?)').run('group-message', 'group-a', 'real-b', 3, 'Group text', 86400003);
+  source.db.prepare('INSERT INTO media(id, sender_id, group_id, filename, content_type, byte_size, disk_name, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run('group-file', 'real-a', 'group-a', 'g.png', 'image/png', 4, 'group-file.blob', 1700000000001);
+  source.db.prepare('INSERT INTO group_reports VALUES (?, ?, ?, ?, ?)').run('report-1', 'group-a', 'real-b', 'Spam', 5);
+  source.db.prepare('INSERT INTO groups VALUES (?, ?, ?, ?)').run('demo-group', 'Demo', 'ava', 1);
+  addMember.run('demo-group', 'real-a', 'member', 0, 1);
+  source.db.prepare('INSERT INTO group_messages VALUES (?, ?, ?, ?, ?, ?)').run('demo-group-message', 'demo-group', 'real-a', 3, 'Excluded', null);
+  source.db.prepare('INSERT INTO media(id, sender_id, group_id, filename, content_type, byte_size, disk_name, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run('demo-file', 'real-a', 'demo-group', 'd.png', 'image/png', 4, 'demo-file.blob', 1700000000002);
   const plan = planImport(source.db);
   assert.equal(plan.find((item) => item.table === 'users').rows, 2);
+  assert.equal(plan.find((item) => item.table === 'media').rows, 2, 'demo-group media is excluded');
+  assert.equal(plan.find((item) => item.table === 'group_reports').rows, 1);
   assert.equal(plan.find((item) => item.table === 'message_reactions').rows, 0);
+  assert.equal(plan.find((item) => item.table === 'groups').rows, 1);
+  assert.equal(plan.find((item) => item.table === 'group_members').rows, 2);
+  assert.equal(plan.find((item) => item.table === 'group_messages').rows, 1);
   await importSqlite(source.db, pool);
   assert.equal((await pool.query('SELECT count(*)::integer AS total FROM relay.messages')).rows[0].total, 205);
-  assert.equal((await pool.query('SELECT byte_size FROM relay.media')).rows[0].byte_size, 100000000000);
+  assert.equal((await pool.query("SELECT byte_size FROM relay.media WHERE id = 'large-file'")).rows[0].byte_size, 100000000000);
+  assert.deepEqual((await pool.query("SELECT id, receiver_id, group_id FROM relay.media WHERE id = 'group-file'")).rows[0], { id: 'group-file', receiver_id: null, group_id: 'group-a' });
+  assert.equal((await pool.query('SELECT count(*)::integer AS total FROM relay.group_reports')).rows[0].total, 1);
+  assert.deepEqual((await pool.query('SELECT group_id, sender_id, content, expires_at FROM relay.group_messages')).rows[0], {
+    group_id: 'group-a', sender_id: 'real-b', content: 'Group text', expires_at: 86400003,
+  });
+  assert.equal((await pool.query("SELECT auto_delete FROM relay.group_members WHERE user_id = 'real-b'")).rows[0].auto_delete, 1);
   await assert.rejects(importSqlite(source.db, pool), /not empty/);
   assert.equal((await pool.query('SELECT count(*)::integer AS total FROM relay.messages')).rows[0].total, 205);
 });

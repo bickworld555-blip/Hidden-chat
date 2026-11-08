@@ -18,6 +18,7 @@ import CallsView from './components/CallsView.jsx';
 import UpdatesView from './components/UpdatesView.jsx';
 import ToolsView from './components/ToolsView.jsx';
 import ChatsList from './components/ChatsList.jsx';
+import GroupsView from './components/GroupsView.jsx';
 import { playNotificationTone, stopAllTones } from './sounds.js';
 import { applyAppBadge, maybeRemind, showSystemNotification, vibrateFor } from './notify.js';
 import { badgeCount, useNotificationSettings } from './notificationSettings.js';
@@ -79,6 +80,9 @@ export default function App() {
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [accountsOpen, setAccountsOpen] = useState(false);
   const [avatarStudioOpen, setAvatarStudioOpen] = useState(false);
+  const [groupsOpen, setGroupsOpen] = useState(false);
+  const [groupsCreate, setGroupsCreate] = useState(false);
+  const [groupRevision, setGroupRevision] = useState(0);
   const [switchingId, setSwitchingId] = useState(null);
   const [callsSeenAt, setCallsSeenAt] = useState(() => Number(localStorage.getItem('relay:calls-seen-at')) || 0);
   const openChatRef = useRef(null);
@@ -156,6 +160,7 @@ export default function App() {
         }
         if (cancelled) return;
         realtime = new RealtimeClient(sessionToken, (event) => {
+          if (event.type === 'connection:ready' || (typeof event.type === 'string' && event.type.startsWith('group:'))) setGroupRevision((current) => current + 1);
           if (event.type === 'connection:ready') event.presence.forEach((item) => setPresence(item.userId, item.status));
           if (event.type === 'presence:update') setPresence(event.userId, event.status);
           if (event.type === 'presence:typing') setTyping(event.userId, event.active);
@@ -354,6 +359,24 @@ export default function App() {
     setCallSignals([]);
   }
 
+  // A group call: the first chosen member is rung directly; the rest are invited into the room once connected.
+  function initiateGroupCall({ mode, members, groupName }) {
+    const active = callRef.current;
+    if (active && !TERMINAL_STATUSES.includes(active.status)) return;
+    const [first, ...rest] = members.filter((member) => member.id !== userId);
+    if (!first) return;
+    if (active) recordCallEnd(active);
+    const callId = crypto.randomUUID();
+    const outgoing = {
+      id: callId, roomId: callId, peerId: first.id, mode, direction: 'outgoing', status: 'idle', peerInfo: first,
+      members, groupName, pendingInvites: rest.map((member) => member.id),
+    };
+    callRef.current = outgoing;
+    setCall(outgoing);
+    setCallSignals([]);
+    setGroupsOpen(false);
+  }
+
   function toggleTheme() {
     const next = !darkMode;
     setDarkMode(next);
@@ -403,6 +426,7 @@ export default function App() {
     setAuthOpen(false);
     setPairingOpen(false);
     setMobileListOpen(true);
+    setGroupsOpen(false);
   }
 
   // Signs one account out of the server and forgets it here; logging out the active account moves to the next one.
@@ -455,6 +479,10 @@ export default function App() {
     setMobileListOpen(false);
     setMobileActiveTab('chats');
   }
+  function openGroups(create = false) {
+    setGroupsCreate(create);
+    setGroupsOpen(true);
+  }
   openChatRef.current = (id) => openChat({ id });
 
   // Motion preference goes on <html> so overlays rendered outside the shell follow it too.
@@ -466,18 +494,18 @@ export default function App() {
 
   return (
     <main className={`app-shell ${darkMode ? 'dark-theme' : ''} ${isMobile ? 'is-mobile' : ''} ${chatOpenOnMobile ? 'chat-open' : ''}`} data-animations={animationsAttribute(appearance)} data-call-animations={callAnimationsAttribute(appearance)}>
-      <Sidebar onPair={() => setPairingOpen(true)} onSounds={() => setNotificationsOpen(true)} onNotifications={() => setNotificationsOpen(true)} onSelectChat={() => setMobileListOpen(false)} onOpenAuth={() => setAuthOpen(true)} onAuthenticated={acceptSession} onLogout={logout} onAccounts={() => setAccountsOpen(true)} />
+      <Sidebar onPair={() => setPairingOpen(true)} onSounds={() => setNotificationsOpen(true)} onNotifications={() => setNotificationsOpen(true)} onSelectChat={() => setMobileListOpen(false)} onOpenAuth={() => setAuthOpen(true)} onAuthenticated={acceptSession} onLogout={logout} onAccounts={() => setAccountsOpen(true)} onGroups={() => openGroups()} />
       <div className="workspace">
         {activeTab === 'chats' ? (
           showMobileList || !chat
-            ? <ChatsList onOpenChat={openChat} onStartCall={initiateCall} />
-            : <ChatWindow key={chat.id} chat={chat} connection={connection} client={client} onPair={() => setPairingOpen(true)} onBack={() => setMobileListOpen(true)} onStartCall={(mode) => initiateCall(chat.id, mode)} />
+            ? <ChatsList onOpenChat={openChat} onStartCall={initiateCall} onGroups={openGroups} />
+            : <ChatWindow key={chat.id} chat={chat} connection={connection} client={client} onPair={() => setPairingOpen(true)} onBack={() => setMobileListOpen(true)} onStartCall={(mode) => initiateCall(chat.id, mode)} onGroups={openGroups} />
         ) : activeTab === 'calls' ? (
           <CallsView onCall={initiateCall} />
         ) : activeTab === 'updates' ? (
           <UpdatesView />
         ) : activeTab === 'tools' ? (
-          <ToolsView darkMode={darkMode} onToggleTheme={toggleTheme} onLogout={() => { logout(); }} onNotifications={() => setNotificationsOpen(true)} onAccounts={() => setAccountsOpen(true)} onAvatarStudio={() => setAvatarStudioOpen(true)} />
+          <ToolsView darkMode={darkMode} onToggleTheme={toggleTheme} onLogout={() => { logout(); }} onNotifications={() => setNotificationsOpen(true)} onAccounts={() => setAccountsOpen(true)} onAvatarStudio={() => setAvatarStudioOpen(true)} onGroups={() => openGroups()} />
         ) : null}
         {activeTab === 'chats' && !isMobile && <footer className="workspace-footer"><span><i /> Hidden Messenger workspace</span><span className="workspace-footer-right">Demo mode <span>·</span><button onClick={toggleTheme} title={`Switch to ${darkMode ? 'light' : 'dark'} theme`}>{darkMode ? <Sun size={14} /> : <Moon size={14} />}{darkMode ? 'Light' : 'Dark'}</button><ChevronRight size={13} /></span></footer>}
       </div>
@@ -487,6 +515,7 @@ export default function App() {
       {notificationsOpen && <NotificationSettings onClose={() => setNotificationsOpen(false)} />}
       {accountsOpen && <AccountSwitcher busyId={switchingId} onSwitch={switchAccount} onRemove={removeAccountFromDevice} onAdd={() => { setAccountsOpen(false); setAuthOpen(true); }} onClose={() => setAccountsOpen(false)} />}
       {avatarStudioOpen && <AvatarStudio onClose={() => setAvatarStudioOpen(false)} />}
+      {groupsOpen && sessionToken && <GroupsView key={userId} token={sessionToken} userId={userId} revision={groupRevision} initialCreate={groupsCreate} onStartGroupCall={initiateGroupCall} onClose={() => setGroupsOpen(false)} />}
       {authReady && (!userId || authOpen) && <UsernameGate onAuthenticated={acceptSession} onClose={userId ? () => setAuthOpen(false) : undefined} />}
       {call && callPeer && <CallOverlay
         key={call.id}

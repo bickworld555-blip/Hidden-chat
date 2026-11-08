@@ -1,6 +1,6 @@
 import { createHash, randomBytes, randomUUID, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto';
 import { copyFileSync, createWriteStream, existsSync, linkSync, mkdirSync } from 'node:fs';
-import { stat, unlink, writeFile } from 'node:fs/promises';
+import { readdir, stat, unlink, writeFile } from 'node:fs/promises';
 import { pipeline } from 'node:stream/promises';
 import { createServer } from 'node:http';
 import { dirname, join } from 'node:path';
@@ -147,12 +147,14 @@ export function createChatServer({
     CREATE TABLE IF NOT EXISTS media (
       id TEXT PRIMARY KEY,
       sender_id TEXT NOT NULL,
-      receiver_id TEXT NOT NULL,
+      receiver_id TEXT,
+      group_id TEXT,
       filename TEXT NOT NULL,
       content_type TEXT NOT NULL,
       byte_size INTEGER NOT NULL,
       disk_name TEXT NOT NULL,
-      created_at INTEGER NOT NULL
+      created_at INTEGER NOT NULL,
+      CHECK ((receiver_id IS NULL) <> (group_id IS NULL))
     );
     CREATE INDEX IF NOT EXISTS messages_conversation
       ON messages(sender_id, receiver_id, created_at);
@@ -198,15 +200,36 @@ export function createChatServer({
   db.exec(`CREATE TABLE IF NOT EXISTS uploads (
     id TEXT PRIMARY KEY,
     owner_id TEXT NOT NULL,
-    receiver_id TEXT NOT NULL,
+    receiver_id TEXT,
+    group_id TEXT,
     filename TEXT NOT NULL,
     content_type TEXT NOT NULL,
     byte_size INTEGER NOT NULL,
     received INTEGER NOT NULL DEFAULT 0,
     disk_name TEXT NOT NULL,
     created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL
+    updated_at INTEGER NOT NULL,
+    CHECK ((receiver_id IS NULL) <> (group_id IS NULL))
   )`);
+  // Attachments gained a group target: older databases rebuild the table so receiver_id may be NULL.
+  for (const table of ['media', 'uploads']) {
+    const columns = db.prepare(`PRAGMA table_info(${table})`).all();
+    if (!columns.find((column) => column.name === 'receiver_id')?.notnull) continue;
+    const names = columns.map((column) => column.name).join(', ');
+    const definition = table === 'media'
+      ? `id TEXT PRIMARY KEY, sender_id TEXT NOT NULL, receiver_id TEXT, group_id TEXT, filename TEXT NOT NULL, content_type TEXT NOT NULL,
+         byte_size INTEGER NOT NULL, disk_name TEXT NOT NULL, created_at INTEGER NOT NULL, CHECK ((receiver_id IS NULL) <> (group_id IS NULL))`
+      : `id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, receiver_id TEXT, group_id TEXT, filename TEXT NOT NULL, content_type TEXT NOT NULL,
+         byte_size INTEGER NOT NULL, received INTEGER NOT NULL DEFAULT 0, disk_name TEXT NOT NULL, created_at INTEGER NOT NULL,
+         updated_at INTEGER NOT NULL, CHECK ((receiver_id IS NULL) <> (group_id IS NULL))`;
+    db.exec(`BEGIN IMMEDIATE;
+      CREATE TABLE ${table}_migrated (${definition});
+      INSERT INTO ${table}_migrated(${names}) SELECT ${names} FROM ${table};
+      DROP TABLE ${table};
+      ALTER TABLE ${table}_migrated RENAME TO ${table};
+      COMMIT;`);
+  }
+  db.exec('CREATE INDEX IF NOT EXISTS media_group ON media(group_id) WHERE group_id IS NOT NULL');
   db.exec(`CREATE TABLE IF NOT EXISTS message_reactions (
     message_id TEXT NOT NULL,
     user_id TEXT NOT NULL,
@@ -218,6 +241,41 @@ export function createChatServer({
     message_id TEXT NOT NULL,
     PRIMARY KEY(user_id, message_id)
   )`);
+  db.exec(`CREATE TABLE IF NOT EXISTS groups (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    created_by TEXT NOT NULL REFERENCES users(id),
+    created_at INTEGER NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS group_members (
+    group_id TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+    user_id TEXT NOT NULL REFERENCES users(id),
+    role TEXT NOT NULL CHECK (role IN ('admin', 'member')),
+    auto_delete INTEGER NOT NULL DEFAULT 0 CHECK (auto_delete IN (0, 1)),
+    joined_at INTEGER NOT NULL,
+    PRIMARY KEY (group_id, user_id)
+  );
+  CREATE INDEX IF NOT EXISTS group_members_user ON group_members(user_id, group_id);
+  CREATE TABLE IF NOT EXISTS group_messages (
+    id TEXT PRIMARY KEY,
+    group_id TEXT NOT NULL REFERENCES groups(id) ON DELETE CASCADE,
+    sender_id TEXT NOT NULL REFERENCES users(id),
+    created_at INTEGER NOT NULL,
+    content TEXT NOT NULL,
+    expires_at INTEGER
+  );
+  CREATE INDEX IF NOT EXISTS group_messages_history ON group_messages(group_id, created_at, id);
+  CREATE INDEX IF NOT EXISTS group_messages_expiry ON group_messages(expires_at) WHERE expires_at IS NOT NULL;
+  CREATE TABLE IF NOT EXISTS group_reports (
+    id TEXT PRIMARY KEY,
+    group_id TEXT NOT NULL REFERENCES groups(id),
+    reporter_id TEXT NOT NULL REFERENCES users(id),
+    reason TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  )`);
+  const memberColumns = new Set(db.prepare("PRAGMA table_info(group_members)").all().map((column) => column.name));
+  if (!memberColumns.has('last_read_at')) db.exec('ALTER TABLE group_members ADD COLUMN last_read_at INTEGER NOT NULL DEFAULT 0');
+  if (!memberColumns.has('cleared_at')) db.exec('ALTER TABLE group_members ADD COLUMN cleared_at INTEGER NOT NULL DEFAULT 0');
   const userColumns = new Set(db.prepare("PRAGMA table_info(users)").all().map((column) => column.name));
   if (!userColumns.has('dob')) db.exec('ALTER TABLE users ADD COLUMN dob TEXT');
   if (!userColumns.has('password_hash')) db.exec('ALTER TABLE users ADD COLUMN password_hash TEXT');
@@ -301,13 +359,16 @@ export function createChatServer({
     return deleted;
   }
 
+  // Two people may call and signal each other when they are contacts, have chatted, or share a group.
   async function areLinked(left, right) {
     return Boolean((await db.prepare(`SELECT 1 FROM contacts
       WHERE (owner_id = ? AND contact_id = ?) OR (owner_id = ? AND contact_id = ?) LIMIT 1`)
       .get(left, right, right, left))
       || (await db.prepare(`SELECT 1 FROM messages
       WHERE (sender_id = ? AND receiver_id = ?) OR (sender_id = ? AND receiver_id = ?) LIMIT 1`)
-      .get(left, right, right, left)));
+      .get(left, right, right, left))
+      || (await db.prepare(`SELECT 1 FROM group_members a JOIN group_members b ON a.group_id = b.group_id
+      WHERE a.user_id = ? AND b.user_id = ? LIMIT 1`).get(left, right)));
   }
 
   // Hides every current message of a conversation for one user, except the ids they keep (starred, on their device).
@@ -341,7 +402,7 @@ export function createChatServer({
     response.set('Access-Control-Allow-Origin', origin);
     response.vary('Origin');
     if (request.method === 'OPTIONS') {
-      response.set('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
+      response.set('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
       response.set('Access-Control-Allow-Headers', 'Authorization,Content-Type,X-File-Name,ngrok-skip-browser-warning');
       return response.status(204).end();
     }
@@ -466,6 +527,275 @@ export function createChatServer({
     }
     return delivered;
   }
+
+  async function runGroupBatch(statements) {
+    if (db.dialect === 'postgres') return db.batch(statements);
+    db.exec('BEGIN IMMEDIATE');
+    try {
+      for (const { sql, values } of statements) db.prepare(sql).run(...values);
+      db.exec('COMMIT');
+    } catch (error) {
+      db.exec('ROLLBACK');
+      throw error;
+    }
+  }
+
+  const groupMembership = db.prepare(`SELECT role, auto_delete AS "autoDelete", last_read_at AS "lastReadAt", cleared_at AS "clearedAt"
+    FROM group_members WHERE group_id = ? AND user_id = ?`);
+  async function notifyGroup(groupId, event) {
+    const members = await db.prepare('SELECT user_id AS "userId" FROM group_members WHERE group_id = ?').all(groupId);
+    for (const member of members) broadcastUser(member.userId, event);
+  }
+
+  // Removes an attachment's row and file once no stored message (group or direct) references it any more.
+  // Every media row owns its own disk file (forwards are hard-linked copies), so this never strands a shared file.
+  async function purgeUnreferencedMedia(content) {
+    const mediaId = mediaIdOf(content);
+    if (!mediaId) return false;
+    const exact = [`media:${mediaId}`, `voice:${mediaId}`];
+    const prefixed = exact.map((value) => `${value}:%`);
+    const referenced = (await db.prepare(`SELECT 1 FROM group_messages
+      WHERE content IN (?, ?) OR content LIKE ? OR content LIKE ? LIMIT 1`).get(...exact, ...prefixed))
+      || (await db.prepare(`SELECT 1 FROM messages WHERE deleted_at IS NULL AND (content IN (?, ?) OR content LIKE ? OR content LIKE ?) LIMIT 1`)
+        .get(...exact, ...prefixed));
+    if (referenced) return false;
+    const media = await db.prepare('DELETE FROM media WHERE id = ? RETURNING disk_name AS "diskName"').get(mediaId);
+    if (!media) return false;
+    await removeMediaFile(media.diskName);
+    return true;
+  }
+
+  async function removeMediaFile(diskName) {
+    try {
+      await unlink(join(mediaDirectory, diskName));
+    } catch (error) {
+      if (error.code !== 'ENOENT') console.error(`Attachment file could not be removed (${error.code ?? error.name}); the orphan sweep will retry.`);
+    }
+  }
+
+  // Hourly safety net: files that no media or upload row names any more, and group attachments that were
+  // uploaded but never sent, are removed once they are old enough not to be an upload still in progress.
+  async function removeOrphanedMedia(now = Date.now()) {
+    const cutoff = now - UPLOAD_STALE_MS;
+    const unsent = await db.prepare(`SELECT id, content_type AS "contentType" FROM media WHERE group_id IS NOT NULL AND created_at < ?`).all(cutoff);
+    let removed = 0;
+    for (const item of unsent) {
+      if (await purgeUnreferencedMedia(`media:${item.id}`)) removed += 1;
+    }
+    const known = new Set([
+      ...(await db.prepare('SELECT disk_name AS "diskName" FROM media').all()).map((row) => row.diskName),
+      ...(await db.prepare('SELECT disk_name AS "diskName" FROM uploads').all()).map((row) => row.diskName),
+    ]);
+    for (const entry of await readdir(mediaDirectory)) {
+      if (!entry.endsWith('.blob') || known.has(entry)) continue;
+      const info = await stat(join(mediaDirectory, entry)).catch(() => null);
+      if (!info || info.mtimeMs >= cutoff) continue;
+      await removeMediaFile(entry);
+      removed += 1;
+    }
+    return removed;
+  }
+
+  async function expireGroupMessages(now = Date.now()) {
+    const rows = await db.prepare(`DELETE FROM group_messages WHERE expires_at IS NOT NULL AND expires_at <= ?
+      RETURNING id, group_id AS "groupId", content`).all(now);
+    for (const row of rows) {
+      await purgeUnreferencedMedia(row.content);
+      await notifyGroup(row.groupId, { type: 'group:message-deleted', groupId: row.groupId, messageId: row.id, reason: 'expired' });
+    }
+    return rows.length;
+  }
+
+  app.get('/api/v1/groups', requireSession, async (request, response) => {
+    const now = Date.now();
+    const groups = await db.prepare(`SELECT g.id, g.name, g.created_by AS "createdBy", g.created_at AS "createdAt",
+      m.role, m.auto_delete AS "autoDelete", latest.content AS "lastContent",
+      latest.sender_id AS "lastSenderId", latest.created_at AS "lastMessageAt",
+      (SELECT count(*) FROM group_messages x WHERE x.group_id = g.id AND x.sender_id <> m.user_id
+        AND x.created_at > m.last_read_at AND x.created_at > m.cleared_at AND (x.expires_at IS NULL OR x.expires_at > ?)) AS "unread"
+      FROM groups g JOIN group_members m ON m.group_id = g.id
+      LEFT JOIN group_messages latest ON latest.id = (
+        SELECT id FROM group_messages WHERE group_id = g.id AND created_at > m.cleared_at AND (expires_at IS NULL OR expires_at > ?)
+        ORDER BY created_at DESC, id DESC LIMIT 1
+      )
+      WHERE m.user_id = ? ORDER BY COALESCE(latest.created_at, g.created_at) DESC, g.id`).all(now, now, request.session.user_id);
+    response.json(groups.map((group) => ({ ...group, autoDelete: Boolean(group.autoDelete), unread: Number(group.unread) })));
+  });
+
+  app.post('/api/v1/groups', requireSession, async (request, response) => {
+    const name = typeof request.body?.name === 'string' ? request.body.name.trim() : '';
+    const members = request.body?.memberIds;
+    if (!name || name.length > 100 || !Array.isArray(members) || members.length > 100
+      || members.some((id) => typeof id !== 'string' || !id || id.length > 128)) {
+      return response.status(400).json({ error: 'Provide a group name and up to 100 valid member IDs.' });
+    }
+    const userId = request.session.user_id;
+    const ids = [...new Set(members.filter((id) => id !== userId))];
+    for (const id of ids) {
+      if (!await db.prepare('SELECT 1 FROM users WHERE id = ?').get(id)) return response.status(400).json({ error: 'A selected member does not exist.' });
+    }
+    const id = randomUUID();
+    const now = Date.now();
+    await runGroupBatch([
+      { sql: 'INSERT INTO groups(id, name, created_by, created_at) VALUES (?, ?, ?, ?)', values: [id, name, userId, now] },
+      { sql: 'INSERT INTO group_members(group_id, user_id, role, auto_delete, joined_at) VALUES (?, ?, ?, ?, ?)', values: [id, userId, 'admin', 0, now] },
+      ...ids.map((memberId) => ({ sql: 'INSERT INTO group_members(group_id, user_id, role, auto_delete, joined_at) VALUES (?, ?, ?, ?, ?)', values: [id, memberId, 'member', 0, now] })),
+    ]);
+    await notifyGroup(id, { type: 'group:changed', groupId: id });
+    response.status(201).json({ id, name, createdBy: userId, createdAt: now, role: 'admin', autoDelete: false });
+  });
+
+  app.get('/api/v1/groups/:groupId', requireSession, async (request, response) => {
+    const { groupId } = request.params;
+    if (!await groupMembership.get(groupId, request.session.user_id)) return response.status(404).json({ error: 'Group not found.' });
+    const group = await db.prepare('SELECT id, name, created_by AS "createdBy", created_at AS "createdAt" FROM groups WHERE id = ?').get(groupId);
+    const members = await db.prepare(`SELECT u.id, u.username, u.name, u.initials, u.color, u.avatar_disk_name,
+      u.avatar_type, u.avatar_updated_at, m.role, m.joined_at AS "joinedAt" FROM group_members m
+      JOIN users u ON u.id = m.user_id WHERE m.group_id = ? ORDER BY m.joined_at, u.id`).all(groupId);
+    const own = await groupMembership.get(groupId, request.session.user_id);
+    response.json({ ...group, role: own.role, autoDelete: Boolean(own.autoDelete), members: members.map((member) => ({ ...publicUser(member), role: member.role, joinedAt: member.joinedAt })) });
+  });
+
+  app.post('/api/v1/groups/:groupId/members', requireSession, async (request, response) => {
+    const { groupId } = request.params;
+    const userId = request.session.user_id;
+    const memberId = request.body?.userId;
+    if (typeof memberId !== 'string' || !memberId || memberId.length > 128) return response.status(400).json({ error: 'Choose a valid user.' });
+    if (!await groupMembership.get(groupId, userId)) return response.status(404).json({ error: 'Group not found.' });
+    const inserted = await db.prepare(`INSERT INTO group_members(group_id, user_id, role, auto_delete, joined_at)
+      SELECT ?, u.id, 'member', 0, ? FROM users u WHERE u.id = ?
+      AND EXISTS (SELECT 1 FROM group_members WHERE group_id = ? AND user_id = ? AND role = 'admin')
+      ON CONFLICT(group_id, user_id) DO NOTHING`).run(groupId, Date.now(), memberId, groupId, userId);
+    if (!inserted.changes) {
+      if ((await groupMembership.get(groupId, userId))?.role !== 'admin') return response.status(403).json({ error: 'Only group admins can add members.' });
+      if (!await db.prepare('SELECT 1 FROM users WHERE id = ?').get(memberId)) return response.status(404).json({ error: 'User not found.' });
+      return response.status(409).json({ error: 'User is already a group member.' });
+    }
+    await notifyGroup(groupId, { type: 'group:changed', groupId });
+    response.status(201).json({ userId: memberId });
+  });
+
+  app.delete('/api/v1/groups/:groupId/membership', requireSession, async (request, response) => {
+    const { groupId } = request.params;
+    const userId = request.session.user_id;
+    const removed = await db.prepare(`DELETE FROM group_members
+      WHERE group_id = ? AND user_id = ? AND role = 'member' RETURNING user_id`).get(groupId, userId);
+    if (!removed) {
+      const membership = await groupMembership.get(groupId, userId);
+      if (!membership) return response.status(404).json({ error: 'Group not found.' });
+      return response.status(409).json({ error: 'An admin cannot leave until admin transfer is supported.' });
+    }
+    broadcastUser(userId, { type: 'group:changed', groupId });
+    await notifyGroup(groupId, { type: 'group:changed', groupId });
+    response.status(204).end();
+  });
+
+  app.put('/api/v1/groups/:groupId/member-settings', requireSession, async (request, response) => {
+    if (typeof request.body?.autoDelete !== 'boolean') return response.status(400).json({ error: 'autoDelete must be true or false.' });
+    const { groupId } = request.params;
+    const updated = await db.prepare('UPDATE group_members SET auto_delete = ? WHERE group_id = ? AND user_id = ?')
+      .run(request.body.autoDelete ? 1 : 0, groupId, request.session.user_id);
+    if (!updated.changes) return response.status(404).json({ error: 'Group not found.' });
+    broadcastUser(request.session.user_id, { type: 'group:settings', groupId, autoDelete: request.body.autoDelete });
+    response.json({ autoDelete: request.body.autoDelete });
+  });
+
+  app.get('/api/v1/groups/:groupId/messages', requireSession, async (request, response) => {
+    const { groupId } = request.params;
+    const membership = await groupMembership.get(groupId, request.session.user_id);
+    if (!membership) return response.status(404).json({ error: 'Group not found.' });
+    await expireGroupMessages();
+    const messages = await db.prepare(`SELECT * FROM (SELECT id, group_id AS "groupId", sender_id AS "senderId", created_at AS "createdAt",
+      content, expires_at AS "expiresAt" FROM group_messages WHERE group_id = ? AND created_at > ? ORDER BY created_at DESC, id DESC LIMIT 500)
+      AS recent ORDER BY "createdAt", id`).all(groupId, membership.clearedAt);
+    response.json(messages);
+  });
+
+  // Marks everything currently in the group as read for this member; the chat list's unread count derives from it.
+  app.put('/api/v1/groups/:groupId/read', requireSession, async (request, response) => {
+    const { groupId } = request.params;
+    const now = Date.now();
+    const updated = await db.prepare('UPDATE group_members SET last_read_at = ? WHERE group_id = ? AND user_id = ?').run(now, groupId, request.session.user_id);
+    if (!updated.changes) return response.status(404).json({ error: 'Group not found.' });
+    broadcastUser(request.session.user_id, { type: 'group:read', groupId, readAt: now });
+    response.json({ readAt: now });
+  });
+
+  // Clear chat: a member hides the current history from their own view; an admin may clear it for everyone,
+  // which permanently removes the messages and any attachments nothing else references.
+  app.post('/api/v1/groups/:groupId/clear', requireSession, async (request, response) => {
+    const { groupId } = request.params;
+    const userId = request.session.user_id;
+    const membership = await groupMembership.get(groupId, userId);
+    if (!membership) return response.status(404).json({ error: 'Group not found.' });
+    const now = Date.now();
+    if (request.body?.everyone === true) {
+      if (membership.role !== 'admin') return response.status(403).json({ error: 'Only group admins can clear the chat for everyone.' });
+      const rows = await db.prepare('DELETE FROM group_messages WHERE group_id = ? RETURNING content').all(groupId);
+      for (const row of rows) await purgeUnreferencedMedia(row.content);
+      await notifyGroup(groupId, { type: 'group:cleared', groupId, everyone: true, clearedBy: userId });
+      return response.json({ cleared: rows.length, everyone: true });
+    }
+    await db.prepare('UPDATE group_members SET cleared_at = ?, last_read_at = ? WHERE group_id = ? AND user_id = ?').run(now, now, groupId, userId);
+    broadcastUser(userId, { type: 'group:cleared', groupId, everyone: false });
+    response.json({ clearedAt: now, everyone: false });
+  });
+
+  // Reports are stored for the operator to review; they do not change the group for other members.
+  app.post('/api/v1/groups/:groupId/report', requireSession, async (request, response) => {
+    const { groupId } = request.params;
+    const reason = typeof request.body?.reason === 'string' ? request.body.reason.trim() : '';
+    if (!reason || reason.length > 500) return response.status(400).json({ error: 'Describe the problem in up to 500 characters.' });
+    if (!await groupMembership.get(groupId, request.session.user_id)) return response.status(404).json({ error: 'Group not found.' });
+    const id = randomUUID();
+    await db.prepare('INSERT INTO group_reports(id, group_id, reporter_id, reason, created_at) VALUES (?, ?, ?, ?, ?)')
+      .run(id, groupId, request.session.user_id, reason, Date.now());
+    response.status(201).json({ id });
+  });
+
+  app.post('/api/v1/groups/:groupId/messages', requireSession, async (request, response) => {
+    const { groupId } = request.params;
+    const userId = request.session.user_id;
+    const content = request.body?.content;
+    if (typeof content !== 'string' || !content.trim() || content.length > 10000 || content.startsWith('voice:')) {
+      return response.status(400).json({ error: 'Provide a text message or an attachment uploaded to this group.' });
+    }
+    // An attachment must have been uploaded by this sender for this group; nothing from elsewhere can be referenced.
+    if (content.startsWith('media:')) {
+      const mediaId = mediaIdOf(content);
+      const owned = mediaId && await db.prepare('SELECT 1 FROM media WHERE id = ? AND group_id = ? AND sender_id = ?').get(mediaId, groupId, userId);
+      if (!owned) return response.status(400).json({ error: 'Upload the attachment to this group first.' });
+    }
+    const id = randomUUID();
+    const now = Date.now();
+    const row = await db.prepare(`INSERT INTO group_messages(id, group_id, sender_id, created_at, content, expires_at)
+      SELECT ?, group_id, user_id, ?, ?, CASE WHEN auto_delete = 1 THEN CAST(? AS BIGINT) ELSE NULL END
+      FROM group_members WHERE group_id = ? AND user_id = ?
+      RETURNING id, group_id AS "groupId", sender_id AS "senderId", created_at AS "createdAt", content, expires_at AS "expiresAt"`)
+      .get(id, now, content, now + deleteForEveryoneWindowMs, groupId, userId);
+    if (!row) return response.status(404).json({ error: 'Group not found.' });
+    // The sender has seen their own message; it must not count as unread for them.
+    await db.prepare('UPDATE group_members SET last_read_at = ? WHERE group_id = ? AND user_id = ? AND last_read_at < ?').run(now, groupId, userId, now);
+    await notifyGroup(groupId, { type: 'group:message', message: row });
+    response.status(201).json(row);
+  });
+
+  app.delete('/api/v1/groups/:groupId/messages/:messageId', requireSession, async (request, response) => {
+    const { groupId, messageId } = request.params;
+    const userId = request.session.user_id;
+    if (!await groupMembership.get(groupId, userId)) return response.status(404).json({ error: 'Group not found.' });
+    const removed = await db.prepare(`DELETE FROM group_messages WHERE id = ? AND group_id = ?
+      AND EXISTS (SELECT 1 FROM group_members WHERE group_id = ? AND user_id = ?
+        AND (role = 'admin' OR (group_messages.sender_id = ? AND group_messages.created_at > ?)))
+      RETURNING id, content`).get(messageId, groupId, groupId, userId, userId, Date.now() - deleteForEveryoneWindowMs);
+    if (!removed) {
+      const message = await db.prepare('SELECT 1 FROM group_messages WHERE id = ? AND group_id = ?').get(messageId, groupId);
+      return response.status(message ? 403 : 404).json({ error: message ? 'You cannot delete this message.' : 'Message not found.' });
+    }
+    await purgeUnreferencedMedia(removed.content);
+    await notifyGroup(groupId, { type: 'group:message-deleted', groupId, messageId, reason: 'deleted' });
+    response.status(204).end();
+  });
 
   function broadcastPresence(userId) {
     const event = { type: 'presence:update', userId, status: userSockets(userId).size ? 'online' : 'offline' };
@@ -635,10 +965,19 @@ export function createChatServer({
     });
   });
 
+  // An attachment goes to exactly one target: another person (a direct chat) or a group the uploader belongs to.
+  async function attachmentTarget(userId, receiverId, groupId) {
+    if (groupId) {
+      if (receiverId || typeof groupId !== 'string' || groupId.length > 128) return null;
+      return (await groupMembership.get(groupId, userId)) ? { receiverId: null, groupId } : null;
+    }
+    if (typeof receiverId !== 'string' || !receiverId || receiverId === userId) return null;
+    return (await db.prepare("SELECT 1 FROM users WHERE id = ?").get(receiverId)) ? { receiverId, groupId: null } : null;
+  }
+
   app.post('/api/v1/media', requireSession, express.raw({ type: () => true, limit: SINGLE_REQUEST_MEDIA_BYTES }), async (request, response) => {
-    const receiverId = String(request.query.receiverId ?? '');
-    const receiver = (await db.prepare("SELECT 1 FROM users WHERE id = ?").get(receiverId));
-    if (!receiver || receiverId === request.session.user_id) return response.status(400).json({ error: 'Choose a valid conversation.' });
+    const target = await attachmentTarget(request.session.user_id, request.query.receiverId, request.query.groupId);
+    if (!target) return response.status(400).json({ error: 'Choose a valid conversation.' });
     if (!Buffer.isBuffer(request.body) || request.body.length === 0) return response.status(400).json({ error: 'Choose a non-empty file.' });
     let rawName = String(request.get('x-file-name') ?? 'attachment').slice(0, 1024);
     try { rawName = decodeURIComponent(rawName); } catch { return response.status(400).json({ error: 'Filename encoding is invalid.' }); }
@@ -647,9 +986,9 @@ export function createChatServer({
     const id = randomUUID();
     const diskName = `${id}.blob`;
     await writeFile(join(mediaDirectory, diskName), request.body, { flag: 'wx' });
-    (await db.prepare(`INSERT INTO media(id, sender_id, receiver_id, filename, content_type, byte_size, disk_name, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
-      .run(id, request.session.user_id, receiverId, filename, contentType, request.body.length, diskName, Date.now()));
+    (await db.prepare(`INSERT INTO media(id, sender_id, receiver_id, group_id, filename, content_type, byte_size, disk_name, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(id, request.session.user_id, target.receiverId, target.groupId, filename, contentType, request.body.length, diskName, Date.now()));
     response.status(201).json({ id, filename, contentType, byteSize: request.body.length });
   });
 
@@ -674,9 +1013,9 @@ export function createChatServer({
   }
 
   app.post('/api/v1/uploads', requireSession, async (request, response) => {
-    const { receiverId, byteSize } = request.body ?? {};
-    const receiver = typeof receiverId === 'string' && (await db.prepare("SELECT 1 FROM users WHERE id = ?").get(receiverId));
-    if (!receiver || receiverId === request.session.user_id) return response.status(400).json({ error: 'Choose a valid conversation.' });
+    const { receiverId, groupId, byteSize } = request.body ?? {};
+    const target = await attachmentTarget(request.session.user_id, receiverId, groupId);
+    if (!target) return response.status(400).json({ error: 'Choose a valid conversation.' });
     if (!Number.isInteger(byteSize) || byteSize <= 0) return response.status(400).json({ error: 'Choose a non-empty file.' });
     if (byteSize > MAX_MEDIA_BYTES) return response.status(413).json({ error: `Files can be up to ${MAX_MEDIA_BYTES / 1024 ** 3} GB.` });
     const filename = sanitizeFilename(String(request.body?.filename ?? 'attachment').slice(0, 1024));
@@ -685,9 +1024,9 @@ export function createChatServer({
     const diskName = `${id}.blob`;
     await writeFile(join(mediaDirectory, diskName), '', { flag: 'wx' });
     const now = Date.now();
-    (await db.prepare(`INSERT INTO uploads(id, owner_id, receiver_id, filename, content_type, byte_size, received, disk_name, created_at, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`)
-      .run(id, request.session.user_id, receiverId, filename, contentType, byteSize, diskName, now, now));
+    (await db.prepare(`INSERT INTO uploads(id, owner_id, receiver_id, group_id, filename, content_type, byte_size, received, disk_name, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)`)
+      .run(id, request.session.user_id, target.receiverId, target.groupId, filename, contentType, byteSize, diskName, now, now));
     response.status(201).json({ uploadId: id, chunkBytes: UPLOAD_CHUNK_BYTES, received: 0, byteSize, filename, contentType });
   });
 
@@ -757,9 +1096,9 @@ export function createChatServer({
     if (upload.received !== upload.byte_size || size !== upload.byte_size) {
       return response.status(409).json({ error: 'The upload is incomplete.', received: upload.received, byteSize: upload.byte_size });
     }
-    (await db.prepare(`INSERT INTO media(id, sender_id, receiver_id, filename, content_type, byte_size, disk_name, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
-      .run(upload.id, upload.owner_id, upload.receiver_id, upload.filename, upload.content_type, upload.byte_size, upload.disk_name, Date.now()));
+    (await db.prepare(`INSERT INTO media(id, sender_id, receiver_id, group_id, filename, content_type, byte_size, disk_name, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .run(upload.id, upload.owner_id, upload.receiver_id, upload.group_id, upload.filename, upload.content_type, upload.byte_size, upload.disk_name, Date.now()));
     (await db.prepare("DELETE FROM uploads WHERE id = ?").run(upload.id));
     response.status(201).json({ id: upload.id, filename: upload.filename, contentType: upload.content_type, byteSize: upload.byte_size });
   });
@@ -772,9 +1111,12 @@ export function createChatServer({
     for (const [token, link] of downloadLinks) if (link.expiresAt <= now) downloadLinks.delete(token);
   }
 
+  // Direct attachments are readable by both people; group attachments by the group's current members.
   async function mediaFor(userId, mediaId) {
     return (await db.prepare(`SELECT id, filename, content_type AS "contentType", disk_name AS "diskName", byte_size AS "byteSize"
-      FROM media WHERE id = ? AND (sender_id = ? OR receiver_id = ?)`).get(mediaId, userId, userId));
+      FROM media WHERE id = ? AND (sender_id = ? OR receiver_id = ?
+        OR (group_id IS NOT NULL AND EXISTS (SELECT 1 FROM group_members WHERE group_id = media.group_id AND user_id = ?)))`)
+      .get(mediaId, userId, userId, userId));
   }
 
   app.post('/api/v1/media/:id/link', requireSession, async (request, response) => {
@@ -1479,6 +1821,8 @@ export function createChatServer({
     server,
     db,
     expireMessages,
+    expireGroupMessages,
+    removeOrphanedMedia,
     discardStaleUploads,
     avatarDirectory,
     liveSessions,
@@ -1499,9 +1843,15 @@ export function createChatServer({
         await new Promise((resolve) => server.close(resolve));
         throw error;
       }
-      expiryTimer = setInterval(() => sweep(expireMessages), EXPIRY_SWEEP_MS);
+      expiryTimer = setInterval(() => {
+        sweep(expireMessages);
+        sweep(expireGroupMessages);
+      }, EXPIRY_SWEEP_MS);
       expiryTimer.unref();
-      uploadSweep = setInterval(() => sweep(discardStaleUploads), 60 * 60 * 1000);
+      uploadSweep = setInterval(() => {
+        sweep(discardStaleUploads);
+        sweep(removeOrphanedMedia);
+      }, 60 * 60 * 1000);
       uploadSweep.unref();
       return server.address();
     },

@@ -2,7 +2,9 @@ import { readFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import pg from 'pg';
 
-export const DATABASE_SCHEMA_VERSION = 1;
+export const DATABASE_SCHEMA_VERSION = 3;
+// Additive migrations applied in order to reach each version from the one before it.
+const MIGRATIONS = { 2: '002_groups.sql', 3: '003_group_media.sql' };
 
 // SQL emitted by the application uses ? parameters and quoted result aliases.
 export function postgresParameters(sql) {
@@ -82,7 +84,7 @@ export function isDatabaseUnavailable(error) {
   return /^Connection terminated|timeout exceeded when trying to connect/i.test(error?.message ?? '');
 }
 
-// Applies the versioned schema once under an advisory lock; an existing schema is never replaced.
+// Applies ordered, additive migrations under an advisory lock; an existing schema is never replaced.
 // Returns true when the schema was created.
 export async function migratePostgres(client) {
   await client.query('BEGIN');
@@ -90,13 +92,20 @@ export async function migratePostgres(client) {
     await client.query("SELECT pg_advisory_xact_lock(hashtext('relay-schema-migration'))");
     const existing = await client.query("SELECT to_regclass('relay.schema_version') AS version_table");
     let created = false;
+    let version;
     if (existing.rows[0].version_table) {
-      const version = await client.query('SELECT version FROM relay.schema_version WHERE singleton = 1');
-      if (version.rows[0]?.version !== DATABASE_SCHEMA_VERSION) throw new Error('Existing schema version is unsupported. Do not overwrite it.');
+      const current = await client.query('SELECT version FROM relay.schema_version WHERE singleton = 1');
+      version = current.rows[0]?.version;
     } else {
       const sql = await readFile(new URL('../supabase/migrations/001_relay.sql', import.meta.url), 'utf8');
       await client.query(sql);
       created = true;
+      version = 1;
+    }
+    if (!Number.isInteger(version) || version < 1 || version > DATABASE_SCHEMA_VERSION) throw new Error('Existing schema version is unsupported. Do not overwrite it.');
+    for (let next = version + 1; next <= DATABASE_SCHEMA_VERSION; next += 1) {
+      const sql = await readFile(new URL(`../supabase/migrations/${MIGRATIONS[next]}`, import.meta.url), 'utf8');
+      await client.query(sql);
     }
     await client.query('COMMIT');
     return created;
@@ -150,6 +159,19 @@ export function createPostgresDatabase({ env = process.env, pool = new pg.Pool(p
         async get(...values) { return (await pool.query(text, values)).rows[0]; },
         async run(...values) { return { changes: (await pool.query(text, values)).rowCount }; },
       };
+    },
+    async batch(statements) {
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        for (const { sql, values } of statements) await client.query(postgresParameters(sql), values);
+        await client.query('COMMIT');
+      } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+      } finally {
+        client.release();
+      }
     },
     async migrate() {
       const client = await pool.connect();

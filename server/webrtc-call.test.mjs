@@ -847,7 +847,7 @@ test('the overlay restores from PiP on a tap, adds participants, and the chat he
   for (const item of ['New group', 'New contact', "label: 'Search'", 'Media, links and docs', 'Mute notifications', 'Disappearing messages', 'Chat theme', "label: 'Pair a device'"]) {
     assert.ok(chatWindow.includes(item), `header menu has ${item}`);
   }
-  assert.ok(chatWindow.includes("hint: 'Not available yet'"), 'New group is a labelled placeholder');
+  assert.ok(chatWindow.includes("{ id: 'new-group', label: 'New group', action: () => onGroups?.(true) }"), 'New group opens group creation');
   assert.ok(chatWindow.includes("openInfo('media')") && chatWindow.includes("openInfo('disappearing')") && chatWindow.includes("openInfo('theme')") && chatWindow.includes('initialView={contactInfoView}'), 'menu entries deep-link into the info drawer');
 
   // Responsive header: secondary actions collapse into ⋮ on phones and the pane can never outgrow the viewport.

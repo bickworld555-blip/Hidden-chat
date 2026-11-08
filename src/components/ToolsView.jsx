@@ -97,7 +97,7 @@ function DisplayNameEditor({ user, userId }) {
   );
 }
 
-export default function ToolsView({ darkMode, onToggleTheme, onLogout, onNotifications, onAccounts, onAvatarStudio }) {
+export default function ToolsView({ darkMode, onToggleTheme, onLogout, onNotifications, onAccounts, onAvatarStudio, onGroups }) {
   const user = useChatStore((state) => state.user);
   const userId = useChatStore((state) => state.userId);
   const { accounts } = useAccounts();
@@ -146,7 +146,7 @@ export default function ToolsView({ darkMode, onToggleTheme, onLogout, onNotific
         {/* Workspace & Communities */}
         <div className="tools-section">
           <h3>Workspace & Communities</h3>
-          <button className="tool-item">
+          <button className="tool-item" onClick={onGroups}>
             <Users size={20} />
             <div className="tool-item-info">
               <strong>Create a group</strong>

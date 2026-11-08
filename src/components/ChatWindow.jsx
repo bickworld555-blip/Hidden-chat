@@ -480,7 +480,7 @@ function ContactSharePicker({ contacts, onSelect, onClose }) {
   );
 }
 
-export default function ChatWindow({ chat, connection, client, onPair, onBack, onStartCall }) {
+export default function ChatWindow({ chat, connection, client, onPair, onBack, onStartCall, onGroups }) {
   const chatId = chat?.id;
   const userId = useChatStore((state) => state.userId);
   const sessionToken = useChatStore((state) => state.sessionToken);
@@ -1192,7 +1192,7 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
               {headerMenuOpen && (
                 <ul className="header-menu" role="menu" aria-label="Chat options">
                   {[
-                    { id: 'new-group', label: 'New group', hint: 'Not available yet', action: () => setHeaderNotice('Group chats are not available yet.') },
+                    { id: 'new-group', label: 'New group', action: () => onGroups?.(true) },
                     { id: 'new-contact', label: 'New contact', action: () => setNewContactOpen(true) },
                     { id: 'search', label: 'Search', action: openChatSearch },
                     { id: 'media', label: 'Media, links and docs', action: () => openInfo('media') },
@@ -1374,6 +1374,7 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
       <AttachmentMenu isOpen={menuOpen} onSelect={handleAttachmentSelect} onClose={() => setMenuOpen(false)} />
       <SelectContactModal
         isOpen={newContactOpen}
+        onNewGroup={() => onGroups?.(true)}
         onClose={() => setNewContactOpen(false)}
         onSelectContact={(contact) => { useChatStore.getState().addContact(contact); setNewContactOpen(false); }}
       />

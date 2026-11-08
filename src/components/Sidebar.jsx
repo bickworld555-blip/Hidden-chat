@@ -8,7 +8,7 @@ import { presentName } from '../profile.js';
 import { linkContact, searchPeople } from '../contactsApi.js';
 import ShieldMark from './ShieldMark.jsx';
 
-export default function Sidebar({ onPair, onSounds, onNotifications, onSelectChat, onOpenAuth, onLogout, onAccounts }) {
+export default function Sidebar({ onPair, onSounds, onNotifications, onSelectChat, onOpenAuth, onLogout, onAccounts, onGroups }) {
   const [query, setQuery] = useState('');
   const [accountMenu, setAccountMenu] = useState(false);
   const [filter, setFilter] = useState('All');
@@ -109,6 +109,7 @@ export default function Sidebar({ onPair, onSounds, onNotifications, onSelectCha
 
       <div className="search-box"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search chats or @handle" aria-label="Search chats and Hidden Messenger handles" /><kbd>⌘ K</kbd></div>
       <div className="list-toolbar">
+        <button type="button" className="icon-button" onClick={onGroups} disabled={!sessionToken} title="Groups" aria-label="Groups"><Users size={18} /></button>
         <div className="filter-tabs" role="tablist" aria-label="Conversation filter">
           {['All', 'Unread'].map((tab) => <button key={tab} role="tab" aria-selected={filter === tab} className={filter === tab ? 'selected' : ''} onClick={() => setFilter(tab)}>{tab}</button>)}
         </div>

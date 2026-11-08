@@ -23,8 +23,13 @@ export function uploadSizeError(filename, byteSize) {
   return `"${filename}" is larger than ${MAX_TRANSFER_BYTES / 1024 ** 3} GB.`;
 }
 
-async function singleRequest(file, filename, { receiverId, sessionToken, signal }) {
-  const response = await fetch(`/api/v1/media?receiverId=${encodeURIComponent(receiverId)}`, {
+// The upload target is one direct chat (receiverId) or one group (groupId); the server rejects both or neither.
+function targetQuery({ receiverId, groupId }) {
+  return groupId ? `groupId=${encodeURIComponent(groupId)}` : `receiverId=${encodeURIComponent(receiverId)}`;
+}
+
+async function singleRequest(file, filename, { receiverId, groupId, sessionToken, signal }) {
+  const response = await fetch(`/api/v1/media?${targetQuery({ receiverId, groupId })}`, {
     method: 'POST',
     signal,
     headers: {
@@ -51,11 +56,11 @@ async function api(path, { sessionToken, signal, method = 'GET', body, headers =
   return { response, data };
 }
 
-async function chunkedUpload(file, filename, { receiverId, sessionToken, signal, onProgress }) {
+async function chunkedUpload(file, filename, { receiverId, groupId, sessionToken, signal, onProgress }) {
   const created = await api('/api/v1/uploads', {
     sessionToken, signal, method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ receiverId, filename, contentType: file.type || '', byteSize: file.size }),
+    body: JSON.stringify({ ...(groupId ? { groupId } : { receiverId }), filename, contentType: file.type || '', byteSize: file.size }),
   });
   if (!created.response.ok || !created.data?.uploadId) throw new Error(created.data?.error || 'Upload could not start.');
   const { uploadId } = created.data;
@@ -111,7 +116,7 @@ async function chunkedUpload(file, filename, { receiverId, sessionToken, signal,
 }
 
 // Resolves to { id, filename, contentType, byteSize } once the server has the whole file.
-export async function uploadFile(file, { receiverId, sessionToken, signal, onProgress } = {}) {
+export async function uploadFile(file, { receiverId, groupId, sessionToken, signal, onProgress } = {}) {
   const filename = file.name || 'attachment';
   const sizeError = uploadSizeError(filename, file.size);
   if (sizeError) throw new Error(sizeError);
@@ -119,8 +124,8 @@ export async function uploadFile(file, { receiverId, sessionToken, signal, onPro
   const plan = uploadPlan(file.size);
   onProgress?.(0, file.size);
   const result = plan.chunked
-    ? await chunkedUpload(file, filename, { receiverId, sessionToken, signal, onProgress })
-    : await singleRequest(file, filename, { receiverId, sessionToken, signal });
+    ? await chunkedUpload(file, filename, { receiverId, groupId, sessionToken, signal, onProgress })
+    : await singleRequest(file, filename, { receiverId, groupId, sessionToken, signal });
   onProgress?.(file.size, file.size);
   return result;
 }

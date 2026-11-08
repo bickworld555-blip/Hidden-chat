@@ -4,10 +4,12 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, test } from 'node:test';
+import { DatabaseSync } from 'node:sqlite';
 import WebSocket from 'ws';
 import { createChatServer, heartbeatIntervalForState, isAllowedAppOrigin } from './index.mjs';
 import { mergeMessageStatus } from '../src/messageStatus.js';
 import { formatMessageDate, formatMessageTime, utcDateKey } from '../src/time.js';
+import { checkGroupAttachments, checkGroupContract } from './group-contract.mjs';
 
 let service;
 let directory;
@@ -15,7 +17,7 @@ let baseUrl;
 
 beforeEach(async () => {
   directory = mkdtempSync(join(tmpdir(), 'relay-chat-test-'));
-  service = createChatServer({ port: 0, databasePath: join(directory, 'test.sqlite') });
+  service = createChatServer({ port: 0, databasePath: join(directory, 'test.sqlite'), dataDirectory: directory });
   const address = await service.listen();
   baseUrl = `http://127.0.0.1:${address.port}`;
 });
@@ -33,6 +35,76 @@ async function createSession(username) {
   assert.equal(response.status, 201);
   return response.json();
 }
+
+const jsonApi = async (path, { session, method = 'GET', body } = {}) => {
+  const response = await fetch(baseUrl + path, {
+    method,
+    headers: { ...(session ? { Authorization: 'Bearer ' + session.token } : {}), ...(body ? { 'Content-Type': 'application/json' } : {}) },
+    ...(body ? { body: JSON.stringify(body) } : {}),
+  });
+  return { status: response.status, data: response.status === 204 ? null : await response.json() };
+};
+
+test('group text messages enforce membership, deletion windows and per-member expiration', async () => {
+  await checkGroupContract({ api: jsonApi, register: createSession, service });
+});
+
+test('group attachments are member-scoped and purged only with their last referencing message', async () => {
+  await checkGroupAttachments({ api: jsonApi, register: createSession, service, url: baseUrl, mediaDirectory: join(directory, 'media') });
+});
+
+test('an existing SQLite database gains group attachment columns without losing attachments', async () => {
+  await service.close();
+  const legacyPath = join(directory, 'legacy.sqlite');
+  const legacy = new DatabaseSync(legacyPath);
+  legacy.exec(`CREATE TABLE media (id TEXT PRIMARY KEY, sender_id TEXT NOT NULL, receiver_id TEXT NOT NULL, filename TEXT NOT NULL,
+    content_type TEXT NOT NULL, byte_size INTEGER NOT NULL, disk_name TEXT NOT NULL, created_at INTEGER NOT NULL);
+    INSERT INTO media VALUES ('old', 'a', 'b', 'old.bin', 'application/octet-stream', 3, 'old.blob', 1);`);
+  legacy.close();
+  service = createChatServer({ port: 0, databasePath: legacyPath, dataDirectory: directory });
+  await service.listen();
+  const columns = service.db.prepare('PRAGMA table_info(media)').all();
+  assert.equal(columns.find((column) => column.name === 'receiver_id').notnull, 0);
+  assert.ok(columns.some((column) => column.name === 'group_id'));
+  assert.deepEqual(JSON.parse(JSON.stringify(service.db.prepare('SELECT id, receiver_id AS r, group_id AS g, disk_name AS d FROM media').all())), [{ id: 'old', r: 'b', g: null, d: 'old.blob' }]);
+  assert.throws(() => service.db.prepare("INSERT INTO media(id, sender_id, receiver_id, group_id, filename, content_type, byte_size, disk_name, created_at) VALUES ('x', 'a', NULL, NULL, 'f', 't', 1, 'x.blob', 1)").run(), /CHECK/);
+});
+
+test('people who only share a group may signal calls and invites to each other', async (t) => {
+  const admin = await createSession('call_group_admin');
+  const member = await createSession('call_group_member');
+  const outsider = await createSession('call_group_outsider');
+  await jsonApi('/api/v1/groups', { session: admin, method: 'POST', body: { name: 'Callers', memberIds: [member.user.id] } });
+  const adminSocket = await connect(admin.token);
+  const memberSocket = await connect(member.token);
+  const outsiderSocket = await connect(outsider.token);
+  t.after(() => { adminSocket.close(); memberSocket.close(); outsiderSocket.close(); });
+  const offer = waitForEvent(memberSocket, 'call:signal', (event) => event.signal.type === 'offer');
+  adminSocket.send(JSON.stringify({ type: 'call:signal', targetId: member.user.id, callId: 'group-call', mode: 'video', roomId: 'room-1', signal: { type: 'offer', sdp: 'v=0' } }));
+  assert.equal((await offer).from, admin.user.id);
+  const refused = waitForEvent(adminSocket, 'error');
+  adminSocket.send(JSON.stringify({ type: 'call:signal', targetId: outsider.user.id, callId: 'outsider-call', mode: 'video', signal: { type: 'offer', sdp: 'v=0' } }));
+  assert.match((await refused).message, /not a contact/);
+  const invite = waitForEvent(memberSocket, 'call:invite');
+  adminSocket.send(JSON.stringify({ type: 'call:invite', targetId: member.user.id, roomId: 'room-2', mode: 'audio', participants: [admin.user.id] }));
+  assert.equal((await invite).roomId, 'room-2');
+});
+
+test('group history returns the latest 500 messages in chronological order', async () => {
+  const admin = await createSession('group_history_admin');
+  const response = await fetch(`${baseUrl}/api/v1/groups`, {
+    method: 'POST', headers: { Authorization: 'Bearer ' + admin.token, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: 'History', memberIds: [] }),
+  });
+  const { id } = await response.json();
+  const insert = service.db.prepare('INSERT INTO group_messages(id, group_id, sender_id, created_at, content, expires_at) VALUES (?, ?, ?, ?, ?, ?)');
+  for (let index = 0; index < 501; index += 1) insert.run(`history-${index}`, id, admin.user.id, index, `${index}`, null);
+  const historyResponse = await fetch(`${baseUrl}/api/v1/groups/${id}/messages`, { headers: { Authorization: 'Bearer ' + admin.token } });
+  const history = await historyResponse.json();
+  assert.equal(history.length, 500);
+  assert.equal(history[0].content, '1');
+  assert.equal(history[499].content, '500');
+});
 
 function waitForEvent(socket, type, predicate = () => true) {
   const bufferedIndex = socket.eventBuffer.findIndex((event) => event.type === type && predicate(event));
@@ -67,6 +139,55 @@ async function connect(token) {
   assert.equal(socket.protocol, 'relay.v1');
   return socket;
 }
+
+test('group message events reach members and reconnecting members see permanent deletion', async (t) => {
+  const admin = await createSession('group_events_admin');
+  const member = await createSession('group_events_member');
+  const outsider = await createSession('group_events_outsider');
+  const call = async (path, session, method = 'GET', body) => fetch(`${baseUrl}${path}`, {
+    method,
+    headers: { Authorization: 'Bearer ' + session.token, ...(body ? { 'Content-Type': 'application/json' } : {}) },
+    ...(body ? { body: JSON.stringify(body) } : {}),
+  });
+  const created = await call('/api/v1/groups', admin, 'POST', { name: 'Events', memberIds: [member.user.id] });
+  const { id } = await created.json();
+  const memberSocket = await connect(member.token);
+  const outsiderSocket = await connect(outsider.token);
+  t.after(() => { memberSocket.close(); outsiderSocket.close(); });
+  const newMessage = waitForEvent(memberSocket, 'group:message');
+  const sentResponse = await call(`/api/v1/groups/${id}/messages`, admin, 'POST', { content: 'hello members' });
+  const message = await sentResponse.json();
+  assert.equal((await newMessage).message.id, message.id);
+  assert.equal(outsiderSocket.eventBuffer.some((event) => event.type === 'group:message'), false);
+  const deleted = waitForEvent(memberSocket, 'group:message-deleted');
+  assert.equal((await call(`/api/v1/groups/${id}/messages/${message.id}`, admin, 'DELETE')).status, 204);
+  assert.equal((await deleted).messageId, message.id);
+  memberSocket.close();
+  const history = await call(`/api/v1/groups/${id}/messages`, member);
+  assert.deepEqual(await history.json(), []);
+});
+
+test('leaving a group notifies both the departing member and remaining members', async (t) => {
+  const admin = await createSession('leave_group_admin');
+  const member = await createSession('leave_group_member');
+  const created = await fetch(`${baseUrl}/api/v1/groups`, {
+    method: 'POST', headers: { Authorization: 'Bearer ' + admin.token, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name: 'Leave test', memberIds: [member.user.id] }),
+  });
+  const { id } = await created.json();
+  const adminSocket = await connect(admin.token);
+  const memberSocket = await connect(member.token);
+  t.after(() => { adminSocket.close(); memberSocket.close(); });
+  const adminNotice = waitForEvent(adminSocket, 'group:changed', (event) => event.groupId === id);
+  const memberNotice = waitForEvent(memberSocket, 'group:changed', (event) => event.groupId === id);
+  const response = await fetch(`${baseUrl}/api/v1/groups/${id}/membership`, {
+    method: 'DELETE', headers: { Authorization: 'Bearer ' + member.token },
+  });
+  assert.equal(response.status, 204);
+  await Promise.all([adminNotice, memberNotice]);
+  const rejected = await fetch(`${baseUrl}/api/v1/groups/${id}/messages`, { headers: { Authorization: 'Bearer ' + member.token } });
+  assert.equal(rejected.status, 404);
+});
 
 test('rejects invalid registration data and unauthenticated profile requests', async () => {
   const invalid = await fetch(`${baseUrl}/api/v1/auth/register`, {

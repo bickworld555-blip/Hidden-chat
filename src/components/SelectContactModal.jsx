@@ -53,7 +53,7 @@ function PersonRow({ person, online, onChat, onAdd, busy, trailing }) {
   );
 }
 
-export default function SelectContactModal({ isOpen, onClose, onSelectContact }) {
+export default function SelectContactModal({ isOpen, onClose, onSelectContact, onNewGroup }) {
   const rawChats = useChatStore((state) => state.chats);
   const hiddenContacts = useChatStore((state) => state.hiddenContacts);
   const presence = useChatStore((state) => state.presence);
@@ -190,7 +190,7 @@ export default function SelectContactModal({ isOpen, onClose, onSelectContact })
         <div className="wa-sc-scroll-body">
           {!normalizedQuery && (
             <div className="wa-sc-quick-actions">
-              <button type="button" className="wa-sc-action-row" onClick={() => alert('Group chat creation is coming soon in Hidden Messenger!')}>
+              <button type="button" className="wa-sc-action-row" onClick={() => { onClose(); onNewGroup?.(); }} disabled={!onNewGroup}>
                 <div className="wa-sc-action-icon green"><Users size={22} /></div>
                 <div className="wa-sc-action-label"><strong>New group</strong></div>
               </button>

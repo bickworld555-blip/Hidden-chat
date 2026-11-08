@@ -11,13 +11,18 @@ export const IMPORT_TABLES = Object.freeze([
   { name: 'users', columns: ['id', 'username', 'name', 'initials', 'color', 'dob', 'password_hash', 'created_at', 'avatar_disk_name', 'avatar_type', 'avatar_updated_at'], users: ['id'] },
   { name: 'sessions', columns: ['token_hash', 'user_id', 'device_id', 'device_name', 'expires_at'], users: ['user_id'] },
   { name: 'contacts', columns: ['owner_id', 'contact_id', 'created_at', 'saved', 'hidden'], users: ['owner_id', 'contact_id'], key: ['owner_id', 'contact_id'] },
+  // Groups precede media and uploads, whose group_id references them.
+  { name: 'groups', columns: ['id', 'name', 'created_by', 'created_at'], users: ['created_by'] },
+  { name: 'group_members', columns: ['group_id', 'user_id', 'role', 'auto_delete', 'joined_at', 'last_read_at', 'cleared_at'], users: ['user_id'], key: ['group_id', 'user_id'] },
   { name: 'messages', columns: ['id', 'sender_id', 'receiver_id', 'created_at', 'content', 'status', 'deleted_at', 'reply_to_id', 'forwarded', 'expires_at'], users: ['sender_id', 'receiver_id'] },
-  { name: 'media', columns: ['id', 'sender_id', 'receiver_id', 'filename', 'content_type', 'byte_size', 'disk_name', 'created_at'], users: ['sender_id', 'receiver_id'] },
+  { name: 'media', columns: ['id', 'sender_id', 'receiver_id', 'group_id', 'filename', 'content_type', 'byte_size', 'disk_name', 'created_at'], users: ['sender_id', 'receiver_id'] },
   { name: 'pairing_codes', columns: ['code_hash', 'user_id', 'expires_at'], users: ['user_id'] },
   { name: 'chat_settings', columns: ['user_a', 'user_b', 'disappear_seconds', 'updated_by', 'updated_at'], users: ['user_a', 'user_b', 'updated_by'], key: ['user_a', 'user_b'] },
-  { name: 'uploads', columns: ['id', 'owner_id', 'receiver_id', 'filename', 'content_type', 'byte_size', 'received', 'disk_name', 'created_at', 'updated_at'], users: ['owner_id', 'receiver_id'] },
+  { name: 'uploads', columns: ['id', 'owner_id', 'receiver_id', 'group_id', 'filename', 'content_type', 'byte_size', 'received', 'disk_name', 'created_at', 'updated_at'], users: ['owner_id', 'receiver_id'] },
   { name: 'message_reactions', columns: ['message_id', 'user_id', 'emoji'], users: ['user_id'], key: ['message_id', 'user_id'] },
   { name: 'message_hidden', columns: ['user_id', 'message_id'], users: ['user_id'], key: ['user_id', 'message_id'] },
+  { name: 'group_messages', columns: ['id', 'group_id', 'sender_id', 'created_at', 'content', 'expires_at'], users: ['sender_id'] },
+  { name: 'group_reports', columns: ['id', 'group_id', 'reporter_id', 'reason', 'created_at'], users: ['reporter_id'] },
 ]);
 const demoIds = Object.keys(DEMO_USERS);
 const excluded = demoIds.map(() => '?').join(', ');
@@ -28,6 +33,14 @@ function sourceQuery(table) {
   if (['message_reactions', 'message_hidden'].includes(table.name)) {
     filters.push(`message_id IN (SELECT id FROM messages WHERE sender_id NOT IN (${excluded}) AND receiver_id NOT IN (${excluded}))`);
     parameters.push(...demoIds, ...demoIds);
+  }
+  if (['media', 'uploads'].includes(table.name)) {
+    filters.push(`(group_id IS NULL OR group_id IN (SELECT id FROM groups WHERE created_by NOT IN (${excluded})))`);
+    parameters.push(...demoIds);
+  }
+  if (['group_members', 'group_messages', 'group_reports'].includes(table.name)) {
+    filters.push(`group_id IN (SELECT id FROM groups WHERE created_by NOT IN (${excluded}))`);
+    parameters.push(...demoIds);
   }
   return {
     sql: `SELECT ${table.columns.join(', ')} FROM ${table.name} WHERE ${filters.join(' AND ')} ORDER BY ${(table.key ?? [table.columns[0]]).map((column) => `${column} COLLATE BINARY`).join(', ')}`,

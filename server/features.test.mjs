@@ -264,6 +264,26 @@ test('the UI wires PiP calls, screen sharing, download progress, the camera shor
   assert.ok(tools.includes('<strong>Accounts</strong>') && tools.includes('account-strip') && sidebar.includes('Switch account'), 'entry points in Tools and the sidebar');
 });
 
+test('the UI wires group chats: attachments, unread badges, group-bound calls, clear and report', async () => {
+  const read = async (path) => (await readFile(new URL(path, import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
+  const groups = await read('../src/components/GroupsView.jsx');
+  const overlay = await read('../src/components/CallOverlay.jsx');
+  const app = await read('../src/App.jsx');
+  const upload = await read('../src/upload.js');
+  const styles = await read('../src/styles.css');
+
+  assert.ok(groups.includes('uploadFile(file, { groupId: selected, sessionToken: token') && groups.includes('<MediaRenderer mediaRef={message.content} sessionToken={token} />'), 'attachments upload to the group and render inline');
+  assert.ok(upload.includes("groupId ? `groupId=${encodeURIComponent(groupId)}`") && upload.includes('...(groupId ? { groupId } : { receiverId })'), 'both upload paths accept a group target');
+  assert.ok(groups.includes("className={`groups-message ${mine ? 'mine' : 'theirs'}") && styles.includes('.groups-message.mine { align-self: flex-end'), 'own messages sit on the right, others on the left');
+  assert.ok(groups.includes('className="groups-unread"') && groups.includes('`${groupPath}/read`, { method: \'PUT\' }'), 'unread badges from the server, cleared when the chat is viewed');
+  assert.ok(groups.includes('function CallPeoplePicker') && groups.includes('MAX_CALL_PARTICIPANTS - 1') && groups.includes('onStartGroupCall?.({ mode, members: chosen, groupName: group.name })'), 'select people then start a group call');
+  assert.ok(groups.includes('Voice call') && groups.includes('Video call') && groups.includes('Select people'), 'the call menu');
+  assert.ok(app.includes('function initiateGroupCall({ mode, members, groupName })') && app.includes('pendingInvites: rest.map((member) => member.id)'), 'the app rings the first member and queues the rest');
+  assert.ok(overlay.includes('inviteQueueRef') && overlay.includes("if (status !== 'connected' || inviteQueueRef.current || !call.pendingInvites?.length) return;") && overlay.includes('queue.accepted.push(event.from)'), 'invites go out one at a time once connected, naming those who accepted');
+  assert.ok(groups.includes("`${groupPath}/clear`, { method: 'POST', body: {} }") && groups.includes("body: { everyone: true }") && groups.includes("`${groupPath}/report`"), 'clear for me, clear for everyone (admin) and report');
+  assert.ok(groups.includes("role=\"tab\" aria-selected={infoTab === 'media'}"), 'a Media tab in group info');
+});
+
 test('composer helpers: caret-aware emoji insertion and the voice/send action', () => {
   assert.equal(composerAction(''), 'voice');
   assert.equal(composerAction('   '), 'voice');
