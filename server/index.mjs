@@ -27,7 +27,8 @@ const EXPIRY_SWEEP_MS = 30 * 1000;
 // Bounds the request body of a "keep starred" clear; express.json already caps it at 16 kB.
 const MAX_CLEAR_KEEP_IDS = 500;
 const CALL_END_REASONS = new Set(['ended', 'no-answer', 'disconnected', 'busy', 'failed']);
-const CALL_SIGNAL_TYPES = new Set(['offer', 'answer', 'ice', 'end', 'connected', 'ringing', 'media', 'video-request', 'video-accept', 'video-decline', 'video-cancel']);
+const CALL_SIGNAL_TYPES = new Set(['offer', 'answer', 'ice', 'end', 'connected', 'ringing', 'media', 'video-request', 'video-accept', 'video-decline', 'video-cancel', 'reaction']);
+const CALL_REACTION_EMOJI = new Set(['👍', '❤️', '😂', '😮', '😢', '🙏']);
 const LIVE_ACTIONS = new Set(['request', 'accept', 'decline', 'update', 'stop']);
 const MAX_CALL_PARTICIPANTS = 4;
 const LIVE_DURATIONS_MS = new Set(LIVE_DURATIONS.map((duration) => duration.ms));
@@ -1659,7 +1660,7 @@ export function createChatServer({
 
         if (!(await areLinked(userId, targetId)) || targetId === userId || typeof callId !== 'string' || callId.length > 80
           || !['audio', 'video'].includes(mode) || !signal || typeof signal !== 'object'
-          || !CALL_SIGNAL_TYPES.has(signal.type)) {
+          || !CALL_SIGNAL_TYPES.has(signal.type) || (signal.type === 'reaction' && !CALL_REACTION_EMOJI.has(signal.emoji))) {
           return json(socket, { type: 'error', message: 'Call signaling is invalid or the user is not a contact.' });
         }
 

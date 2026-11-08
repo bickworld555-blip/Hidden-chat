@@ -4083,3 +4083,38 @@ button.groups-setting:hover, label.groups-setting:hover { background: rgba(134, 
 .groups-message .poll-view-votes:not(:disabled), .groups-message .event-calendar { color: #00a884; }
 .groups-message .poll-view-votes:disabled { color: #8696a0; }
 .groups-message .poll-bubble, .groups-message .event-bubble { padding-bottom: 0; }
+
+/* ===== In-call: Add people, ⋯ sheet, reactions ===== */
+.wa-add-participant { inset: 0; max-height: none; padding: calc(10px + env(safe-area-inset-top)) 0 env(safe-area-inset-bottom); border-radius: 0; background: #0b141a; }
+.wa-add-participant header { gap: 12px; margin: 0; padding: 4px 12px 10px; }
+.wa-add-title { display: flex; flex: 1; flex-direction: column; gap: 2px; min-width: 0; }
+.wa-add-title strong { font-size: 18px; font-weight: 500; }
+.wa-add-title small { color: #8696a0; font-size: 13px; }
+.wa-add-search { flex: 1; min-width: 0; padding: 9px 12px; border: 0; border-radius: 20px; background: #202c33; color: #e9edef; font: inherit; font-size: 15px; outline: none; }
+.wa-add-participant p { padding: 0 20px; }
+.wa-add-scroll { flex: 1; overflow-y: auto; }
+.wa-add-scroll h3 { margin: 14px 20px 4px; color: #8696a0; font-size: 14px; font-weight: 500; }
+.wa-add-scroll ul { overflow: visible; }
+.wa-add-participant li button { padding: 10px 20px; border-radius: 0; font-size: 16px; }
+.wa-add-participant li button:hover { background: rgba(255, 255, 255, .05); }
+.wa-add-participant li small { display: block; color: #8696a0; font-size: 12.5px; }
+
+.wa-call-lock { flex: none; margin-right: 4px; vertical-align: -1px; opacity: .85; }
+.wa-call-more-layer { position: absolute; inset: 0; z-index: 35; }
+.wa-call-more { position: absolute; left: 12px; bottom: calc(96px + env(safe-area-inset-bottom)); display: flex; flex-direction: column; gap: 10px; width: min(360px, calc(100% - 24px)); animation: wa-video-request-in .18s ease-out; }
+.wa-call-reactions { display: flex; justify-content: space-between; padding: 8px 10px; border-radius: 32px; background: rgba(32, 44, 51, .96); box-shadow: 0 8px 24px rgba(0, 0, 0, .4); }
+.wa-call-reactions button { width: 44px; height: 44px; border: 0; border-radius: 50%; background: transparent; font-size: 26px; line-height: 1; cursor: pointer; transition: transform .12s ease; }
+.wa-call-reactions button:hover, .wa-call-reactions button:focus-visible { transform: scale(1.18); background: rgba(255, 255, 255, .08); }
+.wa-call-more-menu { display: flex; flex-direction: column; padding: 8px 0; border-radius: 24px; background: rgba(32, 44, 51, .96); box-shadow: 0 8px 24px rgba(0, 0, 0, .4); }
+.wa-call-more-menu button { display: flex; align-items: center; gap: 14px; padding: 10px 16px; border: 0; background: transparent; color: #e9edef; font: inherit; font-size: 16px; text-align: left; cursor: pointer; }
+.wa-call-more-menu button > span:nth-child(2) { flex: 1; }
+.wa-call-more-icon { width: 40px; height: 40px; flex: none; display: grid; place-items: center; border-radius: 50%; background: #2a3942; }
+.wa-call-floating-reactions { position: absolute; inset: 0; z-index: 30; overflow: hidden; pointer-events: none; }
+.wa-call-floating-reaction { position: absolute; bottom: 120px; font-size: 44px; animation: wa-reaction-float 2.6s ease-out forwards; }
+.wa-call-floating-reaction.is-mine { font-size: 38px; }
+@keyframes wa-reaction-float { 0% { transform: translateY(0) scale(.6); opacity: 0; } 12% { transform: translateY(-20px) scale(1.1); opacity: 1; } 100% { transform: translateY(-46vh) scale(1); opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .wa-call-floating-reaction { animation-duration: 1.6s; } }
+/* One-to-one video fills the screen like a phone call; shared screens and group tiles stay uncropped. */
+.wa-video-stage:not(.is-group) .wa-video-element.remote-video:not(.is-screen) { object-fit: cover; }
+.wa-call-status-badge { display: inline-flex; align-items: center; justify-content: center; }
+.wa-video-stage:not(.is-group) .wa-video-element.local-video:not(.is-screen) { object-fit: cover; }

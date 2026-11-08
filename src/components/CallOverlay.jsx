@@ -2,7 +2,14 @@ import { apiFetch } from '../api.js';
 import { nativeCancelIncomingCall, nativeEndCallWindow, nativeShell, nativeShowIncomingCall, onNative } from '../native.js';
 import { useEffect, useRef, useState } from 'react';
 import {
+  ArrowLeft,
+  AudioLines,
+  Flashlight,
+  FlashlightOff,
+  Lock,
   Maximize2,
+  MessageSquareText,
+  Search,
   Mic,
   MicOff,
   Minimize2,
@@ -25,9 +32,9 @@ import Avatar from './Avatar.jsx';
 import { useChatStore } from '../store.js';
 import { playStoredTone, stopTone } from '../sounds.js';
 import { stopVibration, vibrateFor } from '../notify.js';
-import { createCallEngine, TERMINAL_STATUSES } from '../callEngine.js';
+import { CALL_REACTIONS, createCallEngine, TERMINAL_STATUSES } from '../callEngine.js';
 import { getStatusLabel } from '../callStatus.js';
-import { MAX_CALL_PARTICIPANTS, PeerRegistry, canInvite, peersToConnect } from '../callRoom.js';
+import { MAX_CALL_PARTICIPANTS, PeerRegistry, canInvite, matchesContact, peersToConnect, rankCallContacts } from '../callRoom.js';
 import { DEFAULT_ICE_SERVERS, normalizeIceServers } from '../rtc.js';
 import { setAvatarCallsEnabled, useAvatarCallsEnabled } from '../appearance.js';
 import { personaCharacter, usePersona } from '../avatar/persona.js';
@@ -96,24 +103,86 @@ function ParticipantTile({ info, snapshot, video, speakerOn }) {
   );
 }
 
-function AddParticipantPicker({ contacts, onSelect, onClose }) {
+const NOISE_KEY = 'hm:noise-cancellation';
+const isVideoMode = (mode) => mode === 'video';
+
+function ContactRow({ contact, onSelect }) {
   return (
-    <div className="wa-add-participant" role="dialog" aria-modal="true" aria-label="Add participant">
+    <li>
+      <button type="button" onClick={() => onSelect(contact)}>
+        <Avatar name={contact.name} initials={contact.initials ?? contact.name?.slice(0, 2).toUpperCase()} color={contact.color} image={contact.avatar} />
+        <span>{contact.name}{contact.username && contact.name !== `@${contact.username}` ? <small>@{contact.username}</small> : null}</span>
+      </button>
+    </li>
+  );
+}
+
+// "Add people" during a call: frequently contacted first, then everyone else, with search.
+function AddParticipantPicker({ contacts, onSelect, onClose }) {
+  const messages = useChatStore((state) => state.messages);
+  const callLogs = useChatStore((state) => state.callLogs);
+  const [searching, setSearching] = useState(false);
+  const [query, setQuery] = useState('');
+  const visible = contacts.filter((person) => matchesContact(person, query));
+  const { frequent, others } = rankCallContacts(visible, { messages, callLogs });
+  return (
+    <div className="wa-add-participant" role="dialog" aria-modal="true" aria-label="Add people">
       <header>
-        <strong>Add participant</strong>
-        <button type="button" className="wa-call-circle-btn" onClick={onClose} aria-label="Close"><X size={18} /></button>
+        <button type="button" className="wa-call-circle-btn" onClick={onClose} aria-label="Close"><ArrowLeft size={18} /></button>
+        {searching ? (
+          <input autoFocus className="wa-add-search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search name or @handle" aria-label="Search contacts" />
+        ) : (
+          <span className="wa-add-title"><strong>Add people</strong><small>{contacts.length} contact{contacts.length === 1 ? '' : 's'}</small></span>
+        )}
+        <button type="button" className="wa-call-circle-btn" onClick={() => { setSearching((open) => !open); setQuery(''); }} aria-label={searching ? 'Close search' : 'Search'}>{searching ? <X size={18} /> : <Search size={18} />}</button>
       </header>
       {contacts.length === 0 && <p>Everyone you chat with is already in this call.</p>}
-      <ul>
-        {contacts.map((contact) => (
-          <li key={contact.id}>
-            <button type="button" onClick={() => onSelect(contact)}>
-              <Avatar name={contact.name} initials={contact.initials ?? contact.name?.slice(0, 2).toUpperCase()} color={contact.color} image={contact.avatar} />
-              <span>{contact.name}{contact.username ? <small>@{contact.username}</small> : null}</span>
+      {contacts.length > 0 && visible.length === 0 && <p>No contacts match “{query}”.</p>}
+      <div className="wa-add-scroll">
+        {frequent.length > 0 && <h3>Frequently contacted</h3>}
+        <ul>{frequent.map((contact) => <ContactRow key={contact.id} contact={contact} onSelect={onSelect} />)}</ul>
+        {others.length > 0 && <h3>{frequent.length ? 'Other contacts' : 'Contacts'}</h3>}
+        <ul>{others.map((contact) => <ContactRow key={contact.id} contact={contact} onSelect={onSelect} />)}</ul>
+      </div>
+    </div>
+  );
+}
+
+// The ⋯ sheet: quick reactions, then Share screen, Send message and Noise cancellation.
+function CallMoreSheet({ onReact, canShareScreen, screenSharing, onShareScreen, onSendMessage, noiseSuppression, onNoiseSuppression, onClose }) {
+  return (
+    <div className="wa-call-more-layer" onClick={onClose} role="presentation">
+      <div className="wa-call-more" onClick={(event) => event.stopPropagation()} role="dialog" aria-label="More call options">
+        <div className="wa-call-reactions" role="toolbar" aria-label="Send a reaction">
+          {CALL_REACTIONS.map((emoji) => <button type="button" key={emoji} onClick={() => onReact(emoji)} aria-label={`React ${emoji}`}>{emoji}</button>)}
+        </div>
+        <div className="wa-call-more-menu">
+          {canShareScreen && (
+            <button type="button" onClick={onShareScreen}>
+              <span className="wa-call-more-icon"><MonitorUp size={20} /></span>
+              <span>{screenSharing ? 'Stop sharing screen' : 'Share screen'}</span>
             </button>
-          </li>
-        ))}
-      </ul>
+          )}
+          <button type="button" onClick={onSendMessage}>
+            <span className="wa-call-more-icon"><MessageSquareText size={20} /></span>
+            <span>Send message</span>
+          </button>
+          <button type="button" role="switch" aria-checked={noiseSuppression} onClick={() => onNoiseSuppression(!noiseSuppression)}>
+            <span className="wa-call-more-icon"><AudioLines size={20} /></span>
+            <span>Noise cancellation</span>
+            <span className={`wa-switch${noiseSuppression ? ' on' : ''}`} aria-hidden="true"><span /></span>
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// Reactions float up from the bottom and fade; mine and everyone else's.
+function FloatingReactions({ items }) {
+  return (
+    <div className="wa-call-floating-reactions" aria-live="polite">
+      {items.map((item) => <span key={item.id} className={`wa-call-floating-reaction${item.mine ? ' is-mine' : ''}`} style={{ left: `${item.x}%` }} aria-label={item.label}>{item.emoji}</span>)}
     </div>
   );
 }
@@ -127,6 +196,7 @@ export default function CallOverlay({
   onSignalHandled,
   onCallChange,
   onClose,
+  onOpenChat,
 }) {
   const [snapshot, setSnapshot] = useState(() => ({
     status: 'idle', mode: call.mode, error: '', localStream: null, remoteStream: null,
@@ -503,6 +573,42 @@ export default function CallOverlay({
     : allEngines().forEach((engine) => engine.startScreenShare()));
   const canShareScreen = Boolean(navigator.mediaDevices?.getDisplayMedia);
 
+  // --- ⋯ sheet: reactions, noise cancellation, flash ---
+  const [moreOpen, setMoreOpen] = useState(false);
+  const [floating, setFloating] = useState([]);
+  const reactionTimersRef = useRef([]);
+  useEffect(() => () => reactionTimersRef.current.forEach(clearTimeout), []);
+  function showReaction(emoji, { mine, label: spoken }) {
+    const id = `${Date.now()}-${Math.random()}`;
+    setFloating((list) => [...list.slice(-11), { id, emoji, mine, label: spoken, x: 10 + Math.random() * 70 }]);
+    reactionTimersRef.current.push(setTimeout(() => setFloating((list) => list.filter((item) => item.id !== id)), 2600));
+  }
+  const sendReaction = (emoji) => {
+    const sent = allEngines().map((engine) => engine.sendReaction(emoji)).some(Boolean);
+    if (sent) showReaction(emoji, { mine: true, label: `You reacted ${emoji}` });
+    setMoreOpen(false);
+  };
+  const [noisePreference, setNoisePreference] = useState(() => {
+    try { return localStorage.getItem(NOISE_KEY) !== 'off'; } catch { return true; }
+  });
+  const setNoiseCancellation = (enabled) => {
+    setNoisePreference(enabled);
+    try { localStorage.setItem(NOISE_KEY, enabled ? 'on' : 'off'); } catch { /* private mode */ }
+    allEngines().forEach((engine) => engine.setNoiseSuppression(enabled));
+  };
+  // Capture starts with suppression on; a saved "off" is applied once each leg is up.
+  useEffect(() => {
+    if (status === 'connected' && !noisePreference) allEngines().forEach((engine) => engine.setNoiseSuppression(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status, localStream]);
+  const torchAvailable = isVideoMode(callMode) && Boolean(engineRef.current?.torchAvailable?.());
+  const toggleTorch = () => allEngines().forEach((engine) => engine.setTorch(!snapshot.torch));
+  const sendMessageToPeer = () => {
+    setMoreOpen(false);
+    minimizeCall();
+    onOpenChat?.(call.peerId);
+  };
+
   // Native picture-in-picture for the remote video (where the browser offers it).
   const canNativePip = typeof document !== 'undefined' && document.pictureInPictureEnabled && Boolean(remoteStream) && remoteHasVideo;
   const toggleNativePip = async () => {
@@ -614,6 +720,20 @@ export default function CallOverlay({
   const peerName = peer?.name ?? 'Unknown';
   const extraPeers = Object.entries(extraSnapshots).map(([peerId, item]) => ({ peerId, snapshot: item, info: chats.find((chat) => chat.id === peerId) ?? call.members?.find((member) => member.id === peerId) ?? { id: peerId, name: `@${peerId.slice(0, 6)}`, initials: '??' } }));
   const groupGrid = extraPeers.length > 0;
+  // Reactions from the main peer and every other participant, each shown once.
+  const seenReactionsRef = useRef(new Set());
+  const reactionSources = [[call.peerId, snapshot.remoteReaction, peerName], ...extraPeers.map((item) => [item.peerId, item.snapshot.remoteReaction, item.info.name])];
+  const reactionSignature = reactionSources.map(([id, reaction]) => (reaction ? `${id}:${reaction.at}` : '')).join('|');
+  useEffect(() => {
+    for (const [id, reaction, name] of reactionSources) {
+      if (!reaction) continue;
+      const key = `${id}:${reaction.at}:${reaction.emoji}`;
+      if (seenReactionsRef.current.has(key)) continue;
+      seenReactionsRef.current.add(key);
+      showReaction(reaction.emoji, { mine: false, label: `${name} reacted ${reaction.emoji}` });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reactionSignature]);
   const canSwapTile = !groupGrid || minimized;
   const label = getStatusLabel({ status, direction: call.direction, mode: callMode, isOnline, answered, elapsed, group: Boolean(call.invite) || extraPeers.length > 0 });
   const incomingRinging = call.direction === 'incoming' && status === 'idle';
@@ -733,7 +853,7 @@ export default function CallOverlay({
 
           <div className="wa-call-header-info">
             <h1 className="wa-call-peer-title">{call.groupName ? call.groupName : extraPeers.length ? `${peerName} +${extraPeers.length}` : peerName}</h1>
-            <span className="wa-call-status-badge">{label}</span>
+            <span className="wa-call-status-badge">{!terminal && <Lock size={11} className="wa-call-lock" aria-label="End-to-end encrypted" />}{label}</span>
           </div>
 
           {!incomingRinging && !terminal ? (
@@ -762,6 +882,18 @@ export default function CallOverlay({
                 aria-label="Switch camera"
               >
                 <SwitchCamera size={20} />
+              </button>
+            )}
+            {torchAvailable && (
+              <button
+                type="button"
+                className={`wa-call-circle-btn ${snapshot.torch ? 'active' : ''}`}
+                onClick={toggleTorch}
+                title={snapshot.torch ? 'Turn off flash' : 'Turn on flash'}
+                aria-label={snapshot.torch ? 'Turn off flash' : 'Turn on flash'}
+                aria-pressed={snapshot.torch}
+              >
+                {snapshot.torch ? <FlashlightOff size={20} /> : <Flashlight size={20} />}
               </button>
             )}
             <button
@@ -837,6 +969,20 @@ export default function CallOverlay({
         {/* REMOTE AUDIO ELEMENT (HANDLES SOUND OUTPUT IN BOTH AUDIO & VIDEO CALLS) */}
         <audio ref={remoteAudioRef} autoPlay playsInline muted={!speakerOn} />
 
+        <FloatingReactions items={floating} />
+        {moreOpen && !incomingRinging && !terminal && (
+          <CallMoreSheet
+            onReact={sendReaction}
+            canShareScreen={canShareScreen && status === 'connected'}
+            screenSharing={screenSharing}
+            onShareScreen={() => { setMoreOpen(false); toggleScreenShare(); }}
+            onSendMessage={sendMessageToPeer}
+            noiseSuppression={noisePreference}
+            onNoiseSuppression={setNoiseCancellation}
+            onClose={() => setMoreOpen(false)}
+          />
+        )}
+
         {/* ERROR / ROOM NOTICE */}
         {error && <div className="wa-call-error-toast" role="alert">{error}</div>}
         {!error && notice && <div className="wa-call-error-toast is-notice" role="status">{notice}</div>}
@@ -894,9 +1040,11 @@ export default function CallOverlay({
           <footer className="wa-video-bottom-dock">
             <button
               type="button"
-              className="wa-dock-btn"
+              className={`wa-dock-btn ${moreOpen ? 'active' : ''}`}
+              onClick={() => setMoreOpen((open) => !open)}
               title="More options"
               aria-label="More options"
+              aria-expanded={moreOpen}
             >
               <MoreHorizontal size={22} />
             </button>
@@ -984,8 +1132,10 @@ export default function CallOverlay({
               {/* Row 2 */}
               <button
                 type="button"
-                className="wa-action-cell"
+                className={`wa-action-cell ${moreOpen ? 'selected' : ''}`}
+                onClick={() => setMoreOpen((open) => !open)}
                 title="More options"
+                aria-expanded={moreOpen}
               >
                 <span className="wa-action-bubble">
                   <MoreHorizontal size={24} />

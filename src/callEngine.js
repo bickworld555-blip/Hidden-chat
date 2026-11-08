@@ -21,6 +21,8 @@ export const RECONNECT_GRACE_MS = 15_000;
 export const ICE_RESTART_DELAY_MS = 2_000;
 export const MAX_ICE_RESTARTS = 2;
 export const VIDEO_REQUEST_TIMEOUT_MS = 30_000;
+// Quick reactions that float over the call, sent to everyone in it.
+export const CALL_REACTIONS = Object.freeze(['👍', '❤️', '😂', '😮', '😢', '🙏']);
 
 const CAMERA_LABELS = {
   environment: /back|rear|environment|world/i,
@@ -115,6 +117,12 @@ export function createCallEngine({
     remoteAvatar: false,
     // null | 'outgoing' (we asked) | 'incoming' (they asked)
     videoRequest: null,
+    // Browser noise suppression on our microphone (on by default, like the capture constraints).
+    noiseSuppression: true,
+    // The back camera's flash, where the device exposes it.
+    torch: false,
+    // The latest reaction from the other side: { emoji, at } (a new object each time, so repeats re-trigger).
+    remoteReaction: null,
   };
 
   let connection = null;
@@ -624,6 +632,9 @@ export function createCallEngine({
       case 'video-cancel':
         if (state.videoRequest === 'incoming') clearVideoRequest();
         return;
+      case 'reaction':
+        if (CALL_REACTIONS.includes(signal.emoji)) set({ remoteReaction: { emoji: signal.emoji, at: Date.now() } });
+        return;
       default:
         return;
     }
@@ -714,6 +725,42 @@ export function createCallEngine({
       state.localStream?.getAudioTracks().forEach((track) => { track.enabled = !muted; });
       set({ muted: Boolean(muted) });
       announceMedia();
+    },
+
+    // Turns the microphone's noise suppression on or off on the live track (no renegotiation).
+    async setNoiseSuppression(enabled) {
+      const track = state.localStream?.getAudioTracks()[0];
+      if (closed || !track?.applyConstraints) return false;
+      try {
+        await track.applyConstraints({ ...track.getConstraints?.(), noiseSuppression: Boolean(enabled), echoCancellation: true });
+      } catch {
+        return false;
+      }
+      set({ noiseSuppression: Boolean(enabled) });
+      return true;
+    },
+
+    // Whether the current camera has a controllable flash (usually only the back camera on phones).
+    torchAvailable() {
+      const track = cameraTrack();
+      return Boolean(track?.getCapabilities?.()?.torch);
+    },
+
+    async setTorch(on) {
+      const track = cameraTrack();
+      if (closed || !track?.getCapabilities?.()?.torch) return false;
+      try {
+        await track.applyConstraints({ advanced: [{ torch: Boolean(on) }] });
+      } catch {
+        return false;
+      }
+      set({ torch: Boolean(on) });
+      return true;
+    },
+
+    sendReaction(emoji) {
+      if (closed || state.status !== 'connected' || !CALL_REACTIONS.includes(emoji)) return false;
+      return sendSignal({ type: 'reaction', emoji });
     },
 
     setCameraOff(cameraOff) {
@@ -864,6 +911,7 @@ export function createCallEngine({
       const current = cameraTrack();
       if (!sender || !current) return false;
       switchingCamera = true;
+      if (state.torch) set({ torch: false });
       const previousFacing = state.facing;
       const nextFacing = previousFacing === 'user' ? 'environment' : 'user';
       const currentDeviceId = current.getSettings?.().deviceId ?? '';

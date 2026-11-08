@@ -710,7 +710,7 @@ test('the React overlay delegates all WebRTC work to the engine and no public re
   const app = await read('../src/App.jsx');
   const engine = await read('../src/callEngine.js');
 
-  assert.ok(overlay.includes("import { createCallEngine, TERMINAL_STATUSES } from '../callEngine.js'"));
+  assert.match(overlay, /import \{[^}]*\bcreateCallEngine\b[^}]*\} from '\.\.\/callEngine\.js'/);
   assert.doesNotMatch(overlay, /new RTCPeerConnection|createOffer|createAnswer|addIceCandidate|setRemoteDescription/);
   assert.doesNotMatch(overlay, /onLoadedMetadata/, 'playback is owned by one hook, not per-element handlers');
   assert.doesNotMatch(overlay + app + engine, /openrelay|metered\.ca/i);

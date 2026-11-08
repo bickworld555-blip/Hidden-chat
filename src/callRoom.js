@@ -63,3 +63,32 @@ export class PeerRegistry {
     return [...this.byPeer.values()];
   }
 }
+
+// "Add people": the most-contacted people first (messages in the last 30 days plus calls, calls weighted),
+// then everyone else alphabetically. `messages` is the store's chatId → messages map; `callLogs` its call log.
+export const FREQUENT_LIMIT = 7;
+const RECENT_MS = 30 * 24 * 60 * 60 * 1000;
+
+export function rankCallContacts(contacts, { messages = {}, callLogs = [], now = Date.now() } = {}) {
+  const score = new Map();
+  for (const [chatId, list] of Object.entries(messages)) {
+    const recent = (list ?? []).filter((message) => now - Date.parse(message.timestamp) < RECENT_MS).length;
+    if (recent) score.set(chatId, (score.get(chatId) ?? 0) + recent);
+  }
+  for (const entry of callLogs) {
+    if (entry?.peerId && now - Date.parse(entry.timestamp) < RECENT_MS) score.set(entry.peerId, (score.get(entry.peerId) ?? 0) + 5);
+  }
+  const label = (person) => String(person.name || person.username || '').toLocaleLowerCase();
+  const byName = (a, b) => label(a).localeCompare(label(b));
+  const frequent = contacts.filter((person) => score.get(person.id) > 0)
+    .sort((a, b) => score.get(b.id) - score.get(a.id) || byName(a, b))
+    .slice(0, FREQUENT_LIMIT);
+  const others = contacts.filter((person) => !frequent.includes(person)).sort(byName);
+  return { frequent, others };
+}
+
+export function matchesContact(person, query) {
+  const needle = String(query ?? '').trim().toLocaleLowerCase();
+  if (!needle) return true;
+  return [person.name, person.username].some((value) => String(value ?? '').toLocaleLowerCase().includes(needle));
+}

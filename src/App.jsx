@@ -616,6 +616,7 @@ export default function App() {
         onSignalHandled={(signalId) => setCallSignals((current) => current.filter((event) => event.signalId !== signalId))}
         onCallChange={setCall}
         onClose={handleCallEnd}
+        onOpenChat={(id) => openChatRef.current?.(id)}
       />}
     </main>
   );
