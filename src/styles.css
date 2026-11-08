@@ -1769,8 +1769,8 @@ html, body { overflow-x: hidden; }
 .wa-call-backdrop.is-pip {
   position: fixed;
   inset: auto 16px calc(84px + env(safe-area-inset-bottom)) auto;
-  width: 200px;
-  height: 280px;
+  width: min(172px, calc(100vw - 16px));
+  height: min(228px, calc(100dvh - 16px));
   z-index: 9999;
   display: block;
   background: transparent;
@@ -1781,7 +1781,7 @@ html, body { overflow-x: hidden; }
   animation: none;
   touch-action: none;
 }
-.wa-call-backdrop.is-pip.is-pip-audio { height: 92px; width: 260px; }
+.wa-call-backdrop.is-pip.is-pip-audio { height: 92px; width: min(260px, calc(100vw - 16px)); }
 .wa-call-backdrop.is-pip .wa-call-screen { width: 100%; height: 100%; max-width: none; border-radius: 16px; border: 0; box-shadow: none; }
 .wa-call-backdrop.is-pip .wa-call-header,
 .wa-call-backdrop.is-pip .wa-video-side-toolbar,
@@ -1789,10 +1789,10 @@ html, body { overflow-x: hidden; }
 .wa-call-backdrop.is-pip .wa-audio-bottom-sheet,
 .wa-call-backdrop.is-pip .wa-video-request,
 .wa-call-backdrop.is-pip .wa-call-error-toast,
-.wa-call-backdrop.is-pip .wa-video-tile.is-pip,
 .wa-call-backdrop.is-pip .wa-pip-label-overlay,
 .wa-call-backdrop.is-pip .wa-share-badge { display: none; }
 .wa-call-backdrop.is-pip .wa-video-tile.is-full { inset: 0; }
+.wa-call-backdrop.is-pip .wa-video-tile.is-pip { width: 54px; height: 72px; top: 8px; right: 8px; bottom: auto; border-radius: 8px; }
 .wa-call-backdrop.is-pip .wa-call-audio-body { padding-top: 46px; justify-content: flex-start; }
 .wa-call-backdrop.is-pip .wa-call-big-avatar-wrap .avatar { width: 36px; height: 36px; font-size: 12px; }
 .wa-call-backdrop.is-pip .wa-waiting-avatar .avatar { width: 56px; height: 56px; font-size: 16px; }
@@ -1800,7 +1800,7 @@ html, body { overflow-x: hidden; }
 .wa-pip-bar {
   position: absolute;
   left: 0; right: 0; bottom: 0;
-  z-index: 5;
+  z-index: 30;
   display: flex;
   align-items: center;
   gap: 6px;
@@ -2070,7 +2070,7 @@ html, body { overflow-x: hidden; }
 }
 
 .wa-video-tile {
-  transition: all 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+  transition: border-color .2s ease, box-shadow .2s ease;
 }
 
 /* Full-screen video view */
@@ -2095,11 +2095,11 @@ html, body { overflow-x: hidden; }
   box-shadow: 0 8px 30px rgba(0, 0, 0, 0.7);
   border: 2px solid rgba(255, 255, 255, 0.25);
   cursor: pointer;
+  touch-action: none;
   background: #182229;
 }
 
 .wa-video-tile.is-pip:hover {
-  transform: scale(1.04);
   border-color: rgba(255, 255, 255, 0.6);
   box-shadow: 0 12px 36px rgba(0, 0, 0, 0.85);
 }
@@ -2113,11 +2113,16 @@ html, body { overflow-x: hidden; }
 
 .wa-video-tile .wa-video-element,
 .wa-video-element {
+  position: absolute;
+  inset: 0;
   width: 100% !important;
   height: 100% !important;
-  object-fit: cover !important;
+  object-fit: contain;
   background: #000;
   display: block;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
 }
 
 .wa-video-element.mirror {

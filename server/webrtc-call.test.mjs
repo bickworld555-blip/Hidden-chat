@@ -182,6 +182,50 @@ test('video call connects end to end through the server and both sides receive a
   }
 });
 
+test('video frames continue in both directions after connection and camera replacement', async () => {
+  const sources = [];
+  const media = async (constraints) => {
+    const tracks = [];
+    if (constraints.audio) tracks.push(new wrtc.nonstandard.RTCAudioSource().createTrack());
+    if (constraints.video) {
+      const source = new wrtc.nonstandard.RTCVideoSource();
+      sources.push(source);
+      tracks.push(source.createTrack());
+    }
+    tracks.forEach((track) => openTracks.add(track));
+    return new wrtc.MediaStream(tracks);
+  };
+  const { caller, callee, cleanup } = await fullCall('video', { callerMedia: media, calleeMedia: media });
+  let timer;
+  const sinks = [];
+  try {
+    await callee.engine.accept();
+    await until(() => caller.engine.state.status === 'connected' && callee.engine.state.status === 'connected', { label: 'connected' });
+    await until(() => remoteKinds(caller.engine).includes('video') && remoteKinds(callee.engine).includes('video'), { label: 'remote videos' });
+    const frames = [0, 0];
+    for (const [index, engine] of [caller.engine, callee.engine].entries()) {
+      const sink = new wrtc.nonstandard.RTCVideoSink(engine.state.remoteStream.getVideoTracks()[0]);
+      sink.onframe = () => { frames[index] += 1; };
+      sinks.push(sink);
+    }
+    const frame = { width: 64, height: 48, data: new Uint8ClampedArray(64 * 48 * 3 / 2) };
+    timer = setInterval(() => sources.forEach((source) => source.onFrame(frame)), 50);
+    await until(() => frames.every((count) => count >= 5), { label: 'initial video frames' });
+    const before = [...frames];
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    assert.ok(frames.every((count, index) => count > before[index] + 3), `frames stopped: ${before} -> ${frames}`);
+    assert.equal(await caller.engine.flipCamera(), true);
+    const afterSwitch = frames[1];
+    await until(() => frames[1] >= afterSwitch + 5, { label: 'frames after camera switch' });
+  } finally {
+    clearInterval(timer);
+    sinks.forEach((sink) => sink.stop());
+    caller.engine.hangUp();
+    callee.engine.dispose();
+    cleanup();
+  }
+});
+
 test('voice call connects and upgrades to video with a renegotiated video track for the peer', async () => {
   const { caller, callee, cleanup } = await fullCall('audio');
   try {

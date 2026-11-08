@@ -44,6 +44,11 @@ Public tunneling exposes this demo to the internet. Use test accounts only, keep
 
 ## WebRTC calls
 
+Drag the small video tile to reposition it during a call; tap it (or use Enter
+or Space) to swap the two views. Minimize the call to keep both views in a
+floating window while using chat. Drag its control bar to move it, and use
+Return to call to restore the full view.
+
 The server returns public STUN servers for ICE candidate discovery. Networks with symmetric or restrictive NAT/firewalls (most mobile data connections) need a TURN relay; without one, calls between such devices will not connect. The simplest setup is `RELAY_TURN_URL` with a comma-separated list of ports/transports for the same relay, so clients can fall back from UDP to TCP to TLS on 443:
 
 ```powershell

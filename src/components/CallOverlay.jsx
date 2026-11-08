@@ -53,17 +53,26 @@ async function loadIceServers(sessionToken) {
   return normalizeIceServers(DEFAULT_ICE_SERVERS);
 }
 
-// Binds a MediaStream to a media element exactly once per stream and lets autoplay do the rest.
 function useMediaElement(ref, stream, enabled = true) {
+  const tracksKey = stream?.getTracks().map((track) => track.id).join('|') ?? '';
   useEffect(() => {
     const element = ref.current;
     if (!element || !enabled) return undefined;
-    if (element.srcObject !== (stream ?? null)) element.srcObject = stream ?? null;
-    if (stream) element.play?.().catch(() => {});
-    return () => {
-      if (element.srcObject === stream) element.srcObject = null;
+    let boundStream = null;
+    const bind = () => {
+      boundStream = stream ? new MediaStream(stream.getTracks()) : null;
+      element.srcObject = boundStream;
+      if (boundStream) element.play?.().catch((error) => console.warn('Call media playback failed:', error));
     };
-  }, [ref, stream, enabled]);
+    bind();
+    stream?.addEventListener('addtrack', bind);
+    stream?.addEventListener('removetrack', bind);
+    return () => {
+      stream?.removeEventListener('addtrack', bind);
+      stream?.removeEventListener('removetrack', bind);
+      if (element.srcObject === boundStream) element.srcObject = null;
+    };
+  }, [ref, stream, enabled, tracksKey]);
 }
 
 // One extra participant of a group call: their video (or avatar) plus a hidden audio element.
@@ -458,17 +467,24 @@ export default function CallOverlay({
 
   // In-app floating window: dragged by its bar, kept inside the viewport; a tap anywhere restores it.
   const [pipPosition, setPipPosition] = useState(null);
+  const [tilePosition, setTilePosition] = useState(null);
   const [restoring, setRestoring] = useState(false);
   const dragRef = useRef(null);
   const draggedRef = useRef(false);
+  const tileDragRef = useRef(null);
+  const tileDraggedRef = useRef(false);
+  const floatingRef = useRef(null);
+  const stageRef = useRef(null);
   const restoreCall = () => {
     dragRef.current = null;
+    setTilePosition(null);
     setMinimized(false);
     setRestoring(true);
     window.setTimeout(() => setRestoring(false), 260);
   };
   const minimizeCall = () => {
     if (document.pictureInPictureElement) document.exitPictureInPicture().catch(() => {});
+    setTilePosition(null);
     setMinimized(true);
   };
   const onPipPointerDown = (event) => {
@@ -482,8 +498,8 @@ export default function CallOverlay({
     if (!drag) return;
     if (!drag.moved && Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) < 6) return;
     drag.moved = true;
-    const x = Math.min(Math.max(8, event.clientX - drag.offsetX), window.innerWidth - drag.width - 8);
-    const y = Math.min(Math.max(8, event.clientY - drag.offsetY), window.innerHeight - drag.height - 8);
+    const x = Math.max(0, Math.min(event.clientX - drag.offsetX, window.innerWidth - drag.width));
+    const y = Math.max(0, Math.min(event.clientY - drag.offsetY, window.innerHeight - drag.height));
     setPipPosition({ x, y });
   };
   const onPipPointerUp = (event) => {
@@ -492,8 +508,60 @@ export default function CallOverlay({
     event.currentTarget.releasePointerCapture?.(event.pointerId);
     // The click that follows a drag must not restore the window.
     draggedRef.current = Boolean(drag?.moved);
-    if (drag && !drag.moved) restoreCall();
   };
+  const onTilePointerDown = (event) => {
+    if (event.button !== 0) return;
+    event.stopPropagation();
+    const tile = event.currentTarget.getBoundingClientRect();
+    const stage = stageRef.current.getBoundingClientRect();
+    tileDragRef.current = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, x: tile.left - stage.left, y: tile.top - stage.top, width: tile.width, height: tile.height, moved: false };
+    tileDraggedRef.current = false;
+    event.currentTarget.setPointerCapture(event.pointerId);
+  };
+  const onTilePointerMove = (event) => {
+    const drag = tileDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    const dx = event.clientX - drag.startX;
+    const dy = event.clientY - drag.startY;
+    if (!drag.moved && Math.hypot(dx, dy) < 6) return;
+    drag.moved = true;
+    const stage = stageRef.current.getBoundingClientRect();
+    setTilePosition({ x: Math.max(0, Math.min(drag.x + dx, stage.width - drag.width)), y: Math.max(0, Math.min(drag.y + dy, stage.height - drag.height)) });
+  };
+  const onTilePointerUp = (event) => {
+    const drag = tileDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    tileDraggedRef.current = drag.moved;
+    tileDragRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+  };
+  const swapTile = (event) => {
+    event.stopPropagation();
+    if (tileDraggedRef.current) { tileDraggedRef.current = false; return; }
+    setSwapped((value) => !value);
+  };
+  const tileProps = {
+    onPointerDown: onTilePointerDown,
+    onPointerMove: onTilePointerMove,
+    onPointerUp: onTilePointerUp,
+    onPointerCancel: onTilePointerUp,
+    onClick: swapTile,
+    onKeyDown: (event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); swapTile(event); } },
+    role: 'button',
+    tabIndex: 0,
+    style: tilePosition ? { left: tilePosition.x, top: tilePosition.y, right: 'auto', bottom: 'auto' } : undefined,
+  };
+  useEffect(() => {
+    const clamp = () => {
+      if (floatingRef.current && minimized) {
+        const rect = floatingRef.current.getBoundingClientRect();
+        setPipPosition({ x: Math.max(0, Math.min(rect.left, window.innerWidth - rect.width)), y: Math.max(0, Math.min(rect.top, window.innerHeight - rect.height)) });
+      }
+      setTilePosition(null);
+    };
+    window.addEventListener('resize', clamp);
+    return () => window.removeEventListener('resize', clamp);
+  }, [minimized]);
 
   const peerName = peer?.name ?? 'Unknown';
   const extraPeers = Object.entries(extraSnapshots).map(([peerId, item]) => ({ peerId, snapshot: item, info: chats.find((chat) => chat.id === peerId) ?? { id: peerId, name: `@${peerId.slice(0, 6)}`, initials: '??' } }));
@@ -505,6 +573,7 @@ export default function CallOverlay({
 
   return (
     <div
+      ref={floatingRef}
       className={`wa-call-backdrop ${minimized ? 'is-pip' : ''} ${minimized && !isVideo ? 'is-pip-audio' : ''} ${restoring ? 'is-restoring' : ''}`}
       style={minimized && pipPosition ? { left: pipPosition.x, top: pipPosition.y, right: 'auto', bottom: 'auto' } : undefined}
       onClick={minimized ? (event) => { const dragged = draggedRef.current; draggedRef.current = false; if (!dragged && !event.target.closest('button') && !dragRef.current) restoreCall(); } : undefined}
@@ -521,13 +590,11 @@ export default function CallOverlay({
       <div className={`wa-call-screen ${isVideo ? 'is-video' : 'is-audio'}`} role="dialog" aria-modal={!minimized} aria-label={`${callMode} call with ${peerName}`}>
         {/* VIDEO CALL VIEWPORT */}
         {isVideo && (
-          <div className="wa-video-stage">
+          <div className="wa-video-stage" ref={stageRef}>
             {/* Remote video tile (Full by default, or PiP when swapped) */}
             <div
               className={`wa-video-tile ${swapped ? 'is-pip' : 'is-full'} ${!remoteVideoLive ? 'waiting-remote' : ''}`}
-              onClick={swapped && remoteStream ? () => setSwapped(false) : undefined}
-              role={swapped ? 'button' : undefined}
-              tabIndex={swapped ? 0 : undefined}
+              {...(swapped && remoteStream ? tileProps : {})}
               aria-label={swapped ? 'Swap remote video to full screen' : undefined}
               title={swapped ? 'Tap to enlarge' : undefined}
             >
@@ -561,9 +628,7 @@ export default function CallOverlay({
             {/* Local video tile (PiP by default when remote is connected, or Full while waiting/swapped) */}
             <div
               className={`wa-video-tile ${swapped ? 'is-full' : (remoteStream ? 'is-pip' : 'is-full')} ${cameraOff ? 'camera-off' : ''}`}
-              onClick={!swapped && remoteStream ? () => setSwapped(true) : undefined}
-              role={!swapped && remoteStream ? 'button' : undefined}
-              tabIndex={!swapped && remoteStream ? 0 : undefined}
+              {...(!swapped && remoteStream ? tileProps : {})}
               aria-label={!swapped && remoteStream ? 'Swap self view to full screen' : undefined}
               title={!swapped && remoteStream ? 'Tap to enlarge' : undefined}
             >
