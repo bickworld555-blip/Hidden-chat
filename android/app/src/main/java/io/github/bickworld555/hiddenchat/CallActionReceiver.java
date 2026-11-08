@@ -11,8 +11,9 @@ public class CallActionReceiver extends BroadcastReceiver {
     @Override
     public void onReceive(Context context, Intent intent) {
         if (!ACTION_REJECT.equals(intent.getAction())) return;
-        String callId = intent.getStringExtra(HiddenNativePlugin.EXTRA_CALL_ID);
-        HiddenNativePlugin.cancelCallNotification(context);
-        HiddenNativePlugin.emitCallAction("reject", callId);
+        String callId = intent.getStringExtra(Alerts.EXTRA_CALL_ID);
+        Alerts.cancelIncomingCall(context);
+        // App closed: the service's connection tells the caller. App open (or in the background): the web app does.
+        if (!NativeRelay.declinePendingCall(callId)) HiddenNativePlugin.emitCallAction("reject", callId);
     }
 }

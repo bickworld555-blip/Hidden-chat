@@ -832,11 +832,26 @@ export function createChatServer({
     const owner = await presenceOwner.get(ownerId);
     if (!owner) return () => null;
     const contactIds = owner.privacy === 'contacts' ? new Set((await savedContactIds.all(ownerId)).map((row) => row.id)) : null;
-    const online = userSockets(ownerId).size > 0;
+    const online = isOnline(ownerId);
     return (viewerId) => ({
       userId: ownerId,
       ...presenceFor({ online, lastSeenAt: owner.lastSeenAt, visible: canSeePresence({ ownerId, viewerId, privacy: owner.privacy, ownerContactIds: contactIds }) }),
     });
+  }
+
+  // "Online" means the app is open on screen somewhere: a connection that is backgrounded (the app minimised,
+  // the screen off) or that only keeps the phone reachable (the Android service's relay.background socket)
+  // does not count. Last seen is the moment the last visible connection went away.
+  function isOnline(userId) {
+    for (const socket of userSockets(userId)) if (!socket.backgrounded) return true;
+    return false;
+  }
+
+  async function presenceChanged(userId, wasOnline) {
+    const online = isOnline(userId);
+    if (online === wasOnline) return;
+    if (!online) await db.prepare('UPDATE users SET last_seen_at = ? WHERE id = ?').run(Date.now(), userId);
+    await broadcastPresence(userId);
   }
 
   async function broadcastPresence(userId) {
@@ -1483,6 +1498,25 @@ export function createChatServer({
     response.json((await issueSession(row.user_id, deviceNameFromUserAgent(request.get('user-agent'), 'Linked device'))));
   });
 
+  // Catch-up after a dropped connection: every direct message to or from me newer than `after`, plus my own
+  // recent messages (their ticks may have moved while I was away). Ordered oldest first, capped at 500.
+  app.get('/api/v1/messages/sync', requireSession, async (request, response) => {
+    const after = new Date(String(request.query.after ?? ''));
+    if (Number.isNaN(after.getTime())) return response.status(400).json({ error: 'Give the time of your newest message as ?after=.' });
+    const userId = request.session.user_id;
+    (await expireMessages());
+    const recentOwn = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
+    const rows = await db.prepare(`SELECT id, sender_id AS "senderId", receiver_id AS "receiverId",
+      created_at AS "timestamp", content, status, deleted_at IS NOT NULL AS "deleted",
+      reply_to_id AS "replyToId", forwarded, expires_at AS "expiresAt" FROM messages
+      WHERE (sender_id = ? OR receiver_id = ?)
+        AND (created_at > ? OR (sender_id = ? AND created_at > ?))
+        AND id NOT IN (SELECT message_id FROM message_hidden WHERE user_id = ?)
+      ORDER BY created_at ASC LIMIT 500`)
+      .all(userId, userId, after.toISOString(), userId, recentOwn, userId);
+    response.json(await Promise.all(rows.map(async (row) => ({ ...(await presentMessage(row)), deleted: Boolean(row.deleted) }))));
+  });
+
   app.get('/api/v1/messages', requireSession, async (request, response) => {
     const peerId = String(request.query.peerId ?? '');
     const peer = (await db.prepare("SELECT 1 FROM users WHERE id = ?").get(peerId));
@@ -1546,6 +1580,7 @@ export function createChatServer({
       return;
     }
     request.session = session;
+    request.relayBackground = offered.includes('relay.background');
     if (socket.destroyed || closing) {
       socket.destroy();
       return;
@@ -1560,12 +1595,14 @@ export function createChatServer({
     socket.userId = userId;
     socket.deviceId = deviceId;
     socket.sessionHash = request.session.token_hash;
-    socket.backgrounded = false;
+    // The Android service's own connection only keeps the phone reachable; it never makes the user "online".
+    socket.relayBackground = Boolean(request.relayBackground);
+    socket.backgrounded = socket.relayBackground;
     socket.idle = false;
     socket.awaitingPong = false;
     scheduleHeartbeat(socket);
     if (!connections.has(userId)) connections.set(userId, new Set());
-    const wasOffline = connections.get(userId).size === 0;
+    const wasOnline = isOnline(userId);
     connections.get(userId).add(socket);
 
     let queuedBytes = 0;
@@ -1580,7 +1617,7 @@ export function createChatServer({
     enqueue(async () => {
       json(socket, { type: 'connection:ready', user: request.session.user, presence: await presenceSnapshot(userId) });
       await db.prepare('UPDATE sessions SET last_active_at = ? WHERE token_hash = ?').run(Date.now(), socket.sessionHash);
-      if (wasOffline) await broadcastPresence(userId);
+      await presenceChanged(userId, wasOnline);
     });
     enqueue(deliverPendingMessages);
     async function deliverPendingMessages() {
@@ -1626,7 +1663,9 @@ export function createChatServer({
       try { event = JSON.parse(raw.toString()); } catch { return json(socket, { type: 'error', message: 'Invalid message format.' }); }
 
       if (event.type === 'client:state') {
-        socket.backgrounded = event.visibility !== 'visible';
+        const wasOnline = isOnline(userId);
+        if (!socket.relayBackground) socket.backgrounded = event.visibility !== 'visible';
+        enqueue(() => presenceChanged(userId, wasOnline));
         socket.idle = Boolean(event.idle);
         socket.awaitingPong = false;
         scheduleHeartbeat(socket);
@@ -2000,17 +2039,13 @@ export function createChatServer({
         }
       }
       const sockets = userSockets(userId);
+      const wasOnline = isOnline(userId);
       sockets.delete(socket);
-      if (sockets.size === 0) {
-        connections.delete(userId);
-        const now = Date.now();
-        trackSocketTask(Promise.all([
-          db.prepare('UPDATE users SET last_seen_at = ? WHERE id = ?').run(now, userId),
-          db.prepare('UPDATE sessions SET last_active_at = ? WHERE token_hash = ?').run(now, socket.sessionHash),
-        ]).then(() => (userSockets(userId).size ? null : broadcastPresence(userId))).catch((error) => {
+      if (sockets.size === 0) connections.delete(userId);
+      trackSocketTask(Promise.resolve(db.prepare('UPDATE sessions SET last_active_at = ? WHERE token_hash = ?').run(Date.now(), socket.sessionHash))
+        .then(() => presenceChanged(userId, wasOnline)).catch((error) => {
           console.error('Last seen could not be recorded:', error.code ?? error.name);
         }));
-      }
     });
     socket.on('error', () => {});
   });

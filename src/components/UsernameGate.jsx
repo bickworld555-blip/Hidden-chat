@@ -1,8 +1,34 @@
 import { apiFetch } from '../api.js';
 import { useEffect, useState } from 'react';
-import { ArrowRight, AtSign, Copy, Eye, EyeOff, ShieldAlert, ShieldCheck } from 'lucide-react';
+import { ArrowRight, AtSign, Copy, Eye, EyeOff, Facebook, Instagram, ShieldCheck } from 'lucide-react';
 import ShieldMark from './ShieldMark.jsx';
 import './UsernameGate.css';
+
+// The X (formerly Twitter) mark; lucide only ships the old bird.
+function XLogo({ size = 18 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+      <path fill="currentColor" d="M17.75 3h3.07l-6.7 7.66L22 21h-6.17l-4.83-6.32L5.47 21H2.4l7.17-8.2L2 3h6.33l4.37 5.77L17.75 3Zm-1.08 16.17h1.7L7.4 4.74H5.58l11.09 14.43Z" />
+    </svg>
+  );
+}
+
+// Static for now: the profiles get linked in a later update, so these are images, not dead buttons.
+const SOCIAL_PROFILES = [
+  { id: 'facebook', name: 'Facebook', Icon: Facebook },
+  { id: 'x', name: 'X', Icon: XLogo },
+  { id: 'instagram', name: 'Instagram', Icon: Instagram },
+];
+
+function SocialLinks() {
+  return (
+    <div className="identity-social" aria-label="Hidden Messenger on social media">
+      {SOCIAL_PROFILES.map(({ id, name, Icon }) => (
+        <span key={id} className={`identity-social-icon is-${id}`} role="img" aria-label={name} title={name}><Icon size={18} /></span>
+      ))}
+    </div>
+  );
+}
 
 function IdentityBrand() {
   return (
@@ -144,7 +170,7 @@ export default function UsernameGate({ onAuthenticated, onClose }) {
         <div className="identity-switch">
           {mode === 'register' ? <>Already have an account? <button onClick={() => { setMode('login'); setAvailability(null); setError(''); setShowPassword(false); }}>Sign in</button></> : <>New to Hidden Messenger? <button onClick={() => { setMode('register'); setAvailability(null); setError(''); setShowPassword(false); }}>Create an account</button></>}
         </div>
-        <div className="identity-warning"><ShieldAlert size={15} /><span>Demo accounts use a local server. Use a unique password and don’t store sensitive conversations here.</span></div>
+        <SocialLinks />
       </section>
       </div>
     </div>

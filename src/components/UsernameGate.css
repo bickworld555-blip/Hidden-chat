@@ -264,20 +264,24 @@
   font-weight: 700;
   cursor: pointer;
 }
-.identity-backdrop .identity-warning {
+.identity-backdrop .identity-social {
   display: flex;
-  align-items: flex-start;
-  gap: 7px;
-  margin-top: 20px;
-  padding: 10px;
-  border: 1px solid #f1e7d4;
-  border-radius: 6px;
-  background: #fbf8f0;
-  color: #6d5934;
-  font-size: 11px;
-  line-height: 1.45;
+  justify-content: center;
+  gap: 14px;
+  margin-top: 22px;
 }
-.identity-warning svg { flex: none; margin-top: 1px; }
+.identity-social-icon {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: #fff;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, .12);
+}
+.identity-social-icon.is-facebook { background: #1877f2; }
+.identity-social-icon.is-x { background: #000; }
+.identity-social-icon.is-instagram { background: radial-gradient(circle at 30% 107%, #fdf497 0%, #fd5949 45%, #d6249f 60%, #285aeb 90%); }
 .identity-backdrop .auth-error { margin-top: 9px; font-size: 13px; text-align: center; }
 
 @media (max-width: 480px) {

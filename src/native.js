@@ -37,7 +37,20 @@ function remember(state) {
 export const nativeState = async () => remember(await invoke('getState'));
 export const nativeRequestStartupPermissions = async () => remember(await invoke('requestStartupPermissions'));
 export const nativeRequestBatteryExemption = async () => remember(await invoke('requestBatteryExemption'));
-export const nativeStartBackground = () => invoke('startBackground');
+// The service needs the account before it starts (it stops itself without one), so starting waits for any
+// session hand-over still in flight.
+let sessionSaved = Promise.resolve(null);
+export function nativeSetSession({ origin, token, userId, mutedChats = [], mutedGroups = [] }) {
+  sessionSaved = invoke('setSession', { origin, token, userId, mutedChats, mutedGroups });
+  return sessionSaved;
+}
+export const nativeClearSession = () => invoke('clearSession');
+// A call the background service rang while the app was closed: { event, ice[] } or null.
+export const nativeTakePendingCall = async () => (await invoke('takePendingCall'))?.pending ?? null;
+export const nativeStartBackground = async () => {
+  await sessionSaved;
+  return invoke('startBackground');
+};
 export const nativeStopBackground = () => invoke('stopBackground');
 export const nativeNotify = (options) => invoke('notify', options);
 export const nativeShowIncomingCall = (options) => invoke('showIncomingCall', options);
@@ -71,5 +84,6 @@ export function onNative(eventName, handler) {
 
 export function resetNativeStateForTests() {
   pluginPromise = null;
+  sessionSaved = Promise.resolve(null);
   notificationsEnabled = false;
 }

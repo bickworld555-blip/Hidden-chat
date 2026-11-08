@@ -66,3 +66,17 @@ test('native calls reach the real Capacitor plugin proxy (which answers `then`, 
   assert.equal(nativeAlertsActive({ visibilityState: 'hidden' }), true);
   assert.deepEqual(calls, ['HiddenNative.notify', 'HiddenNative.getState']);
 });
+
+test('after a swipe-away the service keeps its own background-only connection', async () => {
+  const read = (file) => readFile(new URL(`android/app/src/main/java/io/github/bickworld555/hiddenchat/${file}`, root), 'utf8');
+  const service = await read('MessagingService.java');
+  const relay = await read('NativeRelay.java');
+  const activity = await read('MainActivity.java');
+  assert.match(service, /public void onTaskRemoved[\s\S]*NativeRelay\.start\(this\)/, 'swiping away hands over to the native connection');
+  assert.match(service, /return START_STICKY;/, 'Android restarts the service if it kills the process');
+  assert.ok(relay.includes('relay.background'), 'the native connection never makes the user "online"');
+  assert.ok(relay.includes('"message:delivered"'), 'it confirms delivery (two ticks)');
+  assert.match(activity, /onCreate[\s\S]*NativeRelay\.stop\(\)/, 'the open app takes the connection back');
+  const gradle = await readFile(new URL('android/app/build.gradle', root), 'utf8');
+  assert.ok(gradle.includes('com.squareup.okhttp3:okhttp'));
+});

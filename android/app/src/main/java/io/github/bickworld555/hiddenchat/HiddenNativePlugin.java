@@ -1,17 +1,13 @@
 package io.github.bickworld555.hiddenchat;
 
 import android.Manifest;
-import android.app.Notification;
-import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
 import android.os.Build;
 import android.os.PowerManager;
 import android.provider.Settings;
-import androidx.core.app.NotificationCompat;
 import androidx.core.app.NotificationManagerCompat;
-import androidx.core.app.Person;
 import com.getcapacitor.JSObject;
 import com.getcapacitor.PermissionState;
 import com.getcapacitor.Plugin;
@@ -20,8 +16,13 @@ import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.CapacitorPlugin;
 import com.getcapacitor.annotation.Permission;
 import com.getcapacitor.annotation.PermissionCallback;
+import com.getcapacitor.JSArray;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
+import org.json.JSONException;
+import org.json.JSONObject;
 
 /**
  * Native side of the Hidden Messenger shell: runtime permissions, the background connection service,
@@ -37,13 +38,9 @@ import java.util.List;
     }
 )
 public class HiddenNativePlugin extends Plugin {
-    static final String EXTRA_OPEN = "hm_open";
-    static final String EXTRA_CALL_ID = "hm_call_id";
-    static final String EXTRA_CALL = "hm_call";
-    static final String ACTION_ACCEPT = "io.github.bickworld555.hiddenchat.CALL_ACCEPT";
-    static final String ACTION_SHOW_CALL = "io.github.bickworld555.hiddenchat.CALL_SHOW";
-    private static final String CALL_TAG = "incoming_call";
-    private static final int CALL_ID = 2001;
+    static final String EXTRA_OPEN = Alerts.EXTRA_OPEN;
+    static final String EXTRA_CALL_ID = Alerts.EXTRA_CALL_ID;
+    static final String ACTION_ACCEPT = Alerts.ACTION_ACCEPT;
 
     private static HiddenNativePlugin instance;
 
@@ -52,6 +49,13 @@ public class HiddenNativePlugin extends Plugin {
         instance = this;
         NotificationChannels.ensure(getContext());
         handleIntent(getActivity().getIntent());
+    }
+
+    @Override
+    protected void handleOnDestroy() {
+        // The WebView is going away; events must not be queued for a bridge that no longer exists.
+        if (instance == this) instance = null;
+        super.handleOnDestroy();
     }
 
     @Override
@@ -91,7 +95,7 @@ public class HiddenNativePlugin extends Plugin {
     }
 
     static void cancelCallNotification(Context context) {
-        NotificationManagerCompat.from(context).cancel(CALL_TAG, CALL_ID);
+        Alerts.cancelIncomingCall(context);
     }
 
     private void setCallWindow(boolean visibleOverLock) {
@@ -166,98 +170,73 @@ public class HiddenNativePlugin extends Plugin {
         call.resolve();
     }
 
-    private PendingIntent openIntent(String open, int requestCode) {
-        Intent intent = new Intent(getContext(), MainActivity.class)
-            .setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP)
-            .putExtra(EXTRA_OPEN, open);
-        return PendingIntent.getActivity(getContext(), requestCode, intent, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+    /**
+     * The signed-in account for the service's own connection (used once the app is swiped away), with the
+     * muted chats and groups so a closed app stays as quiet as an open one. Called on sign-in and whenever
+     * the app goes to the background.
+     */
+    @PluginMethod
+    public void setSession(PluginCall call) {
+        Set<String> mutedChats = new HashSet<>(stringList(call.getArray("mutedChats")));
+        Set<String> mutedGroups = new HashSet<>(stringList(call.getArray("mutedGroups")));
+        boolean saved = RelaySession.save(getContext(), call.getString("origin"), call.getString("token"), call.getString("userId"), mutedChats, mutedGroups);
+        JSObject result = new JSObject();
+        result.put("saved", saved);
+        call.resolve(result);
+    }
+
+    /** Signing out: forget the account and stop the background connection. */
+    @PluginMethod
+    public void clearSession(PluginCall call) {
+        RelaySession.clear(getContext());
+        NativeRelay.stop();
+        call.resolve();
+    }
+
+    /** A call rung by the service's connection while the app was closed, for the web app to answer. */
+    @PluginMethod
+    public void takePendingCall(PluginCall call) {
+        JSONObject pending = NativeRelay.takePendingCall();
+        JSObject result = new JSObject();
+        if (pending != null) {
+            try {
+                result.put("pending", JSObject.fromJSONObject(pending));
+            } catch (JSONException ignored) {
+                // Nothing usable to hand over.
+            }
+        }
+        call.resolve(result);
+    }
+
+    private static List<String> stringList(JSArray array) {
+        List<String> values = new ArrayList<>();
+        if (array == null) return values;
+        for (int index = 0; index < array.length(); index += 1) {
+            String value = array.optString(index, null);
+            if (value != null && !value.isEmpty()) values.add(value);
+        }
+        return values;
     }
 
     /** A message notification on the direct_messages or group_messages channel, with that channel's sound. */
     @PluginMethod
     public void notify(PluginCall call) {
-        String channel = NotificationChannels.GROUP_MESSAGES.equals(call.getString("channel"))
-            ? NotificationChannels.GROUP_MESSAGES
-            : NotificationChannels.DIRECT_MESSAGES;
-        String tag = call.getString("tag", channel);
-        String open = call.getString("open", "");
-        NotificationCompat.Builder builder = new NotificationCompat.Builder(getContext(), channel)
-            .setSmallIcon(R.drawable.ic_stat_hidden)
-            .setContentTitle(call.getString("title", "Hidden Messenger"))
-            .setContentText(call.getString("body", ""))
-            .setStyle(new NotificationCompat.BigTextStyle().bigText(call.getString("body", "")))
-            .setContentIntent(openIntent(open, tag.hashCode()))
-            .setAutoCancel(true)
-            .setCategory(NotificationCompat.CATEGORY_MESSAGE)
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE);
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
-            builder.setSound(NotificationChannels.rawSound(getContext(), NotificationChannels.soundFor(channel)));
-            builder.setDefaults(NotificationCompat.DEFAULT_VIBRATE);
-        }
+        String channel = call.getString("channel");
+        boolean shown = Alerts.showMessage(getContext(), channel, call.getString("title", "Hidden Messenger"), call.getString("body", ""),
+            call.getString("tag", channel), call.getString("open", ""));
         JSObject result = new JSObject();
-        try {
-            NotificationManagerCompat.from(getContext()).notify(tag, 1, builder.build());
-            result.put("shown", true);
-        } catch (SecurityException missingPermission) {
-            result.put("shown", false);
-        }
+        result.put("shown", shown);
         call.resolve(result);
     }
 
     /** Heads-up / full-screen incoming call with Accept and Reject; the ringtone repeats until it is handled. */
     @PluginMethod
     public void showIncomingCall(PluginCall call) {
-        Context context = getContext();
-        String callId = call.getString("callId", "");
-        String caller = call.getString("callerName", "Hidden Messenger");
-        boolean video = "video".equals(call.getString("mode"));
-
-        Intent show = new Intent(context, MainActivity.class)
-            .setAction(ACTION_SHOW_CALL)
-            .setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP)
-            .putExtra(EXTRA_CALL, true)
-            .putExtra(EXTRA_CALL_ID, callId);
-        Intent accept = new Intent(context, MainActivity.class)
-            .setAction(ACTION_ACCEPT)
-            .setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP)
-            .putExtra(EXTRA_CALL, true)
-            .putExtra(EXTRA_CALL_ID, callId);
-        Intent reject = new Intent(context, CallActionReceiver.class)
-            .setAction(CallActionReceiver.ACTION_REJECT)
-            .putExtra(EXTRA_CALL_ID, callId);
-        int flags = PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT;
-        PendingIntent showIntent = PendingIntent.getActivity(context, 3001, show, flags);
-        PendingIntent acceptIntent = PendingIntent.getActivity(context, 3002, accept, flags);
-        PendingIntent rejectIntent = PendingIntent.getBroadcast(context, 3003, reject, flags);
-
-        Person person = new Person.Builder().setName(caller).setImportant(true).build();
-        NotificationCompat.Builder builder = new NotificationCompat.Builder(context, NotificationChannels.INCOMING_CALLS)
-            .setSmallIcon(R.drawable.ic_stat_hidden)
-            .setContentTitle(caller)
-            .setContentText(video ? "Incoming video call" : "Incoming voice call")
-            .setCategory(NotificationCompat.CATEGORY_CALL)
-            .setPriority(NotificationCompat.PRIORITY_MAX)
-            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-            .setOngoing(true)
-            .setAutoCancel(false)
-            .setContentIntent(showIntent)
-            .setFullScreenIntent(showIntent, true)
-            .setStyle(NotificationCompat.CallStyle.forIncomingCall(person, rejectIntent, acceptIntent).setIsVideo(video));
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
-            builder.setSound(NotificationChannels.rawSound(context, R.raw.incoming_call_ringtone));
-            builder.setVibrate(new long[] { 0, 800, 600, 800, 600 });
-        }
-        Notification notification = builder.build();
-        notification.flags |= Notification.FLAG_INSISTENT;
+        boolean shown = Alerts.showIncomingCall(getContext(), call.getString("callId", ""), call.getString("callerName", "Hidden Messenger"),
+            "video".equals(call.getString("mode")));
+        if (shown) setCallWindow(true);
         JSObject result = new JSObject();
-        try {
-            NotificationManagerCompat.from(context).notify(CALL_TAG, CALL_ID, notification);
-            setCallWindow(true);
-            result.put("shown", true);
-        } catch (SecurityException missingPermission) {
-            result.put("shown", false);
-        }
+        result.put("shown", shown);
         call.resolve(result);
     }
 

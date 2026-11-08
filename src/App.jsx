@@ -1,4 +1,4 @@
-import { apiFetch } from './api.js';
+import { apiFetch, apiUrl } from './api.js';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { activateAccount, addOrActivateAccount, getAccountsState, loadAccounts, removeAccount, updateAccountUser } from './accounts.js';
 import AccountSwitcher from './components/AccountSwitcher.jsx';
@@ -12,7 +12,7 @@ import { initialTabFromUrl } from './pwa.js';
 import { countUnreadConversations, groupRow } from './groupRows.js';
 import { getViewingGroup, readMutedGroups, useMutedGroups } from './groupPrefs.js';
 import { classifyIncoming, groupNotificationText, parseConversationOpenParam, shouldAlertGroup } from './notificationChannels.js';
-import { nativeShell, nativeStartBackground, nativeState, nativeStopBackground, onNative } from './native.js';
+import { nativeClearSession, nativeSetSession, nativeShell, nativeStartBackground, nativeState, nativeStopBackground, nativeTakePendingCall, onNative } from './native.js';
 import PermissionsSheet, { PERMISSIONS_ASKED_KEY } from './components/PermissionsSheet.jsx';
 import Sidebar from './components/Sidebar.jsx';
 import ChatWindow from './components/ChatWindow.jsx';
@@ -21,6 +21,7 @@ import UsernameGate from './components/UsernameGate.jsx';
 import CallOverlay from './components/CallOverlay.jsx';
 import NotificationSettings from './components/NotificationSettings.jsx';
 import AccountSettings from './components/AccountSettings.jsx';
+import { syncMissedMessages } from './messageSync.js';
 import MobileBottomNav from './components/MobileBottomNav.jsx';
 import CallsView from './components/CallsView.jsx';
 import UpdatesView from './components/UpdatesView.jsx';
@@ -173,8 +174,26 @@ export default function App() {
           if (response.ok) mergeHistory(contact.id, await response.json());
         }
         if (cancelled) return;
+        let connectedBefore = false;
         realtime = new RealtimeClient(sessionToken, (event) => {
           if (event.type === 'connection:ready' || (typeof event.type === 'string' && event.type.startsWith('group:'))) setGroupRevision((current) => current + 1);
+          // Reconnected after a drop: catch up on anything that changed meanwhile (the first connect already loaded history).
+          if (event.type === 'connection:ready') {
+            if (!connectedBefore) {
+              // Accept was tapped on a call the background service rang while the app was closed: replay that
+              // offer (and the caller's candidates) as if it had just arrived; the retained "accept" then answers.
+              nativeTakePendingCall().then((pending) => {
+                if (!pending?.event) return;
+                realtime?.onEvent(pending.event);
+                for (const ice of pending.ice ?? []) realtime?.onEvent(ice);
+              }).catch(() => {});
+            }
+            if (connectedBefore) {
+              syncMissedMessages({ sessionToken, userId, acknowledge: (ids) => realtime?.send({ type: 'message:delivered', messageIds: ids }) })
+                .catch(() => { /* the next reconnect retries */ });
+            }
+            connectedBefore = true;
+          }
           // Group messages use their own channel: the group tone, vibration and a "<group>" / "<sender>: text" notification.
           if (event.type === 'group:message') {
             const alert = classifyIncoming(event, userId);
@@ -550,10 +569,24 @@ export default function App() {
     };
   }, [userId]);
 
+  // Android app: hand the account (and current mutes) to the background service, which keeps the phone reachable
+  // after the app is swiped away. Refreshed whenever the app goes to the background so mute changes carry over.
+  const mutedChatIds = useChatStore((state) => state.mutedChatIds);
+  useEffect(() => {
+    if (!nativeShell() || !userId || !sessionToken) return undefined;
+    const origin = new URL(apiUrl('/api/v1/health'), window.location.href).origin;
+    const sync = () => nativeSetSession({ origin, token: sessionToken, userId, mutedChats: useChatStore.getState().mutedChatIds ?? [], mutedGroups: readMutedGroups(userId) });
+    sync();
+    const onHide = () => { if (document.visibilityState === 'hidden') sync(); };
+    document.addEventListener('visibilitychange', onHide);
+    return () => document.removeEventListener('visibilitychange', onHide);
+  }, [userId, sessionToken, mutedChatIds, mutedGroupIds]);
+
   // Signed in: offer the permission walkthrough once per device; in the Android app keep the
   // background connection running (and stop it on sign-out). Native state is re-read on resume.
   useEffect(() => {
     if (!userId) {
+      nativeClearSession();
       nativeStopBackground();
       return undefined;
     }
