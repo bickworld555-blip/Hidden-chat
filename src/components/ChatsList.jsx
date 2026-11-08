@@ -24,7 +24,7 @@ function GroupListRow({ row, onOpen }) {
           </span>
           <span className="wa-row-bottom">
             <span className="wa-preview">{row.preview}</span>
-            <span className="wa-row-indicators">{row.unread > 0 && <span className="wa-badge">{unreadBadge(row.unread)}</span>}</span>
+            <span className="wa-row-indicators">{row.unread > 0 && <span className={`wa-badge ${row.muted ? 'is-muted' : ''}`}>{unreadBadge(row.unread)}</span>}</span>
           </span>
         </span>
       </button>

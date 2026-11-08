@@ -146,7 +146,7 @@ export default function Sidebar({ onPair, onSounds, onNotifications, onSelectCha
               <span className="chat-preview">{chat.preview}</span>
               <span className="chat-row-meta">
                 <span className="row-meta-left"><span className="group-meta"><Users size={12} />Group</span></span>
-                {chat.unread > 0 && <span className="unread-badge">{unreadBadge(chat.unread)}</span>}
+                {chat.unread > 0 && <span className={`unread-badge ${chat.muted ? 'is-muted' : ''}`}>{unreadBadge(chat.unread)}</span>}
               </span>
             </span>
           </button>

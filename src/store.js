@@ -6,6 +6,7 @@ import { haversineDistance, isLiveExpired, parseContact, parseLocation, shouldSe
 import { mergeMessageStatus } from './messageStatus.js';
 import { formatMessageTime } from './time.js';
 import { splitLinks } from './contactBook.js';
+import { scheduledCallPreview } from './groupChat.js';
 
 const EMPTY_MESSAGES = Object.freeze([]);
 
@@ -21,6 +22,8 @@ export function previewFor(content) {
   if (content.startsWith('file:')) return '📎 Attachment';
   if (content.startsWith('location:')) return `📍 ${parseLocation(content)?.name || 'Location'}`;
   if (content.startsWith('live:')) return '📍 Live location';
+  const scheduled = scheduledCallPreview(content);
+  if (scheduled) return scheduled;
   if (content.startsWith('contact:')) return `👤 ${parseContact(content)?.name || 'Contact'}`;
   if (content.startsWith('call:')) {
     try {

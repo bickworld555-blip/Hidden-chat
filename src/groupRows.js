@@ -11,7 +11,7 @@ export function groupPreviewText(group, userId) {
   return group.lastSenderName ? `${group.lastSenderName}: ${text}` : text;
 }
 
-export function groupRow(group, userId) {
+export function groupRow(group, userId, mutedIds = []) {
   const lastActivity = group.lastMessageAt ?? group.createdAt ?? null;
   return {
     kind: 'group',
@@ -20,6 +20,7 @@ export function groupRow(group, userId) {
     preview: groupPreviewText(group, userId),
     time: group.lastMessageAt ? formatMessageTime(group.lastMessageAt) : '',
     unread: Number(group.unread) || 0,
+    muted: mutedIds.includes(group.id),
     lastActivityAt: lastActivity === null ? null : new Date(lastActivity).toISOString(),
   };
 }
@@ -50,6 +51,7 @@ export function mergeGroupRows(orderedChats, groupRows, { leadingIds = [] } = {}
   return [...head, ...rest];
 }
 
+// Muted groups keep their own (grey) badge but do not count toward navigation and app badges.
 export function countUnreadConversations(chats, groups) {
-  return [...chats, ...groups].reduce((sum, item) => sum + (item?.unread > 0 ? 1 : 0), 0);
+  return [...chats, ...groups].reduce((sum, item) => sum + (item?.unread > 0 && !item.muted ? 1 : 0), 0);
 }

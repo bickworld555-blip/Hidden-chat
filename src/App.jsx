@@ -10,6 +10,7 @@ import { clearAvatarCache } from './avatar.js';
 import { RealtimeClient } from './realtime.js';
 import { initialTabFromUrl } from './pwa.js';
 import { countUnreadConversations, groupRow } from './groupRows.js';
+import { useMutedGroups } from './groupPrefs.js';
 import Sidebar from './components/Sidebar.jsx';
 import ChatWindow from './components/ChatWindow.jsx';
 import PairingModal from './components/PairingModal.jsx';
@@ -464,7 +465,8 @@ export default function App() {
       .catch(() => {});
     return () => controller.abort();
   }, [sessionToken, groupRevision]);
-  const groupRows = useMemo(() => groupSummaries.map((group) => groupRow(group, userId)), [groupSummaries, userId]);
+  const mutedGroupIds = useMutedGroups(userId);
+  const groupRows = useMemo(() => groupSummaries.map((group) => groupRow(group, userId, mutedGroupIds)), [groupSummaries, userId, mutedGroupIds]);
   const unreadChats = countUnreadConversations(chats, groupRows);
   const callLogs = useChatStore((state) => state.callLogs);
   const notificationSettings = useNotificationSettings();
@@ -478,7 +480,7 @@ export default function App() {
   }, [activeTab, callLogs]);
 
   useEffect(() => {
-    applyAppBadge({ chats: [...chats, ...groupRows], callLogs, callsSeenAt });
+    applyAppBadge({ chats: [...chats, ...groupRows.filter((row) => !row.muted)], callLogs, callsSeenAt });
   }, [chats, groupRows, callLogs, callsSeenAt, notificationSettings.appBadge]);
 
   // Reminder sweep while the app stays open in the background.
