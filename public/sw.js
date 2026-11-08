@@ -1,7 +1,7 @@
 // Hidden Messenger service worker: makes the app installable and lets the shell open offline.
 // API, WebSocket, media and model requests always go to the network; only the app shell and
 // content-hashed build assets are cached.
-const VERSION = 'hm-shell-v1';
+const VERSION = 'hm-shell-v2';
 const SHELL = '/';
 
 self.addEventListener('install', (event) => {
