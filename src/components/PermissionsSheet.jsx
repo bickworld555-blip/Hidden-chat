@@ -3,7 +3,9 @@ import { BatteryCharging, Bell, Camera, Mic, ShieldCheck } from 'lucide-react';
 import { nativeRequestBatteryExemption, nativeRequestStartupPermissions, nativeShell, nativeStartBackground } from '../native.js';
 import { requestNotificationPermission } from '../notify.js';
 
-export const PERMISSIONS_ASKED_KEY = 'hm:permissions-asked-v1';
+import { PERMISSIONS_ASKED_KEY } from '../permissionsKey.js';
+
+export { PERMISSIONS_ASKED_KEY };
 
 // Browsers only show the microphone/camera prompt when media is requested; the tracks are stopped at once.
 async function requestWebMedia() {

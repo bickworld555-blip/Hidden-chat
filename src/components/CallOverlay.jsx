@@ -40,7 +40,8 @@ import { setAvatarCallsEnabled, useAvatarCallsEnabled } from '../appearance.js';
 import { personaCharacter, usePersona } from '../avatar/persona.js';
 import { createAvatarFilter } from '../avatar/avatarStream.js';
 import { loadFaceTracker } from '../avatar/faceTracker.js';
-import AvatarStudio from './AvatarStudio.jsx';
+import { lazyComponent } from '../lazy.js';
+const AvatarStudio = lazyComponent(() => import('./AvatarStudio.jsx'));
 
 const ICE_CONFIG_TIMEOUT_MS = 3000;
 const CLOSE_DELAY_MS = { failed: 5000, busy: 4000, default: 2500 };

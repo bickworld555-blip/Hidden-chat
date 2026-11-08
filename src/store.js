@@ -17,6 +17,23 @@ function mergeMessage(current, incoming) {
   return { ...current, ...incoming, status: mergeMessageStatus(current.status, incoming.status) };
 }
 
+const PERSIST_DELAY_MS = 400;
+let persistTimer = null;
+let pendingPersistUser = null;
+
+export async function flushPersistedMessages() {
+  clearTimeout(persistTimer);
+  persistTimer = null;
+  const userId = pendingPersistUser;
+  pendingPersistUser = null;
+  const state = useChatStore.getState();
+  if (userId && userId === state.userId) await set(`relay:messages:${userId}`, state.messages);
+}
+
+if (typeof document !== 'undefined') {
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden' && persistTimer) flushPersistedMessages(); });
+}
+
 export function previewFor(content) {
   if (typeof content !== 'string') return '';
   if (content.startsWith('voice-opened:')) return '① Opened';
@@ -587,8 +604,13 @@ export const useChatStore = create((setState, getState) => ({
       });
     }
   },
-  async persistMessages(userId) {
-    if (userId === getState().userId) await set(`relay:messages:${userId}`, getState().messages);
+  // Saving copies every message on the main thread, so bursts (history loading, a busy group) are coalesced into
+  // one write per PERSIST_DELAY_MS; leaving the app flushes at once (flushPersistedMessages).
+  persistMessages(userId) {
+    if (!userId || userId !== getState().userId) return Promise.resolve();
+    pendingPersistUser = userId;
+    if (!persistTimer) persistTimer = setTimeout(flushPersistedMessages, PERSIST_DELAY_MS);
+    return Promise.resolve();
   },
   async hydrateContacts(userId) {
     const saved = await get(`relay:contacts:${userId}`);

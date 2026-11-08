@@ -1,8 +1,6 @@
 import { apiFetch, apiUrl } from './api.js';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { activateAccount, addOrActivateAccount, getAccountsState, loadAccounts, removeAccount, updateAccountUser } from './accounts.js';
-import AccountSwitcher from './components/AccountSwitcher.jsx';
-import AvatarStudio from './components/AvatarStudio.jsx';
 import { Bell, ChevronRight, MessageSquarePlus, Moon, Sun } from 'lucide-react';
 import { previewFor, useChatStore } from './store.js';
 import { clearMediaCache } from './media.js';
@@ -13,21 +11,26 @@ import { countUnreadConversations, groupRow } from './groupRows.js';
 import { getViewingGroup, readMutedGroups, useMutedGroups } from './groupPrefs.js';
 import { classifyIncoming, groupNotificationText, parseConversationOpenParam, shouldAlertGroup } from './notificationChannels.js';
 import { nativeClearSession, nativeSetSession, nativeShell, nativeStartBackground, nativeState, nativeStopBackground, nativeTakePendingCall, onNative } from './native.js';
-import PermissionsSheet, { PERMISSIONS_ASKED_KEY } from './components/PermissionsSheet.jsx';
+import { PERMISSIONS_ASKED_KEY } from './permissionsKey.js';
 import Sidebar from './components/Sidebar.jsx';
 import ChatWindow from './components/ChatWindow.jsx';
-import PairingModal from './components/PairingModal.jsx';
 import UsernameGate from './components/UsernameGate.jsx';
 import CallOverlay from './components/CallOverlay.jsx';
-import NotificationSettings from './components/NotificationSettings.jsx';
-import AccountSettings from './components/AccountSettings.jsx';
 import { syncMissedMessages } from './messageSync.js';
+import { HISTORY_CONCURRENCY, forEachLimited } from './concurrency.js';
 import MobileBottomNav from './components/MobileBottomNav.jsx';
-import CallsView from './components/CallsView.jsx';
-import UpdatesView from './components/UpdatesView.jsx';
-import ToolsView from './components/ToolsView.jsx';
 import ChatsList from './components/ChatsList.jsx';
-import GroupsView from './components/GroupsView.jsx';
+import { lazyComponent, preloadLazyScreens } from './lazy.js';
+const AccountSwitcher = lazyComponent(() => import('./components/AccountSwitcher.jsx'));
+const AvatarStudio = lazyComponent(() => import('./components/AvatarStudio.jsx'));
+const PermissionsSheet = lazyComponent(() => import('./components/PermissionsSheet.jsx'));
+const PairingModal = lazyComponent(() => import('./components/PairingModal.jsx'));
+const NotificationSettings = lazyComponent(() => import('./components/NotificationSettings.jsx'));
+const AccountSettings = lazyComponent(() => import('./components/AccountSettings.jsx'));
+const CallsView = lazyComponent(() => import('./components/CallsView.jsx'));
+const UpdatesView = lazyComponent(() => import('./components/UpdatesView.jsx'));
+const ToolsView = lazyComponent(() => import('./components/ToolsView.jsx'));
+const GroupsView = lazyComponent(() => import('./components/GroupsView.jsx'));
 import { playNotificationTone, stopAllTones } from './sounds.js';
 import { applyAppBadge, maybeRemind, showSystemNotification, vibrateFor } from './notify.js';
 import { badgeCount, useNotificationSettings } from './notificationSettings.js';
@@ -162,17 +165,6 @@ export default function App() {
         await hydrateCallLogs(userId);
         await hydratePreferences(userId);
         if (cancelled) return;
-        const contactResponse = await apiFetch('/api/v1/contacts', { headers: { Authorization: `Bearer ${sessionToken}` } });
-        if (!contactResponse.ok) throw new Error('Could not load your Hidden Messenger contacts.');
-        const contacts = await contactResponse.json();
-        if (cancelled) return;
-        setContacts(contacts);
-        await persistContacts(userId);
-        for (const contact of contacts) {
-          const response = await apiFetch(`/api/v1/messages?peerId=${contact.id}`, { headers: { Authorization: `Bearer ${sessionToken}` } });
-          if (cancelled) return;
-          if (response.ok) mergeHistory(contact.id, await response.json());
-        }
         if (cancelled) return;
         let connectedBefore = false;
         realtime = new RealtimeClient(sessionToken, (event) => {
@@ -323,7 +315,24 @@ export default function App() {
         };
         setClient(realtime);
         useChatStore.getState().setClient(realtime);
+        // Connect first: messages, ticks and calls must not wait for history. The cached chats are already on
+        // screen; the contact list and every chat's history then load in parallel (they used to load one chat at a
+        // time before connecting, which kept a 30-chat account offline for ~8 s on mobile data).
         realtime.connect();
+        preloadLazyScreens();
+        const contactResponse = await apiFetch('/api/v1/contacts', { headers: { Authorization: `Bearer ${sessionToken}` } });
+        if (!contactResponse.ok) throw new Error('Could not load your Hidden Messenger contacts.');
+        const contacts = await contactResponse.json();
+        if (cancelled) return;
+        setContacts(contacts);
+        persistContacts(userId).catch(() => {});
+        // The open chat first, then the rest, a few at a time.
+        const active = useChatStore.getState().activeChatId;
+        const ordered = [...contacts].sort((a, b) => Number(b.id === active) - Number(a.id === active));
+        await forEachLimited(ordered, HISTORY_CONCURRENCY, async (contact) => {
+          const response = await apiFetch(`/api/v1/messages?peerId=${contact.id}`, { headers: { Authorization: `Bearer ${sessionToken}` } });
+          if (!cancelled && response.ok) mergeHistory(contact.id, await response.json());
+        });
       } catch (error) {
         if (!cancelled) { setFatalError(error.message); setConnection('offline'); }
       }
@@ -545,23 +554,35 @@ export default function App() {
   openGroupRef.current = (id) => openGroups(false, id);
 
   // Notification clicks: the service worker posts the conversation to open; a cold start passes ?open=.
+  // A tap that launches the app arrives before the account is restored, and restoring it resets the open chat, so
+  // the request waits until someone is signed in and is applied right after (instead of landing on the chat list).
+  const pendingOpenRef = useRef(null);
   useEffect(() => {
     const open = (value) => {
       const target = parseConversationOpenParam(value);
-      if (target?.kind === 'group') openGroupRef.current?.(target.id);
-      else if (target) openChatRef.current?.(target.id);
+      if (!target) return;
+      if (!userId) {
+        pendingOpenRef.current = target;
+        return;
+      }
+      if (target.kind === 'group') openGroupRef.current?.(target.id);
+      else openChatRef.current?.(target.id);
     };
+    if (userId && pendingOpenRef.current) {
+      const target = pendingOpenRef.current;
+      pendingOpenRef.current = null;
+      if (target.kind === 'group') openGroupRef.current?.(target.id);
+      else openChatRef.current?.(target.id);
+    }
     const onMessage = (event) => { if (event.data?.type === 'notification:open') open(event.data.open); };
     navigator.serviceWorker?.addEventListener?.('message', onMessage);
     const stopNative = onNative('notificationOpen', (event) => open(event?.open));
-    if (userId) {
-      const url = new URL(window.location.href);
-      const pending = url.searchParams.get('open');
-      if (pending) {
-        url.searchParams.delete('open');
-        window.history.replaceState(null, '', url.pathname + url.search + url.hash);
-        open(pending);
-      }
+    const url = new URL(window.location.href);
+    const pending = url.searchParams.get('open');
+    if (pending) {
+      url.searchParams.delete('open');
+      window.history.replaceState(null, '', url.pathname + url.search + url.hash);
+      open(pending);
     }
     return () => {
       navigator.serviceWorker?.removeEventListener?.('message', onMessage);
