@@ -3971,3 +3971,22 @@ button.groups-setting:hover, label.groups-setting:hover { background: rgba(134, 
 .groups-message .groups-message-meta button { visibility: hidden; }
 .groups-message:hover .groups-message-meta button, .groups-message:focus-within .groups-message-meta button { visibility: visible; }
 .groups-message:focus { outline: none; }
+
+/* ===== First-launch permissions sheet ===== */
+.permissions-overlay { position: fixed; inset: 0; z-index: 1300; display: grid; place-items: end center; padding: 0; background: rgba(0, 0, 0, .6); }
+.permissions-sheet { width: min(520px, 100%); max-height: 92dvh; overflow-y: auto; padding: 24px 22px calc(20px + env(safe-area-inset-bottom)); border-radius: 22px 22px 0 0; background: var(--wa-panel, #fff); color: var(--wa-text, #111b21); text-align: center; animation: fade-in .15s ease-out; }
+.dark-theme .permissions-sheet { background: #111b21; color: #e9edef; }
+.permissions-hero { color: #00a884; }
+.permissions-sheet h2 { margin: 10px 0 16px; font-size: 20px; font-weight: 600; }
+.permissions-list { display: flex; flex-direction: column; gap: 14px; margin: 0 0 20px; padding: 0; list-style: none; text-align: left; }
+.permissions-list li { display: flex; align-items: flex-start; gap: 14px; }
+.permissions-list li > svg { flex: none; margin-top: 2px; color: #00a884; }
+.permissions-list span { display: flex; flex-direction: column; gap: 3px; }
+.permissions-list small, .permissions-copy { color: #8696a0; font-size: 13.5px; line-height: 1.4; }
+.permissions-copy { margin: 0 0 20px; text-align: left; }
+.permissions-actions { display: flex; gap: 10px; }
+.permissions-actions button { flex: 1; padding: 13px; border-radius: 24px; font: inherit; font-weight: 600; cursor: pointer; }
+.permissions-primary { border: 0; background: #00a884; color: #fff; }
+.permissions-secondary { border: 1px solid rgba(134, 150, 160, .5); background: transparent; color: inherit; }
+.permissions-actions button:disabled { opacity: .6; cursor: default; }
+@media (min-width: 769px) { .permissions-overlay { place-items: center; padding: 16px; } .permissions-sheet { border-radius: 18px; } }

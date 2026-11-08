@@ -2,6 +2,7 @@
 // then plays either a synthesized library tone or an uploaded file. Custom files live in IndexedDB.
 import { get, set } from 'idb-keyval';
 import { getNotificationSettings, soundPlan } from './notificationSettings.js';
+import { nativeAlertsActive } from './native.js';
 import { ALERT_TONE, RINGBACK_TONE, SENT_TONE, TIMBRES, defaultToneForCategory, defaultToneId, resolveToneChoice, toneDuration } from './tones.js';
 
 const CUSTOM_TONES_KEY = 'relay:custom-tones';
@@ -145,7 +146,11 @@ export async function playToneChoice(choice, kind, { loop = false, volume, key =
 }
 
 // Plays what the settings say a category should sound like right now.
+// Categories whose sound comes from an Android notification channel while the app is in the background.
+const NATIVE_CHANNEL_CATEGORIES = new Set(['message', 'reaction', 'group', 'incomingCall']);
+
 export async function playStoredTone(categoryId, { loop = categoryId === 'incomingCall' || categoryId === 'outgoingCall' } = {}) {
+  if (NATIVE_CHANNEL_CATEGORIES.has(categoryId) && nativeAlertsActive()) return;
   const settings = getNotificationSettings();
   const plan = soundPlan(categoryId, settings);
   if (categoryId === 'outgoingCall') {

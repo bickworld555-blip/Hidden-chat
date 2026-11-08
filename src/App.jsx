@@ -12,6 +12,8 @@ import { initialTabFromUrl } from './pwa.js';
 import { countUnreadConversations, groupRow } from './groupRows.js';
 import { getViewingGroup, readMutedGroups, useMutedGroups } from './groupPrefs.js';
 import { classifyIncoming, groupNotificationText, parseConversationOpenParam, shouldAlertGroup } from './notificationChannels.js';
+import { nativeShell, nativeStartBackground, nativeState, nativeStopBackground, onNative } from './native.js';
+import PermissionsSheet, { PERMISSIONS_ASKED_KEY } from './components/PermissionsSheet.jsx';
 import Sidebar from './components/Sidebar.jsx';
 import ChatWindow from './components/ChatWindow.jsx';
 import PairingModal from './components/PairingModal.jsx';
@@ -90,6 +92,7 @@ export default function App() {
   const [groupRevision, setGroupRevision] = useState(0);
   const [groupsInitialId, setGroupsInitialId] = useState('');
   const [groupSummaries, setGroupSummaries] = useState([]);
+  const [permissionsOpen, setPermissionsOpen] = useState(false);
   const [switchingId, setSwitchingId] = useState(null);
   const [callsSeenAt, setCallsSeenAt] = useState(() => Number(localStorage.getItem('relay:calls-seen-at')) || 0);
   const openChatRef = useRef(null);
@@ -527,6 +530,7 @@ export default function App() {
     };
     const onMessage = (event) => { if (event.data?.type === 'notification:open') open(event.data.open); };
     navigator.serviceWorker?.addEventListener?.('message', onMessage);
+    const stopNative = onNative('notificationOpen', (event) => open(event?.open));
     if (userId) {
       const url = new URL(window.location.href);
       const pending = url.searchParams.get('open');
@@ -536,7 +540,28 @@ export default function App() {
         open(pending);
       }
     }
-    return () => navigator.serviceWorker?.removeEventListener?.('message', onMessage);
+    return () => {
+      navigator.serviceWorker?.removeEventListener?.('message', onMessage);
+      stopNative();
+    };
+  }, [userId]);
+
+  // Signed in: offer the permission walkthrough once per device; in the Android app keep the
+  // background connection running (and stop it on sign-out). Native state is re-read on resume.
+  useEffect(() => {
+    if (!userId) {
+      nativeStopBackground();
+      return undefined;
+    }
+    let asked = false;
+    try { asked = localStorage.getItem(PERMISSIONS_ASKED_KEY) === '1'; } catch { /* private mode */ }
+    const needsWebPrompt = !nativeShell() && typeof Notification !== 'undefined' && Notification.permission === 'default';
+    if (!asked && (nativeShell() || needsWebPrompt)) setPermissionsOpen(true);
+    else if (nativeShell()) nativeStartBackground();
+    nativeState();
+    const refresh = () => { if (document.visibilityState === 'visible') nativeState(); };
+    document.addEventListener('visibilitychange', refresh);
+    return () => document.removeEventListener('visibilitychange', refresh);
   }, [userId]);
 
   // Motion preference goes on <html> so overlays rendered outside the shell follow it too.
@@ -570,6 +595,7 @@ export default function App() {
       {accountsOpen && <AccountSwitcher busyId={switchingId} onSwitch={switchAccount} onRemove={removeAccountFromDevice} onAdd={() => { setAccountsOpen(false); setAuthOpen(true); }} onClose={() => setAccountsOpen(false)} />}
       {avatarStudioOpen && <AvatarStudio onClose={() => setAvatarStudioOpen(false)} />}
       {groupsOpen && sessionToken && <GroupsView key={userId} token={sessionToken} userId={userId} revision={groupRevision} initialCreate={groupsCreate} initialGroupId={groupsInitialId} onStartGroupCall={initiateGroupCall} onClose={() => setGroupsOpen(false)} />}
+      {permissionsOpen && userId && <PermissionsSheet onDone={() => setPermissionsOpen(false)} />}
       {authReady && (!userId || authOpen) && <UsernameGate onAuthenticated={acceptSession} onClose={userId ? () => setAuthOpen(false) : undefined} />}
       {call && callPeer && <CallOverlay
         key={call.id}

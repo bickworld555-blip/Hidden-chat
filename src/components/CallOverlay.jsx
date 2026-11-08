@@ -1,4 +1,5 @@
 import { apiFetch } from '../api.js';
+import { nativeCancelIncomingCall, nativeEndCallWindow, nativeShell, nativeShowIncomingCall, onNative } from '../native.js';
 import { useEffect, useRef, useState } from 'react';
 import {
   Maximize2,
@@ -385,6 +386,25 @@ export default function CallOverlay({
     if (remoteAudioRef.current) remoteAudioRef.current.muted = !speakerOn;
   }, [speakerOn, remoteStream]);
 
+  // In the Android app, a call that rings while the app is in the background shows the native call
+  // notification (ringtone, Accept / Reject); it is withdrawn once the app is in front or the call moves on.
+  const pageHidden = usePageHidden();
+  const ringingIncoming = call.direction === 'incoming' && status === 'idle';
+  useEffect(() => {
+    if (!nativeShell()) return;
+    if (ringingIncoming && pageHidden) {
+      stopTone('incomingCall');
+      nativeShowIncomingCall({ callId: call.id, callerName: peer?.name ?? 'Hidden Messenger', mode: call.mode });
+    } else nativeCancelIncomingCall();
+  }, [ringingIncoming, pageHidden, call.id, call.mode, peer?.name]);
+  useEffect(() => () => { nativeCancelIncomingCall(); nativeEndCallWindow(); }, []);
+  const callActionsRef = useRef(null);
+  useEffect(() => onNative('callAction', ({ action, callId }) => {
+    if (callId && callId !== latest.current.call.id) return;
+    if (action === 'accept') callActionsRef.current?.accept();
+    else if (action === 'reject') callActionsRef.current?.reject();
+  }), []);
+
   useEffect(() => {
     const incomingRinging = call.direction === 'incoming' && status === 'idle';
     const outgoingRinging = call.direction === 'outgoing' && !answered && (status === 'connecting' || status === 'ringing');
@@ -405,7 +425,7 @@ export default function CallOverlay({
       stopTone('incomingCall');
       stopTone('outgoingCall');
     };
-  }, [call.direction, status, answered]);
+  }, [call.direction, status, answered, pageHidden]);
 
   useEffect(() => {
     if (status !== 'connected' && status !== 'reconnecting') return undefined;
@@ -460,6 +480,8 @@ export default function CallOverlay({
     else engine.hangUp();
     onClose();
   }
+
+  callActionsRef.current = { accept: acceptCall, reject: endCall };
 
   function inviteParticipant(contact) {
     setAddOpen(false);
@@ -1015,4 +1037,14 @@ export default function CallOverlay({
       </div>
     </div>
   );
+}
+
+function usePageHidden() {
+  const [hidden, setHidden] = useState(() => typeof document !== 'undefined' && document.visibilityState === 'hidden');
+  useEffect(() => {
+    const update = () => setHidden(document.visibilityState === 'hidden');
+    document.addEventListener('visibilitychange', update);
+    return () => document.removeEventListener('visibilitychange', update);
+  }, []);
+  return hidden;
 }
