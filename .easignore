@@ -1,0 +1,42 @@
+# Files Expo EAS must not upload. EAS reads this instead of .gitignore, so it repeats the root rules
+# and the Android ones (EAS does not apply android/.gitignore).
+node_modules/
+dist/
+.data/
+.env
+.env.*
+!.env.example
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.log
+backups/
+*.jks
+*.keystore
+*.p12
+*.pem
+capacitor.config.json
+apk-artifacts/
+
+public/mediapipe/
+public/models/
+
+# Android build output and local machine files
+android/**/*.apk
+android/**/*.aab
+android/**/*.aar
+android/**/*.ap_
+android/**/*.dex
+android/**/*.class
+android/**/.gradle/
+android/**/build/
+android/**/local.properties
+android/**/.cxx/
+android/**/.externalNativeBuild
+android/**/captures/
+android/**/*.iml
+android/**/.idea/
+android/build/
+android/app/build/
+android/.gradle/
+android/app/src/main/assets/public/
