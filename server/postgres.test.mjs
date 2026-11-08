@@ -8,7 +8,7 @@ import { after, before, beforeEach, test } from 'node:test';
 import { PGlite } from '@electric-sql/pglite';
 import WebSocket from 'ws';
 import { createChatServer } from './index.mjs';
-import { createPostgresDatabase, migratePostgres, postgresOptions, postgresParameters } from './database.mjs';
+import { DATABASE_SCHEMA_VERSION, createPostgresDatabase, migratePostgres, postgresOptions, postgresParameters } from './database.mjs';
 import { IMPORT_TABLES, importSqlite, planImport } from '../scripts/import-sqlite.mjs';
 import { checkGroupAttachments, checkGroupContract } from './group-contract.mjs';
 
@@ -101,7 +101,7 @@ test('upgrading a version 1 database preserves data and adds private group table
   await engine.exec("INSERT INTO relay.users(id, username, name, initials, color, created_at) VALUES ('existing', 'existing', 'Existing', 'EX', 'blue', 1)");
   await engine.exec("INSERT INTO relay.media(id, sender_id, receiver_id, filename, content_type, byte_size, disk_name, created_at) VALUES ('old', 'existing', 'existing', 'old.bin', 'application/octet-stream', 3, 'old.blob', 1)");
   assert.equal(await migratePostgres(pool), false);
-  assert.equal((await pool.query('SELECT version FROM relay.schema_version WHERE singleton = 1')).rows[0].version, 3);
+  assert.equal((await pool.query('SELECT version FROM relay.schema_version WHERE singleton = 1')).rows[0].version, DATABASE_SCHEMA_VERSION);
   assert.equal((await pool.query("SELECT name FROM relay.users WHERE id = 'existing'")).rows[0].name, 'Existing');
   assert.deepEqual((await pool.query("SELECT receiver_id, group_id FROM relay.media WHERE id = 'old'")).rows[0], { receiver_id: 'existing', group_id: null });
   const tables = await pool.query("SELECT relname, relrowsecurity FROM pg_class JOIN pg_namespace n ON n.oid = relnamespace WHERE n.nspname = 'relay' AND relname IN ('groups', 'group_members', 'group_messages', 'group_reports')");
@@ -111,7 +111,7 @@ test('upgrading a version 1 database preserves data and adds private group table
   assert.equal(await migratePostgres(pool), false);
 });
 
-test('a version 2 database upgrades to version 3 with its groups intact', async () => {
+test('a version 2 database upgrades to the current version with its groups intact', async () => {
   await engine.exec('DROP SCHEMA relay CASCADE');
   await engine.exec(readFileSync(new URL('../supabase/migrations/001_relay.sql', import.meta.url), 'utf8'));
   await engine.exec(`BEGIN;\n${readFileSync(new URL('../supabase/migrations/002_groups.sql', import.meta.url), 'utf8')}\nCOMMIT;`);
@@ -120,8 +120,25 @@ test('a version 2 database upgrades to version 3 with its groups intact', async 
   await engine.exec("INSERT INTO relay.group_members(group_id, user_id, role, auto_delete, joined_at) VALUES ('g1', 'owner', 'admin', 1, 1)");
   assert.equal((await pool.query('SELECT version FROM relay.schema_version WHERE singleton = 1')).rows[0].version, 2);
   assert.equal(await migratePostgres(pool), false);
-  assert.equal((await pool.query('SELECT version FROM relay.schema_version WHERE singleton = 1')).rows[0].version, 3);
+  assert.equal((await pool.query('SELECT version FROM relay.schema_version WHERE singleton = 1')).rows[0].version, DATABASE_SCHEMA_VERSION);
   assert.deepEqual((await pool.query("SELECT auto_delete, last_read_at, cleared_at FROM relay.group_members WHERE group_id = 'g1'")).rows[0], { auto_delete: 1, last_read_at: 0, cleared_at: 0 });
+});
+
+test('a version 3 database gains last seen, session times and poll votes', async () => {
+  await engine.exec('DROP SCHEMA relay CASCADE');
+  await engine.exec(readFileSync(new URL('../supabase/migrations/001_relay.sql', import.meta.url), 'utf8'));
+  for (const file of ['002_groups.sql', '003_group_media.sql']) {
+    await engine.exec(`BEGIN;\n${readFileSync(new URL(`../supabase/migrations/${file}`, import.meta.url), 'utf8')}\nCOMMIT;`);
+  }
+  await engine.exec("INSERT INTO relay.users(id, username, name, initials, color, created_at) VALUES ('old', 'old', 'Old', 'OL', 'blue', 1)");
+  await engine.exec("INSERT INTO relay.sessions(token_hash, user_id, device_id, device_name) VALUES ('h', 'old', 'd', 'Browser')");
+  assert.equal(await migratePostgres(pool), false);
+  assert.deepEqual((await pool.query("SELECT last_seen_at, last_seen_privacy FROM relay.users WHERE id = 'old'")).rows[0], { last_seen_at: null, last_seen_privacy: 'everyone' });
+  assert.deepEqual((await pool.query("SELECT device_name, created_at FROM relay.sessions WHERE token_hash = 'h'")).rows[0], { device_name: 'Browser', created_at: null });
+  await assert.rejects(pool.query("UPDATE relay.users SET last_seen_privacy = 'friends' WHERE id = 'old'"), { code: '23514' });
+  await pool.query("INSERT INTO relay.poll_votes(message_id, user_id, option_index, voted_at) VALUES ('m', 'old', 0, 1)");
+  await assert.rejects(pool.query("INSERT INTO relay.poll_votes(message_id, user_id, option_index, voted_at) VALUES ('m', 'old', 12, 1)"), { code: '23514' });
+  assert.equal((await pool.query("SELECT relrowsecurity FROM pg_class JOIN pg_namespace n ON n.oid = relnamespace WHERE n.nspname = 'relay' AND relname = 'poll_votes'")).rows[0].relrowsecurity, true);
 });
 
 test('a conflicting group migration rolls back and leaves the existing version intact', async () => {

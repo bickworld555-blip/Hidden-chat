@@ -5,11 +5,14 @@ import { formatClock } from '../voice.js';
 const SAMPLE_MS = 90;
 const MAX_BARS = 36;
 
-export default function VoiceRecorderBar({ onSend, onCancel, onError }) {
+export default function VoiceRecorderBar({ onSend, onCancel, onError, allowViewOnce = false }) {
   const [seconds, setSeconds] = useState(0);
   const [paused, setPaused] = useState(false);
   const [previewing, setPreviewing] = useState(false);
   const [levels, setLevels] = useState([]);
+  const [viewOnce, setViewOnce] = useState(false);
+  const [toast, setToast] = useState('');
+  const viewOnceRef = useRef(false);
   const sessionRef = useRef(null);
   const callbacksRef = useRef({ onSend, onCancel, onError });
   callbacksRef.current = { onSend, onCancel, onError };
@@ -69,7 +72,7 @@ export default function VoiceRecorderBar({ onSend, onCancel, onError }) {
         const duration = Math.max(1, Math.round(session.elapsed));
         const blob = send ? new Blob(session.chunks, { type }) : null;
         session.release();
-        if (blob) callbacksRef.current.onSend(blob, duration, type);
+        if (blob) callbacksRef.current.onSend(blob, duration, type, { viewOnce: viewOnceRef.current });
         else callbacksRef.current.onCancel();
       };
 
@@ -145,6 +148,19 @@ export default function VoiceRecorderBar({ onSend, onCancel, onError }) {
     }
   }
 
+  function toggleViewOnce() {
+    const next = !viewOnceRef.current;
+    viewOnceRef.current = next;
+    setViewOnce(next);
+    setToast(next ? 'Voice message set to view once' : 'View once turned off');
+  }
+
+  useEffect(() => {
+    if (!toast) return undefined;
+    const timer = setTimeout(() => setToast(''), 2200);
+    return () => clearTimeout(timer);
+  }, [toast]);
+
   function togglePreview() {
     const session = sessionRef.current;
     if (!session || !paused) return;
@@ -176,7 +192,20 @@ export default function VoiceRecorderBar({ onSend, onCancel, onError }) {
       <button type="button" className="recording-preview" onClick={togglePreview} disabled={!paused} aria-label={previewing ? 'Stop preview' : 'Preview recording'}>
         {previewing ? <Square size={15} /> : <Play size={15} />}
       </button>
-      <button type="button" className="send-button voice-send" onClick={send} aria-label="Send voice message"><Send size={19} /></button>
+      {allowViewOnce && (
+        <button
+          type="button"
+          className={`recording-view-once${viewOnce ? ' is-on' : ''}`}
+          onClick={toggleViewOnce}
+          aria-pressed={viewOnce}
+          aria-label={viewOnce ? 'View once on' : 'Send as view once'}
+          title="View once"
+        >
+          1
+        </button>
+      )}
+      <button type="button" className="send-button voice-send" onClick={send} aria-label={viewOnce ? 'Send view once voice message' : 'Send voice message'}><Send size={19} /></button>
+      {toast && <span className="recording-toast" role="status">{toast}</span>}
     </div>
   );
 }

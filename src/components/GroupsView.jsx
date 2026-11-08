@@ -1,7 +1,7 @@
 import { apiFetch } from '../api.js';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  ArrowLeft, Bell, BellOff, CalendarClock, ChevronDown, Download, Flag, LockKeyhole, LogOut, MinusCircle, Paperclip,
+  ArrowLeft, BarChart3, Bell, BellOff, CalendarClock, CalendarDays, ChevronDown, Download, Flag, LockKeyhole, LogOut, MinusCircle, Paperclip,
   Phone, Search, SendHorizontal, Timer, Trash2, UserPlus, Users, Video, X,
 } from 'lucide-react';
 import { searchPeople } from '../contactsApi.js';
@@ -12,6 +12,9 @@ import { exportGroupChat, parseScheduledCall, scheduledCallContent, senderColor,
 import { setGroupMuted, setViewingGroup, useMutedGroups } from '../groupPrefs.js';
 import Avatar from './Avatar.jsx';
 import MediaRenderer from './MediaRenderer.jsx';
+import { EventBubble, EventComposer, PollBubble, PollComposer } from './RichMessages.jsx';
+import { parsePollContent } from '../polls.js';
+import { parseEventContent } from '../calendarEvents.js';
 
 const DELETE_WINDOW_MS = 24 * 60 * 60 * 1000;
 
@@ -142,6 +145,7 @@ export default function GroupsView({ token, userId, revision, onClose, onStartGr
   const [callMenu, setCallMenu] = useState(false);
   const [callPicker, setCallPicker] = useState('');
   const [scheduling, setScheduling] = useState(false);
+  const [richComposer, setRichComposer] = useState('');
   const [name, setName] = useState('');
   const [query, setQuery] = useState('');
   const [results, setResults] = useState([]);
@@ -519,6 +523,8 @@ export default function GroupsView({ token, userId, revision, onClose, onStartGr
                 const canDelete = group.role === 'admin' || (mine && Date.now() - message.createdAt < DELETE_WINDOW_MS);
                 const isMedia = message.content.startsWith('media:');
                 const scheduled = parseScheduledCall(message.content);
+                const poll = parsePollContent(message.content);
+                const event = parseEventContent(message.content);
                 return (
                   <div className={`groups-message-row ${mine ? 'mine' : 'theirs'}`} key={item.key}>
                     {!mine && (sender ? <Avatar {...sender} size="small" /> : <span className="groups-avatar groups-avatar-small" aria-hidden="true" />)}
@@ -530,7 +536,10 @@ export default function GroupsView({ token, userId, revision, onClose, onStartGr
                           <span><strong>{scheduled.title}</strong><small>{scheduled.mode === 'video' ? 'Video call' : 'Voice call'} · {formatSchedule(scheduled.at)}</small></span>
                           {onStartGroupCall && <button type="button" onClick={() => setCallPicker(scheduled.mode)}>{scheduled.at > Date.now() ? 'Start early' : 'Start call'}</button>}
                         </div>
-                      ) : isMedia ? <MediaRenderer mediaRef={message.content} sessionToken={token} /> : <p>{message.content}</p>}
+                      ) : isMedia ? <MediaRenderer mediaRef={message.content} sessionToken={token} />
+                        : poll ? <PollBubble messageId={message.id} poll={poll} sessionToken={token} userId={userId} nameFor={(id) => group.members.find((member) => member.id === id)?.name} />
+                        : event ? <EventBubble messageId={message.id} event={event} />
+                        : <p>{message.content}</p>}
                       <span className="groups-message-meta">
                         {canDelete && <button type="button" disabled={busy} aria-label="Delete message" title="Delete message" onClick={() => perform(() => groupRequest(token, `${groupPath}/messages/${encodeURIComponent(message.id)}`, { method: 'DELETE' }))}><Trash2 size={13} /></button>}
                         {message.expiresAt && <Timer size={12} aria-label="Disappears after 24 hours" />}
@@ -548,6 +557,8 @@ export default function GroupsView({ token, userId, revision, onClose, onStartGr
                 <button type="button" className="groups-attach" onClick={() => fileInputRef.current?.click()} disabled={busy || uploading > 0} aria-label="Attach a file" title="Attach a photo, video or file">
                   <Paperclip size={20} />
                 </button>
+                <button type="button" className="groups-attach" onClick={() => setRichComposer('poll')} disabled={busy} aria-label="Create poll" title="Poll"><BarChart3 size={20} /></button>
+                <button type="button" className="groups-attach" onClick={() => setRichComposer('event')} disabled={busy} aria-label="Create event" title="Event"><CalendarDays size={20} /></button>
               </span>
               <button type="submit" className="groups-send" disabled={busy || uploading > 0 || !draft.trim()} aria-label="Send"><SendHorizontal size={20} /></button>
             </form>
@@ -555,6 +566,11 @@ export default function GroupsView({ token, userId, revision, onClose, onStartGr
         )}
         {group && callPicker && <CallPeoplePicker members={group.members} userId={userId} mode={callPicker} busy={busy} onStart={startCall} onClose={() => setCallPicker('')} />}
         {group && scheduling && <ScheduleCallSheet busy={busy} onSchedule={scheduleCall} onClose={() => setScheduling(false)} />}
+        {group && richComposer && (() => {
+          const Composer = richComposer === 'poll' ? PollComposer : EventComposer;
+          const send = (content) => { setRichComposer(''); perform(() => groupRequest(token, `${groupPath}/messages`, { method: 'POST', body: { content } })); };
+          return <Composer onSend={send} onClose={() => setRichComposer('')} />;
+        })()}
       </div>
     </div>
   );

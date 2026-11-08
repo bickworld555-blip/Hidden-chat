@@ -18,6 +18,7 @@ import { displayNameError, initialsFor, normalizeDisplayName } from '../src/prof
 import { createPostgresDatabase, describeDatabaseError, isDatabaseUnavailable } from './database.mjs';
 import { DEMO_USERS } from './demo.mjs';
 import { createEventPilot } from './eventPilot.mjs';
+import { canSeePresence, deviceNameFromUserAgent, isLastSeenPrivacy, presenceFor } from './presence.mjs';
 
 const directory = dirname(fileURLToPath(import.meta.url));
 const PAIRING_TTL_MS = 1000 * 60 * 2;
@@ -284,6 +285,20 @@ export function createChatServer({
   if (!userColumns.has('avatar_disk_name')) db.exec('ALTER TABLE users ADD COLUMN avatar_disk_name TEXT');
   if (!userColumns.has('avatar_type')) db.exec('ALTER TABLE users ADD COLUMN avatar_type TEXT');
   if (!userColumns.has('avatar_updated_at')) db.exec('ALTER TABLE users ADD COLUMN avatar_updated_at INTEGER');
+  if (!userColumns.has('last_seen_at')) db.exec('ALTER TABLE users ADD COLUMN last_seen_at INTEGER');
+  if (!userColumns.has('last_seen_privacy')) {
+    db.exec("ALTER TABLE users ADD COLUMN last_seen_privacy TEXT NOT NULL DEFAULT 'everyone' CHECK (last_seen_privacy IN ('everyone', 'contacts', 'nobody'))");
+  }
+  const sessionColumns = new Set(db.prepare("PRAGMA table_info(sessions)").all().map((column) => column.name));
+  if (!sessionColumns.has('created_at')) db.exec('ALTER TABLE sessions ADD COLUMN created_at INTEGER');
+  if (!sessionColumns.has('last_active_at')) db.exec('ALTER TABLE sessions ADD COLUMN last_active_at INTEGER');
+  db.exec(`CREATE TABLE IF NOT EXISTS poll_votes (
+    message_id TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    option_index INTEGER NOT NULL CHECK (option_index >= 0 AND option_index < 12),
+    voted_at INTEGER NOT NULL,
+    PRIMARY KEY (message_id, user_id, option_index)
+  )`);
   // A contacts row is a link between two people. `saved` = in the owner's contact book; `hidden` = the thread was
   // deleted from the owner's chat list (a saved contact stays in the book). Older rows were always saved.
   const contactColumns = new Set(db.prepare("PRAGMA table_info(contacts)").all().map((column) => column.name));
@@ -335,6 +350,13 @@ export function createChatServer({
 
   function mediaIdOf(content) {
     return content.startsWith('media:') || content.startsWith('voice:') ? content.slice(6).split(':', 1)[0] : null;
+  }
+
+  // View once voice notes are "voice:<mediaId>:<seconds>:once". The recipient gets the audio exactly once, from
+  // POST /messages/:id/view-once, which turns the message into "voice-opened:<seconds>" and deletes the audio.
+  const VIEW_ONCE_VOICE = /^voice:[^:]+:\d+(?:\.\d+)?:once$/;
+  async function isViewOnceMedia(mediaId) {
+    return Boolean(await db.prepare('SELECT 1 FROM messages WHERE deleted_at IS NULL AND content LIKE ? LIMIT 1').get(`voice:${mediaId}:%:once`));
   }
 
   // Expired disappearing messages become deleted-for-everyone tombstones, so devices that were offline drop them on
@@ -478,9 +500,10 @@ export function createChatServer({
   async function issueSession(userId, deviceName) {
     const token = randomBytes(32).toString('base64url');
     const deviceId = randomUUID();
-    (await db.prepare(`INSERT INTO sessions(token_hash, user_id, device_id, device_name, expires_at)
-      VALUES (?, ?, ?, ?, ?)`)
-      .run(digest(token), userId, deviceId, deviceName, null));
+    const now = Date.now();
+    (await db.prepare(`INSERT INTO sessions(token_hash, user_id, device_id, device_name, expires_at, created_at, last_active_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)`)
+      .run(digest(token), userId, deviceId, deviceName, null, now, now));
     const user = (await db.prepare(`SELECT ${USER_COLUMNS} FROM users WHERE id = ?`).get(userId));
     return { token, deviceId, deviceName, user: publicUser(user) };
   }
@@ -799,9 +822,38 @@ export function createChatServer({
     response.status(204).end();
   });
 
-  function broadcastPresence(userId) {
-    const event = { type: 'presence:update', userId, status: userSockets(userId).size ? 'online' : 'offline' };
-    for (const sockets of connections.values()) for (const socket of sockets) json(socket, event);
+  // Presence (online / last seen) honours each owner's "Last seen and online" privacy: every viewer is told
+  // only what that setting allows them to see; a hidden owner reads as status 'hidden' with no time.
+  const presenceOwner = db.prepare('SELECT id, last_seen_at AS "lastSeenAt", last_seen_privacy AS "privacy" FROM users WHERE id = ?');
+  const savedContactIds = db.prepare('SELECT contact_id AS "id" FROM contacts WHERE owner_id = ? AND saved = 1');
+
+  async function presenceViewer(ownerId) {
+    const owner = await presenceOwner.get(ownerId);
+    if (!owner) return () => null;
+    const contactIds = owner.privacy === 'contacts' ? new Set((await savedContactIds.all(ownerId)).map((row) => row.id)) : null;
+    const online = userSockets(ownerId).size > 0;
+    return (viewerId) => ({
+      userId: ownerId,
+      ...presenceFor({ online, lastSeenAt: owner.lastSeenAt, visible: canSeePresence({ ownerId, viewerId, privacy: owner.privacy, ownerContactIds: contactIds }) }),
+    });
+  }
+
+  async function broadcastPresence(userId) {
+    const view = await presenceViewer(userId);
+    for (const [viewerId, sockets] of connections) {
+      const presence = view(viewerId);
+      if (!presence) return;
+      for (const socket of sockets) json(socket, { type: 'presence:update', ...presence });
+    }
+  }
+
+  // Everyone the viewer can see on connect: their chat partners (online or not, for last seen) and anyone online.
+  async function presenceSnapshot(viewerId) {
+    const partners = (await db.prepare('SELECT contact_id AS "id" FROM contacts WHERE owner_id = ?').all(viewerId)).map((row) => row.id);
+    const ids = new Set([...partners, ...connections.keys()]);
+    ids.delete(viewerId);
+    const views = await Promise.all([...ids].map(async (id) => (await presenceViewer(id))(viewerId)));
+    return views.filter(Boolean);
   }
 
   function heartbeatDelay(socket) {
@@ -889,7 +941,7 @@ export function createChatServer({
       }
       throw error;
     }
-    const session = (await issueSession(userId, 'Browser'));
+    const session = (await issueSession(userId, deviceNameFromUserAgent(request.get('user-agent'))));
     response.status(201).json(session);
   });
 
@@ -905,7 +957,7 @@ export function createChatServer({
       : (await db.prepare("SELECT id, password_hash FROM users WHERE id = ?").get(identity));
     const valid = user?.password_hash && await verifyPassword(password, user.password_hash);
     if (!valid) return response.status(401).json({ error: 'Credentials do not match.' });
-    response.json((await issueSession(user.id, 'Browser')));
+    response.json((await issueSession(user.id, deviceNameFromUserAgent(request.get('user-agent')))));
   });
 
   app.get('/api/v1/me', requireSession, (request, response) => {
@@ -915,6 +967,71 @@ export function createChatServer({
       device: { id: session.device_id, name: session.device_name },
       expiresAt: session.expires_at,
     });
+  });
+
+  // --- Account: last-seen privacy, password, and the devices signed in to this account. ---
+
+  function closeSessionSockets(tokenHashes, reason) {
+    for (const socket of websocketServer.clients) {
+      if (tokenHashes.has(socket.sessionHash)) socket.close(4001, reason);
+    }
+  }
+
+  app.get('/api/v1/me/privacy', requireSession, async (request, response) => {
+    const owner = await presenceOwner.get(request.session.user_id);
+    response.json({ lastSeen: owner?.privacy ?? 'everyone' });
+  });
+
+  app.put('/api/v1/me/privacy', requireSession, async (request, response) => {
+    const lastSeen = request.body?.lastSeen;
+    if (!isLastSeenPrivacy(lastSeen)) return response.status(400).json({ error: 'Choose Everyone, My contacts or Nobody.' });
+    await db.prepare('UPDATE users SET last_seen_privacy = ? WHERE id = ?').run(lastSeen, request.session.user_id);
+    await broadcastPresence(request.session.user_id);
+    response.json({ lastSeen });
+  });
+
+  // Changing the password signs every other device out; this one stays signed in.
+  app.put('/api/v1/me/password', requireSession, async (request, response) => {
+    const { currentPassword, newPassword } = request.body ?? {};
+    if (typeof newPassword !== 'string' || newPassword.length < 10 || newPassword.length > 128) {
+      return response.status(400).json({ error: 'Password must be 10–128 characters.' });
+    }
+    if (typeof currentPassword !== 'string' || currentPassword.length > 128) {
+      return response.status(400).json({ error: 'Enter your current password.' });
+    }
+    const userId = request.session.user_id;
+    const row = await db.prepare('SELECT password_hash FROM users WHERE id = ?').get(userId);
+    if (!row?.password_hash || !(await verifyPassword(currentPassword, row.password_hash))) {
+      return response.status(401).json({ error: 'Your current password is incorrect.' });
+    }
+    if (currentPassword === newPassword) return response.status(400).json({ error: 'Choose a different password.' });
+    await db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(await hashPassword(newPassword), userId);
+    const others = await db.prepare('DELETE FROM sessions WHERE user_id = ? AND token_hash <> ? RETURNING token_hash AS "hash"')
+      .all(userId, request.session.token_hash);
+    closeSessionSockets(new Set(others.map((other) => other.hash)), 'Password changed');
+    response.json({ signedOutDevices: others.length });
+  });
+
+  // Linked devices: each session is a device, identified publicly by its random device id (never the token hash).
+  app.get('/api/v1/me/sessions', requireSession, async (request, response) => {
+    const rows = await db.prepare(`SELECT token_hash AS "hash", device_id AS "id", device_name AS "deviceName",
+      created_at AS "createdAt", last_active_at AS "lastActiveAt"
+      FROM sessions WHERE user_id = ? AND (expires_at IS NULL OR expires_at > ?)`).all(request.session.user_id, Date.now());
+    const live = new Set([...websocketServer.clients].map((socket) => socket.sessionHash));
+    const devices = rows.map(({ hash, ...device }) => ({ ...device, current: hash === request.session.token_hash, online: live.has(hash) }));
+    devices.sort((a, b) => Number(b.current) - Number(a.current) || (b.lastActiveAt ?? 0) - (a.lastActiveAt ?? 0));
+    response.json(devices);
+  });
+
+  app.delete('/api/v1/me/sessions/:deviceId', requireSession, async (request, response) => {
+    if (request.params.deviceId === request.session.device_id) {
+      return response.status(400).json({ error: 'Use Log out to sign out of this device.' });
+    }
+    const removed = await db.prepare('DELETE FROM sessions WHERE device_id = ? AND user_id = ? RETURNING token_hash AS "hash"')
+      .get(request.params.deviceId, request.session.user_id);
+    if (!removed) return response.status(404).json({ error: 'That device is no longer signed in.' });
+    closeSessionSockets(new Set([removed.hash]), 'Signed out from another device');
+    response.status(204).end();
   });
 
   // --- Profile photos: stored per user, served to signed-in users, announced to everyone online. ---
@@ -1121,9 +1238,102 @@ export function createChatServer({
       .get(mediaId, userId, userId, userId));
   }
 
+  // --- Polls: "poll:{question, options[], multiple}" messages in direct or group chats; votes are per option. ---
+
+  function parsePoll(content) {
+    if (typeof content !== 'string' || !content.startsWith('poll:')) return null;
+    try {
+      const poll = JSON.parse(content.slice(5));
+      const valid = Array.isArray(poll?.options) && poll.options.length >= 2 && poll.options.length <= 12;
+      return valid ? { optionCount: poll.options.length, multiple: poll.multiple === true } : null;
+    } catch {
+      return null;
+    }
+  }
+
+  // The poll message plus who should hear about votes, or null when this user cannot see it.
+  async function pollFor(userId, messageId) {
+    const direct = await db.prepare(`SELECT content, sender_id AS "senderId", receiver_id AS "receiverId" FROM messages
+      WHERE id = ? AND deleted_at IS NULL AND (sender_id = ? OR receiver_id = ?)`).get(messageId, userId, userId);
+    if (direct) return { poll: parsePoll(direct.content), notify: (event) => { broadcastUser(direct.senderId, event); broadcastUser(direct.receiverId, event); } };
+    const group = await db.prepare(`SELECT group_messages.content, group_messages.group_id AS "groupId" FROM group_messages
+      JOIN group_members ON group_members.group_id = group_messages.group_id AND group_members.user_id = ?
+      WHERE group_messages.id = ?`).get(userId, messageId);
+    if (group) return { poll: parsePoll(group.content), notify: (event) => notifyGroup(group.groupId, event) };
+    return null;
+  }
+
+  async function pollVotes(messageId) {
+    const rows = await db.prepare('SELECT user_id AS "userId", option_index AS "option" FROM poll_votes WHERE message_id = ? ORDER BY voted_at, user_id')
+      .all(messageId);
+    const votes = {};
+    for (const { userId, option } of rows) (votes[option] ??= []).push(userId);
+    return votes;
+  }
+
+  app.get('/api/v1/polls/:messageId', requireSession, async (request, response) => {
+    const found = await pollFor(request.session.user_id, request.params.messageId);
+    if (!found?.poll) return response.status(404).json({ error: 'Poll not found.' });
+    response.json({ messageId: request.params.messageId, votes: await pollVotes(request.params.messageId) });
+  });
+
+  // Replaces this user's choice; an empty list withdraws the vote.
+  app.put('/api/v1/polls/:messageId/vote', requireSession, async (request, response) => {
+    const userId = request.session.user_id;
+    const { messageId } = request.params;
+    const found = await pollFor(userId, messageId);
+    if (!found?.poll) return response.status(404).json({ error: 'Poll not found.' });
+    const chosen = request.body?.options;
+    const options = Array.isArray(chosen) ? [...new Set(chosen)] : null;
+    if (!options || options.some((option) => !Number.isInteger(option) || option < 0 || option >= found.poll.optionCount)
+      || (!found.poll.multiple && options.length > 1)) {
+      return response.status(400).json({ error: found.poll.multiple ? 'Choose valid options.' : 'Choose one option.' });
+    }
+    const now = Date.now();
+    await db.prepare('DELETE FROM poll_votes WHERE message_id = ? AND user_id = ?').run(messageId, userId);
+    for (const option of options) {
+      await db.prepare('INSERT INTO poll_votes(message_id, user_id, option_index, voted_at) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING')
+        .run(messageId, userId, option, now);
+    }
+    const votes = await pollVotes(messageId);
+    await found.notify({ type: 'poll:votes', messageId, votes });
+    response.json({ messageId, votes });
+  });
+
+  // The only way to hear a view once voice note: the recipient claims it (atomically, so two devices or a retry
+  // cannot both get it), receives the audio in this response, and the file is deleted once it has been sent.
+  app.post('/api/v1/messages/:id/view-once', requireSession, async (request, response) => {
+    const userId = request.session.user_id;
+    const row = await db.prepare(`SELECT id, sender_id AS "senderId", receiver_id AS "receiverId", content
+      FROM messages WHERE id = ? AND deleted_at IS NULL`).get(request.params.id);
+    if (!row || (row.senderId !== userId && row.receiverId !== userId)) return response.status(404).json({ error: 'Message not found.' });
+    if (!VIEW_ONCE_VOICE.test(row.content)) return response.status(410).json({ error: 'This voice message was already played.' });
+    if (row.receiverId !== userId) return response.status(403).json({ error: 'Only the recipient can play a view once voice message.' });
+    const [, mediaId, seconds] = row.content.split(':');
+    const opened = `voice-opened:${seconds}`;
+    const claimed = await db.prepare('UPDATE messages SET content = ? WHERE id = ? AND content = ? RETURNING id').get(opened, row.id, row.content);
+    if (!claimed) return response.status(410).json({ error: 'This voice message was already played.' });
+    const media = await db.prepare('SELECT filename, content_type AS "contentType", disk_name AS "diskName" FROM media WHERE id = ?').get(mediaId);
+    const event = { type: 'message:updated', messageId: row.id, content: opened };
+    broadcastUser(row.senderId, event);
+    broadcastUser(row.receiverId, event);
+    if (!media) return response.status(410).json({ error: 'This voice message is no longer available.' });
+    response.set({
+      'Content-Type': resolveContentType(media.contentType, media.filename),
+      'Content-Security-Policy': "sandbox; default-src 'none'",
+      'X-Content-Type-Options': 'nosniff',
+      'Cache-Control': 'private, no-store',
+    });
+    response.sendFile(media.diskName, { root: mediaDirectory, cacheControl: false, dotfiles: 'deny' }, (error) => {
+      if (error && !response.headersSent) response.status(410).json({ error: 'This voice message is no longer available.' });
+      purgeUnreferencedMedia(row.content).catch((failure) => console.error('View once audio could not be removed:', failure.code ?? failure.name));
+    });
+  });
+
   app.post('/api/v1/media/:id/link', requireSession, async (request, response) => {
     const media = (await mediaFor(request.session.user_id, request.params.id));
     if (!media) return response.status(404).json({ error: 'Attachment not found.' });
+    if (await isViewOnceMedia(media.id)) return response.status(403).json({ error: 'Open view once messages from the chat.' });
     pruneDownloadLinks();
     const token = randomBytes(24).toString('base64url');
     const expiresAt = Date.now() + DOWNLOAD_LINK_TTL_MS;
@@ -1145,6 +1355,7 @@ export function createChatServer({
   app.get('/api/v1/media/:id', requireSessionOrDownloadLink, async (request, response) => {
     const media = (await mediaFor(request.session.user_id, request.params.id));
     if (!media) return response.status(404).json({ error: 'Attachment not found.' });
+    if (await isViewOnceMedia(media.id)) return response.status(403).json({ error: 'Open view once messages from the chat.' });
     // Rows stored before types were preserved hold the generic type; re-derive it from the filename.
     const contentType = resolveContentType(media.contentType, media.filename);
     const inline = Boolean(request.query.inline) && isInlineSafe(contentType);
@@ -1167,9 +1378,7 @@ export function createChatServer({
   app.post('/api/v1/auth/logout', requireSession, async (request, response) => {
     const tokenHash = request.session.token_hash;
     (await db.prepare("DELETE FROM sessions WHERE token_hash = ?").run(tokenHash));
-    for (const socket of websocketServer.clients) {
-      if (socket.sessionHash === tokenHash) socket.close(4001, 'Session logged out');
-    }
+    closeSessionSockets(new Set([tokenHash]), 'Session logged out');
     response.status(204).end();
   });
 
@@ -1251,6 +1460,8 @@ export function createChatServer({
     const contact = (await db.prepare(`SELECT ${USER_COLUMNS} FROM users WHERE id = ?`).get(contactId));
     if (!contact) return response.status(404).json({ error: 'That Hidden Messenger handle was not found.' });
     (await linkUsers(request.session.user_id, contactId, { save: request.body?.save !== false }));
+    // Saving someone can reveal "My contacts" presence to them.
+    await broadcastPresence(request.session.user_id);
     const link = (await linkRow.get(request.session.user_id, contactId));
     response.status(200).json({ ...publicUser(contact), saved: Boolean(link?.saved), hidden: false });
   });
@@ -1268,7 +1479,7 @@ export function createChatServer({
     const row = (await db.prepare("DELETE FROM pairing_codes WHERE code_hash = ? AND expires_at > ? RETURNING user_id")
       .get(digest(code), Date.now()));
     if (!row) return response.status(410).json({ error: 'This pairing code has expired or was already used.' });
-    response.json((await issueSession(row.user_id, 'Linked device')));
+    response.json((await issueSession(row.user_id, deviceNameFromUserAgent(request.get('user-agent'), 'Linked device'))));
   });
 
   app.get('/api/v1/messages', requireSession, async (request, response) => {
@@ -1355,12 +1566,6 @@ export function createChatServer({
     if (!connections.has(userId)) connections.set(userId, new Set());
     const wasOffline = connections.get(userId).size === 0;
     connections.get(userId).add(socket);
-    json(socket, {
-      type: 'connection:ready',
-      user: request.session.user,
-      presence: [...connections.keys()].map((id) => ({ userId: id, status: userSockets(id).size ? 'online' : 'offline' })),
-    });
-    if (wasOffline) broadcastPresence(userId);
 
     let queuedBytes = 0;
     let queue = Promise.resolve();
@@ -1370,6 +1575,12 @@ export function createChatServer({
         json(socket, { type: 'error', message: 'The server could not complete this operation. Please retry.' });
       }));
     }
+    // The first queued task, so "ready" (with the presence the viewer may see) precedes pending messages.
+    enqueue(async () => {
+      json(socket, { type: 'connection:ready', user: request.session.user, presence: await presenceSnapshot(userId) });
+      await db.prepare('UPDATE sessions SET last_active_at = ? WHERE token_hash = ?').run(Date.now(), socket.sessionHash);
+      if (wasOffline) await broadcastPresence(userId);
+    });
     enqueue(deliverPendingMessages);
     async function deliverPendingMessages() {
     (await expireMessages());
@@ -1697,6 +1908,13 @@ export function createChatServer({
         if (existing.senderId !== userId) return json(socket, { type: 'error', message: 'Message ID is already in use.' });
         return json(socket, { type: 'message:ack', message: (await presentMessage(existing)) });
       }
+      // View once audio belongs to its one message: it cannot be forwarded or re-sent, and only fresh uploads qualify.
+      if (mediaId && await isViewOnceMedia(mediaId)) {
+        return json(socket, { type: 'error', message: 'View once messages can’t be forwarded.' });
+      }
+      if (VIEW_ONCE_VOICE.test(content) && (payload.forwarded === true || media.senderId !== userId || media.receiverId !== receiverId)) {
+        return json(socket, { type: 'error', message: 'Only a new voice message can be sent as view once.' });
+      }
 
       const requestedReplyId = typeof payload.replyTo?.id === 'string' ? payload.replyTo.id : null;
       const replyToId = requestedReplyId && (await db.prepare(`SELECT 1 FROM messages WHERE id = ?
@@ -1775,7 +1993,13 @@ export function createChatServer({
       sockets.delete(socket);
       if (sockets.size === 0) {
         connections.delete(userId);
-        broadcastPresence(userId);
+        const now = Date.now();
+        trackSocketTask(Promise.all([
+          db.prepare('UPDATE users SET last_seen_at = ? WHERE id = ?').run(now, userId),
+          db.prepare('UPDATE sessions SET last_active_at = ? WHERE token_hash = ?').run(now, socket.sessionHash),
+        ]).then(() => (userSockets(userId).size ? null : broadcastPresence(userId))).catch((error) => {
+          console.error('Last seen could not be recorded:', error.code ?? error.name);
+        }));
       }
     });
     socket.on('error', () => {});
@@ -1865,10 +2089,15 @@ export function createChatServer({
         closing = true;
         clearInterval(expiryTimer);
         clearInterval(uploadSweep);
+        // Each socket's close handler queues work (e.g. recording last seen); wait for those handlers to run
+        // so the tasks are tracked before the database closes.
+        const socketsClosed = [];
         for (const socket of websocketServer.clients) {
           clearTimeout(socket.heartbeatTimer);
+          socketsClosed.push(new Promise((resolve) => socket.once('close', resolve)));
           socket.terminate();
         }
+        await Promise.all(socketsClosed);
         for (const activeCall of activeCalls.values()) clearTimeout(activeCall.timer);
         for (const session of liveSessions.values()) clearTimeout(session.timer);
         liveSessions.clear();

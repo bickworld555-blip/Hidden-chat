@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, Camera, Check, CheckCheck, ChevronDown, ChevronUp, CornerUpLeft, Forward, Info, Link2, Mic, MoreVertical, Paperclip, Phone, Search, Send, Smile, Star, Timer, Trash2, Video, X } from 'lucide-react';
-import { voiceExtension } from '../voice.js';
+import { parseVoiceContent, voiceExtension } from '../voice.js';
 import { COMPOSER_EMOJIS, COMPOSER_MAX_LENGTH, composerAction, insertAtCaret } from '../composer.js';
 import { playNotificationTone } from '../sounds.js';
 import { EMPTY_MESSAGES, useChatStore } from '../store.js';
@@ -27,8 +27,21 @@ import MediaRenderer from './MediaRenderer.jsx';
 import MediaViewer from './MediaViewer.jsx';
 import VoiceMessage from './VoiceMessage.jsx';
 import VoiceRecorderBar from './VoiceRecorderBar.jsx';
+import { presenceLine } from '../presence.js';
+import { EventBubble, EventComposer, PollBubble, PollComposer, ViewOnceVoice } from './RichMessages.jsx';
+import { parsePollContent } from '../polls.js';
+import { parseEventContent } from '../calendarEvents.js';
 
-const UNSUPPORTED_ATTACHMENTS = new Set(['order', 'catalogue', 'quick-reply', 'poll', 'event']);
+// Re-renders once a minute so "last seen today" rolls over to "yesterday" without new presence events.
+function useMinuteClock() {
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(new Date()), 60_000);
+    return () => clearInterval(timer);
+  }, []);
+  return now;
+}
+
 // Distance (px) from the bottom of the feed within which the view is still treated as "at the latest message".
 const STICK_TO_BOTTOM_THRESHOLD = 80;
 // Upper bound for a smooth scroll animation; after this the scroll position is re-evaluated.
@@ -215,10 +228,12 @@ function MessageBubble({
     onLongPress(message);
   }
 
-  const isVoice = content.startsWith('voice:');
+  const voice = parseVoiceContent(content);
+  const isVoice = Boolean(voice);
   const isMedia = content.startsWith('media:');
   const sharedKind = messageKind(content);
-  const [, voiceId, voiceSeconds] = isVoice ? content.split(':') : [];
+  const poll = parsePollContent(content);
+  const event = parseEventContent(content);
 
   const meta = (
     <div className="message-meta">
@@ -279,8 +294,14 @@ function MessageBubble({
               <span className="wa-quoted-text">{quote.text}</span>
             </button>
           )}
-          {isVoice ? (
-            <VoiceMessage id={voiceId} seconds={voiceSeconds} sessionToken={sessionToken} sender={sender}>{meta}</VoiceMessage>
+          {voice?.viewOnce ? (
+            <ViewOnceVoice messageId={message.id} seconds={voice.seconds} opened={voice.opened} mine={mine} sessionToken={sessionToken}>{meta}</ViewOnceVoice>
+          ) : isVoice ? (
+            <VoiceMessage id={voice.id} seconds={voice.seconds} sessionToken={sessionToken} sender={sender}>{meta}</VoiceMessage>
+          ) : poll ? (
+            <PollBubble messageId={message.id} poll={poll} sessionToken={sessionToken} userId={shared.userId} nameFor={shared.nameFor}>{meta}</PollBubble>
+          ) : event ? (
+            <EventBubble messageId={message.id} event={event}>{meta}</EventBubble>
           ) : (
             <>
               {isMedia ? <MediaRenderer mediaRef={content} sessionToken={sessionToken} onOpen={onOpenMedia} />
@@ -488,6 +509,8 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
   const chats =  useChatStore((state) => state.chats);
   const messages = useChatStore((state) => (chatId ? state.messages?.[chatId] : null)) ?? EMPTY_MESSAGES;
   const presence = useChatStore((state) => (chatId ? state.presence?.[chatId] : undefined));
+  const lastSeenAt = useChatStore((state) => (chatId ? state.lastSeen?.[chatId] : undefined));
+  const now = useMinuteClock();
   const typing = useChatStore((state) => (chatId ? state.typing?.[chatId] : false));
   const addMessage = useChatStore((state) => state.addMessage);
   const updateMessage = useChatStore((state) => state.updateMessage);
@@ -804,7 +827,7 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
         signal: controller.signal,
         onProgress: (sent, total) => setUploadProgress({ filename, sent, total }),
       });
-      sendContent(kind === 'voice' ? `voice:${data.id}:${seconds}` : `media:${data.id}:${data.filename || filename}`);
+      sendContent(kind === 'voice' ? `voice:${data.id}:${seconds}` : kind === 'voice-once' ? `voice:${data.id}:${seconds}:once` : `media:${data.id}:${data.filename || filename}`);
     } catch (caught) {
       if (caught?.name !== 'AbortError') setError(caught?.message || 'Upload failed.');
     } finally {
@@ -846,7 +869,8 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
     else if (option === 'audio') openFilePicker('audio/*');
     else if (option === 'location') setPicker('location');
     else if (option === 'contact') setPicker('contact');
-    else if (UNSUPPORTED_ATTACHMENTS.has(option)) setError('That attachment type is not available yet.');
+    else if (option === 'poll') setPicker('poll');
+    else if (option === 'event') setPicker('event');
   }
 
   function handleLocation(selection) {
@@ -878,6 +902,8 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
   const liveSend = useCallback((payload) => client?.send?.(payload), [client]);
   const sharedHandlers = useMemo(() => ({
     peerName: chat?.name ?? 'Contact',
+    userId,
+    nameFor: (id) => (id === chat?.id ? presentName(chat) : null),
     send: client ? liveSend : null,
     openLocation: (location) => setMapView({ location }),
     openLive: (sessionId) => setMapView({ sessionId }),
@@ -886,11 +912,11 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
       if (list.some((item) => item.id === contact.id)) setActiveChat(contact.id);
       else addContact({ id: contact.id, name: contact.name, username: contact.username, initials: contact.initials, color: contact.color, avatar: contact.avatar });
     },
-  }), [chat?.name, client, liveSend]);
+  }), [chat, userId, client, liveSend]);
 
-  function handleVoiceSend(blob, seconds, type) {
+  function handleVoiceSend(blob, seconds, type, { viewOnce = false } = {}) {
     setRecording(false);
-    uploadAndSend(blob, `voice-note.${voiceExtension(type)}`, 'voice', seconds);
+    uploadAndSend(blob, `voice-note.${voiceExtension(type)}`, viewOnce ? 'voice-once' : 'voice', seconds);
   }
 
   const handleVoiceCancel = useCallback(() => setRecording(false), []);
@@ -945,7 +971,7 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
     );
   }
 
-  const status = typing ? 'typing…' : presence === 'online' ? 'Online' : 'Offline';
+  const status = typing ? 'typing…' : presenceLine({ status: presence, lastSeenAt }, now);
   const shareable = (Array.isArray(chats) ? chats : []).filter((item) => item?.id && item.id !== userId);
   let lastDay = '';
 
@@ -1177,7 +1203,7 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
               </strong>
               <small>
                 {hasCustomDisplayName(chat) && <span className="conversation-handle">@{chat.username} · </span>}
-                {blocked ? 'Blocked' : connection && connection !== 'online' && connection !== 'connected' ? `${status} · ${connection}` : status}
+                {blocked ? 'Blocked' : connection && connection !== 'online' && connection !== 'connected' ? [status, connection].filter(Boolean).join(' · ') : status}
               </small>
             </span>
           </div>
@@ -1315,7 +1341,7 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
           );
         })()}
         {recording ? (
-          <VoiceRecorderBar onSend={handleVoiceSend} onCancel={handleVoiceCancel} onError={setError} />
+          <VoiceRecorderBar onSend={handleVoiceSend} onCancel={handleVoiceCancel} onError={setError} allowViewOnce />
         ) : (
           <div className="composer-row">
             <div className="composer">
@@ -1380,6 +1406,8 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
       />
       {picker === 'location' && <LocationPicker onSendLocation={handleLocation} onShareLive={handleShareLive} onClose={() => setPicker(null)} />}
       {picker === 'contact' && <ContactSharePicker contacts={shareable} onSelect={handleContact} onClose={() => setPicker(null)} />}
+      {picker === 'poll' && <PollComposer onSend={(content) => { sendContent(content); setPicker(null); }} onClose={() => setPicker(null)} />}
+      {picker === 'event' && <EventComposer onSend={(content) => { sendContent(content); setPicker(null); }} onClose={() => setPicker(null)} />}
       {mapView && <MapView location={mapView.location} sessionId={mapView.sessionId} peer={chat} send={sharedHandlers.send} onClose={() => setMapView(null)} />}
       {viewerMessage && (
         <MediaViewer

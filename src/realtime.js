@@ -55,8 +55,15 @@ export class RealtimeClient {
     socket.addEventListener('message', ({ data }) => {
       try { this.onEvent(JSON.parse(data)); } catch { /* Ignore malformed server events. */ }
     });
-    socket.addEventListener('close', () => {
+    socket.addEventListener('close', (event) => {
       if (this.closed) return;
+      // 4001: this session was signed out (Log out, a password change, or Linked devices on another device).
+      if (event.code === 4001) {
+        this.closed = true;
+        this.onState('offline');
+        this.onRevoked?.(event.reason);
+        return;
+      }
       this.onState('offline');
       const delay = Math.min(800 * 2 ** this.attempt, 20_000) + Math.random() * 350;
       this.attempt += 1;

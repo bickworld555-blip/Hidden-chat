@@ -20,6 +20,7 @@ import PairingModal from './components/PairingModal.jsx';
 import UsernameGate from './components/UsernameGate.jsx';
 import CallOverlay from './components/CallOverlay.jsx';
 import NotificationSettings from './components/NotificationSettings.jsx';
+import AccountSettings from './components/AccountSettings.jsx';
 import MobileBottomNav from './components/MobileBottomNav.jsx';
 import CallsView from './components/CallsView.jsx';
 import UpdatesView from './components/UpdatesView.jsx';
@@ -85,6 +86,7 @@ export default function App() {
   const [client, setClient] = useState(null);
   const [pairingOpen, setPairingOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [accountSettingsOpen, setAccountSettingsOpen] = useState(false);
   const [accountsOpen, setAccountsOpen] = useState(false);
   const [avatarStudioOpen, setAvatarStudioOpen] = useState(false);
   const [groupsOpen, setGroupsOpen] = useState(false);
@@ -97,6 +99,7 @@ export default function App() {
   const [callsSeenAt, setCallsSeenAt] = useState(() => Number(localStorage.getItem('relay:calls-seen-at')) || 0);
   const openChatRef = useRef(null);
   const openGroupRef = useRef(null);
+  const revokedRef = useRef(null);
   const [authOpen, setAuthOpen] = useState(false);
   const [darkMode, setDarkMode] = useState(() => {
     const stored = localStorage.getItem('relay:theme');
@@ -181,8 +184,8 @@ export default function App() {
               showSystemNotification('group', { ...groupNotificationText(event), conversation: alert.conversation, onClick: () => openGroupRef.current?.(alert.conversation.id) });
             }
           }
-          if (event.type === 'connection:ready') event.presence.forEach((item) => setPresence(item.userId, item.status));
-          if (event.type === 'presence:update') setPresence(event.userId, event.status);
+          if (event.type === 'connection:ready') event.presence.forEach((item) => setPresence(item.userId, item.status, item.lastSeenAt));
+          if (event.type === 'presence:update') setPresence(event.userId, event.status, event.lastSeenAt);
           if (event.type === 'presence:typing') setTyping(event.userId, event.active);
           if (event.type === 'message:new' || event.type === 'message:ack') {
             const { blockedChats, mutedChatIds } = useChatStore.getState();
@@ -213,6 +216,8 @@ export default function App() {
           }
           if (event.type === 'location:live') useChatStore.getState().applyLiveEvent(event, (payload) => realtime.send(payload));
           if (event.type === 'message:status') updateMessage(event.messageId, { status: event.status });
+          if (event.type === 'message:updated') updateMessage(event.messageId, { content: event.content });
+          if (event.type === 'poll:votes') useChatStore.getState().setPollVotes(event.messageId, event.votes);
           if (event.type === 'message:deleted') useChatStore.getState().removeMessageById(event.messageId);
           if (event.type === 'message:reaction') {
             const state = useChatStore.getState();
@@ -288,6 +293,7 @@ export default function App() {
             playNotificationTone('alert');
           }
         }, setConnection);
+        realtime.onRevoked = () => revokedRef.current?.();
         realtime.onReady = async () => {
           const outbox = await getOutbox(userId);
           for (const message of outbox) realtime.send({ type: 'message:send', message });
@@ -467,6 +473,8 @@ export default function App() {
   }
 
   const logout = () => removeAccountFromDevice(userId);
+  // Signed out from another device: drop this account here too (its token no longer works).
+  revokedRef.current = () => removeAccountFromDevice(userId);
 
   const activeTab = isMobile ? mobileActiveTab : 'chats';
   const showMobileList = isMobile && activeTab === 'chats' && (mobileListOpen || !chat);
@@ -573,7 +581,7 @@ export default function App() {
 
   return (
     <main className={`app-shell ${darkMode ? 'dark-theme' : ''} ${isMobile ? 'is-mobile' : ''} ${chatOpenOnMobile ? 'chat-open' : ''}`} data-animations={animationsAttribute(appearance)} data-call-animations={callAnimationsAttribute(appearance)}>
-      <Sidebar onPair={() => setPairingOpen(true)} onSounds={() => setNotificationsOpen(true)} onNotifications={() => setNotificationsOpen(true)} onSelectChat={() => setMobileListOpen(false)} onOpenAuth={() => setAuthOpen(true)} onAuthenticated={acceptSession} onLogout={logout} onAccounts={() => setAccountsOpen(true)} onGroups={() => openGroups()} groups={groupRows} onOpenGroup={(id) => openGroups(false, id)} />
+      <Sidebar onPair={() => setPairingOpen(true)} onSounds={() => setNotificationsOpen(true)} onNotifications={() => setNotificationsOpen(true)} onAccountSettings={() => setAccountSettingsOpen(true)} onSelectChat={() => setMobileListOpen(false)} onOpenAuth={() => setAuthOpen(true)} onAuthenticated={acceptSession} onLogout={logout} onAccounts={() => setAccountsOpen(true)} onGroups={() => openGroups()} groups={groupRows} onOpenGroup={(id) => openGroups(false, id)} />
       <div className="workspace">
         {activeTab === 'chats' ? (
           showMobileList || !chat
@@ -584,7 +592,7 @@ export default function App() {
         ) : activeTab === 'updates' ? (
           <UpdatesView />
         ) : activeTab === 'tools' ? (
-          <ToolsView darkMode={darkMode} onToggleTheme={toggleTheme} onLogout={() => { logout(); }} onNotifications={() => setNotificationsOpen(true)} onAccounts={() => setAccountsOpen(true)} onAvatarStudio={() => setAvatarStudioOpen(true)} onGroups={() => openGroups()} />
+          <ToolsView darkMode={darkMode} onToggleTheme={toggleTheme} onLogout={() => { logout(); }} onNotifications={() => setNotificationsOpen(true)} onAccountSettings={() => setAccountSettingsOpen(true)} onAccounts={() => setAccountsOpen(true)} onAvatarStudio={() => setAvatarStudioOpen(true)} onGroups={() => openGroups()} />
         ) : null}
         {activeTab === 'chats' && !isMobile && <footer className="workspace-footer"><span><i /> Hidden Messenger workspace</span><span className="workspace-footer-right">Demo mode <span>·</span><button onClick={toggleTheme} title={`Switch to ${darkMode ? 'light' : 'dark'} theme`}>{darkMode ? <Sun size={14} /> : <Moon size={14} />}{darkMode ? 'Light' : 'Dark'}</button><ChevronRight size={13} /></span></footer>}
       </div>
@@ -592,6 +600,7 @@ export default function App() {
       {fatalError && <div className="status-toast"><Bell size={15} /><span>{fatalError}</span><button onClick={() => setFatalError('')}>Dismiss</button></div>}
       {pairingOpen && user && <PairingModal onClose={() => setPairingOpen(false)} token={sessionToken} userId={userId} />}
       {notificationsOpen && <NotificationSettings onClose={() => setNotificationsOpen(false)} />}
+      {accountSettingsOpen && <AccountSettings onClose={() => setAccountSettingsOpen(false)} />}
       {accountsOpen && <AccountSwitcher busyId={switchingId} onSwitch={switchAccount} onRemove={removeAccountFromDevice} onAdd={() => { setAccountsOpen(false); setAuthOpen(true); }} onClose={() => setAccountsOpen(false)} />}
       {avatarStudioOpen && <AvatarStudio onClose={() => setAvatarStudioOpen(false)} />}
       {groupsOpen && sessionToken && <GroupsView key={userId} token={sessionToken} userId={userId} revision={groupRevision} initialCreate={groupsCreate} initialGroupId={groupsInitialId} onStartGroupCall={initiateGroupCall} onClose={() => setGroupsOpen(false)} />}

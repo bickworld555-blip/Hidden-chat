@@ -17,7 +17,7 @@ function Switch({ checked }) {
   return <span className={`wa-switch${checked ? ' on' : ''}`} aria-hidden="true"><span /></span>;
 }
 
-function Row({ title, subtitle, onClick, disabled, children }) {
+export function Row({ title, subtitle, onClick, disabled, children }) {
   return (
     <button type="button" className={`wa-info-row notif-row${disabled ? ' is-disabled' : ''}`} onClick={onClick} disabled={disabled} aria-disabled={disabled || undefined}>
       <span className="wa-info-row-text">
@@ -37,7 +37,7 @@ function ToggleRow({ title, subtitle, checked, onChange }) {
   );
 }
 
-function SubView({ title, onBack, children }) {
+export function SubView({ title, onBack, children }) {
   return (
     <div className="wa-info-subview">
       <header className="wa-info-header">
@@ -49,7 +49,7 @@ function SubView({ title, onBack, children }) {
   );
 }
 
-function RadioList({ title, options, value, onChange, onBack, render = (option) => option.label }) {
+export function RadioList({ title, options, value, onChange, onBack, render = (option) => option.label }) {
   return (
     <SubView title={title} onBack={onBack}>
       <section className="wa-info-section">

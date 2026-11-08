@@ -97,7 +97,7 @@ function DisplayNameEditor({ user, userId }) {
   );
 }
 
-export default function ToolsView({ darkMode, onToggleTheme, onLogout, onNotifications, onAccounts, onAvatarStudio, onGroups }) {
+export default function ToolsView({ darkMode, onToggleTheme, onLogout, onNotifications, onAccountSettings, onAccounts, onAvatarStudio, onGroups }) {
   const user = useChatStore((state) => state.user);
   const userId = useChatStore((state) => state.userId);
   const { accounts } = useAccounts();
@@ -233,11 +233,11 @@ export default function ToolsView({ darkMode, onToggleTheme, onLogout, onNotific
             </div>
             <ChevronRight size={16} />
           </button>
-          <button className="tool-item">
+          <button className="tool-item" onClick={() => onAccountSettings?.()}>
             <Settings size={20} />
             <div className="tool-item-info">
-              <strong>Account settings</strong>
-              <small>Privacy, security & profile</small>
+              <strong>Account & privacy</strong>
+              <small>Last seen, change password, linked devices</small>
             </div>
             <ChevronRight size={16} />
           </button>

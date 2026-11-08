@@ -8,8 +8,8 @@ import { DATABASE_SCHEMA_VERSION, postgresOptions } from '../server/database.mjs
 import { DEMO_USERS } from '../server/demo.mjs';
 
 export const IMPORT_TABLES = Object.freeze([
-  { name: 'users', columns: ['id', 'username', 'name', 'initials', 'color', 'dob', 'password_hash', 'created_at', 'avatar_disk_name', 'avatar_type', 'avatar_updated_at'], users: ['id'] },
-  { name: 'sessions', columns: ['token_hash', 'user_id', 'device_id', 'device_name', 'expires_at'], users: ['user_id'] },
+  { name: 'users', columns: ['id', 'username', 'name', 'initials', 'color', 'dob', 'password_hash', 'created_at', 'avatar_disk_name', 'avatar_type', 'avatar_updated_at', 'last_seen_at', 'last_seen_privacy'], users: ['id'] },
+  { name: 'sessions', columns: ['token_hash', 'user_id', 'device_id', 'device_name', 'expires_at', 'created_at', 'last_active_at'], users: ['user_id'] },
   { name: 'contacts', columns: ['owner_id', 'contact_id', 'created_at', 'saved', 'hidden'], users: ['owner_id', 'contact_id'], key: ['owner_id', 'contact_id'] },
   // Groups precede media and uploads, whose group_id references them.
   { name: 'groups', columns: ['id', 'name', 'created_by', 'created_at'], users: ['created_by'] },
@@ -22,11 +22,17 @@ export const IMPORT_TABLES = Object.freeze([
   { name: 'message_reactions', columns: ['message_id', 'user_id', 'emoji'], users: ['user_id'], key: ['message_id', 'user_id'] },
   { name: 'message_hidden', columns: ['user_id', 'message_id'], users: ['user_id'], key: ['user_id', 'message_id'] },
   { name: 'group_messages', columns: ['id', 'group_id', 'sender_id', 'created_at', 'content', 'expires_at'], users: ['sender_id'] },
+  { name: 'poll_votes', columns: ['message_id', 'user_id', 'option_index', 'voted_at'], users: ['user_id'], key: ['message_id', 'user_id', 'option_index'], numeric: ['option_index'] },
   { name: 'group_reports', columns: ['id', 'group_id', 'reporter_id', 'reason', 'created_at'], users: ['reporter_id'] },
 ]);
 const demoIds = Object.keys(DEMO_USERS);
 const excluded = demoIds.map(() => '?').join(', ');
 const BATCH_ROWS = 200;
+
+// Deterministic byte-order sort on each table's key; numeric key columns sort as numbers (collations are text-only).
+function orderBy(table, collation) {
+  return (table.key ?? [table.columns[0]]).map((column) => (table.numeric?.includes(column) ? column : `${column} COLLATE ${collation}`)).join(', ');
+}
 function sourceQuery(table) {
   const filters = table.users.map((column) => `(${column} IS NULL OR ${column} NOT IN (${excluded}))`);
   const parameters = table.users.flatMap(() => demoIds);
@@ -43,7 +49,7 @@ function sourceQuery(table) {
     parameters.push(...demoIds);
   }
   return {
-    sql: `SELECT ${table.columns.join(', ')} FROM ${table.name} WHERE ${filters.join(' AND ')} ORDER BY ${(table.key ?? [table.columns[0]]).map((column) => `${column} COLLATE BINARY`).join(', ')}`,
+    sql: `SELECT ${table.columns.join(', ')} FROM ${table.name} WHERE ${filters.join(' AND ')} ORDER BY ${orderBy(table, 'BINARY')}`,
     parameters,
   };
 }
@@ -99,7 +105,7 @@ export async function importSqlite(source, client) {
       }
       await insertBatch();
       const actual = createHash('sha256');
-      const order = (table.key ?? [table.columns[0]]).map((column) => `${column} COLLATE "C"`).join(', ');
+      const order = orderBy(table, '"C"');
       await client.query(`DECLARE relay_import_verify NO SCROLL CURSOR FOR SELECT ${table.columns.join(', ')} FROM relay.${table.name} ORDER BY ${order}`);
       for (;;) {
         const result = await client.query(`FETCH FORWARD ${BATCH_ROWS} FROM relay_import_verify`);

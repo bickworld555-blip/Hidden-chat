@@ -1,3 +1,5 @@
+import { pollSummary } from './polls.js';
+import { eventSummary } from './calendarEvents.js';
 import { create } from 'zustand';
 import { del, get, set } from 'idb-keyval';
 import { endBlock, hiddenByBlock, startBlock } from './blocking.js';
@@ -17,7 +19,10 @@ function mergeMessage(current, incoming) {
 
 export function previewFor(content) {
   if (typeof content !== 'string') return '';
-  if (content.startsWith('voice:')) return '🎤 Voice message';
+  if (content.startsWith('voice-opened:')) return '① Opened';
+  if (content.startsWith('voice:')) return content.endsWith(':once') ? '① Voice message' : '🎤 Voice message';
+  if (content.startsWith('poll:')) return pollSummary(content) ?? '📊 Poll';
+  if (content.startsWith('event:')) return eventSummary(content) ?? '📅 Event';
   if (content.startsWith('media:')) return mediaPreviewLabel(content);
   if (content.startsWith('file:')) return '📎 Attachment';
   if (content.startsWith('location:')) return `📍 ${parseLocation(content)?.name || 'Location'}`;
@@ -113,6 +118,10 @@ export const useChatStore = create((setState, getState) => ({
   blockedChats: {},
   chatThemes: {},
   presence: {},
+  // userId → when they were last online (ms), for "last seen …"; null while online or when their privacy hides it.
+  lastSeen: {},
+  // Poll message id → { [optionIndex]: [userId, …] }, filled on first view and kept live by poll:votes events.
+  pollVotes: {},
   typing: {},
   connection: 'connecting',
   // Live location sessions (ephemeral, keyed by session id). `me`/`peer` hold the latest fixes.
@@ -294,7 +303,10 @@ export const useChatStore = create((setState, getState) => ({
     const session = getState().liveSessions[sessionId];
     return session?.me && session?.peer ? haversineDistance(session.me, session.peer) : null;
   },
-  setPresence(userId, status) { setState((state) => ({ presence: { ...state.presence, [userId]: status } })); },
+  setPresence(userId, status, lastSeenAt = null) {
+    setState((state) => ({ presence: { ...state.presence, [userId]: status }, lastSeen: { ...state.lastSeen, [userId]: lastSeenAt ?? null } }));
+  },
+  setPollVotes(messageId, votes) { setState((state) => ({ pollVotes: { ...state.pollVotes, [messageId]: votes ?? {} } })); },
   setTyping(userId, active) { setState((state) => ({ typing: { ...state.typing, [userId]: active } })); },
   markRead(chatId) {
     setState((state) => ({

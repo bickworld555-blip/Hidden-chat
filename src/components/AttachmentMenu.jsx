@@ -1,13 +1,10 @@
-import { FileText, Camera, Image, Music, ShoppingCart, BookOpen, MessageSquare, MapPin, User, BarChart3, Calendar, X } from 'lucide-react';
+import { FileText, Camera, Image, Music, MapPin, User, BarChart3, Calendar, X } from 'lucide-react';
 
 const attachmentOptions = [
   { id: 'document', icon: FileText, label: 'Document', color: 'bg-blue-100 text-blue-600' },
   { id: 'camera', icon: Camera, label: 'Camera', color: 'bg-purple-100 text-purple-600' },
   { id: 'gallery', icon: Image, label: 'Gallery', color: 'bg-pink-100 text-pink-600' },
   { id: 'audio', icon: Music, label: 'Audio', color: 'bg-orange-100 text-orange-600' },
-  { id: 'order', icon: ShoppingCart, label: 'Order', color: 'bg-red-100 text-red-600' },
-  { id: 'catalogue', icon: BookOpen, label: 'Catalogue', color: 'bg-green-100 text-green-600' },
-  { id: 'quick-reply', icon: MessageSquare, label: 'Quick Reply', color: 'bg-cyan-100 text-cyan-600' },
   { id: 'location', icon: MapPin, label: 'Location', color: 'bg-yellow-100 text-yellow-600' },
   { id: 'contact', icon: User, label: 'Contact', color: 'bg-indigo-100 text-indigo-600' },
   { id: 'poll', icon: BarChart3, label: 'Poll', color: 'bg-violet-100 text-violet-600' },

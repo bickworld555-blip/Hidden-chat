@@ -26,3 +26,16 @@ export function voiceMimeFromDisposition(disposition) {
   if (extension === 'm4a') return 'audio/mp4';
   return 'audio/webm';
 }
+
+// "voice:<mediaId>:<seconds>" or, sent as view once, "voice:<mediaId>:<seconds>:once"; after the recipient
+// plays a view once note the server rewrites it to "voice-opened:<seconds>" and deletes the audio.
+export function parseVoiceContent(content) {
+  if (typeof content !== 'string') return null;
+  if (content.startsWith('voice-opened:')) {
+    return { id: null, seconds: Number(content.slice(13)) || 0, viewOnce: true, opened: true };
+  }
+  if (!content.startsWith('voice:')) return null;
+  const [, id, seconds, flag] = content.split(':');
+  if (!id) return null;
+  return { id, seconds: Number(seconds) || 0, viewOnce: flag === 'once', opened: false };
+}

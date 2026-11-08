@@ -9,7 +9,7 @@ import { linkContact, searchPeople } from '../contactsApi.js';
 import ShieldMark from './ShieldMark.jsx';
 import { mergeGroupRows, unreadBadge } from '../groupRows.js';
 
-export default function Sidebar({ onPair, onSounds, onNotifications, onSelectChat, onOpenAuth, onLogout, onAccounts, onGroups, groups = [], onOpenGroup }) {
+export default function Sidebar({ onPair, onSounds, onNotifications, onAccountSettings, onSelectChat, onOpenAuth, onLogout, onAccounts, onGroups, groups = [], onOpenGroup }) {
   const [query, setQuery] = useState('');
   const [accountMenu, setAccountMenu] = useState(false);
   const [filter, setFilter] = useState('All');
@@ -108,6 +108,7 @@ export default function Sidebar({ onPair, onSounds, onNotifications, onSelectCha
         {accountMenu && <div className="account-menu">
           <span className="menu-caption">SIGNED IN AS @{user?.username ?? userId}</span>
           <span className="account-id">ID · {userId}</span>
+          <button className="account-option" onClick={() => { setAccountMenu(false); onAccountSettings?.(); }}><Settings2 size={16} />Account &amp; privacy</button>
           <button className="account-option" onClick={() => { setAccountMenu(false); onAccounts?.(); }}><Users size={16} />Switch account{accounts.length > 1 ? ` (${accounts.length})` : ''}</button>
           <button className="account-option add-account-option" onClick={() => { setAccountMenu(false); onOpenAuth?.(); }}><AtSign size={16} />Add another account</button>
           <button className="account-option logout-option" onClick={() => { setAccountMenu(false); onLogout?.(); }}><LogOut size={16} />Log out</button>
