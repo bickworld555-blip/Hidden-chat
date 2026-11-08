@@ -3826,3 +3826,8 @@ button.groups-row { cursor: pointer; }
   .avatar-studio-stage.is-choosing .avatar-scan-view { max-width: 150px; height: 150px; }
   .avatar-choice-grid { grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); }
 }
+
+/* Group rows in the main chat list: neutral round avatar with a people glyph, sized like contact avatars. */
+.wa-group-avatar { flex: none; width: 42px; height: 42px; display: grid; place-items: center; border-radius: 50%; background: #cfd8dc; color: #fff; }
+.wa-row-avatar-wrap .wa-group-avatar { width: 52px; height: 52px; }
+.dark-theme .wa-group-avatar { background: #3b4a54; color: #aebac1; }

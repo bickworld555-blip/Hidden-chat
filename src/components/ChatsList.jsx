@@ -10,8 +10,29 @@ import { uploadFile } from '../upload.js';
 import Avatar from './Avatar.jsx';
 import SelectContactModal from './SelectContactModal.jsx';
 import ShieldMark from './ShieldMark.jsx';
+import { countUnreadConversations, mergeGroupRows, unreadBadge } from '../groupRows.js';
 
-export default function ChatsList({ onOpenChat, onStartCall, onGroups }) {
+function GroupListRow({ row, onOpen }) {
+  return (
+    <div className="wa-row-wrapper">
+      <button type="button" className="wa-row" onClick={() => onOpen?.(row.id)} aria-label={`Open group ${row.name}${row.unread > 0 ? `, ${row.unread} unread` : ''}`}>
+        <div className="wa-row-avatar-wrap"><span className="wa-group-avatar" aria-hidden="true"><Users size={24} /></span></div>
+        <span className="wa-row-body">
+          <span className="wa-row-top">
+            <strong>{row.name}</strong>
+            <time className={row.unread > 0 ? 'unread' : ''}>{row.time}</time>
+          </span>
+          <span className="wa-row-bottom">
+            <span className="wa-preview">{row.preview}</span>
+            <span className="wa-row-indicators">{row.unread > 0 && <span className="wa-badge">{unreadBadge(row.unread)}</span>}</span>
+          </span>
+        </span>
+      </button>
+    </div>
+  );
+}
+
+export default function ChatsList({ onOpenChat, onStartCall, onGroups, groups = [], onOpenGroup }) {
   const rawChats = useChatStore((state) => state.chats);
   const presence = useChatStore((state) => state.presence);
   const sessionToken = useChatStore((state) => state.sessionToken);
@@ -201,8 +222,13 @@ export default function ChatsList({ onOpenChat, onStartCall, onGroups }) {
     ? sortedChats.filter((chat) => `${chat.name ?? ''} ${chat.username ?? ''}`.toLowerCase().includes(normalizedQuery))
     : filterTab === 'unread' ? sortedChats.filter((chat) => chat.unread > 0)
       : filterTab === 'favourites' ? sortedChats.filter((chat) => favouriteChatIds.includes(chat.id)) : sortedChats;
+  // Groups sit in the same list as direct chats (after pinned/favourite chats, by recency); they are not favouritable.
+  const visibleGroups = isSelectionMode || filterTab === 'favourites' ? []
+    : normalizedQuery ? groups.filter((group) => group.name.toLowerCase().includes(normalizedQuery))
+      : filterTab === 'unread' ? groups.filter((group) => group.unread > 0) : groups;
+  const visibleRows = mergeGroupRows(visibleChats, visibleGroups, { leadingIds: [...pinnedChatIds, ...favouriteChatIds] });
   const newResults = searchResults.filter((contact) => contact?.id && !chats.some((chat) => chat.id === contact.id));
-  const totalUnread = chats.reduce((sum, chat) => sum + (chat.unread > 0 ? 1 : 0), 0);
+  const totalUnread = countUnreadConversations(chats, groups);
 
   return (
     <section className="wa-list">
@@ -324,7 +350,8 @@ export default function ChatsList({ onOpenChat, onStartCall, onGroups }) {
       )}
 
       <div className="wa-rows">
-        {visibleChats.map((chat) => {
+        {visibleRows.map((chat) => {
+          if (chat.kind === 'group') return <GroupListRow key={`group-${chat.id}`} row={chat} onOpen={onOpenGroup} />;
           const online = presence?.[chat.id] === 'online';
           const isSelected = selectedChatIds.includes(chat.id);
           const isPinned = pinnedChatIds.includes(chat.id);
@@ -402,7 +429,7 @@ export default function ChatsList({ onOpenChat, onStartCall, onGroups }) {
             <div className="wa-section-label">Find people on Hidden Messenger</div>
             {isSearching && <div className="wa-note">Searching…</div>}
             {searchError && <div className="wa-note error">{searchError}</div>}
-            {!isSearching && !searchError && newResults.length === 0 && visibleChats.length === 0 && <div className="wa-note">No people found</div>}
+            {!isSearching && !searchError && newResults.length === 0 && visibleRows.length === 0 && <div className="wa-note">No people found</div>}
             {newResults.map((contact) => (
               <div key={contact.id} className="wa-row static">
                 <Avatar name={contact.name} initials={contact.initials ?? contact.name?.slice(0, 2)?.toUpperCase() ?? '?'} color={contact.color} image={contact.avatar} />
@@ -418,7 +445,7 @@ export default function ChatsList({ onOpenChat, onStartCall, onGroups }) {
           </>
         )}
 
-        {!normalizedQuery && visibleChats.length === 0 && (
+        {!normalizedQuery && visibleRows.length === 0 && (
           <div className="wa-empty">
             <MessageSquarePlus size={40} />
             <h3>{filterTab === 'unread' ? 'No unread chats' : 'No chats yet'}</h3>

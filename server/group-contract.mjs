@@ -24,6 +24,7 @@ export async function checkGroupContract({ api, register, service }) {
   const listing = await api('/api/v1/groups', { session: admin });
   assert.equal(listing.data[0].lastContent, 'temporary text');
   assert.equal(listing.data[0].lastSenderId, member.user.id);
+  assert.equal(listing.data[0].lastSenderName, member.user.name, 'group previews name the sender');
   assert.equal(listing.data[0].lastMessageAt, sent.data.createdAt);
   assert.equal(listing.data[0].unread, 1, 'the admin has not read the member\'s message');
   assert.equal((await api('/api/v1/groups', { session: member })).data[0].unread, 0, 'a sender never counts their own message');

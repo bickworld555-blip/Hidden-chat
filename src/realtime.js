@@ -1,3 +1,5 @@
+import { websocketUrl } from './api.js';
+
 export class RealtimeClient {
   constructor(token, onEvent, onState) {
     this.token = token;
@@ -36,8 +38,7 @@ export class RealtimeClient {
     window.clearTimeout(this.retryTimer);
     if (this.socket?.readyState === WebSocket.CONNECTING || this.socket?.readyState === WebSocket.OPEN) return;
     if (!this.listenersAttached) this.attachLifecycleListeners();
-    const scheme = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const socket = new WebSocket(`${scheme}//${location.host}/ws`, [`relay.auth.${this.token}`, 'relay.v1']);
+    const socket = new WebSocket(websocketUrl(), [`relay.auth.${this.token}`, 'relay.v1']);
     this.socket = socket;
     this.onState('connecting');
     socket.addEventListener('open', () => {

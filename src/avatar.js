@@ -1,3 +1,4 @@
+import { apiFetch } from './api.js';
 // Profile photos: authenticated image loading shared by every Avatar, and client-side resizing before upload.
 import { useEffect, useState } from 'react';
 import { useChatStore } from './store.js';
@@ -16,7 +17,7 @@ export function isApiAvatar(src) {
 function loadAvatar(src, token) {
   const key = `${token}\n${src}`;
   if (!objectUrls.has(key)) {
-    objectUrls.set(key, fetch(src, { headers: { Authorization: 'Bearer ' + token } })
+    objectUrls.set(key, apiFetch(src, { headers: { Authorization: 'Bearer ' + token } })
       .then((response) => {
         if (!response.ok) throw new Error('No profile photo.');
         return response.blob();
@@ -78,14 +79,14 @@ export async function prepareAvatarBlob(file, { maxEdge = AVATAR_MAX_EDGE, quali
 }
 
 export async function uploadAvatar(blob, sessionToken) {
-  const response = await fetch('/api/v1/me/avatar', { method: 'PUT', headers: { Authorization: 'Bearer ' + sessionToken, 'Content-Type': blob.type || 'image/jpeg' }, body: blob });
+  const response = await apiFetch('/api/v1/me/avatar', { method: 'PUT', headers: { Authorization: 'Bearer ' + sessionToken, 'Content-Type': blob.type || 'image/jpeg' }, body: blob });
   const data = await response.json().catch(() => ({}));
   if (!response.ok || !data?.user) throw new Error(data?.error || 'Could not update your photo.');
   return data.user;
 }
 
 export async function removeAvatar(sessionToken) {
-  const response = await fetch('/api/v1/me/avatar', { method: 'DELETE', headers: { Authorization: 'Bearer ' + sessionToken } });
+  const response = await apiFetch('/api/v1/me/avatar', { method: 'DELETE', headers: { Authorization: 'Bearer ' + sessionToken } });
   const data = await response.json().catch(() => ({}));
   if (!response.ok || !data?.user) throw new Error(data?.error || 'Could not remove your photo.');
   return data.user;

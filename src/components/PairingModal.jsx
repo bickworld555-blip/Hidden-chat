@@ -1,3 +1,4 @@
+import { apiFetch } from '../api.js';
 import { useEffect, useState } from 'react';
 import { Check, Copy, Monitor, ShieldCheck, Smartphone, X } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
@@ -11,7 +12,7 @@ export default function PairingModal({ onClose, token, userId }) {
 
   useEffect(() => {
     let active = true;
-    fetch('/api/v1/pairing', { method: 'POST', headers: { Authorization: `Bearer ${token}` } })
+    apiFetch('/api/v1/pairing', { method: 'POST', headers: { Authorization: `Bearer ${token}` } })
       .then(async (response) => {
         const body = await response.json();
         if (!response.ok) throw new Error(body.error ?? 'Could not create a pairing code.');
@@ -24,7 +25,7 @@ export default function PairingModal({ onClose, token, userId }) {
   async function simulatePairing() {
     if (!pairing) return;
     try {
-      const response = await fetch(`/api/v1/pairing/${pairing.code}/claim`, { method: 'POST' });
+      const response = await apiFetch(`/api/v1/pairing/${pairing.code}/claim`, { method: 'POST' });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error ?? 'Pairing failed.');
       await set(`relay:paired:${userId}`, result);

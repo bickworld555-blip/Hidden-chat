@@ -1,3 +1,4 @@
+import { apiFetch } from './api.js';
 // People lookup and chat links, shared by the chat list, sidebar and contact picker.
 
 async function readJson(response, fallback) {
@@ -7,7 +8,7 @@ async function readJson(response, fallback) {
 }
 
 export async function searchPeople(sessionToken, query, { signal } = {}) {
-  const response = await fetch(`/api/v1/contacts/search?q=${encodeURIComponent(query)}`, {
+  const response = await apiFetch(`/api/v1/contacts/search?q=${encodeURIComponent(query)}`, {
     headers: { Authorization: 'Bearer ' + sessionToken },
     signal,
   });
@@ -17,7 +18,7 @@ export async function searchPeople(sessionToken, query, { signal } = {}) {
 
 // Opens a thread with `userId`. `save: true` also adds them to the contact book; `save: false` is a direct chat.
 export async function linkContact(sessionToken, userId, { save = true } = {}) {
-  const response = await fetch('/api/v1/contacts', {
+  const response = await apiFetch('/api/v1/contacts', {
     method: 'POST',
     headers: { Authorization: 'Bearer ' + sessionToken, 'Content-Type': 'application/json' },
     body: JSON.stringify({ userId, save }),

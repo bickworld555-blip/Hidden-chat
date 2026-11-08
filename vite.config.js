@@ -7,7 +7,7 @@ const configuredHosts = (process.env.VITE_ALLOWED_HOSTS ?? '')
   .map((host) => host.trim().toLowerCase())
   .filter(Boolean);
 const tunnelHost = process.env.VITE_TUNNEL_HOST?.trim().toLowerCase();
-const allowedHosts = [...new Set(['localhost', '127.0.0.1', ...configuredHosts, ...(tunnelHost ? [tunnelHost] : [])])];
+const allowedHosts = [...new Set(['localhost', '127.0.0.1', '.ngrok-free.app', ...configuredHosts, ...(tunnelHost ? [tunnelHost] : [])])];
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],

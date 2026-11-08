@@ -17,6 +17,7 @@ import { LIVE_DURATIONS } from '../src/geo.js';
 import { displayNameError, initialsFor, normalizeDisplayName } from '../src/profile.js';
 import { createPostgresDatabase, describeDatabaseError, isDatabaseUnavailable } from './database.mjs';
 import { DEMO_USERS } from './demo.mjs';
+import { createEventPilot } from './eventPilot.mjs';
 
 const directory = dirname(fileURLToPath(import.meta.url));
 const PAIRING_TTL_MS = 1000 * 60 * 2;
@@ -58,7 +59,8 @@ export function isAllowedAppOrigin(origin, configuredOrigins = []) {
   if (configuredOrigins.includes(origin)) return true;
   const hostname = url.hostname.replace(/^\[|\]$/g, '').toLowerCase();
   if (hostname === 'localhost' || hostname === '::1' || hostname.endsWith('.localhost')) return true;
-  if (hostname.endsWith('.ngrok-free.dev') || hostname.endsWith('.ngrok.io')) return true;
+  if (hostname.endsWith('.ngrok-free.dev') || hostname.endsWith('.ngrok.io')
+    || (url.protocol === 'https:' && hostname.endsWith('.ngrok-free.app'))) return true;
   const octets = hostname.split('.').map(Number);
   if (octets.length !== 4 || octets.some((octet) => !Number.isInteger(octet) || octet < 0 || octet > 255)) return false;
   return octets[0] === 10
@@ -346,12 +348,7 @@ export function createChatServer({
       if (!updated.changes) continue;
       deleted += 1;
       (await db.prepare("DELETE FROM message_reactions WHERE message_id = ?").run(row.id));
-      const mediaId = mediaIdOf(row.content);
-      const media = mediaId ? (await db.prepare("SELECT disk_name AS \"diskName\" FROM media WHERE id = ?").get(mediaId)) : null;
-      if (media) {
-        (await db.prepare("DELETE FROM media WHERE id = ?").run(mediaId));
-        unlink(join(mediaDirectory, media.diskName)).catch(() => {});
-      }
+      await purgeUnreferencedMedia(row.content);
       const event = { type: 'message:deleted', messageId: row.id, scope: 'everyone', reason: 'expired' };
       broadcastUser(row.senderId, event);
       broadcastUser(row.receiverId, event);
@@ -386,6 +383,7 @@ export function createChatServer({
     return hidden;
   }
 
+  const eventPilot = createEventPilot();
   const app = express();
   app.disable('x-powered-by');
   const configuredOrigins = (Array.isArray(allowedOrigins) ? allowedOrigins : String(allowedOrigins).split(','))
@@ -402,8 +400,8 @@ export function createChatServer({
     response.set('Access-Control-Allow-Origin', origin);
     response.vary('Origin');
     if (request.method === 'OPTIONS') {
-      response.set('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
-      response.set('Access-Control-Allow-Headers', 'Authorization,Content-Type,X-File-Name,ngrok-skip-browser-warning');
+      response.set('Access-Control-Allow-Methods', 'GET,HEAD,POST,PUT,PATCH,DELETE,OPTIONS');
+      response.set('Access-Control-Allow-Headers', 'Authorization,Content-Type,X-File-Name,X-Upload-Offset,ngrok-skip-browser-warning');
       return response.status(204).end();
     }
     return next();
@@ -610,7 +608,7 @@ export function createChatServer({
     const now = Date.now();
     const groups = await db.prepare(`SELECT g.id, g.name, g.created_by AS "createdBy", g.created_at AS "createdAt",
       m.role, m.auto_delete AS "autoDelete", latest.content AS "lastContent",
-      latest.sender_id AS "lastSenderId", latest.created_at AS "lastMessageAt",
+      latest.sender_id AS "lastSenderId", sender.name AS "lastSenderName", latest.created_at AS "lastMessageAt",
       (SELECT count(*) FROM group_messages x WHERE x.group_id = g.id AND x.sender_id <> m.user_id
         AND x.created_at > m.last_read_at AND x.created_at > m.cleared_at AND (x.expires_at IS NULL OR x.expires_at > ?)) AS "unread"
       FROM groups g JOIN group_members m ON m.group_id = g.id
@@ -618,6 +616,7 @@ export function createChatServer({
         SELECT id FROM group_messages WHERE group_id = g.id AND created_at > m.cleared_at AND (expires_at IS NULL OR expires_at > ?)
         ORDER BY created_at DESC, id DESC LIMIT 1
       )
+      LEFT JOIN users sender ON sender.id = latest.sender_id
       WHERE m.user_id = ? ORDER BY COALESCE(latest.created_at, g.created_at) DESC, g.id`).all(now, now, request.session.user_id);
     response.json(groups.map((group) => ({ ...group, autoDelete: Boolean(group.autoDelete), unread: Number(group.unread) })));
   });
@@ -1630,12 +1629,11 @@ export function createChatServer({
         const mediaRef = mediaIdOf(row.content);
         (await db.prepare("UPDATE messages SET content = '', deleted_at = ? WHERE id = ?").run(Date.now(), messageId));
         (await db.prepare("DELETE FROM message_reactions WHERE message_id = ?").run(messageId));
-        if (mediaRef && event.deleteMedia !== false) {
-          const media = (await db.prepare("SELECT disk_name AS \"diskName\" FROM media WHERE id = ? AND sender_id = ?").get(mediaRef, userId));
-          if (media) {
-            (await db.prepare("DELETE FROM media WHERE id = ?").run(mediaRef));
-            unlink(join(mediaDirectory, media.diskName)).catch(() => {});
-          }
+        // The same attachment can back several messages (a resend to the same person), so the file is only
+        // removed once no remaining message references it, and only when this sender uploaded it.
+        if (mediaRef && event.deleteMedia !== false
+          && (await db.prepare('SELECT 1 FROM media WHERE id = ? AND sender_id = ?').get(mediaRef, userId))) {
+          await purgeUnreferencedMedia(row.content);
         }
         const deletedEvent = { type: 'message:deleted', messageId, scope: 'everyone' };
         broadcastUser(row.receiver_id, deletedEvent);
@@ -1790,6 +1788,7 @@ export function createChatServer({
   let expiryTimer;
   let uploadSweep;
   let closing = false;
+  let closePromise;
   let maintenance = Promise.resolve();
   function sweep(operation) {
     maintenance = maintenance.then(operation).catch((error) => {
@@ -1820,6 +1819,7 @@ export function createChatServer({
     app,
     server,
     db,
+    eventPilot,
     expireMessages,
     expireGroupMessages,
     removeOrphanedMedia,
@@ -1853,24 +1853,31 @@ export function createChatServer({
         sweep(removeOrphanedMedia);
       }, 60 * 60 * 1000);
       uploadSweep.unref();
+      await eventPilot.publish('server:listening', server.address());
       return server.address();
     },
-    async close() {
-      closing = true;
-      clearInterval(expiryTimer);
-      clearInterval(uploadSweep);
-      for (const socket of websocketServer.clients) {
-        clearTimeout(socket.heartbeatTimer);
-        socket.terminate();
-      }
-      for (const activeCall of activeCalls.values()) clearTimeout(activeCall.timer);
-      for (const session of liveSessions.values()) clearTimeout(session.timer);
-      liveSessions.clear();
-      activeCalls.clear();
-      await new Promise((resolve) => server.close(resolve));
-      await Promise.allSettled([...socketTasks]);
-      await maintenance;
-      await db.close();
+    // Idempotent: callers (and test cleanup hooks) may close more than once; every call awaits the same shutdown.
+    close() {
+      closePromise ??= (async () => {
+        closing = true;
+        clearInterval(expiryTimer);
+        clearInterval(uploadSweep);
+        for (const socket of websocketServer.clients) {
+          clearTimeout(socket.heartbeatTimer);
+          socket.terminate();
+        }
+        for (const activeCall of activeCalls.values()) clearTimeout(activeCall.timer);
+        for (const session of liveSessions.values()) clearTimeout(session.timer);
+        liveSessions.clear();
+        activeCalls.clear();
+        await new Promise((resolve) => server.close(resolve));
+        await Promise.allSettled([...socketTasks]);
+        await maintenance;
+        await eventPilot.publish('server:stopping');
+        await eventPilot.close();
+        await db.close();
+      })();
+      return closePromise;
     },
   };
 }

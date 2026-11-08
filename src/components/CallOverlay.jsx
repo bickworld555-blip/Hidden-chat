@@ -1,3 +1,4 @@
+import { apiFetch } from '../api.js';
 import { useEffect, useRef, useState } from 'react';
 import {
   Maximize2,
@@ -39,7 +40,7 @@ const CLOSE_DELAY_MS = { failed: 5000, busy: 4000, default: 2500 };
 // Fetches the server's ICE policy with a short deadline so a slow API never delays the call.
 async function loadIceServers(sessionToken) {
   try {
-    const response = await fetch('/api/v1/rtc-config', {
+    const response = await apiFetch('/api/v1/rtc-config', {
       headers: { Authorization: 'Bearer ' + sessionToken },
       signal: AbortSignal.timeout(ICE_CONFIG_TIMEOUT_MS),
     });

@@ -6,6 +6,13 @@ export const DATABASE_SCHEMA_VERSION = 3;
 // Additive migrations applied in order to reach each version from the one before it.
 const MIGRATIONS = { 2: '002_groups.sql', 3: '003_group_media.sql' };
 
+let chatEventsPool;
+
+export function getPostgresPool() {
+  if (!chatEventsPool) chatEventsPool = createPostgresDatabase().pool;
+  return chatEventsPool;
+}
+
 // SQL emitted by the application uses ? parameters and quoted result aliases.
 export function postgresParameters(sql) {
   let output = '';

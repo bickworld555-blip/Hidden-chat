@@ -1,6 +1,7 @@
 // Client-side media helpers. The server owns each file's content type (reported by HEAD /api/v1/media/:id);
 // the extension is used only where no server facts are available, such as chat-list previews.
 import { MAX_TRANSFER_BYTES, PREVIEW_LIMIT_BYTES } from './transfer.js';
+import { apiFetch, apiUrl } from './api.js';
 
 export const MAX_UPLOAD_BYTES = MAX_TRANSFER_BYTES;
 
@@ -100,7 +101,7 @@ function mediaUrl(id) {
 }
 
 async function fetchMediaInfo(id, sessionToken, signal) {
-  const response = await fetch(mediaUrl(id), { method: 'HEAD', headers: { Authorization: `Bearer ${sessionToken}` }, signal });
+  const response = await apiFetch(mediaUrl(id), { method: 'HEAD', headers: { Authorization: `Bearer ${sessionToken}` }, signal });
   if (!response.ok) throw new Error(response.status === 404 ? 'File is no longer available.' : 'Could not load file details.');
   const length = Number.parseInt(response.headers.get('content-length') ?? '', 10);
   return {
@@ -111,7 +112,7 @@ async function fetchMediaInfo(id, sessionToken, signal) {
 
 // Downloads the exact stored bytes; onProgress receives a 0..1 fraction when the size is known.
 async function fetchMediaBlob(id, sessionToken, { signal, onProgress } = {}) {
-  const response = await fetch(mediaUrl(id), { headers: { Authorization: `Bearer ${sessionToken}` }, signal });
+  const response = await apiFetch(mediaUrl(id), { headers: { Authorization: `Bearer ${sessionToken}` }, signal });
   if (!response.ok) throw new Error(response.status === 404 ? 'File is no longer available.' : 'Download failed.');
   const type = essence(response.headers.get('content-type'));
   const total = Number.parseInt(response.headers.get('content-length') ?? '', 10);
@@ -195,10 +196,11 @@ export function clearMediaCache() {
 // Asks the server for a short-lived link, so the browser streams the file to disk itself
 // (with its own progress and resume) instead of holding the bytes in memory.
 export async function requestMediaLink(id, sessionToken, { inline = false, signal } = {}) {
-  const response = await fetch(`${mediaUrl(id)}/link`, { method: 'POST', headers: { Authorization: 'Bearer ' + sessionToken }, signal });
+  const response = await apiFetch(`${mediaUrl(id)}/link`, { method: 'POST', headers: { Authorization: 'Bearer ' + sessionToken }, signal });
   const data = await response.json().catch(() => ({}));
   if (!response.ok || !data?.url) throw new Error(data?.error || (response.status === 404 ? 'File is no longer available.' : 'Could not prepare the download.'));
-  return { ...data, url: inline ? `${data.url}&inline=1` : data.url };
+  const url = apiUrl(data.url);
+  return { ...data, url: inline ? `${url}&inline=1` : url };
 }
 
 // Saves the exact stored bytes under the original filename without reading them into memory.

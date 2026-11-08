@@ -442,7 +442,7 @@ test('production requires PostgreSQL, a fixed port and exact HTTPS origins', asy
   const { api } = await startServer(t, database);
   process.env.NODE_ENV = 'production';
   assert.equal((await api('/api/v1/health', { headers: { Origin: 'https://chat.example.com' } })).status, 200);
-  for (const Origin of ['https://attacker.example', 'http://localhost:5173', 'https://other.ngrok-free.dev']) {
+  for (const Origin of ['https://attacker.example', 'http://localhost:5173', 'https://other.ngrok-free.dev', 'https://other.ngrok-free.app']) {
     assert.equal((await api('/api/v1/health', { headers: { Origin } })).status, 403);
   }
 });

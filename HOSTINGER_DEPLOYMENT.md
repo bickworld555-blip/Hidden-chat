@@ -36,6 +36,9 @@ are **not used** by this backend. Do not provision unnecessary privileged keys.
 Login uses scrypt password hashes and random device-session tokens whose hashes
 are stored in PostgreSQL, not JWTs. No production `VITE_*` secrets are needed.
 `VITE_ALLOWED_HOSTS`, `VITE_TUNNEL_HOST`, `VITE_HMR_CLIENT_PORT` are dev-only.
+`VITE_API_BASE_URL` is optional public frontend build configuration for a separate
+backend origin. Leave it empty for this guide's same-origin Nginx deployment;
+when set, use an exact HTTP(S) origin without credentials or an `/api` suffix.
 
 For local Windows checks use Windows paths for the CA/data directory; the
 template's Linux paths are specifically for Hostinger.

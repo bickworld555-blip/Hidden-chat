@@ -1,3 +1,4 @@
+import { apiFetch } from '../api.js';
 import { useEffect, useState } from 'react';
 import { ArrowRight, AtSign, Copy, Eye, EyeOff, ShieldAlert, ShieldCheck } from 'lucide-react';
 import ShieldMark from './ShieldMark.jsx';
@@ -36,7 +37,7 @@ export default function UsernameGate({ onAuthenticated, onClose }) {
     const timer = window.setTimeout(async () => {
       setChecking(true);
       try {
-        const response = await fetch(`/api/v1/auth/availability?username=${encodeURIComponent(normalized)}`, { signal: controller.signal });
+        const response = await apiFetch(`/api/v1/auth/availability?username=${encodeURIComponent(normalized)}`, { signal: controller.signal });
         if (!response.ok) throw new Error('Could not check handle availability.');
         setAvailability(await response.json());
       } catch (reason) {
@@ -55,7 +56,7 @@ export default function UsernameGate({ onAuthenticated, onClose }) {
     setSubmitting(true);
     setError('');
     try {
-      const response = await fetch(mode === 'register' ? '/api/v1/auth/register' : '/api/v1/auth/login', {
+      const response = await apiFetch(mode === 'register' ? '/api/v1/auth/register' : '/api/v1/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(mode === 'register'

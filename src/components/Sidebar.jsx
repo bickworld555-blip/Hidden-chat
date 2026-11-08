@@ -7,8 +7,9 @@ import { useAccounts } from '../accounts.js';
 import { presentName } from '../profile.js';
 import { linkContact, searchPeople } from '../contactsApi.js';
 import ShieldMark from './ShieldMark.jsx';
+import { mergeGroupRows, unreadBadge } from '../groupRows.js';
 
-export default function Sidebar({ onPair, onSounds, onNotifications, onSelectChat, onOpenAuth, onLogout, onAccounts, onGroups }) {
+export default function Sidebar({ onPair, onSounds, onNotifications, onSelectChat, onOpenAuth, onLogout, onAccounts, onGroups, groups = [], onOpenGroup }) {
   const [query, setQuery] = useState('');
   const [accountMenu, setAccountMenu] = useState(false);
   const [filter, setFilter] = useState('All');
@@ -39,6 +40,12 @@ export default function Sidebar({ onPair, onSounds, onNotifications, onSelectCha
       return bPinned - aPinned;
     });
   }, [chats, filter, query, userId, pinnedChatIds]);
+  const rows = useMemo(() => {
+    const term = query.toLowerCase();
+    const matching = groups.filter((group) => `${group.name} ${group.preview}`.toLowerCase().includes(term))
+      .filter((group) => filter !== 'Unread' || group.unread > 0);
+    return mergeGroupRows(filtered, matching, { leadingIds: pinnedChatIds });
+  }, [filtered, groups, query, filter, pinnedChatIds]);
 
   useEffect(() => {
     if (!sessionToken || normalizedQuery.length === 0) {
@@ -131,7 +138,19 @@ export default function Sidebar({ onPair, onSounds, onNotifications, onSelectCha
           {searchError && <p className="search-error">{searchError}</p>}
         </>}
         <div className="list-section-label"><span>{normalizedQuery ? 'CHATS' : 'PINNED'}</span><span className="section-line" /></div>
-        {filtered.map((chat) => (
+        {rows.map((chat) => chat.kind === 'group' ? (
+          <button key={`group-${chat.id}`} className="chat-row" onClick={() => onOpenGroup?.(chat.id)} aria-label={`Open group ${chat.name}${chat.unread > 0 ? `, ${chat.unread} unread` : ''}`}>
+            <span className="wa-group-avatar" aria-hidden="true"><Users size={22} /></span>
+            <span className="chat-row-main">
+              <span className="chat-row-heading"><strong>{chat.name}</strong><time>{chat.time}</time></span>
+              <span className="chat-preview">{chat.preview}</span>
+              <span className="chat-row-meta">
+                <span className="row-meta-left"><span className="group-meta"><Users size={12} />Group</span></span>
+                {chat.unread > 0 && <span className="unread-badge">{unreadBadge(chat.unread)}</span>}
+              </span>
+            </span>
+          </button>
+        ) : (
           <button key={chat.id} className={`chat-row ${activeChatId === chat.id ? 'active' : ''}`} onClick={() => { setActiveChat(chat.id); onSelectChat?.(); }}>
             <Avatar {...chat} online={presence[chat.id] === 'online'} />
             <span className="chat-row-main">
@@ -148,7 +167,7 @@ export default function Sidebar({ onPair, onSounds, onNotifications, onSelectCha
             </span>
           </button>
         ))}
-        {filtered.length === 0 && <p className="empty-search">No conversations found.</p>}
+        {rows.length === 0 && <p className="empty-search">No conversations found.</p>}
       </div>
       <footer className="sidebar-footer"><Archive size={15} /><span>Archived</span><span className="footer-spacer" /> <span className="footer-status"><i /> All caught up</span></footer>
     </aside>

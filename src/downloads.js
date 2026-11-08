@@ -1,3 +1,4 @@
+import { apiFetch } from './api.js';
 // Download manager with live progress (bytes, %, speed, time left) shared by every attachment.
 // Strategy: stream straight to a file the user picks (File System Access API) when available;
 // otherwise fetch into memory with progress for files small enough; otherwise hand the browser a link.
@@ -73,7 +74,7 @@ function finish(id, patch) {
 
 async function streamToFile(id, handle, sessionToken, total, controller) {
   const writable = await handle.createWritable();
-  const response = await fetch(`/api/v1/media/${encodeURIComponent(id)}`, { headers: { Authorization: 'Bearer ' + sessionToken }, signal: controller.signal });
+  const response = await apiFetch(`/api/v1/media/${encodeURIComponent(id)}`, { headers: { Authorization: 'Bearer ' + sessionToken }, signal: controller.signal });
   if (!response.ok || !response.body) throw new Error(response.status === 404 ? 'File is no longer available.' : 'Download failed.');
   const reader = response.body.getReader();
   const startedAt = Date.now();

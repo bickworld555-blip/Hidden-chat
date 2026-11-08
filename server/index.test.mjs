@@ -214,6 +214,57 @@ test('rejects invalid ports instead of silently using a fallback', () => {
   }
 });
 
+test('Event Pilot lifecycle failures do not break HTTP startup or shutdown', async (t) => {
+  await service.close();
+  service = createChatServer({ port: 0, dataDirectory: directory });
+  const log = t.mock.method(console, 'error', () => {});
+  const observed = [];
+  service.eventPilot.on('server:listening', async () => { throw new Error('Listener failed'); });
+  service.eventPilot.on('server:listening', async (address) => {
+    observed.push(address.port);
+  });
+  service.eventPilot.on('server:stopping', async () => { throw new Error('Cleanup listener failed'); });
+  service.eventPilot.on('server:stopping', async () => {
+    assert.equal(service.server.listening, false);
+    assert.equal(service.db.prepare('SELECT 1 AS value').get().value, 1);
+    observed.push('stopping');
+  });
+  const address = await service.listen();
+  assert.deepEqual(observed, [address.port]);
+  const health = await fetch(`http://127.0.0.1:${address.port}/api/v1/health`);
+  assert.equal(health.status, 200);
+  const pilot = service.eventPilot;
+  await service.close();
+  service = null;
+  assert.deepEqual(observed, [address.port, 'stopping']);
+  assert.equal(log.mock.callCount(), 2);
+  await assert.rejects(pilot.publish('late'), /closed/);
+});
+
+test('server shutdown drains pending Event Pilot handlers before closing the database', async (t) => {
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  t.after(() => release());
+  let stopping;
+  const stopSignal = new Promise((resolve) => { stopping = resolve; });
+  let completed = false;
+  service.eventPilot.on('background', async () => {
+    await gate;
+    assert.equal(service.db.prepare('SELECT 1 AS value').get().value, 1);
+    completed = true;
+  });
+  service.eventPilot.on('server:stopping', () => stopping());
+  const publication = service.eventPilot.publish('background');
+  const closing = service.close();
+  await stopSignal;
+  assert.equal(completed, false);
+  release();
+  await publication;
+  await closing;
+  service = null;
+  assert.equal(completed, true);
+});
+
 test('rejects WebSocket upgrades without a valid session', async () => {
   const socketUrl = baseUrl.replace('http:', 'ws:') + '/ws';
   const socket = new WebSocket(socketUrl, ['relay.auth.invalid-token', 'relay.v1']);
@@ -607,4 +658,29 @@ test('allows exact configured tunnel origins and rejects arbitrary public origin
   });
   assert.equal(status, 403);
   socket.terminate();
+});
+
+test('development Ngrok origins pass CORS preflight and authenticated WebSocket upgrades', async () => {
+  const origin = 'https://new-tunnel.ngrok-free.app';
+  assert.equal(isAllowedAppOrigin(origin), true);
+  for (const denied of ['https://ngrok-free.app', 'https://x.ngrok-free.app.attacker.example', 'https://evilngrok-free.app', 'http://x.ngrok-free.app', `${origin}/path`]) {
+    assert.equal(isAllowedAppOrigin(denied), false);
+  }
+  const response = await fetch(`${baseUrl}/api/v1/uploads/upload-a`, {
+    method: 'OPTIONS',
+    headers: { Origin: origin, 'Access-Control-Request-Method': 'PUT', 'Access-Control-Request-Headers': 'authorization,x-upload-offset,ngrok-skip-browser-warning' },
+  });
+  assert.equal(response.status, 204);
+  assert.equal(response.headers.get('access-control-allow-origin'), origin);
+  assert.equal(response.headers.get('access-control-allow-methods'), 'GET,HEAD,POST,PUT,PATCH,DELETE,OPTIONS');
+  assert.match(response.headers.get('access-control-allow-headers'), /X-Upload-Offset/);
+  assert.match(response.headers.get('vary'), /Origin/);
+  const account = await createSession('ngrokuser');
+  const socket = new WebSocket(baseUrl.replace('http:', 'ws:') + '/ws', ['relay.auth.' + account.token, 'relay.v1'], { headers: { Origin: origin } });
+  try {
+    await new Promise((resolve, reject) => { socket.once('open', resolve); socket.once('error', reject); });
+    assert.equal(socket.protocol, 'relay.v1');
+  } finally {
+    socket.terminate();
+  }
 });

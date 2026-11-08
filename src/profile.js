@@ -1,3 +1,4 @@
+import { apiFetch } from './api.js';
 // Display name rules shared by the server and the browser. The @handle is the permanent identity;
 // the display name is what people see and can be changed any time.
 
@@ -31,7 +32,7 @@ export function hasCustomDisplayName(user) {
 export async function updateDisplayName(name, sessionToken) {
   const error = displayNameError(name);
   if (error) throw new Error(error);
-  const response = await fetch('/api/v1/me', {
+  const response = await apiFetch('/api/v1/me', {
     method: 'PATCH',
     headers: { Authorization: 'Bearer ' + sessionToken, 'Content-Type': 'application/json' },
     body: JSON.stringify({ name: normalizeDisplayName(name) }),

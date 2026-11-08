@@ -1,3 +1,4 @@
+import { apiFetch } from './api.js';
 // Browser upload client. Small files go in one request; larger ones are sliced from the File on disk
 // (never read into memory as a whole) and sent as resumable chunks with retry.
 import { MAX_TRANSFER_BYTES, UPLOAD_CHUNK_BYTES, uploadPlan } from './transfer.js';
@@ -29,7 +30,7 @@ function targetQuery({ receiverId, groupId }) {
 }
 
 async function singleRequest(file, filename, { receiverId, groupId, sessionToken, signal }) {
-  const response = await fetch(`/api/v1/media?${targetQuery({ receiverId, groupId })}`, {
+  const response = await apiFetch(`/api/v1/media?${targetQuery({ receiverId, groupId })}`, {
     method: 'POST',
     signal,
     headers: {
@@ -46,7 +47,7 @@ async function singleRequest(file, filename, { receiverId, groupId, sessionToken
 }
 
 async function api(path, { sessionToken, signal, method = 'GET', body, headers = {} }) {
-  const response = await fetch(path, {
+  const response = await apiFetch(path, {
     method,
     signal,
     headers: { Authorization: 'Bearer ' + sessionToken, ...headers },
@@ -109,7 +110,7 @@ async function chunkedUpload(file, filename, { receiverId, groupId, sessionToken
   } catch (error) {
     if (isAbort(error)) {
       // Best effort: free the partial file on the server; the stale sweep covers a lost connection.
-      fetch(`/api/v1/uploads/${encodeURIComponent(uploadId)}`, { method: 'DELETE', headers: { Authorization: 'Bearer ' + sessionToken }, keepalive: true }).catch(() => {});
+      apiFetch(`/api/v1/uploads/${encodeURIComponent(uploadId)}`, { method: 'DELETE', headers: { Authorization: 'Bearer ' + sessionToken }, keepalive: true }).catch(() => {});
     }
     throw error;
   }

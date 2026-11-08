@@ -1,16 +1,17 @@
+import { apiFetch } from '../api.js';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ArrowLeft, Flag, Paperclip, Phone, Settings, Users, Video, X } from 'lucide-react';
 import { searchPeople } from '../contactsApi.js';
 import { uploadFile } from '../upload.js';
 import { MAX_CALL_PARTICIPANTS } from '../callRoom.js';
-import { previewFor } from '../store.js';
+import { groupPreviewText, unreadBadge } from '../groupRows.js';
 import Avatar from './Avatar.jsx';
 import MediaRenderer from './MediaRenderer.jsx';
 
 const DELETE_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 async function groupRequest(token, path, { method = 'GET', body, signal } = {}) {
-  const response = await fetch(`/api/v1/groups${path}`, {
+  const response = await apiFetch(`/api/v1/groups${path}`, {
     method,
     headers: { Authorization: `Bearer ${token}`, ...(body ? { 'Content-Type': 'application/json' } : {}) },
     ...(body ? { body: JSON.stringify(body) } : {}),
@@ -65,9 +66,9 @@ function CallPeoplePicker({ members, userId, mode, busy, onStart, onClose }) {
   );
 }
 
-export default function GroupsView({ token, userId, revision, onClose, onStartGroupCall, initialCreate = false }) {
+export default function GroupsView({ token, userId, revision, onClose, onStartGroupCall, initialCreate = false, initialGroupId = '' }) {
   const [groups, setGroups] = useState([]);
-  const [selected, setSelected] = useState('');
+  const [selected, setSelected] = useState(initialCreate ? '' : initialGroupId);
   const [group, setGroup] = useState(null);
   const [messages, setMessages] = useState([]);
   const [creating, setCreating] = useState(initialCreate);
@@ -248,11 +249,11 @@ export default function GroupsView({ token, userId, revision, onClose, onStartGr
                 <span className="groups-list-icon"><Users size={22} /></span>
                 <span className="groups-list-copy">
                   <strong>{item.name}</strong>
-                  <small>{item.lastContent ? `${item.lastSenderId === userId ? 'You: ' : ''}${previewFor(item.lastContent)}` : 'No messages yet'}</small>
+                  <small>{groupPreviewText(item, userId)}</small>
                 </span>
                 <span className="groups-list-meta">
                   {item.lastMessageAt && <time className={item.unread ? 'is-unread' : ''} dateTime={new Date(item.lastMessageAt).toISOString()}>{formatWhen(item.lastMessageAt)}</time>}
-                  {item.unread > 0 && <span className="groups-unread" aria-label={`${item.unread} unread`}>{item.unread > 999 ? '999+' : item.unread}</span>}
+                  {item.unread > 0 && <span className="groups-unread" aria-label={`${item.unread} unread`}>{unreadBadge(item.unread)}</span>}
                 </span>
               </button>
             ))}

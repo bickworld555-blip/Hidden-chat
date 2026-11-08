@@ -130,6 +130,7 @@ test('reminders fire at most once per interval while hidden, and the badge count
   assert.equal(badgeCount({ enabled: true, chats, callLogs, callsSeenAt: Date.parse('2026-11-06T11:00:00.000Z') }), 3, 'viewed missed calls drop out');
   assert.equal(badgeCount({ enabled: true, chats: [], callLogs: [], callsSeenAt: 0 }), 0, 'clears when everything is viewed');
   assert.equal(badgeCount({ enabled: false, chats, callLogs }), 0);
+  assert.equal(badgeCount({ enabled: true, chats: [...chats, { kind: 'group', id: 'g', unread: 9 }], callLogs: [], callsSeenAt: 0 }), 3, 'unread groups count like unread chats');
 });
 
 test('the tone library is original, consistent and resolves every kind of choice', () => {
@@ -184,7 +185,7 @@ test('the panel and the app are wired: sections, pickers, tones on events, vibra
 
   assert.ok(app.includes("playNotificationTone('message')") && app.includes("vibrateFor('message')") && app.includes("showSystemNotification('message'"));
   assert.ok(app.includes("playNotificationTone('reaction')") && app.includes("showSystemNotification('reaction'"), 'reactions to my messages notify');
-  assert.ok(app.includes('applyAppBadge({ chats, callLogs, callsSeenAt })') && app.includes('maybeRemind({ unseenCount: unseen() })'));
+  assert.ok(app.includes('applyAppBadge({ chats: [...chats, ...groupRows], callLogs, callsSeenAt })') && app.includes('maybeRemind({ unseenCount: unseen() })'));
   assert.ok(app.includes('<NotificationSettings onClose=') && app.includes('onNotifications={() => setNotificationsOpen(true)}'));
   assert.ok(tools.includes('onClick={() => onNotifications?.()}') && sidebar.includes('title="Notifications" onClick={onNotifications}'));
   assert.ok(overlay.includes("vibrateFor('incomingCall')") && overlay.includes('stopVibration()'), 'incoming calls vibrate with the call pattern');

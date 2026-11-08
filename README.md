@@ -34,6 +34,9 @@ location retention.
 
 ## Development
 
+See [Event Pilot](server/EVENT_PILOT.md) for the backend's per-server async event
+dispatcher, lifecycle integration, failure handling and targeted tests.
+
 Run `npm install` once, then `npm run dev`. The app uses Vite on port 5173 and the API/WebSocket server on port 4174. The backend watcher is scoped to `server/` so changes in dependencies do not bounce active API/WebSocket connections. Set `PORT` or `HOST` to override the API bind address.
 
 ## Public tunnel testing
@@ -41,6 +44,36 @@ Run `npm install` once, then `npm run dev`. The app uses Vite on port 5173 and t
 For temporary cross-network testing, install and authenticate the Ngrok CLI, then run `npm run tunnel:ngrok`. The launcher starts one HTTPS tunnel to Vite on port 5173, reads its generated origin from the local Ngrok agent API, and starts the app with that exact host/origin allowed. Vite proxies REST requests and WebSocket upgrades to the local API on port 4174, so a separate public backend tunnel is not needed. The launcher prints the public HTTPS URL and stops the tunnel when it exits.
 
 Public tunneling exposes this demo to the internet. Use test accounts only, keep passwords and private data out of it, and stop the tunnel when finished. Do not set Vite's `allowedHosts` to `true` or use wildcard CORS. For a reserved tunnel domain or another tunnel provider, set `VITE_ALLOWED_HOSTS` to its exact hostname and add its exact HTTPS origin to the comma-separated `RELAY_ALLOWED_ORIGINS` before starting `npm run dev`.
+
+### Separate Ngrok frontend and backend tunnels
+
+For a frontend on 5190 and a backend on 4174, run `ngrok http 5190` and
+`ngrok http 4174` using your Ngrok account's supported multi-tunnel configuration.
+Set the frontend's `VITE_API_BASE_URL` to the backend tunnel's exact HTTPS origin
+(no `/api` suffix), then restart Vite:
+
+```powershell
+$env:VITE_API_BASE_URL='https://YOUR-BACKEND.ngrok-free.app'
+npm run dev:web -- --port 5190
+```
+
+Open the frontend tunnel URL on each device. REST requests, authenticated avatars,
+uploads, download links and `wss://.../ws` use the backend origin. API fetches to
+Ngrok include its browser-warning bypass header. Direct browser media navigation
+may still require accepting Ngrok's interstitial; use an endpoint without that
+interstitial for reliable production streaming/downloads. Leave the API base
+empty for the single frontend tunnel/proxy layout. `VITE_API_BASE_URL` is public
+build configuration, not a runtime backend variable; rebuild for a deployed UI
+when it changes. It must not contain credentials.
+
+The existing transport is native `ws`, not Socket.IO. HTTP CORS and WebSocket
+upgrades share the same backend origin check. Development accepts HTTPS
+`*.ngrok-free.app` origins dynamically; Vite's development host allowlist also
+accepts that suffix. Production still requires exact `RELAY_ALLOWED_ORIGINS`,
+including the frontend tunnel origin when deliberately testing production.
+Do not change `NODE_ENV` solely to bypass production database protections.
+Automatic development acceptance trusts all tenants of that Ngrok suffix:
+use controlled test accounts and no sensitive production data.
 
 ## WebRTC calls
 

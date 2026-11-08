@@ -138,3 +138,35 @@ test('delete for me hides the message only from the requesting user', async () =
   avaSocket.close();
   jordanSocket.close();
 });
+
+test('deleting one of two messages that share an attachment keeps the file until the last reference goes', async () => {
+  const ava = await createSession('shareava');
+  const jordan = await createSession('sharejordan');
+  const avaSocket = await connect(ava.token);
+  const jordanSocket = await connect(jordan.token);
+  const uploaded = await fetch(`${baseUrl}/api/v1/media?receiverId=${jordan.user.id}`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${ava.token}`, 'Content-Type': 'image/png', 'X-File-Name': 'photo.png' },
+    body: Buffer.from('not really a png'),
+  });
+  assert.equal(uploaded.status, 201);
+  const media = await uploaded.json();
+  const content = `media:${media.id}:photo.png`;
+  for (const id of ['shared-1', 'shared-2']) {
+    avaSocket.send(JSON.stringify({ type: 'message:send', message: { id, receiverId: jordan.user.id, content } }));
+    await waitFor(jordanSocket, 'message:new', (event) => event.message.id === id);
+  }
+  const download = () => fetch(`${baseUrl}/api/v1/media/${media.id}`, { headers: { Authorization: `Bearer ${jordan.token}` } });
+
+  avaSocket.send(JSON.stringify({ type: 'message:delete', messageId: 'shared-1', scope: 'everyone' }));
+  await waitFor(jordanSocket, 'message:deleted', (event) => event.messageId === 'shared-1');
+  const stillThere = await download();
+  assert.equal(stillThere.status, 200, 'the second message still shows the attachment');
+  assert.equal(Buffer.from(await stillThere.arrayBuffer()).toString(), 'not really a png');
+
+  avaSocket.send(JSON.stringify({ type: 'message:delete', messageId: 'shared-2', scope: 'everyone' }));
+  await waitFor(jordanSocket, 'message:deleted', (event) => event.messageId === 'shared-2');
+  assert.equal((await download()).status, 404, 'the attachment is purged with its last reference');
+  avaSocket.close();
+  jordanSocket.close();
+});

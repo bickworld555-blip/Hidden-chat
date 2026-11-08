@@ -1,3 +1,4 @@
+import { apiFetch } from './api.js';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { activateAccount, addOrActivateAccount, getAccountsState, loadAccounts, removeAccount, updateAccountUser } from './accounts.js';
 import AccountSwitcher from './components/AccountSwitcher.jsx';
@@ -7,6 +8,8 @@ import { previewFor, useChatStore } from './store.js';
 import { clearMediaCache } from './media.js';
 import { clearAvatarCache } from './avatar.js';
 import { RealtimeClient } from './realtime.js';
+import { initialTabFromUrl } from './pwa.js';
+import { countUnreadConversations, groupRow } from './groupRows.js';
 import Sidebar from './components/Sidebar.jsx';
 import ChatWindow from './components/ChatWindow.jsx';
 import PairingModal from './components/PairingModal.jsx';
@@ -43,7 +46,7 @@ function useIsMobile() {
 
 // Confirms a stored account's token still works and refreshes its profile from the server.
 async function validateAccount(account) {
-  const response = await fetch('/api/v1/me', { headers: { Authorization: 'Bearer ' + account.token } });
+  const response = await apiFetch('/api/v1/me', { headers: { Authorization: 'Bearer ' + account.token } });
   if (response.status === 401 || response.status === 403) return null;
   if (!response.ok) throw new Error('Could not reach the server.');
   const profile = await response.json();
@@ -83,6 +86,8 @@ export default function App() {
   const [groupsOpen, setGroupsOpen] = useState(false);
   const [groupsCreate, setGroupsCreate] = useState(false);
   const [groupRevision, setGroupRevision] = useState(0);
+  const [groupsInitialId, setGroupsInitialId] = useState('');
+  const [groupSummaries, setGroupSummaries] = useState([]);
   const [switchingId, setSwitchingId] = useState(null);
   const [callsSeenAt, setCallsSeenAt] = useState(() => Number(localStorage.getItem('relay:calls-seen-at')) || 0);
   const openChatRef = useRef(null);
@@ -94,7 +99,7 @@ export default function App() {
   const [fatalError, setFatalError] = useState('');
   const [mobileListOpen, setMobileListOpen] = useState(true);
   const [authReady, setAuthReady] = useState(false);
-  const [mobileActiveTab, setMobileActiveTab] = useState('chats');
+  const [mobileActiveTab, setMobileActiveTab] = useState(initialTabFromUrl);
   const [call, setCall] = useState(null);
   const [callSignals, setCallSignals] = useState([]);
   const callStartTimeRef = useState(() => ({ current: null }))[0];
@@ -147,14 +152,14 @@ export default function App() {
         await hydrateCallLogs(userId);
         await hydratePreferences(userId);
         if (cancelled) return;
-        const contactResponse = await fetch('/api/v1/contacts', { headers: { Authorization: `Bearer ${sessionToken}` } });
+        const contactResponse = await apiFetch('/api/v1/contacts', { headers: { Authorization: `Bearer ${sessionToken}` } });
         if (!contactResponse.ok) throw new Error('Could not load your Hidden Messenger contacts.');
         const contacts = await contactResponse.json();
         if (cancelled) return;
         setContacts(contacts);
         await persistContacts(userId);
         for (const contact of contacts) {
-          const response = await fetch(`/api/v1/messages?peerId=${contact.id}`, { headers: { Authorization: `Bearer ${sessionToken}` } });
+          const response = await apiFetch(`/api/v1/messages?peerId=${contact.id}`, { headers: { Authorization: `Bearer ${sessionToken}` } });
           if (cancelled) return;
           if (response.ok) mergeHistory(contact.id, await response.json());
         }
@@ -285,7 +290,7 @@ export default function App() {
   useEffect(() => {
     if (!sessionToken || !activeChatId) return;
     const controller = new AbortController();
-    fetch(`/api/v1/messages?peerId=${encodeURIComponent(activeChatId)}`, {
+    apiFetch(`/api/v1/messages?peerId=${encodeURIComponent(activeChatId)}`, {
       headers: { Authorization: `Bearer ${sessionToken}` },
       signal: controller.signal,
     }).then(async (response) => {
@@ -433,7 +438,7 @@ export default function App() {
   async function removeAccountFromDevice(id) {
     const account = getAccountsState().accounts.find((item) => item.id === id);
     try {
-      if (account?.token) await fetch('/api/v1/auth/logout', { method: 'POST', headers: { Authorization: 'Bearer ' + account.token } });
+      if (account?.token) await apiFetch('/api/v1/auth/logout', { method: 'POST', headers: { Authorization: 'Bearer ' + account.token } });
     } catch { /* already invalid server-side */ }
     const next = await removeAccount(id);
     if (id !== userId) return;
@@ -449,7 +454,18 @@ export default function App() {
   const activeTab = isMobile ? mobileActiveTab : 'chats';
   const showMobileList = isMobile && activeTab === 'chats' && (mobileListOpen || !chat);
   const chatOpenOnMobile = isMobile && activeTab === 'chats' && !showMobileList;
-  const unreadChats = chats.reduce((sum, item) => sum + (item?.unread > 0 ? 1 : 0), 0);
+  // Group rows in the chat list come from the server listing, refreshed on every group:* socket event and reconnect.
+  useEffect(() => {
+    if (!sessionToken) { setGroupSummaries([]); return undefined; }
+    const controller = new AbortController();
+    apiFetch('/api/v1/groups', { headers: { Authorization: `Bearer ${sessionToken}` }, signal: controller.signal })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((list) => { if (Array.isArray(list)) setGroupSummaries(list); })
+      .catch(() => {});
+    return () => controller.abort();
+  }, [sessionToken, groupRevision]);
+  const groupRows = useMemo(() => groupSummaries.map((group) => groupRow(group, userId)), [groupSummaries, userId]);
+  const unreadChats = countUnreadConversations(chats, groupRows);
   const callLogs = useChatStore((state) => state.callLogs);
   const notificationSettings = useNotificationSettings();
 
@@ -462,8 +478,8 @@ export default function App() {
   }, [activeTab, callLogs]);
 
   useEffect(() => {
-    applyAppBadge({ chats, callLogs, callsSeenAt });
-  }, [chats, callLogs, callsSeenAt, notificationSettings.appBadge]);
+    applyAppBadge({ chats: [...chats, ...groupRows], callLogs, callsSeenAt });
+  }, [chats, groupRows, callLogs, callsSeenAt, notificationSettings.appBadge]);
 
   // Reminder sweep while the app stays open in the background.
   useEffect(() => {
@@ -479,8 +495,9 @@ export default function App() {
     setMobileListOpen(false);
     setMobileActiveTab('chats');
   }
-  function openGroups(create = false) {
+  function openGroups(create = false, groupId = '') {
     setGroupsCreate(create);
+    setGroupsInitialId(typeof groupId === 'string' ? groupId : '');
     setGroupsOpen(true);
   }
   openChatRef.current = (id) => openChat({ id });
@@ -494,11 +511,11 @@ export default function App() {
 
   return (
     <main className={`app-shell ${darkMode ? 'dark-theme' : ''} ${isMobile ? 'is-mobile' : ''} ${chatOpenOnMobile ? 'chat-open' : ''}`} data-animations={animationsAttribute(appearance)} data-call-animations={callAnimationsAttribute(appearance)}>
-      <Sidebar onPair={() => setPairingOpen(true)} onSounds={() => setNotificationsOpen(true)} onNotifications={() => setNotificationsOpen(true)} onSelectChat={() => setMobileListOpen(false)} onOpenAuth={() => setAuthOpen(true)} onAuthenticated={acceptSession} onLogout={logout} onAccounts={() => setAccountsOpen(true)} onGroups={() => openGroups()} />
+      <Sidebar onPair={() => setPairingOpen(true)} onSounds={() => setNotificationsOpen(true)} onNotifications={() => setNotificationsOpen(true)} onSelectChat={() => setMobileListOpen(false)} onOpenAuth={() => setAuthOpen(true)} onAuthenticated={acceptSession} onLogout={logout} onAccounts={() => setAccountsOpen(true)} onGroups={() => openGroups()} groups={groupRows} onOpenGroup={(id) => openGroups(false, id)} />
       <div className="workspace">
         {activeTab === 'chats' ? (
           showMobileList || !chat
-            ? <ChatsList onOpenChat={openChat} onStartCall={initiateCall} onGroups={openGroups} />
+            ? <ChatsList onOpenChat={openChat} onStartCall={initiateCall} onGroups={openGroups} groups={groupRows} onOpenGroup={(id) => openGroups(false, id)} />
             : <ChatWindow key={chat.id} chat={chat} connection={connection} client={client} onPair={() => setPairingOpen(true)} onBack={() => setMobileListOpen(true)} onStartCall={(mode) => initiateCall(chat.id, mode)} onGroups={openGroups} />
         ) : activeTab === 'calls' ? (
           <CallsView onCall={initiateCall} />
@@ -515,7 +532,7 @@ export default function App() {
       {notificationsOpen && <NotificationSettings onClose={() => setNotificationsOpen(false)} />}
       {accountsOpen && <AccountSwitcher busyId={switchingId} onSwitch={switchAccount} onRemove={removeAccountFromDevice} onAdd={() => { setAccountsOpen(false); setAuthOpen(true); }} onClose={() => setAccountsOpen(false)} />}
       {avatarStudioOpen && <AvatarStudio onClose={() => setAvatarStudioOpen(false)} />}
-      {groupsOpen && sessionToken && <GroupsView key={userId} token={sessionToken} userId={userId} revision={groupRevision} initialCreate={groupsCreate} onStartGroupCall={initiateGroupCall} onClose={() => setGroupsOpen(false)} />}
+      {groupsOpen && sessionToken && <GroupsView key={userId} token={sessionToken} userId={userId} revision={groupRevision} initialCreate={groupsCreate} initialGroupId={groupsInitialId} onStartGroupCall={initiateGroupCall} onClose={() => setGroupsOpen(false)} />}
       {authReady && (!userId || authOpen) && <UsernameGate onAuthenticated={acceptSession} onClose={userId ? () => setAuthOpen(false) : undefined} />}
       {call && callPeer && <CallOverlay
         key={call.id}
