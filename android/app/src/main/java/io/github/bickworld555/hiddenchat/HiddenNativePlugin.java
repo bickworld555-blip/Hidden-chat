@@ -185,6 +185,13 @@ public class HiddenNativePlugin extends Plugin {
         call.resolve(result);
     }
 
+    /** A call started or ended: while active the service keeps the microphone (and camera) working in the background. */
+    @PluginMethod
+    public void setCallActive(PluginCall call) {
+        MessagingService.setCall(getContext(), Boolean.TRUE.equals(call.getBoolean("active", false)), Boolean.TRUE.equals(call.getBoolean("video", false)));
+        call.resolve();
+    }
+
     /** Signing out: forget the account and stop the background connection. */
     @PluginMethod
     public void clearSession(PluginCall call) {

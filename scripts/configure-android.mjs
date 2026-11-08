@@ -11,7 +11,7 @@ export function androidConfig(rawUrl) {
   if (url.hostname.endsWith('.invalid')) throw new Error('ANDROID_APP_URL cannot use a placeholder .invalid domain.');
   return {
     appId: 'io.github.bickworld555.hiddenchat',
-    appName: 'Hidden Chat Test',
+    appName: 'Hidden Messenger',
     webDir: 'dist',
     loggingBehavior: 'debug',
     server: { url: url.origin, cleartext: false },

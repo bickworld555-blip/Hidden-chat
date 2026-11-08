@@ -7,13 +7,12 @@ import { EMPTY_MESSAGES, useChatStore } from '../store.js';
 import { isBlocked } from '../blocking.js';
 import { searchMessages } from '../contactInfo.js';
 import { disappearingLabel } from '../disappearing.js';
-import { formatFileSize } from '../media.js';
 import { uploadFile, uploadSizeError } from '../upload.js';
 import { FORWARD_LIMIT, forwardSections } from '../forwarding.js';
 import { quoteView, replyQuoteFor } from '../replies.js';
 import { resolveSelection, selectionActions, toggleSelection } from '../selection.js';
 import { EXTENDED_REACTIONS as EXTENDED_EMOJIS, QUICK_REACTIONS as QUICK_EMOJIS } from '../reactions.js';
-import { formatMessageDate, formatMessageTime, utcDateKey } from '../time.js';
+import { formatMessageDate, formatMessageTime, localDateKey } from '../time.js';
 import Avatar from './Avatar.jsx';
 import AttachmentMenu from './AttachmentMenu.jsx';
 import SelectContactModal from './SelectContactModal.jsx';
@@ -28,6 +27,7 @@ import MediaViewer from './MediaViewer.jsx';
 import VoiceMessage from './VoiceMessage.jsx';
 import VoiceRecorderBar from './VoiceRecorderBar.jsx';
 import { presenceLine } from '../presence.js';
+import PendingUpload from './PendingUpload.jsx';
 import { EventBubble, EventComposer, PollBubble, PollComposer, ViewOnceVoice } from './RichMessages.jsx';
 import { parsePollContent } from '../polls.js';
 import { parseEventContent } from '../calendarEvents.js';
@@ -830,20 +830,27 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
     uploadAbortRef.current = controller;
     setBusy(true);
     setError('');
-    setUploadProgress({ filename, sent: 0, total: blob.size });
+    // Shown as an outgoing bubble with a progress ring (photos and videos preview at once), like WhatsApp.
+    const type = blob.type || '';
+    const previewKind = kind === 'voice' || kind === 'voice-once' ? 'voice' : type.startsWith('image/') ? 'image' : type.startsWith('video/') ? 'video' : 'file';
+    const previewUrl = previewKind === 'image' || previewKind === 'video' ? URL.createObjectURL(blob) : '';
+    const pending = { filename, kind: previewKind, previewUrl };
+    setUploadProgress({ ...pending, sent: 0, total: blob.size });
+    scrollToBottom('smooth');
     try {
       const file = blob instanceof File ? blob : new File([blob], filename, { type: blob.type });
       const data = await uploadFile(file, {
         receiverId: chatId,
         sessionToken,
         signal: controller.signal,
-        onProgress: (sent, total) => setUploadProgress({ filename, sent, total }),
+        onProgress: (sent, total) => setUploadProgress({ ...pending, sent, total }),
       });
       sendContent(kind === 'voice' ? `voice:${data.id}:${seconds}` : kind === 'voice-once' ? `voice:${data.id}:${seconds}:once` : `media:${data.id}:${data.filename || filename}`);
     } catch (caught) {
       if (caught?.name !== 'AbortError') setError(caught?.message || 'Upload failed.');
     } finally {
       uploadAbortRef.current = null;
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
       setUploadProgress(null);
       setBusy(false);
     }
@@ -1278,7 +1285,7 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
         <div className="message-stack" ref={messageStackRef}>
           {messages.map((message) => {
             if (!message?.id) return null;
-            const day = utcDateKey(message.timestamp);
+            const day = localDateKey(message.timestamp);
             const showDay = day !== lastDay;
             lastDay = day;
 
@@ -1310,6 +1317,7 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
               </div>
             );
           })}
+          {uploadProgress && <PendingUpload upload={uploadProgress} onCancel={cancelUpload} />}
           {typing && <div className="typing-indicator"><span /><span /><span /></div>}
           <div ref={messagesEndRef} className="messages-end" aria-hidden="true" />
         </div>
@@ -1378,17 +1386,7 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
             ))}
           </div>
         )}
-        {uploadProgress ? (
-          <div className="upload-progress" role="status" aria-live="polite">
-            <span className="upload-progress-text">
-              Uploading <strong title={uploadProgress.filename}>{uploadProgress.filename}</strong>
-              {' · '}{formatFileSize(uploadProgress.sent)} of {formatFileSize(uploadProgress.total)}
-              {uploadProgress.total > 0 ? ` (${Math.floor((uploadProgress.sent / uploadProgress.total) * 100)}%)` : ''}
-            </span>
-            <span className="upload-progress-track"><span className="upload-progress-fill" style={{ width: `${uploadProgress.total > 0 ? (uploadProgress.sent / uploadProgress.total) * 100 : 0}%` }} /></span>
-            <button type="button" className="upload-progress-cancel" onClick={cancelUpload} aria-label="Cancel upload"><X size={14} /></button>
-          </div>
-        ) : (error || busy) && <span className="attachment-error">{error || 'Uploading…'}</span>}
+        {error && <span className="attachment-error">{error}</span>}
         <input ref={fileInputRef} type="file" hidden onChange={handleFileChange} />
       </form>
       )}

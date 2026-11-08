@@ -1,13 +1,17 @@
 package io.github.bickworld555.hiddenchat;
 
+import android.Manifest;
 import android.app.Notification;
 import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.content.pm.ServiceInfo;
 import android.os.Build;
+import android.os.Handler;
 import android.os.IBinder;
+import android.os.Looper;
 import androidx.core.app.NotificationCompat;
 import androidx.core.app.ServiceCompat;
 import androidx.core.content.ContextCompat;
@@ -21,6 +25,11 @@ import androidx.core.content.ContextCompat;
 public class MessagingService extends Service {
     private static final int NOTIFICATION_ID = 1001;
     private static volatile boolean running;
+    private static MessagingService instance;
+    // During a call the service also holds the microphone (and camera for video) types, so Android keeps them
+    // working when the user switches apps or turns the screen off; otherwise a backgrounded call goes silent.
+    private static volatile boolean callActive;
+    private static volatile boolean callVideo;
 
     static void start(Context context) {
         ContextCompat.startForegroundService(context, new Intent(context, MessagingService.class));
@@ -34,25 +43,59 @@ public class MessagingService extends Service {
         return running;
     }
 
-    @Override
-    public int onStartCommand(Intent intent, int flags, int startId) {
-        NotificationChannels.ensure(this);
+    /** Called by the web app when a call starts and ends (HiddenNative.setCallActive). */
+    static void setCall(Context context, boolean active, boolean video) {
+        callActive = active;
+        callVideo = active && video;
+        MessagingService service = instance;
+        if (service != null) new Handler(Looper.getMainLooper()).post(service::promote);
+        else if (active) start(context);
+    }
+
+    private boolean granted(String permission) {
+        return ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED;
+    }
+
+    private int serviceTypes() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return 0;
+        int types = Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE ? ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE : 0;
+        if (callActive && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            if (granted(Manifest.permission.RECORD_AUDIO)) types |= ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE;
+            if (callVideo && granted(Manifest.permission.CAMERA)) types |= ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA;
+        }
+        return types;
+    }
+
+    /** (Re)posts the ongoing notification with the service types the current state needs. */
+    private void promote() {
         Intent open = new Intent(this, MainActivity.class).setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
         PendingIntent content = PendingIntent.getActivity(this, 0, open, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
         Notification notification = new NotificationCompat.Builder(this, NotificationChannels.CONNECTION)
             .setSmallIcon(R.drawable.ic_stat_hidden)
             .setContentTitle("Hidden Messenger")
-            .setContentText("Connected · receiving messages and calls")
+            .setContentText(callActive ? "Call in progress" : "Connected · receiving messages and calls")
             .setContentIntent(content)
             .setOngoing(true)
             .setShowWhen(false)
             .setPriority(NotificationCompat.PRIORITY_MIN)
-            .setCategory(NotificationCompat.CATEGORY_SERVICE)
+            .setCategory(callActive ? NotificationCompat.CATEGORY_CALL : NotificationCompat.CATEGORY_SERVICE)
             .build();
-        int type = Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE ? ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE : 0;
-        ServiceCompat.startForeground(this, NOTIFICATION_ID, notification, type);
+        try {
+            ServiceCompat.startForeground(this, NOTIFICATION_ID, notification, serviceTypes());
+        } catch (RuntimeException notAllowedNow) {
+            // Android only grants the call types while the app is in front; keep the connection type meanwhile.
+            int fallback = Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE ? ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE : 0;
+            ServiceCompat.startForeground(this, NOTIFICATION_ID, notification, fallback);
+        }
+    }
+
+    @Override
+    public int onStartCommand(Intent intent, int flags, int startId) {
+        NotificationChannels.ensure(this);
+        instance = this;
+        promote();
         running = true;
-        if (RelaySession.read(this) == null) {
+        if (RelaySession.read(this) == null && !callActive) {
             // Nobody is signed in on this phone: nothing to keep reachable.
             stopSelf();
             return START_NOT_STICKY;
@@ -73,6 +116,7 @@ public class MessagingService extends Service {
     @Override
     public void onDestroy() {
         running = false;
+        if (instance == this) instance = null;
         NativeRelay.stop();
         super.onDestroy();
     }

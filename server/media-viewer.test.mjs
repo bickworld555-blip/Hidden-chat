@@ -64,10 +64,11 @@ test('failed downloads are not cached', async () => {
 
 test('viewer subtitle names the day like WhatsApp', () => {
   const now = new Date('2026-11-06T12:00:00Z');
-  assert.equal(formatViewerTimestamp('2026-11-06T02:05:00Z', now), 'Today, 2:05 AM GMT');
-  assert.equal(formatViewerTimestamp('2026-11-05T23:59:00Z', now), 'Yesterday, 11:59 PM GMT');
-  assert.equal(formatViewerTimestamp('2026-03-04T14:30:00Z', now), 'March 4, 2:30 PM GMT');
-  assert.equal(formatViewerTimestamp('2025-12-31T09:00:00Z', now), 'December 31, 2025, 9:00 AM GMT');
+  const today = new Date(2026, 10, 6, 12, 0);
+  assert.equal(formatViewerTimestamp(new Date(2026, 10, 6, 2, 5), today), 'Today, 2:05 am');
+  assert.equal(formatViewerTimestamp(new Date(2026, 10, 5, 23, 59), today), 'Yesterday, 11:59 pm');
+  assert.equal(formatViewerTimestamp(new Date(2026, 2, 4, 14, 30), today), '4 March, 2:30 pm');
+  assert.equal(formatViewerTimestamp(new Date(2025, 11, 31, 9, 0), today), '31 December 2025, 9:00 am');
   assert.equal(formatViewerTimestamp('not a date', now), '');
 });
 

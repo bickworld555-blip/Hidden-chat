@@ -247,7 +247,7 @@ test('the UI wires PiP calls, screen sharing, download progress, the camera shor
   const sidebar = await read('../src/components/Sidebar.jsx');
   const styles = await read('../src/styles.css');
 
-  assert.ok(overlay.includes("minimized ? 'is-pip' : ''") && overlay.includes('className="wa-pip-bar"') && overlay.includes('onPointerMove={onPipPointerMove}'), 'a draggable floating window replaces the pill');
+  assert.ok(overlay.includes("minimized ? 'is-pip' : ''") && overlay.includes('className="wa-pip-bar"') && overlay.includes('onPointerMove={minimized ? onPipPointerMove : undefined}') && overlay.includes('setPipPosition(pipCorner(rect))'), 'the whole floating window drags and snaps to a corner');
   assert.ok(overlay.includes('requestPictureInPicture()') && overlay.includes('document.pictureInPictureEnabled'), 'native picture-in-picture when the browser offers it');
   assert.ok(overlay.includes('toggleScreenShare') && overlay.includes("Share screen") && overlay.includes('getDisplayMedia: navigator.mediaDevices?.getDisplayMedia'), 'screen sharing from the call controls');
   assert.ok(overlay.includes('is sharing their screen') && overlay.includes("remoteScreen ? 'is-screen'"), 'the remote tile shows screens unscaled with a badge');

@@ -1,7 +1,7 @@
 // Group conversations shown in the main chat list next to direct chats. The server's group listing
 // (GET /api/v1/groups) owns unread counts and the latest message; this module only presents it.
 import { previewFor } from './store.js';
-import { formatMessageTime } from './time.js';
+import { formatChatListTime } from './time.js';
 
 // "You: hi" for your own message, "Ava: hi" for someone else's, like a messenger group row.
 export function groupPreviewText(group, userId) {
@@ -18,7 +18,7 @@ export function groupRow(group, userId, mutedIds = []) {
     id: group.id,
     name: group.name,
     preview: groupPreviewText(group, userId),
-    time: group.lastMessageAt ? formatMessageTime(group.lastMessageAt) : '',
+    time: group.lastMessageAt ? formatChatListTime(group.lastMessageAt) : '',
     unread: Number(group.unread) || 0,
     muted: mutedIds.includes(group.id),
     lastActivityAt: lastActivity === null ? null : new Date(lastActivity).toISOString(),

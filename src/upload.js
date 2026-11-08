@@ -1,4 +1,4 @@
-import { apiFetch } from './api.js';
+import { apiFetch, apiUrl } from './api.js';
 // Browser upload client. Small files go in one request; larger ones are sliced from the File on disk
 // (never read into memory as a whole) and sent as resumable chunks with retry.
 import { MAX_TRANSFER_BYTES, UPLOAD_CHUNK_BYTES, uploadPlan } from './transfer.js';
@@ -17,6 +17,31 @@ function isAbort(error) {
   return error?.name === 'AbortError';
 }
 
+// fetch() cannot report upload progress, so a whole chunk (up to 8 MB — a minute on a slow uplink) looked stuck
+// at 0%. In the browser, requests that carry a body go through XMLHttpRequest and report bytes as they leave.
+// Returns the same { response: { ok, status }, data } shape as api(); falls back to fetch where XHR is missing.
+function send(path, { sessionToken, signal, method, body, headers = {}, onBytes }) {
+  if (typeof XMLHttpRequest === 'undefined' || !onBytes) return api(path, { sessionToken, signal, method, body, headers });
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open(method, apiUrl(path));
+    xhr.setRequestHeader('Authorization', 'Bearer ' + sessionToken);
+    for (const [name, value] of Object.entries(headers)) xhr.setRequestHeader(name, value);
+    xhr.upload.onprogress = (event) => { if (event.lengthComputable) onBytes(event.loaded); };
+    const abort = () => xhr.abort();
+    signal?.addEventListener('abort', abort, { once: true });
+    xhr.onload = () => {
+      signal?.removeEventListener('abort', abort);
+      let data = {};
+      try { data = xhr.status === 204 ? {} : JSON.parse(xhr.responseText || '{}'); } catch { data = {}; }
+      resolve({ response: { ok: xhr.status >= 200 && xhr.status < 300, status: xhr.status }, data });
+    };
+    xhr.onerror = () => { signal?.removeEventListener('abort', abort); reject(new TypeError('Network error during upload.')); };
+    xhr.onabort = () => reject(signal?.reason ?? new DOMException('Aborted', 'AbortError'));
+    xhr.send(body);
+  });
+}
+
 export function uploadSizeError(filename, byteSize) {
   const plan = uploadPlan(byteSize);
   if (plan.ok) return '';
@@ -29,19 +54,19 @@ function targetQuery({ receiverId, groupId }) {
   return groupId ? `groupId=${encodeURIComponent(groupId)}` : `receiverId=${encodeURIComponent(receiverId)}`;
 }
 
-async function singleRequest(file, filename, { receiverId, groupId, sessionToken, signal }) {
-  const response = await apiFetch(`/api/v1/media?${targetQuery({ receiverId, groupId })}`, {
-    method: 'POST',
+async function singleRequest(file, filename, { receiverId, groupId, sessionToken, signal, onProgress }) {
+  const { response, data } = await send(`/api/v1/media?${targetQuery({ receiverId, groupId })}`, {
+    sessionToken,
     signal,
+    method: 'POST',
     headers: {
-      Authorization: 'Bearer ' + sessionToken,
       // The browser's type for the file; the server falls back to the extension when this is empty or generic.
       'Content-Type': file.type || 'application/octet-stream',
       'X-File-Name': encodeURIComponent(filename),
     },
     body: file,
+    onBytes: onProgress ? (loaded) => onProgress(Math.min(loaded, file.size - 1), file.size) : null,
   });
-  const data = await response.json().catch(() => ({}));
   if (!response.ok || !data?.id) throw new Error(data?.error || 'Upload failed.');
   return data;
 }
@@ -74,10 +99,12 @@ async function chunkedUpload(file, filename, { receiverId, groupId, sessionToken
       const end = Math.min(offset + chunkBytes, file.size);
       let result;
       try {
-        result = await api(`/api/v1/uploads/${encodeURIComponent(uploadId)}`, {
+        const chunkStart = offset;
+        result = await send(`/api/v1/uploads/${encodeURIComponent(uploadId)}`, {
           sessionToken, signal, method: 'PUT',
           headers: { 'Content-Type': 'application/octet-stream', 'X-Upload-Offset': String(offset) },
           body: file.slice(offset, end),
+          onBytes: onProgress ? (loaded) => onProgress(Math.min(chunkStart + loaded, file.size - 1), file.size) : null,
         });
       } catch (error) {
         if (isAbort(error)) throw error;
@@ -126,7 +153,7 @@ export async function uploadFile(file, { receiverId, groupId, sessionToken, sign
   onProgress?.(0, file.size);
   const result = plan.chunked
     ? await chunkedUpload(file, filename, { receiverId, groupId, sessionToken, signal, onProgress })
-    : await singleRequest(file, filename, { receiverId, groupId, sessionToken, signal });
+    : await singleRequest(file, filename, { receiverId, groupId, sessionToken, signal, onProgress });
   onProgress?.(file.size, file.size);
   return result;
 }

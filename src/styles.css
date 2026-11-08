@@ -4120,3 +4120,41 @@ button.groups-setting:hover, label.groups-setting:hover { background: rgba(134, 
 .wa-video-stage:not(.is-group) .wa-video-element.local-video:not(.is-screen) { object-fit: cover; }
 .avatar-choice-group h3 { margin: 14px 2px 8px; color: #8696a0; font-size: 13px; font-weight: 600; letter-spacing: .02em; text-transform: uppercase; }
 .avatar-choice-group:first-of-type h3 { margin-top: 4px; }
+
+/* ===== Edge-to-edge screens (Android 15+ draws under the status bar) =====
+   Newer WebViews pass the inset to env(); Capacitor also injects --safe-area-inset-top. Use whichever is set. */
+:root { --hm-safe-top: max(env(safe-area-inset-top, 0px), var(--safe-area-inset-top, 0px)); }
+.app-shell { padding-top: var(--hm-safe-top); }
+.wa-info-drawer, .loc-layer { padding-top: var(--hm-safe-top); }
+.wa-call-header { padding-top: calc(16px + var(--hm-safe-top)); }
+.wa-call-backdrop.is-pip .wa-call-header { padding-top: 16px; }
+.avatar-studio-backdrop { padding-top: calc(12px + var(--hm-safe-top)); }
+.wa-viewer-top { padding-top: calc(6px + var(--hm-safe-top)); }
+.wa-viewer-editor-bar { padding-top: calc(8px + var(--hm-safe-top)); }
+.wa-add-participant { padding-top: calc(10px + var(--hm-safe-top)); }
+@media (max-width: 768px) {
+  .groups-panel { padding-top: var(--hm-safe-top); }
+}
+.wa-video-side-toolbar { top: calc(72px + var(--hm-safe-top)); }
+
+/* ===== Sending an attachment: inline bubble with a progress ring (no separate upload bar) ===== */
+.pending-upload { position: relative; overflow: hidden; padding: 3px; }
+.pending-upload.is-image, .pending-upload.is-video { width: min(260px, 66vw); }
+.pending-upload-media { display: block; width: 100%; max-height: 320px; min-height: 140px; object-fit: cover; border-radius: 8px; filter: brightness(.55); }
+.pending-upload-overlay { position: absolute; inset: 3px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: #fff; }
+.pending-upload-overlay small { padding: 2px 8px; border-radius: 10px; background: rgba(0, 0, 0, .45); font-size: 12px; }
+.pending-upload.is-image:not(:has(img)) .pending-upload-overlay, .pending-upload.is-video:not(:has(video)) .pending-upload-overlay { position: static; min-height: 140px; }
+.pending-upload-ring { position: relative; width: 52px; height: 52px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 50%; background: rgba(0, 0, 0, .45); color: #fff; cursor: pointer; }
+.pending-upload-ring svg { position: absolute; inset: 2px; width: 48px; height: 48px; transform: rotate(-90deg); }
+.pending-upload-ring circle { fill: none; stroke-width: 3; }
+.pending-upload-ring-track { stroke: rgba(255, 255, 255, .25); }
+.pending-upload-ring-fill { stroke: #fff; stroke-linecap: round; transition: stroke-dashoffset .25s ease; }
+.pending-upload-file { display: flex; align-items: center; gap: 10px; min-width: 220px; padding: 6px 8px; }
+.pending-upload-file .pending-upload-ring { width: 44px; height: 44px; background: #00a884; }
+.pending-upload-file .pending-upload-ring svg { inset: 0; width: 44px; height: 44px; }
+.pending-upload-file-icon { display: none; }
+.pending-upload-file-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.pending-upload-file-text strong { overflow: hidden; font-size: 14px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.pending-upload-file-text small { color: #667781; font-size: 12px; }
+.dark-theme .pending-upload-file-text small { color: #8696a0; }
+.wa-call-backdrop.is-pip.is-snapping { transition: left .25s ease, top .25s ease; }

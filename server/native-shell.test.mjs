@@ -43,7 +43,8 @@ test('the Android shell declares the channels, service, call receiver and runtim
   for (const permission of ['POST_NOTIFICATIONS', 'RECORD_AUDIO', 'CAMERA', 'MODIFY_AUDIO_SETTINGS', 'FOREGROUND_SERVICE_SPECIAL_USE', 'USE_FULL_SCREEN_INTENT']) {
     assert.ok(manifest.includes(`android.permission.${permission}`), permission);
   }
-  assert.match(manifest, /android:name="\.MessagingService"[\s\S]*foregroundServiceType="specialUse"/);
+  assert.match(manifest, /android:name="\.MessagingService"[\s\S]*foregroundServiceType="specialUse\|microphone\|camera"/);
+  for (const permission of ['FOREGROUND_SERVICE_MICROPHONE', 'FOREGROUND_SERVICE_CAMERA']) assert.ok(manifest.includes(`android.permission.${permission}`), permission);
   assert.match(manifest, /android:name="\.CallActionReceiver"\s+android:exported="false"/);
   const channels = await readFile(new URL('android/app/src/main/java/io/github/bickworld555/hiddenchat/NotificationChannels.java', root), 'utf8');
   for (const id of ['"direct_messages"', '"group_messages"', '"incoming_calls"']) assert.ok(channels.includes(id), id);

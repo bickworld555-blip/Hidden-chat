@@ -8,7 +8,7 @@ import { DatabaseSync } from 'node:sqlite';
 import WebSocket from 'ws';
 import { createChatServer, heartbeatIntervalForState, isAllowedAppOrigin } from './index.mjs';
 import { mergeMessageStatus } from '../src/messageStatus.js';
-import { formatMessageDate, formatMessageTime, utcDateKey } from '../src/time.js';
+import { formatChatListTime, formatMessageDate, formatMessageTime, localDateKey } from '../src/time.js';
 import { checkGroupAttachments, checkGroupContract } from './group-contract.mjs';
 
 let service;
@@ -583,11 +583,23 @@ test('uses longer heartbeat intervals while idle or backgrounded', () => {
   assert.equal(heartbeatIntervalForState({ visibility: 'hidden', idle: false }), 120_000);
 });
 
-test('formats message times and date grouping in GMT consistently', () => {
-  assert.equal(formatMessageTime('2026-11-04T22:35:00.000Z'), '10:35 PM GMT');
-  assert.equal(formatMessageDate('2026-11-04T22:35:00.000Z', new Date('2026-11-04T12:00:00.000Z')), 'Today · Wednesday, November 4, 2026 GMT');
-  assert.equal(formatMessageDate('2026-11-03T22:35:00.000Z', new Date('2026-11-04T12:00:00.000Z')), 'Yesterday · Tuesday, November 3, 2026 GMT');
-  assert.equal(utcDateKey('2026-11-04T23:59:59.000Z'), utcDateKey('2026-11-04T00:00:00.000Z'));
+test('times read like WhatsApp in the phone time zone', () => {
+  // Local constructors keep this independent of the machine's time zone.
+  const now = new Date(2026, 10, 9, 14, 0);
+  assert.equal(formatMessageTime(new Date(2026, 10, 9, 22, 35)), '10:35 pm');
+  assert.equal(formatMessageTime(new Date(2026, 10, 9, 0, 7)), '12:07 am');
+  assert.equal(formatMessageTime(new Date(2026, 10, 9, 12, 0)), '12:00 pm');
+  assert.equal(formatMessageTime('nonsense'), '');
+  assert.equal(formatChatListTime(new Date(2026, 10, 9, 2, 11), now), '2:11 am');
+  assert.equal(formatChatListTime(new Date(2026, 10, 8, 23, 59), now), 'Yesterday');
+  assert.equal(formatChatListTime(new Date(2026, 10, 5, 9, 0), now), 'Thursday');
+  assert.equal(formatChatListTime(new Date(2026, 10, 7 - 5, 9, 0), now), '02/11/2026');
+  assert.equal(formatMessageDate(new Date(2026, 10, 9, 1, 0), now), 'Today');
+  assert.equal(formatMessageDate(new Date(2026, 10, 8, 1, 0), now), 'Yesterday');
+  assert.equal(formatMessageDate(new Date(2026, 10, 4, 1, 0), now), 'Wednesday');
+  assert.equal(formatMessageDate(new Date(2026, 9, 20, 1, 0), now), '20 October 2026');
+  assert.equal(localDateKey(new Date(2026, 10, 4, 23, 59)), localDateKey(new Date(2026, 10, 4, 0, 0)));
+  assert.notEqual(localDateKey(new Date(2026, 10, 4, 23, 59)), localDateKey(new Date(2026, 10, 5, 0, 0)));
 });
 
 test('message receipts advance monotonically from sent to delivered to read', () => {

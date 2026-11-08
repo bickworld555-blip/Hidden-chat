@@ -1,62 +1,67 @@
-const timeFormatter = new Intl.DateTimeFormat('en-US', {
-  timeZone: 'UTC',
-  hour: 'numeric',
-  minute: '2-digit',
-  hour12: true,
-});
+// Timestamps the way WhatsApp shows them, in the phone's own time zone: "10:35 pm" on bubbles; "Yesterday",
+// a weekday or "07/11/2026" in the chat list; "Today" / "Yesterday" / "4 November 2026" between messages.
+const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+const DAY_MS = 24 * 60 * 60 * 1000;
 
-const dateFormatter = new Intl.DateTimeFormat('en-US', {
-  timeZone: 'UTC',
-  weekday: 'long',
-  month: 'long',
-  day: 'numeric',
-  year: 'numeric',
-});
-
-function utcDayKey(value) {
-  const date = new Date(value);
-  if (!Number.isFinite(date.getTime())) return '';
-  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}-${String(date.getUTCDate()).padStart(2, '0')}`;
+function toDate(value) {
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isFinite(date.getTime()) ? date : null;
 }
+
+const startOfDay = (date) => new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+
+// Whole calendar days between two moments in local time (DST-safe); 0 = same day, 1 = yesterday.
+function daysAgo(date, now) {
+  return Math.round((startOfDay(now) - startOfDay(date)) / DAY_MS);
+}
+
+const pad = (value) => String(value).padStart(2, '0');
 
 export function formatMessageTime(timestamp) {
-  const date = new Date(timestamp);
-  if (!Number.isFinite(date.getTime())) return '';
-  return `${timeFormatter.format(date)} GMT`;
+  const date = toDate(timestamp);
+  if (!date) return '';
+  const hours = date.getHours();
+  return `${hours % 12 || 12}:${pad(date.getMinutes())} ${hours < 12 ? 'am' : 'pm'}`;
 }
 
+// Chat list: the time today, then "Yesterday", the weekday within a week, else the date.
+export function formatChatListTime(timestamp, now = new Date()) {
+  const date = toDate(timestamp);
+  if (!date) return '';
+  const days = daysAgo(date, now);
+  if (days <= 0) return formatMessageTime(date);
+  if (days === 1) return 'Yesterday';
+  if (days < 7) return WEEKDAYS[date.getDay()];
+  return `${pad(date.getDate())}/${pad(date.getMonth() + 1)}/${date.getFullYear()}`;
+}
+
+// The divider between days in a conversation.
 export function formatMessageDate(timestamp, now = new Date()) {
-  const date = new Date(timestamp);
-  if (!Number.isFinite(date.getTime())) return 'Unknown date';
-  const currentDay = utcDayKey(now);
-  const messageDay = utcDayKey(date);
-  const previous = new Date(now);
-  previous.setUTCDate(previous.getUTCDate() - 1);
-  const previousDay = utcDayKey(previous);
-  const fullDate = dateFormatter.format(date);
-  if (messageDay === currentDay) return `Today · ${fullDate} GMT`;
-  if (messageDay === previousDay) return `Yesterday · ${fullDate} GMT`;
-  return `${fullDate} GMT`;
+  const date = toDate(timestamp);
+  if (!date) return 'Unknown date';
+  const days = daysAgo(date, now);
+  if (days <= 0) return 'Today';
+  if (days === 1) return 'Yesterday';
+  if (days < 7) return WEEKDAYS[date.getDay()];
+  return `${date.getDate()} ${MONTHS[date.getMonth()]} ${date.getFullYear()}`;
 }
 
-export function utcDateKey(timestamp) {
-  return utcDayKey(timestamp);
+// Groups messages by local calendar day.
+export function localDateKey(timestamp) {
+  const date = toDate(timestamp);
+  return date ? `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}` : '';
 }
 
-const shortDateFormatter = new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', month: 'long', day: 'numeric' });
-const longDateFormatter = new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', month: 'long', day: 'numeric', year: 'numeric' });
-
-// Media viewer subtitle, e.g. "Today, 2:05 AM GMT" or "March 4, 2:05 AM GMT".
+// Media viewer and call log, e.g. "Today, 2:05 am" or "4 March, 2:30 pm".
 export function formatViewerTimestamp(timestamp, now = new Date()) {
-  const date = new Date(timestamp);
-  if (!Number.isFinite(date.getTime())) return '';
-  const day = utcDayKey(date);
-  const previous = new Date(now);
-  previous.setUTCDate(previous.getUTCDate() - 1);
+  const date = toDate(timestamp);
+  if (!date) return '';
+  const days = daysAgo(date, now);
   let label;
-  if (day === utcDayKey(now)) label = 'Today';
-  else if (day === utcDayKey(previous)) label = 'Yesterday';
-  else if (date.getUTCFullYear() === now.getUTCFullYear()) label = shortDateFormatter.format(date);
-  else label = longDateFormatter.format(date);
+  if (days <= 0) label = 'Today';
+  else if (days === 1) label = 'Yesterday';
+  else if (date.getFullYear() === now.getFullYear()) label = `${date.getDate()} ${MONTHS[date.getMonth()]}`;
+  else label = `${date.getDate()} ${MONTHS[date.getMonth()]} ${date.getFullYear()}`;
   return `${label}, ${formatMessageTime(date)}`;
 }

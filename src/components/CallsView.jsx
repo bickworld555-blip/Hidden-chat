@@ -1,6 +1,6 @@
 import { Phone, Video, ArrowDownLeft, ArrowUpRight } from 'lucide-react';
 import { useChatStore } from '../store.js';
-import { formatMessageTime } from '../time.js';
+import { formatViewerTimestamp } from '../time.js';
 import Avatar from './Avatar.jsx';
 
 function describeDuration(seconds) {
@@ -59,7 +59,7 @@ export default function CallsView({ onCall }) {
               <div className="call-log-details">
                 <div className="call-log-header">
                   <strong className={missed && isIncoming ? 'call-log-missed' : ''}>{name}</strong>
-                  <span className="call-log-time">{formatMessageTime(log.timestamp)}</span>
+                  <span className="call-log-time">{formatViewerTimestamp(log.timestamp)}</span>
                 </div>
                 <div className="call-log-meta">
                   <span className={`call-status ${missed && isIncoming ? 'call-log-missed' : ''}`}>

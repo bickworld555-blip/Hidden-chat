@@ -290,3 +290,7 @@
   .identity-mark { width: 67px; height: 75px; }
   .identity-backdrop .identity-card { padding: 24px 20px; }
 }
+
+/* Clear of the status bar on edge-to-edge phones. */
+.identity-backdrop.identity-backdrop { padding-top: calc(32px + var(--hm-safe-top, 0px)); }
+@media (max-width: 480px) { .identity-backdrop.identity-backdrop { padding-top: calc(24px + var(--hm-safe-top, 0px)); } }

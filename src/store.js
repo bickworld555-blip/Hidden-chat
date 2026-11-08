@@ -6,7 +6,7 @@ import { endBlock, hiddenByBlock, startBlock } from './blocking.js';
 import { mediaPreviewLabel } from './media.js';
 import { haversineDistance, isLiveExpired, parseContact, parseLocation, shouldSendLiveUpdate } from './geo.js';
 import { mergeMessageStatus } from './messageStatus.js';
-import { formatMessageTime } from './time.js';
+import { formatChatListTime } from './time.js';
 import { splitLinks } from './contactBook.js';
 import { scheduledCallPreview } from './groupChat.js';
 
@@ -61,7 +61,7 @@ export function orderChatsByActivity(chats) {
 function summarizeChat(chat, messages) {
   const last = messages?.length ? messages[messages.length - 1] : null;
   if (!last) return chat;
-  return { ...chat, preview: previewFor(last.content), time: formatMessageTime(last.timestamp), lastActivityAt: last.timestamp };
+  return { ...chat, preview: previewFor(last.content), time: formatChatListTime(last.timestamp), lastActivityAt: last.timestamp };
 }
 
 // Re-derives a chat's summary after messages were removed; an emptied chat keeps its place in the list.

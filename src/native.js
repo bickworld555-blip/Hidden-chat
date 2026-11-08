@@ -45,6 +45,8 @@ export function nativeSetSession({ origin, token, userId, mutedChats = [], muted
   return sessionSaved;
 }
 export const nativeClearSession = () => invoke('clearSession');
+// While a call is live the service also holds the microphone/camera, so the call keeps working in the background.
+export const nativeSetCallActive = (active, video = false) => invoke('setCallActive', { active: Boolean(active), video: Boolean(video) });
 // A call the background service rang while the app was closed: { event, ice[] } or null.
 export const nativeTakePendingCall = async () => (await invoke('takePendingCall'))?.pending ?? null;
 export const nativeStartBackground = async () => {

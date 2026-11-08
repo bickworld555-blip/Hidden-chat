@@ -1,5 +1,5 @@
 import { apiFetch } from '../api.js';
-import { nativeCancelIncomingCall, nativeEndCallWindow, nativeShell, nativeShowIncomingCall, onNative } from '../native.js';
+import { nativeCancelIncomingCall, nativeEndCallWindow, nativeSetCallActive, nativeShell, nativeShowIncomingCall, onNative } from '../native.js';
 import { useEffect, useRef, useState } from 'react';
 import {
   ArrowLeft,
@@ -104,6 +104,7 @@ function ParticipantTile({ info, snapshot, video, speakerOn }) {
 }
 
 const NOISE_KEY = 'hm:noise-cancellation';
+const SCREEN_SHARE_TIMEOUT_MS = 60_000;
 const isVideoMode = (mode) => mode === 'video';
 
 function ContactRow({ contact, onSelect }) {
@@ -225,12 +226,22 @@ export default function CallOverlay({
   const { status, mode: callMode, error, localStream, remoteStream, muted, cameraOff, facing, answered, remoteVideoOff, remoteMuted, remoteHasVideo, videoRequest, remoteScreen, screenSharing, videoFilter, remoteAvatar } = snapshot;
   const isVideo = callMode === 'video';
   const terminal = TERMINAL_STATUSES.includes(status);
+  // Android: from the moment we place or answer a call until it ends, the background service holds the microphone
+  // (and camera for video) so switching apps or locking the screen does not freeze or silence the call.
+  const callLive = !terminal && !(call.direction === 'incoming' && status === 'idle');
+  useEffect(() => {
+    if (!nativeShell()) return undefined;
+    nativeSetCallActive(callLive, isVideo);
+    return () => { if (callLive) nativeSetCallActive(false); };
+  }, [callLive, isVideo]);
 
   // Shared across the room: one screen capture feeds every pair (each engine gets its own clone).
   const displayShareRef = useRef(null);
   function sharedDisplayMedia(constraints) {
     if (!displayShareRef.current) {
-      displayShareRef.current = navigator.mediaDevices.getDisplayMedia(constraints).finally(() => { setTimeout(() => { displayShareRef.current = null; }, 1500); });
+      // A picker that never answers (seen in some WebViews) must not leave the call stuck waiting.
+      const timeout = new Promise((_, reject) => setTimeout(() => reject(Object.assign(new Error('Screen sharing did not start.'), { name: 'TimeoutError' })), SCREEN_SHARE_TIMEOUT_MS));
+      displayShareRef.current = Promise.race([navigator.mediaDevices.getDisplayMedia(constraints), timeout]).finally(() => { setTimeout(() => { displayShareRef.current = null; }, 1500); });
     }
     return displayShareRef.current.then((stream) => new MediaStream(stream.getVideoTracks().map((track) => track.clone())));
   }
@@ -571,7 +582,9 @@ export default function CallOverlay({
   const toggleScreenShare = () => (screenSharing
     ? allEngines().forEach((engine) => engine.stopScreenShare())
     : allEngines().forEach((engine) => engine.startScreenShare()));
-  const canShareScreen = Boolean(navigator.mediaDevices?.getDisplayMedia);
+  // The Android app's WebView offers getDisplayMedia but cannot capture the screen (the request never settles), so
+  // sharing is offered only where browsers support it (desktop).
+  const canShareScreen = Boolean(navigator.mediaDevices?.getDisplayMedia) && !nativeShell();
 
   // --- ⋯ sheet: reactions, noise cancellation, flash ---
   const [moreOpen, setMoreOpen] = useState(false);
@@ -641,9 +654,12 @@ export default function CallOverlay({
     setTilePosition(null);
     setMinimized(true);
   };
+  // The minimised window drags from anywhere on it (not just its bar) and snaps to the nearest corner on release.
+  const [pipSnapping, setPipSnapping] = useState(false);
   const onPipPointerDown = (event) => {
-    if (event.target.closest('button')) return;
-    const rect = event.currentTarget.parentElement.getBoundingClientRect();
+    if (!minimized || event.target.closest('button') || (event.button ?? 0) !== 0) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    setPipSnapping(false);
     dragRef.current = { offsetX: event.clientX - rect.left, offsetY: event.clientY - rect.top, width: rect.width, height: rect.height, moved: false, startX: event.clientX, startY: event.clientY };
     event.currentTarget.setPointerCapture?.(event.pointerId);
   };
@@ -662,9 +678,16 @@ export default function CallOverlay({
     event.currentTarget.releasePointerCapture?.(event.pointerId);
     // The click that follows a drag must not restore the window.
     draggedRef.current = Boolean(drag?.moved);
+    if (drag?.moved) {
+      const rect = event.currentTarget.getBoundingClientRect();
+      setPipPosition(pipCorner(rect));
+      setPipSnapping(true);
+      window.setTimeout(() => setPipSnapping(false), 260);
+    }
   };
   const onTilePointerDown = (event) => {
-    if (event.button !== 0) return;
+    // Minimised, the whole window drags instead of the tile inside it.
+    if (event.button !== 0 || minimized) return;
     event.stopPropagation();
     const tile = event.currentTarget.getBoundingClientRect();
     const stage = stageRef.current.getBoundingClientRect();
@@ -744,12 +767,16 @@ export default function CallOverlay({
   return (
     <div
       ref={floatingRef}
-      className={`wa-call-backdrop ${minimized ? 'is-pip' : ''} ${minimized && !isVideo ? 'is-pip-audio' : ''} ${restoring ? 'is-restoring' : ''}`}
+      className={`wa-call-backdrop ${minimized ? 'is-pip' : ''} ${minimized && !isVideo ? 'is-pip-audio' : ''} ${restoring ? 'is-restoring' : ''} ${pipSnapping ? 'is-snapping' : ''}`}
       style={minimized && pipPosition ? { left: pipPosition.x, top: pipPosition.y, right: 'auto', bottom: 'auto' } : undefined}
+      onPointerDown={minimized ? onPipPointerDown : undefined}
+      onPointerMove={minimized ? onPipPointerMove : undefined}
+      onPointerUp={minimized ? onPipPointerUp : undefined}
+      onPointerCancel={minimized ? onPipPointerUp : undefined}
       onClick={minimized ? (event) => { const dragged = draggedRef.current; draggedRef.current = false; if (!dragged && !event.target.closest('button') && !dragRef.current) restoreCall(); } : undefined}
     >
       {minimized && (
-        <div className="wa-pip-bar" onPointerDown={onPipPointerDown} onPointerMove={onPipPointerMove} onPointerUp={onPipPointerUp} onPointerCancel={onPipPointerUp} role="toolbar" aria-label="Call controls">
+        <div className="wa-pip-bar" role="toolbar" aria-label="Call controls">
           <span className="wa-pip-text"><strong>{peerName}</strong><small>{label}</small></span>
           <button type="button" className="wa-pip-btn" onClick={toggleMute} aria-label={muted ? 'Unmute microphone' : 'Mute microphone'}>{muted ? <MicOff size={16} /> : <Mic size={16} />}</button>
           <button type="button" className="wa-pip-btn" onClick={restoreCall} aria-label="Return to call"><Maximize2 size={16} /></button>
@@ -1187,6 +1214,23 @@ export default function CallOverlay({
       </div>
     </div>
   );
+}
+
+// Nearest corner for the minimised call window: clear of the status bar at the top and the tab bar at the bottom.
+export function pipCorner(rect, viewport = { width: window.innerWidth, height: window.innerHeight }, safeTop = safeAreaTop()) {
+  const margin = 12;
+  const left = rect.left + rect.width / 2 < viewport.width / 2;
+  const top = rect.top + rect.height / 2 < viewport.height / 2;
+  return {
+    x: left ? margin : Math.max(margin, viewport.width - rect.width - margin),
+    y: top ? safeTop + 64 : Math.max(safeTop + 64, viewport.height - rect.height - 84),
+  };
+}
+
+function safeAreaTop() {
+  if (typeof document === 'undefined') return 0;
+  const styles = getComputedStyle(document.documentElement);
+  return parseFloat(styles.getPropertyValue('--safe-area-inset-top')) || 0;
 }
 
 function usePageHidden() {
