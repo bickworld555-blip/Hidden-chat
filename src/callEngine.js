@@ -395,8 +395,10 @@ export function createCallEngine({
       } else {
         params.encodings[0].maxBitrate = VIDEO_MAX_BITRATE;
         params.encodings[0].maxFramerate = VIDEO_MAX_FRAMERATE;
+        params.encodings[0].scaleResolutionDownBy = 1;
       }
-      if (params.degradationPreference !== undefined || kind === 'video') params.degradationPreference = 'maintain-framerate';
+      // Under congestion trade a little of both rather than dropping straight to a blurry low resolution.
+      if (params.degradationPreference !== undefined || kind === 'video') params.degradationPreference = 'balanced';
       Promise.resolve(sender.setParameters(params)).catch(() => {});
     } catch {}
   }

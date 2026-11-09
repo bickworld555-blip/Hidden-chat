@@ -10,6 +10,7 @@ import android.content.res.Configuration;
 import android.os.Build;
 import android.os.Bundle;
 import android.util.Rational;
+import android.view.WindowManager;
 import androidx.activity.OnBackPressedCallback;
 import com.getcapacitor.BridgeActivity;
 import java.util.Collections;
@@ -32,6 +33,9 @@ public class MainActivity extends BridgeActivity {
         // The WebView takes over the connection; the service's own one would only duplicate notifications.
         NativeRelay.stop();
         super.onCreate(savedInstanceState);
+        // Opened by a ringing call's full-screen notification: show over the lock screen and light the screen at
+        // once, before the web app has loaded (otherwise the call would wait behind the lock screen).
+        if (getIntent() != null && getIntent().getBooleanExtra(Alerts.EXTRA_CALL, false)) applyCallWindow(true);
         // Back closes the top screen inside the app (chat → chat list, drawers, viewer…); with nothing left to close
         // the app goes to the background instead of being destroyed, like WhatsApp.
         getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
@@ -40,6 +44,37 @@ public class MainActivity extends BridgeActivity {
                 if (!HiddenNativePlugin.emitBack()) moveTaskToBack(true);
             }
         });
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        if (intent != null && intent.getBooleanExtra(Alerts.EXTRA_CALL, false)) applyCallWindow(true);
+        super.onNewIntent(intent);
+    }
+
+    /** While a call rings or is in progress the call screen shows over the lock screen, like the phone app. */
+    static boolean wantsCallWindow() {
+        return Alerts.isRinging() || MessagingService.isCallActive();
+    }
+
+    /** Ringing started/stopped or a call started/ended: update the lock-screen and keep-screen-on flags. */
+    static void callWindowChanged() {
+        MainActivity activity = current;
+        if (activity != null) activity.runOnUiThread(() -> activity.applyCallWindow(wantsCallWindow()));
+    }
+
+    void applyCallWindow(boolean overLock) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+            setShowWhenLocked(overLock);
+            setTurnScreenOn(overLock);
+        } else if (overLock) {
+            getWindow().addFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED | WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON);
+        } else {
+            getWindow().clearFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED | WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON);
+        }
+        // The screen stays on while a call rings and during video calls (voice calls use the proximity sensor).
+        if (overLock && (Alerts.isRinging() || MessagingService.isVideoCallActive())) getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        else getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
     }
 
     private static PictureInPictureParams pipParams(Context context, boolean autoEnter) {
@@ -68,7 +103,9 @@ public class MainActivity extends BridgeActivity {
     @Override
     protected void onUserLeaveHint() {
         super.onUserLeaveHint();
-        if (MessagingService.isVideoCallActive() && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+        // Android 12+ enters by itself (auto-enter), but several phone makers ignore that; asking here as well works
+        // everywhere, and does nothing when the window is already on its way.
+        if (MessagingService.isVideoCallActive() && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !isInPictureInPictureMode()) {
             try {
                 enterPictureInPictureMode(pipParams(this, false));
             } catch (IllegalStateException unsupported) {

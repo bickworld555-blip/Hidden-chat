@@ -50,9 +50,10 @@ export function turnServerFromEnv({ url, username, credential } = {}) {
 export function videoConstraints(facing = 'user') {
   return {
     facingMode: facing,
-    width: { ideal: 640, max: 1280 },
-    height: { ideal: 480, max: 720 },
-    frameRate: { ideal: 24, max: 30 },
+    // Full HD at 30 fps when the camera and connection allow it; WebRTC scales down by itself on weak networks.
+    width: { ideal: 1920, max: 1920 },
+    height: { ideal: 1080, max: 1080 },
+    frameRate: { ideal: 30, max: 30 },
   };
 }
 
@@ -65,7 +66,8 @@ export function mediaConstraints(mode, facing = 'user') {
 
 export const VIDEO_CODEC_ORDER = Object.freeze(['video/VP8', 'video/H264']);
 export const AUDIO_MAX_BITRATE = 48_000;
-export const VIDEO_MAX_BITRATE = 800_000;
+// Enough for sharp 1080p30; a cap, not a target (bandwidth estimation still lowers it on slow links).
+export const VIDEO_MAX_BITRATE = 4_000_000;
 export const VIDEO_MAX_FRAMERATE = 30;
 
 // Stable reorder: preferred codecs first in the given order; everything else (VP9, AV1, rtx, red,

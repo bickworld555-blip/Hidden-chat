@@ -4181,3 +4181,6 @@ html.native-pip .wa-video-tile.is-pip { width: 30% !important; height: auto !imp
 /* Links in messages open in YouTube, Facebook or the browser. */
 .message-link { color: #027eb5; text-decoration: underline; word-break: break-all; }
 .dark-theme .message-link { color: #53bdeb; }
+/* "Calls on this phone": an Allow button beside each blocked switch. */
+.permissions-list li > span { flex: 1; min-width: 0; }
+.permissions-list .call-access-open { flex: none; align-self: center; padding: 8px 16px; min-height: 0; }

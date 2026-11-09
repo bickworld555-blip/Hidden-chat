@@ -13,6 +13,8 @@ import { classifyIncoming, groupNotificationText, parseConversationOpenParam, sh
 import { nativeClearSession, nativeSetSession, nativeShell, nativeStartBackground, nativeState, nativeStopBackground, nativeTakePendingCall, nativeMoveToBackground, nativeClearShare, onNative } from './native.js';
 import { parseShare } from './shareTarget.js';
 import ShareSheet from './components/ShareSheet.jsx';
+import CallAccessSheet from './components/CallAccessSheet.jsx';
+import { CALL_ACCESS_ASKED_KEY, missingCallAccess } from './callAccess.js';
 import { PERMISSIONS_ASKED_KEY } from './permissionsKey.js';
 import Sidebar from './components/Sidebar.jsx';
 import ChatWindow from './components/ChatWindow.jsx';
@@ -106,6 +108,8 @@ export default function App() {
   const [permissionsOpen, setPermissionsOpen] = useState(false);
   // Something shared to Hidden Messenger from another app's share sheet, waiting for the user to pick chats.
   const [incomingShare, setIncomingShare] = useState(null);
+  // Android blocks lock-screen calls or the floating video window for this app: the native state, to ask once.
+  const [callAccess, setCallAccess] = useState(null);
   const [switchingId, setSwitchingId] = useState(null);
   const [callsSeenAt, setCallsSeenAt] = useState(() => Number(localStorage.getItem('relay:calls-seen-at')) || 0);
   const openChatRef = useRef(null);
@@ -644,12 +648,23 @@ export default function App() {
     try { asked = localStorage.getItem(PERMISSIONS_ASKED_KEY) === '1'; } catch { /* private mode */ }
     const needsWebPrompt = !nativeShell() && typeof Notification !== 'undefined' && Notification.permission === 'default';
     if (!asked && (nativeShell() || needsWebPrompt)) setPermissionsOpen(true);
-    else if (nativeShell()) nativeStartBackground();
+    else if (nativeShell()) {
+      nativeStartBackground();
+      checkCallAccess();
+    }
     nativeState();
     const refresh = () => { if (document.visibilityState === 'visible') nativeState(); };
     document.addEventListener('visibilitychange', refresh);
     return () => document.removeEventListener('visibilitychange', refresh);
   }, [userId]);
+
+  // Lock-screen calls and the floating video window need two Android switches; ask once if either is off.
+  async function checkCallAccess() {
+    if (!nativeShell()) return;
+    try { if (localStorage.getItem(CALL_ACCESS_ASKED_KEY) === '1') return; } catch { /* private mode */ }
+    const state = await nativeState();
+    if (missingCallAccess(state).length > 0) setCallAccess(state);
+  }
 
   // Motion preference goes on <html> so overlays rendered outside the shell follow it too.
   const appearance = useAppearance();
@@ -699,7 +714,8 @@ export default function App() {
           }}
         />
       )}
-      {permissionsOpen && userId && <PermissionsSheet onDone={() => setPermissionsOpen(false)} />}
+      {permissionsOpen && userId && <PermissionsSheet onDone={() => { setPermissionsOpen(false); checkCallAccess(); }} />}
+      {callAccess && !permissionsOpen && userId && <CallAccessSheet initial={callAccess} onDone={() => setCallAccess(null)} />}
       {authReady && (!userId || authOpen) && <UsernameGate onAuthenticated={acceptSession} onClose={userId ? () => setAuthOpen(false) : undefined} />}
       {call && callPeer && <CallOverlay
         key={call.id}

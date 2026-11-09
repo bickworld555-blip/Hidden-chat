@@ -77,6 +77,8 @@ export const nativeNotify = (options) => invoke('notify', options);
 export const nativeShowIncomingCall = (options) => invoke('showIncomingCall', options);
 export const nativeCancelIncomingCall = () => invoke('cancelIncomingCall');
 export const nativeEndCallWindow = () => invoke('endCallWindow');
+// System settings page for 'fullScreen' (ringing calls on the lock screen, Android 14+) or 'pictureInPicture'.
+export const nativeOpenCallSettings = (which) => invoke('openCallSettings', { which });
 // Opens a link in the app that handles it (YouTube, Facebook, the browser); Back returns to Hidden Messenger.
 // Resolves true when Android took it, false outside the app (the caller then opens it in a new tab).
 export async function nativeOpenExternal(url) {

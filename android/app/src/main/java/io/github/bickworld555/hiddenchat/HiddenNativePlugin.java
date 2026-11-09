@@ -1,6 +1,8 @@
 package io.github.bickworld555.hiddenchat;
 
 import android.Manifest;
+import android.app.AppOpsManager;
+import android.app.NotificationManager;
 import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
@@ -69,8 +71,8 @@ public class HiddenNativePlugin extends Plugin {
     @Override
     protected void handleOnStop() {
         super.handleOnStop();
-        // Only a ringing call may show over the lock screen; leaving the app ends that.
-        setCallWindow(false);
+        // Only a ringing or ongoing call may show over the lock screen; leaving the app otherwise ends that.
+        if (!MainActivity.wantsCallWindow()) setCallWindow(false);
     }
 
     private void handleIntent(Intent intent) {
@@ -110,17 +112,10 @@ public class HiddenNativePlugin extends Plugin {
     }
 
     private void setCallWindow(boolean visibleOverLock) {
-        if (getActivity() == null) return;
-        getActivity().runOnUiThread(() -> {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
-                getActivity().setShowWhenLocked(visibleOverLock);
-                getActivity().setTurnScreenOn(visibleOverLock);
-            } else if (!visibleOverLock) {
-                getActivity().getWindow().clearFlags(
-                    android.view.WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED | android.view.WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON
-                );
-            }
-        });
+        if (!(getActivity() instanceof MainActivity)) return;
+        MainActivity activity = (MainActivity) getActivity();
+        // Never drop the lock-screen window while a call still rings or is in progress.
+        activity.runOnUiThread(() -> activity.applyCallWindow(visibleOverLock || MainActivity.wantsCallWindow()));
     }
 
     private String[] startupAliases() {
@@ -140,7 +135,41 @@ public class HiddenNativePlugin extends Plugin {
         PowerManager power = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
         result.put("batteryUnrestricted", power != null && power.isIgnoringBatteryOptimizations(context.getPackageName()));
         result.put("sdk", Build.VERSION.SDK_INT);
+        // Android 14+ lets only allowed apps show ringing calls full screen on the lock screen (off by default for
+        // apps not installed from the Play Store).
+        NotificationManager notifications = context.getSystemService(NotificationManager.class);
+        result.put("fullScreenCalls", Build.VERSION.SDK_INT < 34 || (notifications != null && notifications.canUseFullScreenIntent()));
+        result.put("pictureInPicture", pictureInPictureAllowed(context));
         return result;
+    }
+
+    static boolean pictureInPictureAllowed(Context context) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false;
+        AppOpsManager ops = context.getSystemService(AppOpsManager.class);
+        if (ops == null) return true;
+        int mode = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
+            ? ops.unsafeCheckOpNoThrow(AppOpsManager.OPSTR_PICTURE_IN_PICTURE, android.os.Process.myUid(), context.getPackageName())
+            : ops.checkOpNoThrow(AppOpsManager.OPSTR_PICTURE_IN_PICTURE, android.os.Process.myUid(), context.getPackageName());
+        return mode == AppOpsManager.MODE_ALLOWED || mode == AppOpsManager.MODE_DEFAULT;
+    }
+
+    /** Opens the system page for "show calls full screen" (Android 14+) or picture-in-picture for this app. */
+    @PluginMethod
+    public void openCallSettings(PluginCall call) {
+        String which = call.getString("which", "");
+        Context context = getContext();
+        Uri pkg = Uri.parse("package:" + context.getPackageName());
+        Intent intent;
+        if ("fullScreen".equals(which) && Build.VERSION.SDK_INT >= 34) intent = new Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT, pkg);
+        else if ("pictureInPicture".equals(which)) intent = new Intent("android.settings.PICTURE_IN_PICTURE_SETTINGS", pkg);
+        else intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, pkg);
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        try {
+            context.startActivity(intent);
+        } catch (android.content.ActivityNotFoundException missing) {
+            context.startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, pkg).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        }
+        call.resolve();
     }
 
     @PluginMethod

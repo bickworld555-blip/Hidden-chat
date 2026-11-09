@@ -50,6 +50,10 @@ public class MessagingService extends Service {
         return callActive && callVideo;
     }
 
+    static boolean isCallActive() {
+        return callActive;
+    }
+
     /** Called by the web app when a call starts and ends (HiddenNative.setCallActive). */
     static void setCall(Context context, boolean active, boolean video, String name) {
         if (active && !callActive) callStartedAt = System.currentTimeMillis();
@@ -57,6 +61,7 @@ public class MessagingService extends Service {
         callVideo = active && video;
         callName = active && name != null && !name.trim().isEmpty() ? name.trim() : null;
         MainActivity.videoCallChanged(callVideo);
+        MainActivity.callWindowChanged();
         MessagingService service = instance;
         if (service != null) new Handler(Looper.getMainLooper()).post(service::promote);
         else if (active) start(context);

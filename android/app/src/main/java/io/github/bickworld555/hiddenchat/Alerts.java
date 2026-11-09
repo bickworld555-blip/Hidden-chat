@@ -125,6 +125,9 @@ final class Alerts {
         notification.flags |= Notification.FLAG_INSISTENT;
         try {
             NotificationManagerCompat.from(context).notify(CALL_TAG, CALL_NOTIFICATION_ID, notification);
+            ringing = true;
+            // App on screen (or in the background): light the screen and show the call over the lock screen now.
+            MainActivity.callWindowChanged();
             return true;
         } catch (SecurityException missingPermission) {
             return false;
@@ -149,5 +152,14 @@ final class Alerts {
 
     static void cancelIncomingCall(Context context) {
         NotificationManagerCompat.from(context).cancel(CALL_TAG, CALL_NOTIFICATION_ID);
+        ringing = false;
+        MainActivity.callWindowChanged();
+    }
+
+    private static volatile boolean ringing;
+
+    /** An incoming call is ringing (its full-screen notification is up). */
+    static boolean isRinging() {
+        return ringing;
     }
 }
