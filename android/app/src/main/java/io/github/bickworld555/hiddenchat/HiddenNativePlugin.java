@@ -212,6 +212,20 @@ public class HiddenNativePlugin extends Plugin {
         call.resolve(result);
     }
 
+    /** Outgoing-call ringback on the call stream (earpiece by default for voice calls). Resolves { played }. */
+    @PluginMethod
+    public void startRingback(PluginCall call) {
+        JSObject result = new JSObject();
+        result.put("played", CallAudio.startRingback());
+        call.resolve(result);
+    }
+
+    @PluginMethod
+    public void stopRingback(PluginCall call) {
+        CallAudio.stopRingback();
+        call.resolve();
+    }
+
     /** The in-call speaker button: loudspeaker on/off (off = earpiece or headset). */
     @PluginMethod
     public void setSpeaker(PluginCall call) {

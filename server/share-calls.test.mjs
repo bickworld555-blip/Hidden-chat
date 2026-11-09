@@ -77,3 +77,15 @@ test('voice notes are green until played, then blue for both people', async () =
   const css = await source('src/styles.css');
   assert.ok(css.includes('.voice-row.is-played .voice-badge, .voice-row.is-played .voice-thumb { background: #53bdeb; }'));
 });
+
+test('voice calls ring back on the earpiece; Speaker keeps its icon; the PiP window has Hang up', async () => {
+  const audio = await java('CallAudio.java');
+  assert.ok(audio.includes('new ToneGenerator(AudioManager.STREAM_VOICE_CALL, 80)'), 'ringback on the call stream, not media (loudspeaker)');
+  const sounds = await source('src/sounds.js');
+  assert.match(sounds, /categoryId === 'outgoingCall'\) \{\s*\/\/[^\n]*\n\s*if \(nativeShell\(\)\)/);
+  const overlay = await source('src/components/CallOverlay.jsx');
+  assert.equal((overlay.match(/speakerOn \|\| nativeRouting \? <Volume2/g) ?? []).length, 2, 'earpiece is not shown as a muted speaker');
+  const activity = await java('MainActivity.java');
+  assert.match(activity, /setActions\(Collections\.singletonList\(new RemoteAction\([\s\S]*"Hang up"/);
+  assert.ok(activity.includes('if (!active && activity.isInPictureInPictureMode()) activity.moveTaskToBack(false);'), 'the floating window closes when the call ends');
+});

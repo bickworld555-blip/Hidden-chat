@@ -1123,7 +1123,7 @@ export default function CallOverlay({
               aria-label={speakerLabel}
               aria-pressed={speakerOn}
             >
-              {speakerOn ? <Volume2 size={22} /> : <VolumeX size={22} />}
+              {speakerOn || nativeRouting ? <Volume2 size={22} /> : <VolumeX size={22} />}
             </button>
 
             <button
@@ -1159,7 +1159,7 @@ export default function CallOverlay({
                 aria-pressed={speakerOn}
               >
                 <span className="wa-action-bubble">
-                  {speakerOn ? <Volume2 size={24} /> : <VolumeX size={24} />}
+                  {speakerOn || nativeRouting ? <Volume2 size={24} /> : <VolumeX size={24} />}
                 </span>
                 <span className="wa-action-name">Speaker</span>
               </button>

@@ -2,7 +2,7 @@
 // then plays either a synthesized library tone or an uploaded file. Custom files live in IndexedDB.
 import { get, set } from 'idb-keyval';
 import { getNotificationSettings, soundPlan } from './notificationSettings.js';
-import { nativeAlertsActive, nativePlaySystemSound, nativeStopSystemSound } from './native.js';
+import { nativeAlertsActive, nativePlaySystemSound, nativeStopSystemSound, nativeShell, nativeStartRingback, nativeStopRingback } from './native.js';
 import { usesPhoneSound } from './phoneSounds.js';
 import { ALERT_TONE, RINGBACK_TONE, SENT_TONE, TIMBRES, defaultToneForCategory, defaultToneId, resolveToneChoice, toneDuration } from './tones.js';
 
@@ -155,6 +155,18 @@ export async function playStoredTone(categoryId, { loop = categoryId === 'incomi
   const settings = getNotificationSettings();
   const plan = soundPlan(categoryId, settings);
   if (categoryId === 'outgoingCall') {
+    // Android app: the ringback plays on the call stream (earpiece unless Speaker is on), like a phone call.
+    if (nativeShell()) {
+      stopTone(categoryId);
+      const record = { native: true, stopped: false, stopNative: nativeStopRingback };
+      activeTones.set(categoryId, record);
+      if (await nativeStartRingback()) {
+        if (record.stopped) nativeStopRingback();
+        return undefined;
+      }
+      if (activeTones.get(categoryId) === record) activeTones.delete(categoryId);
+      if (record.stopped) return undefined;
+    }
     const record = newRecord(categoryId);
     return playSynth(categoryId, record, RINGBACK_TONE, { loop, volume: plan.volume });
   }
@@ -186,7 +198,8 @@ export function stopTone(key) {
   record.stopped = true;
   activeTones.delete(key);
   if (record.native) {
-    nativeStopSystemSound(key);
+    if (record.stopNative) record.stopNative();
+    else nativeStopSystemSound(key);
     return;
   }
   window.clearTimeout(record.timer);

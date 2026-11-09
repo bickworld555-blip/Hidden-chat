@@ -3,6 +3,7 @@ package io.github.bickworld555.hiddenchat;
 import android.content.Context;
 import android.media.AudioDeviceInfo;
 import android.media.AudioManager;
+import android.media.ToneGenerator;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
@@ -20,6 +21,7 @@ final class CallAudio {
     private static boolean speaker;
     private static boolean video;
     private static PowerManager.WakeLock proximity;
+    private static ToneGenerator ringback;
     private static AudioManager.OnCommunicationDeviceChangedListener listener;
     private static final Handler handler = new Handler(Looper.getMainLooper());
 
@@ -47,7 +49,38 @@ final class CallAudio {
         if (active) apply(context);
     }
 
+    /**
+     * The "tuu… tuu…" while an outgoing call rings, on the call stream like a phone call: it plays wherever the call
+     * plays (earpiece, headset or loudspeaker) and follows the Speaker button. Web audio would always use the loudspeaker.
+     */
+    static synchronized boolean startRingback() {
+        stopRingback();
+        try {
+            ringback = new ToneGenerator(AudioManager.STREAM_VOICE_CALL, 80);
+            if (!ringback.startTone(ToneGenerator.TONE_SUP_RINGTONE)) {
+                stopRingback();
+                return false;
+            }
+            return true;
+        } catch (RuntimeException unavailable) {
+            ringback = null;
+            return false;
+        }
+    }
+
+    static synchronized void stopRingback() {
+        if (ringback == null) return;
+        try {
+            ringback.stopTone();
+        } catch (RuntimeException ignored) {
+            // Already released.
+        }
+        ringback.release();
+        ringback = null;
+    }
+
     static synchronized void stop(Context context) {
+        stopRingback();
         if (!active) return;
         active = false;
         handler.removeCallbacksAndMessages(null);

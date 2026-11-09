@@ -53,6 +53,9 @@ export const nativeSetSpeaker = (on) => invoke('setSpeaker', { on: Boolean(on) }
 // The phone's own default sounds, for the in-app "Default" tone choice.
 export const nativePlaySystemSound = ({ key, ringtone = false, loop = false }) => invoke('playSystemSound', { key, ringtone, loop });
 export const nativeStopSystemSound = (key) => invoke('stopSystemSound', { key });
+// Outgoing-call ringback on the phone's call stream: earpiece for voice calls, following the Speaker button.
+export const nativeStartRingback = async () => Boolean((await invoke('startRingback'))?.played);
+export const nativeStopRingback = () => invoke('stopRingback');
 // A chat was read: drop its notification and its share of the app icon badge (no tag: every chat).
 export const nativeClearMessageNotifications = (tag) => invoke('clearMessageNotifications', tag ? { tag } : {});
 // Saves into Download/Hidden Messenger/<Images|Video|Audio|Documents>; resolves { saved, path }.

@@ -1,12 +1,18 @@
 package io.github.bickworld555.hiddenchat;
 
+import android.app.PendingIntent;
 import android.app.PictureInPictureParams;
+import android.app.RemoteAction;
+import android.content.Context;
+import android.content.Intent;
+import android.graphics.drawable.Icon;
 import android.content.res.Configuration;
 import android.os.Build;
 import android.os.Bundle;
 import android.util.Rational;
 import androidx.activity.OnBackPressedCallback;
 import com.getcapacitor.BridgeActivity;
+import java.util.Collections;
 
 public class MainActivity extends BridgeActivity {
     private static volatile boolean alive;
@@ -36,8 +42,13 @@ public class MainActivity extends BridgeActivity {
         });
     }
 
-    private static PictureInPictureParams pipParams(boolean autoEnter) {
+    private static PictureInPictureParams pipParams(Context context, boolean autoEnter) {
         PictureInPictureParams.Builder builder = new PictureInPictureParams.Builder().setAspectRatio(new Rational(9, 16));
+        // A Hang up button in the floating window, like WhatsApp; it ends the call through the web app.
+        Intent hangUp = new Intent(context, CallActionReceiver.class).setAction(CallActionReceiver.ACTION_HANGUP);
+        PendingIntent hangUpIntent = PendingIntent.getBroadcast(context, 4, hangUp, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+        builder.setActions(Collections.singletonList(new RemoteAction(
+            Icon.createWithResource(context, android.R.drawable.ic_menu_close_clear_cancel), "Hang up", "End the call", hangUpIntent)));
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) builder.setAutoEnterEnabled(autoEnter).setSeamlessResizeEnabled(true);
         return builder.build();
     }
@@ -47,7 +58,9 @@ public class MainActivity extends BridgeActivity {
         MainActivity activity = current;
         if (activity == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return;
         activity.runOnUiThread(() -> {
-            try { activity.setPictureInPictureParams(pipParams(active)); } catch (IllegalStateException ignored) { }
+            try { activity.setPictureInPictureParams(pipParams(activity, active)); } catch (IllegalStateException ignored) { }
+            // The call ended while it was in the floating window: close the window, like WhatsApp.
+            if (!active && activity.isInPictureInPictureMode()) activity.moveTaskToBack(false);
         });
     }
 
@@ -57,7 +70,7 @@ public class MainActivity extends BridgeActivity {
         super.onUserLeaveHint();
         if (MessagingService.isVideoCallActive() && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
             try {
-                enterPictureInPictureMode(pipParams(false));
+                enterPictureInPictureMode(pipParams(this, false));
             } catch (IllegalStateException unsupported) {
                 // The device or the user's settings do not allow picture-in-picture; the call continues in the background.
             }
