@@ -18,6 +18,7 @@ import { displayNameError, initialsFor, normalizeDisplayName } from '../src/prof
 import { createPostgresDatabase, describeDatabaseError, isDatabaseUnavailable } from './database.mjs';
 import { DEMO_USERS } from './demo.mjs';
 import { createEventPilot } from './eventPilot.mjs';
+import { pdfPageCountOfFile } from './pdfPages.mjs';
 import { canSeePresence, deviceNameFromUserAgent, isLastSeenPrivacy, presenceFor } from './presence.mjs';
 
 const directory = dirname(fileURLToPath(import.meta.url));
@@ -1409,13 +1410,16 @@ export function createChatServer({
     // Rows stored before types were preserved hold the generic type; re-derive it from the filename.
     const contentType = resolveContentType(media.contentType, media.filename);
     const inline = Boolean(request.query.inline) && isInlineSafe(contentType);
+    // "1 page • 0.94 MB • PDF" under a document, like WhatsApp.
+    const pages = contentType === 'application/pdf' ? await pdfPageCountOfFile(join(mediaDirectory, media.diskName)) : null;
+    if (pages) response.set('X-Page-Count', String(pages));
     response.set({
       'Content-Type': contentType,
       'Content-Disposition': contentDisposition(media.filename, inline ? 'inline' : 'attachment'),
       'Content-Security-Policy': "sandbox; default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'unsafe-inline'",
       'X-Content-Type-Options': 'nosniff',
       'Cache-Control': 'private, no-store',
-      'Access-Control-Expose-Headers': 'Content-Disposition, Content-Length',
+      'Access-Control-Expose-Headers': 'Content-Disposition, Content-Length, X-Page-Count',
     });
     response.sendFile(media.diskName, { root: mediaDirectory, cacheControl: false, dotfiles: 'deny' }, (error) => {
       if (error && !response.headersSent) {

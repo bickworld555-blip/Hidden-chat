@@ -266,6 +266,9 @@ function MessageBubble({
   }, {});
 
   const isCall = content.startsWith('call:');
+  // WhatsApp's round forward button beside photos, videos, documents and voice notes (not view once).
+  const quickForward = Boolean(shared?.forward) && !selectionActive && !message.deleted && message.status !== 'failed'
+    && (isMedia || (isVoice && !voice?.viewOnce));
 
   return (
     <div
@@ -358,6 +361,17 @@ function MessageBubble({
             </div>
           )}
         </div>
+      )}
+      {quickForward && (
+        <button
+          type="button"
+          className="wa-quick-forward"
+          onClick={(clickEvent) => { clickEvent.stopPropagation(); shared.forward(message); }}
+          aria-label="Forward"
+          title="Forward"
+        >
+          <Forward size={17} />
+        </button>
       )}
     </div>
   );
@@ -956,6 +970,7 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
     nameFor: (id) => (id === chat?.id ? presentName(chat) : null),
     send: client ? liveSend : null,
     callBack: onStartCall,
+    forward: (message) => setForwardSource([message]),
     openLocation: (location) => setMapView({ location }),
     openLive: (sessionId) => setMapView({ sessionId }),
     messageContact: (contact) => {

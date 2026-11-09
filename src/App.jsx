@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { activateAccount, addOrActivateAccount, getAccountsState, loadAccounts, removeAccount, updateAccountUser } from './accounts.js';
 import { Bell, ChevronRight, MessageSquarePlus, Moon, Sun } from 'lucide-react';
 import { chatPreview, previewFor, useChatStore } from './store.js';
+import { fetchStatuses } from './statusApi.js';
 import { clearMediaCache } from './media.js';
 import { clearAvatarCache } from './avatar.js';
 import { RealtimeClient } from './realtime.js';
@@ -543,6 +544,14 @@ export default function App() {
     nativeClearShare();
   };
   // Android picture-in-picture during a video call: only the call shows in the small window.
+  // Status rings in the chat list: loaded at sign-in and again whenever someone posts, views or deletes a status.
+  const statusRevision = useChatStore((state) => state.statusRevision ?? 0);
+  useEffect(() => {
+    if (!sessionToken) return undefined;
+    let cancelled = false;
+    fetchStatuses(sessionToken).then((feed) => { if (!cancelled) useChatStore.getState().setStatusRings(feed); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [sessionToken, statusRevision]);
   useEffect(() => onNative('pictureInPicture', ({ active }) => document.documentElement.classList.toggle('native-pip', Boolean(active))), []);
   // Group rows in the chat list come from the server listing, refreshed on every group:* socket event and reconnect.
   useEffect(() => {

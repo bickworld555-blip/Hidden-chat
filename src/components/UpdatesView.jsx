@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Camera, ChevronLeft, Eye, Pencil, Plus, Send, Trash2, Type, X } from 'lucide-react';
 import { useChatStore } from '../store.js';
 import Avatar from './Avatar.jsx';
@@ -29,7 +30,9 @@ export default function UpdatesView() {
   const refresh = useCallback(async () => {
     if (!token) return;
     try {
-      setFeed(await fetchStatuses(token));
+      const next = await fetchStatuses(token);
+      setFeed(next);
+      useChatStore.getState().setStatusRings(next);
       setError('');
     } catch (caught) {
       setError(caught.message);
@@ -107,15 +110,17 @@ export default function UpdatesView() {
           </div>
         </div>
       )}
-      {composing && <TextStatusComposer onClose={() => setComposing(false)} onPost={async (text, background) => { await postTextStatus(token, text, background); setComposing(false); refresh(); }} />}
-      {viewing && (
+      {/* Full screen over everything, the tab bar included (inside the Updates panel they were clipped to it). */}
+      {composing && createPortal(<TextStatusComposer onClose={() => setComposing(false)} onPost={async (text, background) => { await postTextStatus(token, text, background); setComposing(false); refresh(); }} />, document.body)}
+      {viewing && createPortal(
         <StatusViewer
           token={token}
           owner={viewing.owner === 'me' ? { user: me ?? { name: 'You' }, statuses: mine, mine: true } : feed.others.find((entry) => entry.user.id === viewing.owner)}
           startIndex={viewing.index}
           onClose={() => { setViewing(null); refresh(); }}
           onDeleted={refresh}
-        />
+        />,
+        document.body,
       )}
     </div>
   );
@@ -251,7 +256,7 @@ function StatusViewer({ token, owner, startIndex = 0, onClose, onDeleted }) {
       <header className="status-viewer-head">
         <button type="button" onClick={onClose} aria-label="Close"><ChevronLeft size={26} /></button>
         <Avatar name={owner.user?.name} initials={owner.user?.initials ?? 'ME'} color={owner.user?.color} image={owner.user?.avatar} />
-        <span><strong>{owner.mine ? 'My status' : presentName(owner.user)}</strong><small>{statusTime(status.createdAt)}</small></span>
+        <span className="status-viewer-title"><strong>{owner.mine ? 'My status' : presentName(owner.user)}</strong><small>{statusTime(status.createdAt)}</small></span>
         {owner.mine && <button type="button" onClick={remove} aria-label="Delete this status"><Trash2 size={20} /></button>}
       </header>
       <div

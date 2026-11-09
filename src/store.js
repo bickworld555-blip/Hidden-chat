@@ -108,6 +108,15 @@ export function unreadFrom(messages, peerId, userId) {
 
 const pageVisible = () => typeof document === 'undefined' || document.visibilityState === 'visible';
 
+// Ring around a contact's photo in the chat list: green while they have a status I have not seen, grey once seen.
+export function statusRingsFrom(feed) {
+  const rings = {};
+  for (const entry of feed?.others ?? []) {
+    if (entry?.user?.id && entry.statuses?.length) rings[entry.user.id] = entry.allSeen ? 'seen' : 'new';
+  }
+  return rings;
+}
+
 // What a message deleted for everyone reads as, in the chat and in the chat list (WhatsApp's wording).
 export function deletedLabel(mine) {
   return mine ? 'You deleted this message' : 'This message was deleted';
@@ -163,6 +172,9 @@ export const useChatStore = create((setState, getState) => ({
   // Bumped on every status:* event so the Updates tab re-reads the feed.
   statusRevision: 0,
   bumpStatusRevision() { setState((state) => ({ statusRevision: (state.statusRevision ?? 0) + 1 })); },
+  // userId → 'new' (a status I have not seen: green ring) or 'seen' (grey ring), from the statuses feed.
+  statusRings: {},
+  setStatusRings(feed) { setState({ statusRings: statusRingsFrom(feed) }); },
   device: null,
   sessionToken: null,
   activeChatId: null,
@@ -193,6 +205,7 @@ export const useChatStore = create((setState, getState) => ({
       messages: {},
       callLogs: [],
       liveSessions: {},
+      statusRings: {},
       user: userId ? state.user : null,
       sessionToken: userId ? state.sessionToken : null,
       chats: [],

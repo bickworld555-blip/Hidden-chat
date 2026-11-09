@@ -14,6 +14,13 @@ import {
 import { useMediaBlob, useMediaInfo } from './mediaHooks.js';
 import DownloadProgress from './DownloadProgress.jsx';
 import { downloadWithProgress, useDownloadProgress } from '../downloads.js';
+import { nativeShell } from '../native.js';
+import { openMediaOnPhone } from '../mediaSave.js';
+
+// "1 page • 0.94 MB • PDF", like WhatsApp under a document.
+export function fileMetaLine({ pages, size, label }) {
+  return [pages ? `${pages} page${pages === 1 ? '' : 's'}` : '', size, label].filter(Boolean).join(' • ');
+}
 
 // Shared by every attachment: downloads run through the progress manager (streamed to disk where the
 // browser allows it), and the overlay shows percentage and time left while they run.
@@ -68,7 +75,11 @@ function DownloadButton({ status, progress, onClick, filename }) {
 export function FileCard({ id, filename, sessionToken, info, infoError }) {
   const saver = useDownload(id, filename, sessionToken);
   const contentType = info?.contentType ?? '';
-  const openable = canOpenInBrowser(contentType);
+  // In the Android app every document opens with the phone's "Open with" chooser (Drive, a PDF reader…).
+  const onPhone = nativeShell();
+  const openable = onPhone || canOpenInBrowser(contentType);
+  const [opening, setOpening] = useState(false);
+  const [openError, setOpenError] = useState('');
   const tone = fileTone(filename);
   const size = formatFileSize(info?.size ?? NaN);
   const label = fileTypeLabel(filename);
@@ -77,6 +88,15 @@ export function FileCard({ id, filename, sessionToken, info, infoError }) {
 
   // Streams the file inline in a new tab; the tab is opened synchronously so popup blockers allow it.
   const open = () => {
+    if (onPhone) {
+      if (opening) return;
+      setOpening(true);
+      setOpenError('');
+      openMediaOnPhone({ id, filename, contentType, sessionToken })
+        .catch((error) => setOpenError(error?.message || 'Could not open the file.'))
+        .finally(() => setOpening(false));
+      return;
+    }
     const tab = window.open('', '_blank');
     if (tab) tab.opener = null;
     requestMediaLink(id, sessionToken, { inline: true })
@@ -113,19 +133,20 @@ export function FileCard({ id, filename, sessionToken, info, infoError }) {
         <span className="wa-file-body">
           <span className="wa-file-name" title={filename}>{filename}</span>
           <span className="wa-file-meta">
-            {infoError ? infoError : [label, size].filter(Boolean).join(' • ')}
+            {infoError ? infoError : opening ? 'Opening…' : fileMetaLine({ pages: info?.pages, size, label })}
           </span>
         </span>
         {!infoError && <DownloadButton status={saver.status} progress={0} onClick={download} filename={filename} />}
       </div>
       <DownloadProgress id={id} />
-      {openable && !infoError && (
+      {openable && !onPhone && !infoError && (
         <div className="wa-file-actions">
           <button type="button" onClick={(event) => { event.stopPropagation(); open(); }}><ExternalLink size={14} /> Open</button>
           <button type="button" onClick={(event) => { event.stopPropagation(); download(); }}><Download size={14} /> Save as…</button>
         </div>
       )}
       {saver.status === 'error' && <span className="wa-file-error" role="alert"><AlertCircle size={12} /> {saver.error}</span>}
+      {openError && <span className="wa-file-error" role="alert"><AlertCircle size={12} /> {openError}</span>}
     </div>
   );
 }

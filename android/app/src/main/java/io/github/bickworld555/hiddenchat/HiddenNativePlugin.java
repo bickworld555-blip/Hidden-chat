@@ -338,6 +338,47 @@ public class HiddenNativePlugin extends Plugin {
             call::reject);
     }
 
+    /**
+     * Tapping a document: Android's "Open with" (Drive, a PDF reader, WPS…), like WhatsApp. Resolves { opened }, or
+     * rejects with the reason (no app on the phone opens this type, or the download failed).
+     */
+    @PluginMethod
+    public void openMedia(PluginCall call) {
+        String url = call.getString("url");
+        if (url == null || !(url.startsWith("https://") || url.startsWith("http://"))) {
+            call.reject("Nothing to open.");
+            return;
+        }
+        String filename = call.getString("filename", "file");
+        String mimeType = call.getString("mimeType", "");
+        MediaSaver.downloadForOpening(getContext(), url, filename, (file) -> {
+            android.app.Activity activity = getActivity();
+            if (activity == null) {
+                call.reject("Could not open the file.");
+                return;
+            }
+            activity.runOnUiThread(() -> {
+                try {
+                    android.net.Uri uri = androidx.core.content.FileProvider.getUriForFile(activity, activity.getPackageName() + ".fileprovider", file);
+                    String type = mimeType == null || mimeType.isEmpty() ? activity.getContentResolver().getType(uri) : mimeType;
+                    Intent view = new Intent(Intent.ACTION_VIEW)
+                        .setDataAndType(uri, type == null || type.isEmpty() ? "*/*" : type)
+                        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                    if (view.resolveActivity(activity.getPackageManager()) == null) {
+                        call.reject("No app on this phone can open " + filename + ".");
+                        return;
+                    }
+                    activity.startActivity(Intent.createChooser(view, "Open with").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION));
+                    JSObject result = new JSObject();
+                    result.put("opened", true);
+                    call.resolve(result);
+                } catch (RuntimeException error) {
+                    call.reject("Could not open the file.");
+                }
+            });
+        }, call::reject);
+    }
+
     /** Nothing left to close on Back: leave the app running in the background, like WhatsApp. */
     @PluginMethod
     public void moveToBackground(PluginCall call) {

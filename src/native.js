@@ -68,6 +68,12 @@ export async function nativeSaveMedia({ id, url, filename, mimeType = '' }) {
   return native.saveMedia({ id, url, filename, mimeType });
 }
 export const nativeMoveToBackground = () => invoke('moveToBackground');
+// A document opened with Android's "Open with" chooser; rejects with the reason (e.g. no app opens this type).
+export async function nativeOpenMedia({ url, filename, mimeType = '' }) {
+  const native = (await plugin())?.native;
+  if (!native) return null;
+  return native.openMedia({ url, filename, mimeType });
+}
 // A call the background service rang while the app was closed: { event, ice[] } or null.
 export const nativeTakePendingCall = async () => (await invoke('takePendingCall'))?.pending ?? null;
 export const nativeStartBackground = async () => {

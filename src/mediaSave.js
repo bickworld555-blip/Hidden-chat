@@ -3,7 +3,7 @@
 // download button saves there too. Browsers keep their own download behaviour.
 import { useSyncExternalStore } from 'react';
 import { apiFetch, apiUrl } from './api.js';
-import { nativeSaveMedia, nativeShell } from './native.js';
+import { nativeOpenMedia, nativeSaveMedia, nativeShell } from './native.js';
 import { parseMediaRef } from './media.js';
 import { parseVoiceContent } from './voice.js';
 
@@ -52,6 +52,15 @@ export async function saveMediaToPhone({ id, filename, sessionToken }) {
   if (!result?.saved) throw new Error('Could not save the file.');
   rememberSaved(id);
   return result.path;
+}
+
+// Android app: opens a received document with the phone's "Open with" chooser (Drive, a PDF reader…).
+export async function openMediaOnPhone({ id, filename, contentType, sessionToken }) {
+  const response = await apiFetch(`/api/v1/media/${encodeURIComponent(id)}/link`, { method: 'POST', headers: { Authorization: `Bearer ${sessionToken}` } });
+  const link = await response.json().catch(() => null);
+  if (!response.ok || !link?.url) throw new Error(link?.error || 'This file is no longer available.');
+  const url = new URL(apiUrl(link.url), window.location.href).href;
+  return nativeOpenMedia({ url, filename: link.filename || filename || 'file', mimeType: contentType || '' });
 }
 
 // A message just arrived: with Media Save on (Android app), save its attachment once.

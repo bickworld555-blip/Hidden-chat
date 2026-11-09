@@ -104,9 +104,11 @@ async function fetchMediaInfo(id, sessionToken, signal) {
   const response = await apiFetch(mediaUrl(id), { method: 'HEAD', headers: { Authorization: `Bearer ${sessionToken}` }, signal });
   if (!response.ok) throw new Error(response.status === 404 ? 'File is no longer available.' : 'Could not load file details.');
   const length = Number.parseInt(response.headers.get('content-length') ?? '', 10);
+  const pages = Number.parseInt(response.headers.get('x-page-count') ?? '', 10);
   return {
     contentType: essence(response.headers.get('content-type')) || 'application/octet-stream',
     size: Number.isFinite(length) ? length : null,
+    ...(Number.isFinite(pages) && pages > 0 ? { pages } : {}),
   };
 }
 

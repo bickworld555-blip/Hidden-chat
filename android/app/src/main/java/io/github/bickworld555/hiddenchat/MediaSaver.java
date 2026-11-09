@@ -60,6 +60,30 @@ final class MediaSaver {
         });
     }
 
+    /**
+     * Downloads a received file into the app's cache (replacing an earlier copy) for "Open with": the file is then
+     * shared read-only with the app the user picks through the FileProvider, never written to shared storage.
+     */
+    static void downloadForOpening(Context context, String url, String filename, java.util.function.Consumer<File> done, java.util.function.Consumer<String> failed) {
+        Context app = context.getApplicationContext();
+        pool.execute(() -> {
+            try (Response response = client.newCall(new Request.Builder().url(url).build()).execute()) {
+                if (!response.isSuccessful() || response.body() == null) {
+                    throw new IOException(response.code() == 404 ? "This file is no longer available." : "Could not download the file.");
+                }
+                File directory = new File(app.getCacheDir(), "opened");
+                if (!directory.isDirectory() && !directory.mkdirs()) throw new IOException("Could not prepare the file.");
+                File target = new File(directory, safeName(filename));
+                try (InputStream input = response.body().byteStream(); OutputStream output = new FileOutputStream(target)) {
+                    copy(input, output, response.body().contentLength(), null);
+                }
+                done.accept(target);
+            } catch (Exception error) {
+                failed.accept(error.getMessage() == null ? "Could not open the file." : error.getMessage());
+            }
+        });
+    }
+
     private static String safeName(String filename) {
         String name = filename == null || filename.trim().isEmpty() ? "file" : filename.trim();
         return name.replaceAll("[\\\\/:*?\"<>|]", "_");

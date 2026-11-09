@@ -35,6 +35,7 @@ function GroupListRow({ row, onOpen }) {
 export default function ChatsList({ onOpenChat, onStartCall, onGroups, groups = [], onOpenGroup }) {
   const rawChats = useChatStore((state) => state.chats);
   const presence = useChatStore((state) => state.presence);
+  const statusRings = useChatStore((state) => state.statusRings);
   const sessionToken = useChatStore((state) => state.sessionToken);
   const userId = useChatStore((state) => state.userId);
   const addContact = useChatStore((state) => state.addContact);
@@ -368,7 +369,7 @@ export default function ChatsList({ onOpenChat, onStartCall, onGroups, groups = 
                 className="wa-row"
                 onClick={() => handleRowClick(chat)}
               >
-                <div className="wa-row-avatar-wrap">
+                <div className={`wa-row-avatar-wrap ${statusRings?.[chat.id] ? `has-status status-${statusRings[chat.id]}` : ''}`}>
                   <Avatar name={chat.name} initials={chat.initials ?? chat.name?.slice(0, 2)?.toUpperCase() ?? '?'} color={chat.color} image={chat.avatar} online={online} />
                   {isSelected && (
                     <div className="wa-row-check-badge">
