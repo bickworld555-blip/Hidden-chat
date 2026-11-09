@@ -529,7 +529,7 @@ export default function CallOverlay({
     return () => { stopPip(); document.removeEventListener('visibilitychange', onVisible); clearInterval(timer); };
   }, []);
   const callActionsRef = useRef(null);
-  useEffect(() => onNative('callAction', ({ action, callId, cameraOff: answerWithCameraOff, text }) => {
+  useEffect(() => onNative('callAction', ({ action, callId, cameraOff: answerWithCameraOff, text, muted: mutedBySystem }) => {
     if (callId && callId !== latest.current.call.id) return;
     if (action === 'accept') callActionsRef.current?.accept({ cameraOff: Boolean(answerWithCameraOff) });
     else if (action === 'reject' || action === 'hangup') callActionsRef.current?.reject();
@@ -538,6 +538,8 @@ export default function CallOverlay({
       if (typeof text === 'string' && text.trim()) useChatStore.getState().sendMessage(latest.current.call.peerId, text.trim());
       callActionsRef.current?.reject();
     }
+    // Muted or unmuted from a headset, car or watch (Android Telecom).
+    else if (action === 'mute' && typeof mutedBySystem === 'boolean') callActionsRef.current?.setMuted(mutedBySystem);
   }), []);
 
   useEffect(() => {
@@ -623,6 +625,7 @@ export default function CallOverlay({
       if (off) allEngines().forEach((engine) => engine.setCameraOff(true));
     },
     reject: endCall,
+    setMuted: (on) => allEngines().forEach((engine) => engine.setMuted(on)),
   };
 
   function inviteParticipant(contact) {

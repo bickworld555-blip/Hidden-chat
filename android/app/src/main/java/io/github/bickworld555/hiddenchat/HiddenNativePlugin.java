@@ -90,6 +90,7 @@ public class HiddenNativePlugin extends Plugin {
             intent.setAction(null);
         }
         if (ACTION_ACCEPT.equals(intent.getAction())) {
+            TelecomCalls.answered();
             cancelCallNotification(getContext());
             JSObject extra = new JSObject();
             extra.put("cameraOff", intent.getBooleanExtra(IncomingCallActivity.EXTRA_CAMERA_OFF, false));

@@ -62,10 +62,21 @@
         <service
             android:name=".MessagingService"
             android:exported="false"
-            android:foregroundServiceType="specialUse|microphone|camera">
+            android:foregroundServiceType="specialUse|microphone|camera|phoneCall">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Keeps the Hidden Messenger connection open so messages and calls arrive while the app is in the background." />
+        </service>
+
+        <!-- Calls as Android phone calls (self-managed Telecom): headsets, cars and watches answer and hang up,
+             SIM calls wait or hold like with WhatsApp. -->
+        <service
+            android:name=".CallConnectionService"
+            android:permission="android.permission.BIND_TELECOM_CONNECTION_SERVICE"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.telecom.ConnectionService" />
+            </intent-filter>
         </service>
 
         <receiver
@@ -106,6 +117,9 @@
     <!-- During a call: keep the microphone and camera working while the app is in the background. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+    <!-- Calls registered with Android (Telecom) as a self-managed calling app, and kept going as phone calls. -->
+    <uses-permission android:name="android.permission.MANAGE_OWN_CALLS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_PHONE_CALL" />
     <!-- Voice calls on the earpiece: the proximity sensor turns the screen off against the ear. -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- Saving received files on Android 9 and older (newer versions need no permission). -->

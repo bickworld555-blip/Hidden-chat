@@ -42,6 +42,7 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         // Local plugins must be registered before the bridge starts.
         registerPlugin(HiddenNativePlugin.class);
+        TelecomCalls.register(this);
         alive = true;
         current = this;
         // The WebView takes over the connection; the service's own one would only duplicate notifications.
@@ -71,6 +72,11 @@ public class MainActivity extends BridgeActivity {
     public void onStop() {
         visible = false;
         super.onStop();
+    }
+
+    /** Answered through Android (headset, car, watch): the same hand-back as an answer from the call screen. */
+    static void answeredFromOutside() {
+        returnAfterCall = ringingWhileAway;
     }
 
     private void noteAnsweredFromOutside(Intent intent) {

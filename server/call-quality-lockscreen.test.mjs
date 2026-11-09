@@ -54,7 +54,7 @@ test('Android: ringing calls show over the lock screen at once and stay there wh
   assert.ok(plugin.includes('Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT'));
   const alerts = await java('Alerts.java');
   assert.ok(alerts.includes('.setFullScreenIntent(showIntent, true)'));
-  assert.match(alerts, /ringing = true;\s*MainActivity\.callRinging\(context\);\s*openCallScreen\(context, show\);\s*wakeScreen\(context\);\s*\/\/[^\n]*\n\s*MainActivity\.callWindowChanged\(\);/);
+  assert.match(alerts, /ringing = true;\s*\/\/[^\n]*\n\s*TelecomCalls\.incoming\(context, id, name, video\);\s*MainActivity\.callRinging\(context\);\s*openCallScreen\(context, show\);\s*wakeScreen\(context\);\s*\/\/[^\n]*\n\s*MainActivity\.callWindowChanged\(\);/);
   // The full-screen call is native (no black screen while the web app loads) and the screen lights even where
   // full-screen notifications are switched off; both end when the call stops ringing.
   assert.ok(alerts.includes('Intent show = IncomingCallActivity.intent(context, id, name, video, avatar);'));

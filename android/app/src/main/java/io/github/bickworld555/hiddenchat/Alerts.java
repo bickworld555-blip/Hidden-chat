@@ -130,6 +130,8 @@ final class Alerts {
         try {
             NotificationManagerCompat.from(context).notify(CALL_TAG, CALL_NOTIFICATION_ID, notification);
             ringing = true;
+            // Android hears about it too (headset / car / watch can answer; call waiting with SIM calls).
+            TelecomCalls.incoming(context, id, name, video);
             MainActivity.callRinging(context);
             openCallScreen(context, show);
             wakeScreen(context);
@@ -163,6 +165,7 @@ final class Alerts {
         releaseScreen();
         IncomingCallActivity.dismiss();
         MainActivity.callWindowChanged();
+        TelecomCalls.ringingStopped();
     }
 
     private static android.os.PowerManager.WakeLock screenLock;
@@ -243,5 +246,6 @@ final class Alerts {
     static void setAppRinging(boolean value) {
         appRinging = value;
         MainActivity.callWindowChanged();
+        if (!value) TelecomCalls.ringingStopped();
     }
 }

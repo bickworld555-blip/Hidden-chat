@@ -58,6 +58,7 @@ public class MessagingService extends Service {
     static void setCall(Context context, boolean active, boolean video, String name) {
         if (active && !callActive) callStartedAt = System.currentTimeMillis();
         if (!active && callActive) MainActivity.callEnded();
+        TelecomCalls.live(context, active, video, name);
         callActive = active;
         callVideo = active && video;
         callName = active && name != null && !name.trim().isEmpty() ? name.trim() : null;
@@ -66,6 +67,12 @@ public class MessagingService extends Service {
         MessagingService service = instance;
         if (service != null) new Handler(Looper.getMainLooper()).post(service::promote);
         else if (active) start(context);
+    }
+
+    /** Re-posts the notification with the current service types (e.g. once Android has the call as a phone call). */
+    static void refresh() {
+        MessagingService service = instance;
+        if (service != null) new Handler(Looper.getMainLooper()).post(service::promote);
     }
 
     private boolean granted(String permission) {
@@ -78,6 +85,8 @@ public class MessagingService extends Service {
         if (callActive && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             if (granted(Manifest.permission.RECORD_AUDIO)) types |= ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE;
             if (callVideo && granted(Manifest.permission.CAMERA)) types |= ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA;
+            // A call Android knows about (Telecom) may hold the service as a phone call even from the background.
+            if (TelecomCalls.hasCall()) types |= ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL;
         }
         return types;
     }
@@ -96,12 +105,18 @@ public class MessagingService extends Service {
             .setPriority(NotificationCompat.PRIORITY_MIN)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .build();
-        try {
-            ServiceCompat.startForeground(this, NOTIFICATION_ID, notification, serviceTypes());
-        } catch (RuntimeException notAllowedNow) {
-            // Android only grants the call types while the app is in front; keep the connection type meanwhile.
-            int fallback = Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE ? ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE : 0;
-            ServiceCompat.startForeground(this, NOTIFICATION_ID, notification, fallback);
+        int types = serviceTypes();
+        int fallback = Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE ? ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE : 0;
+        // Most to least: with the phone-call type, without it, then the connection type alone (Android only grants
+        // the microphone and camera while the app is in front, unless Android has the call as a phone call).
+        int withoutPhoneCall = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q ? types & ~ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL : types;
+        for (int attempt : new int[] { types, withoutPhoneCall, fallback }) {
+            try {
+                ServiceCompat.startForeground(this, NOTIFICATION_ID, notification, attempt);
+                return;
+            } catch (RuntimeException notAllowedNow) {
+                if (attempt == fallback) throw notAllowedNow;
+            }
         }
     }
 
