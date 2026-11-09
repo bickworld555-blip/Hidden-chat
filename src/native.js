@@ -36,7 +36,6 @@ function remember(state) {
 
 export const nativeState = async () => remember(await invoke('getState'));
 export const nativeRequestStartupPermissions = async () => remember(await invoke('requestStartupPermissions'));
-export const nativeRequestBatteryExemption = async () => remember(await invoke('requestBatteryExemption'));
 // The service needs the account before it starts (it stops itself without one), so starting waits for any
 // session hand-over still in flight.
 let sessionSaved = Promise.resolve(null);

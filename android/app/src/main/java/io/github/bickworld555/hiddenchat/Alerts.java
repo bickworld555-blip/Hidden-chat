@@ -133,7 +133,6 @@ final class Alerts {
             // Android hears about it too (headset / car / watch can answer; call waiting with SIM calls).
             TelecomCalls.incoming(context, id, name, video);
             MainActivity.callRinging(context);
-            openCallScreen(context, show);
             wakeScreen(context);
             // App on screen (or in the background): light the screen and show the call over the lock screen now.
             MainActivity.callWindowChanged();
@@ -171,26 +170,6 @@ final class Alerts {
     private static android.os.PowerManager.WakeLock screenLock;
 
     private static final android.os.Handler main = new android.os.Handler(android.os.Looper.getMainLooper());
-
-    /**
-     * Phone locked or screen off: open the call screen ourselves, like WhatsApp, when "Display over other apps" is
-     * allowed. That permission lets an app start its screen from the background, so the call shows full screen even
-     * where Android 14+ has switched full-screen notifications off (then it would only be a small banner). Without
-     * it Android ignores the request and the notification's full-screen intent does the job where it is allowed.
-     */
-    private static void openCallScreen(Context context, Intent show) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M || !android.provider.Settings.canDrawOverlays(context)) return;
-        android.app.KeyguardManager keyguard = context.getSystemService(android.app.KeyguardManager.class);
-        android.os.PowerManager power = context.getSystemService(android.os.PowerManager.class);
-        boolean locked = keyguard != null && keyguard.isKeyguardLocked();
-        boolean dark = power != null && !power.isInteractive();
-        if (!locked && !dark) return; // in use: the heads-up banner with Answer / Decline, as WhatsApp does
-        try {
-            context.startActivity(new Intent(show));
-        } catch (RuntimeException blocked) {
-            // Not allowed after all: the notification's full-screen intent and the screen wake-up remain.
-        }
-    }
 
     /**
      * Makes sure the screen lights while a call rings. Normally the full-screen call screen does that itself, but

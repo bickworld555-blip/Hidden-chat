@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Layers, PhoneIncoming, PictureInPicture2 } from 'lucide-react';
+import { PhoneIncoming, PictureInPicture2 } from 'lucide-react';
 import { nativeOpenCallSettings, nativeState } from '../native.js';
 import { CALL_ACCESS_ASKED_KEY, missingCallAccess } from '../callAccess.js';
 
@@ -21,7 +21,7 @@ export default function CallAccessSheet({ initial, onDone }) {
   });
 
   function finish() {
-    try { localStorage.setItem(CALL_ACCESS_ASKED_KEY, String(Date.now())); } catch { /* private mode */ }
+    try { localStorage.setItem(CALL_ACCESS_ASKED_KEY, '1'); } catch { /* private mode */ }
     onDone?.();
   }
 
@@ -30,20 +30,13 @@ export default function CallAccessSheet({ initial, onDone }) {
       <div className="permissions-sheet">
         <PhoneIncoming size={40} className="permissions-hero" aria-hidden="true" />
         <h2 id="call-access-title">Calls on this phone</h2>
-        <p className="permissions-copy">Android is blocking these for Hidden Messenger. Tap each one and switch it on.</p>
+        <p className="permissions-copy">Android has these switched off for Hidden Messenger. Turn them on for WhatsApp-style calls, or later in Android's app settings.</p>
         <ul className="permissions-list">
           {missing.includes('fullScreen') && (
             <li>
               <PhoneIncoming size={22} />
               <span><strong>Show calls on the lock screen</strong><small>Ringing calls light up the screen with Accept / Decline, even when the phone is locked.</small></span>
               <button type="button" className="permissions-primary call-access-open" onClick={() => nativeOpenCallSettings('fullScreen')}>Allow</button>
-            </li>
-          )}
-          {missing.includes('overlay') && (
-            <li>
-              <Layers size={22} />
-              <span><strong>Display over other apps</strong><small>Lets incoming calls open full screen over the lock screen, even where Android only allows a small banner.</small></span>
-              <button type="button" className="permissions-primary call-access-open" onClick={() => nativeOpenCallSettings('overlay')}>Allow</button>
             </li>
           )}
           {missing.includes('pictureInPicture') && (

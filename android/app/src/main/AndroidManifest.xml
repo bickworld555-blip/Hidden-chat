@@ -125,9 +125,6 @@
     <!-- Saving received files on Android 9 and older (newer versions need no permission). -->
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
-    <!-- "Display over other apps": the call screen can open over the lock screen even without full-screen notifications. -->
-    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
-    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
 </manifest>

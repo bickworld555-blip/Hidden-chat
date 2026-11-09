@@ -151,16 +151,12 @@ public class HiddenNativePlugin extends Plugin {
         result.put("notificationsEnabled", NotificationManagerCompat.from(context).areNotificationsEnabled());
         result.put("microphone", getPermissionState("microphone") == PermissionState.GRANTED);
         result.put("camera", getPermissionState("camera") == PermissionState.GRANTED);
-        PowerManager power = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
-        result.put("batteryUnrestricted", power != null && power.isIgnoringBatteryOptimizations(context.getPackageName()));
         result.put("sdk", Build.VERSION.SDK_INT);
         // Android 14+ lets only allowed apps show ringing calls full screen on the lock screen (off by default for
         // apps not installed from the Play Store).
         NotificationManager notifications = context.getSystemService(NotificationManager.class);
         result.put("fullScreenCalls", Build.VERSION.SDK_INT < 34 || (notifications != null && notifications.canUseFullScreenIntent()));
         result.put("pictureInPicture", pictureInPictureAllowed(context));
-        // "Display over other apps": lets the app open its call screen over the lock screen by itself.
-        result.put("overlay", Build.VERSION.SDK_INT < Build.VERSION_CODES.M || Settings.canDrawOverlays(context));
         return result;
     }
 
@@ -183,7 +179,6 @@ public class HiddenNativePlugin extends Plugin {
         Intent intent;
         if ("fullScreen".equals(which) && Build.VERSION.SDK_INT >= 34) intent = new Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT, pkg);
         else if ("pictureInPicture".equals(which)) intent = new Intent("android.settings.PICTURE_IN_PICTURE_SETTINGS", pkg);
-        else if ("overlay".equals(which)) intent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, pkg);
         else intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, pkg);
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         try {
@@ -206,17 +201,6 @@ public class HiddenNativePlugin extends Plugin {
 
     @PermissionCallback
     private void startupPermissionsDone(PluginCall call) {
-        call.resolve(state());
-    }
-
-    @PluginMethod
-    public void requestBatteryExemption(PluginCall call) {
-        Context context = getContext();
-        PowerManager power = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
-        if (power != null && !power.isIgnoringBatteryOptimizations(context.getPackageName())) {
-            Intent intent = new Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:" + context.getPackageName()));
-            getActivity().startActivity(intent);
-        }
         call.resolve(state());
     }
 

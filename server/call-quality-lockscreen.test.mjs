@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 import { VIDEO_MAX_BITRATE, VIDEO_MAX_FRAMERATE, mediaConstraints, videoConstraints } from '../src/rtc.js';
-import { CALL_ACCESS_REASK_MS, missingCallAccess, shouldAskCallAccess } from '../src/callAccess.js';
+import { missingCallAccess, shouldAskCallAccess } from '../src/callAccess.js';
 
 const root = new URL('../', import.meta.url);
 const source = (path) => readFile(new URL(path, root), 'utf8');
@@ -30,15 +30,12 @@ test('the app asks for the Android switches calls need, only when they are off',
   assert.deepEqual(missingCallAccess({ fullScreenCalls: false, pictureInPicture: true }), ['fullScreen']);
   assert.deepEqual(missingCallAccess({ fullScreenCalls: false, pictureInPicture: false }), ['fullScreen', 'pictureInPicture']);
   assert.deepEqual(missingCallAccess({ sdk: 30 }), [], 'older shells that do not report the switches are not nagged');
-  // Full-screen notifications off: 'Display over other apps' is the other way to show calls full screen.
-  assert.deepEqual(missingCallAccess({ fullScreenCalls: false, overlay: false, pictureInPicture: true }), ['fullScreen', 'overlay']);
-  assert.deepEqual(missingCallAccess({ fullScreenCalls: true, overlay: false, pictureInPicture: true }), [], 'not asked for when calls already show full screen');
-  // Asked again every few days while something is still blocked (asking once let 'Later' switch it off for good).
-  const blocked = { fullScreenCalls: false, overlay: false };
-  assert.equal(shouldAskCallAccess(blocked, 0, 1e12), true);
-  assert.equal(shouldAskCallAccess(blocked, 1e12 - 1000, 1e12), false);
-  assert.equal(shouldAskCallAccess(blocked, 1e12 - CALL_ACCESS_REASK_MS, 1e12), true);
-  assert.equal(shouldAskCallAccess({ fullScreenCalls: true, pictureInPicture: true }, 0, 1e12), false);
+  assert.deepEqual(missingCallAccess({ fullScreenCalls: false, overlay: false, pictureInPicture: true }), ['fullScreen'], 'no "Display over other apps" prompt');
+  // Asked about once, like a standard app: 'Later' is respected.
+  const blocked = { fullScreenCalls: false };
+  assert.equal(shouldAskCallAccess(blocked, false), true);
+  assert.equal(shouldAskCallAccess(blocked, true), false);
+  assert.equal(shouldAskCallAccess({ fullScreenCalls: true, pictureInPicture: true }, false), false);
 });
 
 test('Android: ringing calls show over the lock screen at once and stay there while the call lasts', async () => {
@@ -54,13 +51,13 @@ test('Android: ringing calls show over the lock screen at once and stay there wh
   assert.ok(plugin.includes('Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT'));
   const alerts = await java('Alerts.java');
   assert.ok(alerts.includes('.setFullScreenIntent(showIntent, true)'));
-  assert.match(alerts, /ringing = true;\s*\/\/[^\n]*\n\s*TelecomCalls\.incoming\(context, id, name, video\);\s*MainActivity\.callRinging\(context\);\s*openCallScreen\(context, show\);\s*wakeScreen\(context\);\s*\/\/[^\n]*\n\s*MainActivity\.callWindowChanged\(\);/);
+  assert.match(alerts, /ringing = true;\s*\/\/[^\n]*\n\s*TelecomCalls\.incoming\(context, id, name, video\);\s*MainActivity\.callRinging\(context\);\s*wakeScreen\(context\);\s*\/\/[^\n]*\n\s*MainActivity\.callWindowChanged\(\);/);
   // The full-screen call is native (no black screen while the web app loads) and the screen lights even where
   // full-screen notifications are switched off; both end when the call stops ringing.
   assert.ok(alerts.includes('Intent show = IncomingCallActivity.intent(context, id, name, video, avatar);'));
-  // With 'Display over other apps' the call screen opens itself on a locked or dark phone.
-  assert.match(alerts, /private static void openCallScreen\(Context context, Intent show\) \{\s*if \(Build\.VERSION\.SDK_INT < Build\.VERSION_CODES\.M \|\| !android\.provider\.Settings\.canDrawOverlays\(context\)\) return;[\s\S]*?if \(!locked && !dark\) return;[\s\S]*?context\.startActivity\(new Intent\(show\)\);/);
-  assert.ok((await source('android/app/src/main/AndroidManifest.xml')).includes('android.permission.SYSTEM_ALERT_WINDOW'));
+  assert.ok(!alerts.includes('canDrawOverlays'), 'no "Display over other apps" route');
+  const permissions = await source('android/app/src/main/AndroidManifest.xml');
+  assert.ok(!permissions.includes('SYSTEM_ALERT_WINDOW') && !permissions.includes('REQUEST_IGNORE_BATTERY_OPTIMIZATIONS'), 'only standard permissions, like WhatsApp');
   assert.ok((await java('IncomingCallActivity.java')).includes('connection.setRequestProperty("Authorization", "Bearer " + token);'), "the caller's photo is loaded");
   assert.match(alerts, /SCREEN_BRIGHT_WAKE_LOCK\s*\|\s*android\.os\.PowerManager\.ACQUIRE_CAUSES_WAKEUP/);
   assert.match(alerts, /ringing = false;\s*releaseScreen\(\);\s*IncomingCallActivity\.dismiss\(\);/);
