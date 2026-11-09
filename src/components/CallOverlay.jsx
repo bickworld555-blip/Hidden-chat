@@ -1,5 +1,5 @@
 import { apiFetch } from '../api.js';
-import { nativeCancelIncomingCall, nativeEndCallWindow, nativeSetCallActive, nativeSetSpeaker, nativeShell, nativeShowIncomingCall, onNative } from '../native.js';
+import { nativeCancelIncomingCall, nativeEndCallWindow, nativeSetCallActive, nativeSetCallRinging, nativeSetSpeaker, nativeShell, nativeShowIncomingCall, onNative } from '../native.js';
 import { useEffect, useRef, useState } from 'react';
 import {
   ArrowLeft,
@@ -497,7 +497,27 @@ export default function CallOverlay({
       nativeShowIncomingCall({ callId: call.id, callerName: peer?.name ?? 'Hidden Messenger', mode: call.mode, phoneRingtone: usesPhoneSound('incomingCall', undefined, true) });
     } else nativeCancelIncomingCall();
   }, [ringingIncoming, pageHidden, call.id, call.mode, peer?.name]);
+  // While it rings the call screen stays over the lock screen, whether or not the notification is still up.
+  useEffect(() => {
+    if (!nativeShell() || !ringingIncoming) return undefined;
+    nativeSetCallRinging(true);
+    return () => { nativeSetCallRinging(false); };
+  }, [ringingIncoming]);
   useEffect(() => () => { nativeCancelIncomingCall(); nativeEndCallWindow(); }, []);
+  // Some phones pause <video> elements while the floating picture-in-picture window opens (or the page is briefly
+  // hidden); restart any paused call video so the picture never freezes while the call continues.
+  useEffect(() => {
+    const resume = () => {
+      for (const video of document.querySelectorAll('.wa-call-backdrop video')) {
+        if (video.paused && video.srcObject) video.play().catch(() => {});
+      }
+    };
+    const stopPip = onNative('pictureInPicture', () => { resume(); setTimeout(resume, 500); });
+    const onVisible = () => { if (document.visibilityState === 'visible') resume(); };
+    document.addEventListener('visibilitychange', onVisible);
+    const timer = setInterval(resume, 2000);
+    return () => { stopPip(); document.removeEventListener('visibilitychange', onVisible); clearInterval(timer); };
+  }, []);
   const callActionsRef = useRef(null);
   useEffect(() => onNative('callAction', ({ action, callId }) => {
     if (callId && callId !== latest.current.call.id) return;

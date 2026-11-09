@@ -475,6 +475,13 @@ public class HiddenNativePlugin extends Plugin {
         });
     }
 
+    /** The app shows an incoming call ringing (true) or it stopped ringing (false). */
+    @PluginMethod
+    public void setCallRinging(PluginCall call) {
+        Alerts.setAppRinging(Boolean.TRUE.equals(call.getBoolean("ringing", false)));
+        call.resolve();
+    }
+
     /** Called by the web app once a call is no longer ringing or has ended. */
     @PluginMethod
     public void endCallWindow(PluginCall call) {

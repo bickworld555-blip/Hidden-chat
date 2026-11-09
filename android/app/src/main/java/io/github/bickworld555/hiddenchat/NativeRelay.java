@@ -255,6 +255,16 @@ final class NativeRelay extends WebSocketListener {
             String tag = "group:" + groupId;
             Alerts.showMessage(context, session.phoneGroupSound ? NotificationChannels.GROUP_MESSAGES_PHONE : NotificationChannels.GROUP_MESSAGES,
                 event.optString("groupName", "Group"), senderName.isEmpty() ? body : senderName + ": " + body, tag, tag, Alerts.nextCount(tag));
+        } else if ("message:reaction".equals(type)) {
+            // Someone reacted to a message I sent: a notification like WhatsApp's "Reacted ❤️ to: …".
+            String reactor = event.optString("userId");
+            String emoji = event.optString("emoji", "");
+            if (emoji.isEmpty() || event.isNull("emoji") || !session.userId.equals(event.optString("messageSenderId")) || session.userId.equals(reactor)) return;
+            if (session.mutedChats.contains(reactor)) return;
+            String preview = MessagePreview.of(event.optString("messageContent"));
+            String body = "Reacted " + emoji + (preview.isEmpty() ? " to your message" : " to: \u201C" + preview + "\u201D");
+            Alerts.showMessage(context, session.phoneMessageSound ? NotificationChannels.DIRECT_MESSAGES_PHONE : NotificationChannels.DIRECT_MESSAGES,
+                event.optString("reactorName", "Reaction"), body, "reaction:" + event.optString("messageId"), "chat:" + reactor);
         } else if ("call:signal".equals(type)) {
             handleCallSignal(event);
         } else if ("call:invite".equals(type)) {

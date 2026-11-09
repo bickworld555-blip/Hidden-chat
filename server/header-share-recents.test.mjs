@@ -44,7 +44,7 @@ test('Android share sheet shows recent chats (with photos) as Hidden Messenger d
   const shared = await source('android/app/src/main/java/io/github/bickworld555/hiddenchat/SharedContent.java');
   assert.ok(shared.includes('Intent.EXTRA_SHORTCUT_ID'));
   const sheet = await source('src/components/ShareSheet.jsx');
-  assert.ok(sheet.includes('className="wa-share-recents"') && sheet.includes('onClick={() => send([item])}'), 'one tap on a recent chat sends to it');
+  assert.ok(sheet.includes("title: 'My status'") && sheet.includes('shareSections('), 'WhatsApp layout: My status, then frequently contacted and recent chats');
 });
 
 test('chat header: name and status only; Tools has no demo banner', async () => {

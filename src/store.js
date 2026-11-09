@@ -148,6 +148,9 @@ function ensureLiveTracking(send) {
 export const useChatStore = create((setState, getState) => ({
   userId: '',
   user: null,
+  // Bumped on every status:* event so the Updates tab re-reads the feed.
+  statusRevision: 0,
+  bumpStatusRevision() { setState((state) => ({ statusRevision: (state.statusRevision ?? 0) + 1 })); },
   device: null,
   sessionToken: null,
   activeChatId: null,

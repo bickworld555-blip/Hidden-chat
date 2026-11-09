@@ -157,9 +157,20 @@ final class Alerts {
     }
 
     private static volatile boolean ringing;
+    private static volatile boolean appRinging;
 
-    /** An incoming call is ringing (its full-screen notification is up). */
+    /**
+     * An incoming call is ringing: its full-screen notification is up, or the app itself shows the ringing call.
+     * The second matters on the lock screen: once the app is in front it withdraws the notification, and if that
+     * also ended "show over the lock screen" the app would drop behind the lock screen, post the notification
+     * again, come back, and flash in a loop.
+     */
     static boolean isRinging() {
-        return ringing;
+        return ringing || appRinging;
+    }
+
+    static void setAppRinging(boolean value) {
+        appRinging = value;
+        MainActivity.callWindowChanged();
     }
 }

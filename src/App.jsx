@@ -2,7 +2,7 @@ import { apiFetch, apiUrl } from './api.js';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { activateAccount, addOrActivateAccount, getAccountsState, loadAccounts, removeAccount, updateAccountUser } from './accounts.js';
 import { Bell, ChevronRight, MessageSquarePlus, Moon, Sun } from 'lucide-react';
-import { previewFor, useChatStore } from './store.js';
+import { chatPreview, previewFor, useChatStore } from './store.js';
 import { clearMediaCache } from './media.js';
 import { clearAvatarCache } from './avatar.js';
 import { RealtimeClient } from './realtime.js';
@@ -247,6 +247,7 @@ export default function App() {
           if (event.type === 'location:live') useChatStore.getState().applyLiveEvent(event, (payload) => realtime.send(payload));
           if (event.type === 'message:status') updateMessage(event.messageId, { status: event.status });
           if (event.type === 'message:played') updateMessage(event.messageId, { played: true });
+          if (event.type === 'status:changed' || event.type === 'status:viewed') useChatStore.getState().bumpStatusRevision();
           if (event.type === 'message:updated') updateMessage(event.messageId, { content: event.content });
           if (event.type === 'poll:votes') useChatStore.getState().setPollVotes(event.messageId, event.votes);
           if (event.type === 'message:deleted') useChatStore.getState().removeMessageById(event.messageId);
@@ -254,14 +255,16 @@ export default function App() {
             const state = useChatStore.getState();
             state.applyReaction(event.messageId, event.userId, event.emoji);
             // A reaction to something I sent, from someone else, is a "like" worth a sound and a notice.
-            const mine = event.userId !== userId && Object.values(state.messages).flat().find((message) => message.id === event.messageId && message.senderId === userId);
+            // The server says whose message it was; older servers did not, so fall back to the messages we have.
+            const mine = event.userId !== userId && (event.messageSenderId === userId
+              || Object.values(state.messages).flat().some((message) => message.id === event.messageId && message.senderId === userId));
             if (mine && event.emoji && !state.mutedChatIds.includes(event.userId)) {
               playNotificationTone('reaction');
               vibrateFor('reaction');
               const reactor = state.chats.find((chat) => chat.id === event.userId);
               showSystemNotification('reaction', {
-                title: reactor?.name ?? 'Reaction',
-                body: `Reacted ${event.emoji} to your message`,
+                title: reactor?.name ?? event.reactorName ?? 'Reaction',
+                body: event.messageContent ? `Reacted ${event.emoji} to: “${chatPreview([{ id: event.messageId, senderId: userId, content: event.messageContent }])}”` : `Reacted ${event.emoji} to your message`,
                 tag: `relay-reaction-${event.messageId}`,
                 conversation: { kind: 'chat', id: event.userId },
                 onClick: () => openChatRef.current?.(event.userId),

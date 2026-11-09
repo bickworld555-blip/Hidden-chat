@@ -1,6 +1,7 @@
 // Content another Android app shared to Hidden Messenger (a YouTube or Facebook link, text, photos, files), as the
 // native shell reports it: { text, subject, files: [{ index, name, mimeType, size }] }.
 import { firstLink } from './links.js';
+import { forwardSections } from './forwarding.js';
 
 export const SHARE_TARGET_LIMIT = 5;
 // How many recent chats appear in the share sheet's top row (ours and Android's).
@@ -21,6 +22,23 @@ export function recentShareTargets(chats = [], groups = [], userId = '', limit =
   ]
     .sort((left, right) => time(right.lastActivityAt) - time(left.lastActivityAt))
     .slice(0, limit);
+}
+
+// The "Send to…" list, like WhatsApp's: "Frequently contacted" (chats you send to most), "Recent chats",
+// "Groups", then "Other contacts". Each item carries its kind ('chat' | 'group').
+export function shareSections({ chats = [], groups = [], messages = {}, userId = '', query = '' } = {}) {
+  const needle = query.trim().replace(/^@+/, '').toLowerCase();
+  const chatSections = forwardSections(chats, messages, userId, query).map((section) => ({
+    id: section.id,
+    title: section.title,
+    items: section.chats.map((chat) => ({ ...chat, kind: 'chat' })),
+  }));
+  const groupItems = groups
+    .filter((group) => group?.id && (!needle || String(group.name ?? '').toLowerCase().includes(needle)))
+    .map((group) => ({ ...group, kind: 'group' }));
+  const others = chatSections.findIndex((section) => section.id === 'others');
+  const groupSection = groupItems.length ? [{ id: 'groups', title: 'Groups', items: groupItems }] : [];
+  return others < 0 ? [...chatSections, ...groupSection] : [...chatSections.slice(0, others), ...groupSection, ...chatSections.slice(others)];
 }
 
 // Normalises the native payload; null when there is nothing to send.

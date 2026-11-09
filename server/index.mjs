@@ -190,6 +190,22 @@ export function createChatServer({
   if (!messageColumns.has('forwarded')) db.exec('ALTER TABLE messages ADD COLUMN forwarded INTEGER NOT NULL DEFAULT 0');
   if (!messageColumns.has('expires_at')) db.exec('ALTER TABLE messages ADD COLUMN expires_at INTEGER');
   if (!messageColumns.has('played_at')) db.exec('ALTER TABLE messages ADD COLUMN played_at INTEGER');
+  // Status updates (24 hours) and who has seen each one.
+  db.exec(`CREATE TABLE IF NOT EXISTS statuses (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    content TEXT NOT NULL,
+    background TEXT,
+    created_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL
+  )`);
+  db.exec('CREATE INDEX IF NOT EXISTS statuses_user ON statuses(user_id, expires_at)');
+  db.exec(`CREATE TABLE IF NOT EXISTS status_views (
+    status_id TEXT NOT NULL,
+    viewer_id TEXT NOT NULL,
+    viewed_at INTEGER NOT NULL,
+    PRIMARY KEY (status_id, viewer_id)
+  )`);
   db.exec(`CREATE INDEX IF NOT EXISTS messages_expiry ON messages(expires_at) WHERE expires_at IS NOT NULL AND deleted_at IS NULL`);
   // One disappearing-messages timer per conversation, shared by both people (user_a < user_b).
   db.exec(`CREATE TABLE IF NOT EXISTS chat_settings (
@@ -584,6 +600,7 @@ export function createChatServer({
       || (await db.prepare(`SELECT 1 FROM messages WHERE deleted_at IS NULL AND (content IN (?, ?) OR content LIKE ? OR content LIKE ?) LIMIT 1`)
         .get(...exact, ...prefixed));
     if (referenced) return false;
+    if (await db.prepare('SELECT 1 FROM statuses WHERE content IN (?, ?) OR content LIKE ? LIMIT 1').get(exact[0], exact[1], prefixed[0])) return false;
     const media = await db.prepare('DELETE FROM media WHERE id = ? RETURNING disk_name AS "diskName"').get(mediaId);
     if (!media) return false;
     await removeMediaFile(media.diskName);
@@ -619,6 +636,16 @@ export function createChatServer({
       removed += 1;
     }
     return removed;
+  }
+
+  // Statuses last 24 hours; their photos and videos go with them.
+  async function expireStatuses(now = Date.now()) {
+    const rows = await db.prepare('DELETE FROM statuses WHERE expires_at <= ? RETURNING id, content').all(now);
+    for (const row of rows) {
+      await db.prepare('DELETE FROM status_views WHERE status_id = ?').run(row.id);
+      await purgeUnreferencedMedia(row.content);
+    }
+    return rows.length;
   }
 
   async function expireGroupMessages(now = Date.now()) {
@@ -1109,7 +1136,9 @@ export function createChatServer({
       if (receiverId || typeof groupId !== 'string' || groupId.length > 128) return null;
       return (await groupMembership.get(groupId, userId)) ? { receiverId: null, groupId } : null;
     }
-    if (typeof receiverId !== 'string' || !receiverId || receiverId === userId) return null;
+    // A status photo or video is uploaded to yourself; contacts can read it only through an active status.
+    if (receiverId === userId) return { receiverId: userId, groupId: null };
+    if (typeof receiverId !== 'string' || !receiverId) return null;
     return (await db.prepare("SELECT 1 FROM users WHERE id = ?").get(receiverId)) ? { receiverId, groupId: null } : null;
   }
 
@@ -1253,8 +1282,10 @@ export function createChatServer({
   async function mediaFor(userId, mediaId) {
     return (await db.prepare(`SELECT id, filename, content_type AS "contentType", disk_name AS "diskName", byte_size AS "byteSize"
       FROM media WHERE id = ? AND (sender_id = ? OR receiver_id = ?
-        OR (group_id IS NOT NULL AND EXISTS (SELECT 1 FROM group_members WHERE group_id = media.group_id AND user_id = ?)))`)
-      .get(mediaId, userId, userId, userId));
+        OR (group_id IS NOT NULL AND EXISTS (SELECT 1 FROM group_members WHERE group_id = media.group_id AND user_id = ?))
+        OR EXISTS (SELECT 1 FROM statuses s JOIN contacts c ON c.owner_id = s.user_id AND c.contact_id = ? AND c.hidden = 0
+          WHERE s.user_id = media.sender_id AND s.content LIKE ? AND s.expires_at > ?))`)
+      .get(mediaId, userId, userId, userId, userId, `media:${mediaId}:%`, Date.now()));
   }
 
   // --- Polls: "poll:{question, options[], multiple}" messages in direct or group chats; votes are per option. ---
@@ -1398,6 +1429,107 @@ export function createChatServer({
     const tokenHash = request.session.token_hash;
     (await db.prepare("DELETE FROM sessions WHERE token_hash = ?").run(tokenHash));
     closeSessionSockets(new Set([tokenHash]), 'Session logged out');
+    response.status(204).end();
+  });
+
+  // --- Status: text, photo or video updates that disappear after 24 hours, seen by people in your contacts. ---
+  const STATUS_TTL_MS = 24 * 60 * 60 * 1000;
+  const STATUS_BACKGROUNDS = new Set(['#00a884', '#128c7e', '#7e57c2', '#ef6c00', '#c2185b', '#1e88e5', '#5d4037', '#37474f']);
+  // Everyone who has this author saved or linked: they can see the author's status.
+  async function statusAudience(authorId) {
+    return (await db.prepare('SELECT contact_id AS "id" FROM contacts WHERE owner_id = ? AND hidden = 0').all(authorId)).map((row) => row.id);
+  }
+  function presentStatus(row, viewerId) {
+    return {
+      id: row.id,
+      content: row.content,
+      ...(row.background ? { background: row.background } : {}),
+      createdAt: new Date(Number(row.createdAt)).toISOString(),
+      expiresAt: new Date(Number(row.expiresAt)).toISOString(),
+      ...(row.userId === viewerId ? { views: Number(row.views) || 0 } : { seen: Boolean(row.seen) }),
+    };
+  }
+
+  app.get('/api/v1/statuses', requireSession, async (request, response) => {
+    const userId = request.session.user_id;
+    const now = Date.now();
+    await expireStatuses(now);
+    const rows = await db.prepare(`SELECT s.id, s.user_id AS "userId", s.content, s.background, s.created_at AS "createdAt",
+        s.expires_at AS "expiresAt",
+        (SELECT count(*) FROM status_views v WHERE v.status_id = s.id) AS "views",
+        EXISTS (SELECT 1 FROM status_views v WHERE v.status_id = s.id AND v.viewer_id = ?) AS "seen"
+      FROM statuses s
+      WHERE s.expires_at > ? AND (s.user_id = ? OR EXISTS (
+        SELECT 1 FROM contacts c WHERE c.owner_id = s.user_id AND c.contact_id = ? AND c.hidden = 0))
+      ORDER BY s.created_at ASC`).all(userId, now, userId, userId);
+    const mine = rows.filter((row) => row.userId === userId).map((row) => presentStatus(row, userId));
+    const byAuthor = new Map();
+    for (const row of rows.filter((item) => item.userId !== userId)) {
+      if (!byAuthor.has(row.userId)) byAuthor.set(row.userId, []);
+      byAuthor.get(row.userId).push(presentStatus(row, userId));
+    }
+    const others = [];
+    for (const [authorId, statuses] of byAuthor) {
+      const author = await db.prepare(`SELECT ${USER_COLUMNS} FROM users WHERE id = ?`).get(authorId);
+      if (!author) continue;
+      others.push({ user: publicUser(author), statuses, lastAt: statuses.at(-1).createdAt, allSeen: statuses.every((status) => status.seen) });
+    }
+    others.sort((left, right) => right.lastAt.localeCompare(left.lastAt));
+    response.json({ mine, others });
+  });
+
+  app.post('/api/v1/statuses', requireSession, express.json({ limit: '16kb' }), async (request, response) => {
+    const userId = request.session.user_id;
+    const content = typeof request.body?.content === 'string' ? request.body.content.trim() : '';
+    const mediaId = content.startsWith('media:') ? mediaIdOf(content) : null;
+    if (!content || content.length > (mediaId ? 1200 : 700)) return response.status(400).json({ error: 'A status is up to 700 characters of text, or a photo or video.' });
+    if (content.startsWith('voice:')) return response.status(400).json({ error: 'Voice messages cannot be posted as a status.' });
+    if (mediaId && !(await db.prepare('SELECT 1 FROM media WHERE id = ? AND sender_id = ?').get(mediaId, userId))) {
+      return response.status(400).json({ error: 'Upload the photo or video first.' });
+    }
+    const background = !mediaId && STATUS_BACKGROUNDS.has(request.body?.background) ? request.body.background : null;
+    const now = Date.now();
+    const id = randomUUID();
+    await db.prepare('INSERT INTO statuses(id, user_id, content, background, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(id, userId, content, background, now, now + STATUS_TTL_MS);
+    const event = { type: 'status:changed', userId };
+    for (const viewerId of await statusAudience(userId)) broadcastUser(viewerId, event);
+    broadcastUser(userId, event);
+    response.status(201).json(presentStatus({ id, userId, content, background, createdAt: now, expiresAt: now + STATUS_TTL_MS, views: 0 }, userId));
+  });
+
+  app.post('/api/v1/statuses/:id/view', requireSession, async (request, response) => {
+    const userId = request.session.user_id;
+    const status = await db.prepare(`SELECT s.user_id AS "userId" FROM statuses s
+      WHERE s.id = ? AND s.expires_at > ? AND s.user_id <> ? AND EXISTS (
+        SELECT 1 FROM contacts c WHERE c.owner_id = s.user_id AND c.contact_id = ? AND c.hidden = 0)`)
+      .get(request.params.id, Date.now(), userId, userId);
+    if (!status) return response.status(404).json({ error: 'This status is no longer available.' });
+    const inserted = await db.prepare('INSERT INTO status_views(status_id, viewer_id, viewed_at) VALUES (?, ?, ?) ON CONFLICT DO NOTHING')
+      .run(request.params.id, userId, Date.now());
+    if (inserted.changes) broadcastUser(status.userId, { type: 'status:viewed', statusId: request.params.id, viewerId: userId });
+    response.status(204).end();
+  });
+
+  app.get('/api/v1/statuses/:id/viewers', requireSession, async (request, response) => {
+    const userId = request.session.user_id;
+    if (!(await db.prepare('SELECT 1 FROM statuses WHERE id = ? AND user_id = ?').get(request.params.id, userId))) {
+      return response.status(404).json({ error: 'Status not found.' });
+    }
+    const rows = await db.prepare(`SELECT v.viewed_at AS "viewedAt", ${USER_COLUMNS.split(',').map((column) => `u.${column.trim()}`).join(', ')}
+      FROM status_views v JOIN users u ON u.id = v.viewer_id WHERE v.status_id = ? ORDER BY v.viewed_at DESC`).all(request.params.id);
+    response.json(rows.map((row) => ({ user: publicUser(row), viewedAt: new Date(Number(row.viewedAt)).toISOString() })));
+  });
+
+  app.delete('/api/v1/statuses/:id', requireSession, async (request, response) => {
+    const userId = request.session.user_id;
+    const row = await db.prepare('DELETE FROM statuses WHERE id = ? AND user_id = ? RETURNING content').get(request.params.id, userId);
+    if (!row) return response.status(404).json({ error: 'Status not found.' });
+    await db.prepare('DELETE FROM status_views WHERE status_id = ?').run(request.params.id);
+    await purgeUnreferencedMedia(row.content);
+    const event = { type: 'status:changed', userId };
+    for (const viewerId of await statusAudience(userId)) broadcastUser(viewerId, event);
+    broadcastUser(userId, event);
     response.status(204).end();
   });
 
@@ -1849,7 +1981,13 @@ export function createChatServer({
           ON CONFLICT(message_id, user_id) DO UPDATE SET emoji = excluded.emoji`).run(messageId, userId, emoji));
         const reactionEvent = { type: 'message:reaction', messageId, userId, emoji };
         const peerId = row.sender_id === userId ? row.receiver_id : row.sender_id;
-        broadcastUser(peerId, reactionEvent);
+        // The author of the message hears about a new reaction even with the app closed (the background service
+        // shows it), so their copy says who reacted and to which message.
+        if (emoji && row.sender_id !== userId) {
+          const reactor = await db.prepare('SELECT name, username FROM users WHERE id = ?').get(userId);
+          const reacted = await db.prepare('SELECT content FROM messages WHERE id = ?').get(messageId);
+          broadcastUser(peerId, { ...reactionEvent, messageSenderId: row.sender_id, reactorName: reactor?.name || `@${reactor?.username ?? 'someone'}`, messageContent: String(reacted?.content ?? '').slice(0, 200) });
+        } else broadcastUser(peerId, reactionEvent);
         broadcastUser(userId, reactionEvent);
         return;
       }
@@ -2136,6 +2274,7 @@ export function createChatServer({
       expiryTimer = setInterval(() => {
         sweep(expireMessages);
         sweep(expireGroupMessages);
+        sweep(expireStatuses);
       }, EXPIRY_SWEEP_MS);
       expiryTimer.unref();
       uploadSweep = setInterval(() => {
