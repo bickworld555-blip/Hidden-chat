@@ -52,6 +52,13 @@ public class HiddenNativePlugin extends Plugin {
     public void load() {
         instance = this;
         NotificationChannels.ensure(getContext());
+        // A page that (re)loads starts without a call: one still marked live belonged to the page that went away.
+        getBridge().addWebViewListener(new com.getcapacitor.WebViewListener() {
+            @Override
+            public void onPageStarted(android.webkit.WebView webView) {
+                MessagingService.endOrphanedCall(getContext(), "page reloaded");
+            }
+        });
         handleIntent(getActivity().getIntent());
     }
 

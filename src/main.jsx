@@ -4,6 +4,9 @@ import App from './App.jsx';
 import AppErrorBoundary from './components/AppErrorBoundary.jsx';
 import './styles.css';
 import { registerServiceWorker } from './pwa.js';
+import { watchKeyboard } from './keyboard.js';
+
+watchKeyboard();
 
 createRoot(document.getElementById('root')).render(
   <React.StrictMode>

@@ -38,10 +38,14 @@ public class CallActionReceiver extends BroadcastReceiver {
     static void hangUp(Context context) {
         // The call lives in the WebView, which ends it and tells the other side. Without a WebView there is no
         // call left to end, so only the call state (notification, audio route) is cleared.
+        Context app = context.getApplicationContext();
         if (!HiddenNativePlugin.emitCallAction("hangup", null)) {
-            MessagingService.setCall(context, false, false, null);
-            CallAudio.stop(context);
+            MessagingService.endOrphanedCall(app, "hang-up with no screen");
+            return;
         }
+        // The screen may be paused or gone without having said so; the hang-up must still end the call here.
+        new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(
+            () -> MessagingService.endOrphanedCall(app, "hang-up not confirmed"), 2500);
     }
 
     /** Declines the ringing call (notification, call screen, or a headset / car / watch through Android). */

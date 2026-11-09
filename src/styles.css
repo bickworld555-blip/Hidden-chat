@@ -4249,3 +4249,9 @@ html.native-pip .wa-video-tile.is-pip { width: 30% !important; height: auto !imp
 .link-provider.is-instagram { background: linear-gradient(45deg, #f9ce34, #ee2a7b, #6228d7); }
 .link-provider.is-tiktok { background: #000; }
 .app-shell .message-bubble .link-preview + p.link-preview-url { display: none; }
+
+/* Keyboard open (src/keyboard.js): the message box sits right on the keyboard, no navigation-bar strip under it,
+   and the tab bar (only shown on the lists) gives its room to what is being typed. */
+html.keyboard-open .app-shell.is-mobile .composer-wrap { padding-bottom: 6px; }
+html.keyboard-open .app-shell.is-mobile .wa-blocked-composer, html.keyboard-open .groups-compose { padding-bottom: 6px; }
+html.keyboard-open .app-shell.is-mobile .mobile-bottom-nav { display: none; }

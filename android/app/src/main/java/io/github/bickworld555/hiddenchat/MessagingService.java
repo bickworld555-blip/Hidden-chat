@@ -58,7 +58,8 @@ public class MessagingService extends Service {
     static void setCall(Context context, boolean active, boolean video, String name) {
         if (active && !callActive) callStartedAt = System.currentTimeMillis();
         if (!active && callActive) MainActivity.callEnded();
-        TelecomCalls.live(context, active, video, name);
+        // Only a change reaches Android: a stray "not in a call" must not drop a call that is still ringing.
+        if (active || callActive) TelecomCalls.live(context, active, video, name);
         callActive = active;
         callVideo = active && video;
         callName = active && name != null && !name.trim().isEmpty() ? name.trim() : null;
@@ -73,6 +74,18 @@ public class MessagingService extends Service {
     static void refresh() {
         MessagingService service = instance;
         if (service != null) new Handler(Looper.getMainLooper()).post(service::promote);
+    }
+
+    /**
+     * The web screen that held the call is gone (closed, swiped away, reloaded) or did not confirm a hang-up: the
+     * call cannot go on, so its ongoing notification (the timer on the lock screen), Android's call and the audio
+     * route end now instead of counting on forever.
+     */
+    static void endOrphanedCall(Context context, String why) {
+        if (!callActive) return;
+        android.util.Log.i("MessagingService", "call state cleared: " + why);
+        setCall(context, false, false, null);
+        CallAudio.stop(context);
     }
 
     private boolean granted(String permission) {

@@ -1,7 +1,7 @@
 // Notification channels: direct (1:1) and group messages are classified once here and then drive the
 // sound category, the system-notification channel/tag and what opening the notification does.
 // Browsers have no per-channel sound API, so the app plays each channel's tone itself.
-import { previewFor } from './store.js';
+import { notificationPreview } from './store.js';
 
 export const NOTIFICATION_CHANNELS = Object.freeze({
   direct_messages: Object.freeze({ id: 'direct_messages', name: 'Direct Messages', category: 'message' }),
@@ -28,7 +28,7 @@ export function classifyIncoming(event, userId) {
 
 // Group notification text: "<group>" / "<sender>: <preview>", like a messenger lock-screen entry.
 export function groupNotificationText(event) {
-  const preview = previewFor(event.message?.content ?? '');
+  const preview = notificationPreview(event.message?.content ?? '');
   return {
     title: event.groupName || 'New group message',
     body: event.senderName ? `${event.senderName}: ${preview}` : preview,

@@ -2,7 +2,7 @@ import { apiFetch, apiUrl } from './api.js';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { activateAccount, addOrActivateAccount, getAccountsState, loadAccounts, removeAccount, updateAccountUser } from './accounts.js';
 import { Bell, ChevronRight, MessageSquarePlus, Moon, Sun } from 'lucide-react';
-import { chatPreview, previewFor, useChatStore } from './store.js';
+import { notificationPreview, useChatStore } from './store.js';
 import { fetchStatuses } from './statusApi.js';
 import { clearMediaCache } from './media.js';
 import { clearAvatarCache } from './avatar.js';
@@ -11,7 +11,7 @@ import { initialTabFromUrl } from './pwa.js';
 import { countUnreadConversations, groupRow } from './groupRows.js';
 import { getViewingGroup, readMutedGroups, useMutedGroups } from './groupPrefs.js';
 import { classifyIncoming, groupNotificationText, parseConversationOpenParam, shouldAlertGroup } from './notificationChannels.js';
-import { nativeClearSession, nativeSetSession, nativeShell, nativeStartBackground, nativeState, nativeStopBackground, nativeTakePendingCall, nativeMoveToBackground, nativeClearShare, onNative } from './native.js';
+import { nativeClearSession, nativeSetSession, nativeShell, nativeStartBackground, nativeState, nativeStopBackground, nativeTakePendingCall, nativeMoveToBackground, nativeClearShare, nativeSetCallActive, onNative } from './native.js';
 import { parseShare } from './shareTarget.js';
 import ShareSheet from './components/ShareSheet.jsx';
 import CallAccessSheet from './components/CallAccessSheet.jsx';
@@ -127,6 +127,14 @@ export default function App() {
   const [authReady, setAuthReady] = useState(false);
   const [mobileActiveTab, setMobileActiveTab] = useState(initialTabFromUrl);
   const [call, setCall] = useState(null);
+  // No call on screen means no call: if Android still shows one (its timer on the lock screen), end it there too.
+  useEffect(() => {
+    if (!nativeShell() || call) return undefined;
+    const sync = () => { if (document.visibilityState === 'visible') nativeSetCallActive(false); };
+    sync();
+    document.addEventListener('visibilitychange', sync);
+    return () => document.removeEventListener('visibilitychange', sync);
+  }, [call]);
   const [callSignals, setCallSignals] = useState([]);
   const callStartTimeRef = useState(() => ({ current: null }))[0];
   const callRef = useRef(null);
@@ -230,7 +238,7 @@ export default function App() {
               const sender = useChatStore.getState().chats.find((chat) => chat.id === event.message.senderId);
               showSystemNotification('message', {
                 title: sender?.name ?? 'New message',
-                body: previewFor(event.message.content),
+                body: notificationPreview(event.message.content),
                 tag: `relay-message-${event.message.senderId}`,
                 conversation: { kind: 'chat', id: event.message.senderId },
                 onClick: () => openChatRef.current?.(event.message.senderId),
@@ -269,7 +277,7 @@ export default function App() {
               const reactor = state.chats.find((chat) => chat.id === event.userId);
               showSystemNotification('reaction', {
                 title: reactor?.name ?? event.reactorName ?? 'Reaction',
-                body: event.messageContent ? `Reacted ${event.emoji} to: “${chatPreview([{ id: event.messageId, senderId: userId, content: event.messageContent }])}”` : `Reacted ${event.emoji} to your message`,
+                body: event.messageContent ? `Reacted ${event.emoji} to: “${notificationPreview(event.messageContent)}”` : `Reacted ${event.emoji} to your message`,
                 tag: `relay-reaction-${event.messageId}`,
                 conversation: { kind: 'chat', id: event.userId },
                 onClick: () => openChatRef.current?.(event.userId),

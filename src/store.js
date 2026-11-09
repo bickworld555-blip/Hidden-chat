@@ -66,6 +66,25 @@ export function previewFor(content) {
   return content;
 }
 
+// Notification text: like the chat-list preview, with what a notification needs to say on its own (WhatsApp:
+// "🎤 Voice message (0:12)", "🎵 Audio", "🎞️ GIF"). Kept in step with MessagePreview.java (background service).
+export function notificationPreview(content) {
+  if (typeof content !== 'string') return '';
+  if (content.startsWith('voice:') && !content.endsWith(':once')) {
+    const seconds = Number(content.split(':')[2]);
+    if (!Number.isFinite(seconds) || seconds <= 0) return '🎤 Voice message';
+    const whole = Math.round(seconds);
+    return `🎤 Voice message (${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')})`;
+  }
+  if (content.startsWith('media:')) {
+    const extension = (content.split(':').slice(2).join(':').split('.').pop() || '').toLowerCase();
+    if (extension === 'gif') return '🎞️ GIF';
+    if (AUDIO_NOTIFICATION_EXTENSIONS.has(extension)) return '🎵 Audio';
+  }
+  return previewFor(content);
+}
+const AUDIO_NOTIFICATION_EXTENSIONS = new Set(['mp3', 'm4a', 'aac', 'wav', 'ogg', 'oga', 'opus', 'flac', 'weba']);
+
 function activityTime(chat) {
   const time = Date.parse(chat?.lastActivityAt ?? '');
   return Number.isFinite(time) ? time : null;

@@ -747,10 +747,15 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
     const container = messageScrollRef.current;
     const stack = messageStackRef.current;
     if (!chatId || !container || !stack || typeof ResizeObserver === 'undefined') return undefined;
+    let containerHeight = container.clientHeight;
     const observer = new ResizeObserver(() => {
+      // The feed area itself got shorter or taller (keyboard opening or closing): stay on the newest message at
+      // once, like WhatsApp, rather than gliding after it while the keyboard slides.
+      const resized = container.clientHeight !== containerHeight;
+      containerHeight = container.clientHeight;
       if (!stickToBottomRef.current) return;
       const justOpened = performance.now() - openedAtRef.current < OPEN_SETTLE_MS;
-      if (justOpened) pinToBottom();
+      if (justOpened || resized) pinToBottom();
       else scrollToBottom('smooth');
     });
     observer.observe(stack);
@@ -1044,6 +1049,51 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
     setError('');
   }
 
+  // The message list does not depend on the text being typed: built once per change of the messages or the
+  // selection, so a keystroke re-renders the composer only (long chats with media typed slowly before).
+  const handlersRef = useRef(null);
+  handlersRef.current = { reactTo, startReply, showInChat };
+  const stableStartReply = useCallback((target) => handlersRef.current.startReply(target), []);
+  const stableShowInChat = useCallback((messageId) => handlersRef.current.showInChat(messageId), []);
+  const messageList = useMemo(() => {
+    if (!chat) return null;
+    let lastDay = '';
+    return messages.map((message) => {
+            if (!message?.id) return null;
+            const day = localDateKey(message.timestamp);
+            const showDay = day !== lastDay;
+            lastDay = day;
+
+            return (
+              <div className="message-day-group" key={message.id}>
+                {showDay && <div className="day-divider"><span>{formatMessageDate(message.timestamp)}</span></div>}
+                <MessageBubble
+                  message={message}
+                  mine={message.senderId === userId}
+                  sessionToken={sessionToken}
+                  sender={message.senderId === userId ? user : chat}
+                  quote={quoteView(message.replyTo, userId, chat.name)}
+                  selectionActive={selectionActive}
+                  isSelected={selectedIds.includes(message.id)}
+                  highlighted={highlightId === message.id}
+                  onLongPress={handleLongPress}
+                  onToggleSelect={handleToggleSelect}
+                  onReact={(emoji) => handlersRef.current.reactTo(message, emoji)}
+                  onOpenMedia={() => setViewerMessageId(message.id)}
+                  onSwipeReply={message.content?.startsWith('call:') || message.deleted ? null : stableStartReply}
+                  onQuoteClick={stableShowInChat}
+                  reactionTrayOpen={trayMessageId === message.id}
+                  onTrayReact={(emoji) => {
+                    handlersRef.current.reactTo(message, emoji);
+                    clearSelection();
+                  }}
+                  shared={sharedHandlers}
+                />
+              </div>
+            );
+          });
+  }, [messages, userId, sessionToken, user, chat, selectionActive, selectedIds, highlightId, trayMessageId, sharedHandlers, handleLongPress, handleToggleSelect, clearSelection, stableStartReply, stableShowInChat]);
+
   if (!chat) {
     return (
       <section className="empty-conversation">
@@ -1055,7 +1105,7 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
 
   const status = typing ? 'typing…' : presenceLine({ status: presence, lastSeenAt }, now);
   const shareable = (Array.isArray(chats) ? chats : []).filter((item) => item?.id && item.id !== userId);
-  let lastDay = '';
+
 
   function handleForwardMessage(targets) {
     const sources = Array.isArray(forwardSource) ? forwardSource : [];
@@ -1352,40 +1402,7 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
         }}
       >
         <div className="message-stack" ref={messageStackRef}>
-          {messages.map((message) => {
-            if (!message?.id) return null;
-            const day = localDateKey(message.timestamp);
-            const showDay = day !== lastDay;
-            lastDay = day;
-
-            return (
-              <div className="message-day-group" key={message.id}>
-                {showDay && <div className="day-divider"><span>{formatMessageDate(message.timestamp)}</span></div>}
-                <MessageBubble
-                  message={message}
-                  mine={message.senderId === userId}
-                  sessionToken={sessionToken}
-                  sender={message.senderId === userId ? user : chat}
-                  quote={quoteView(message.replyTo, userId, chat.name)}
-                  selectionActive={selectionActive}
-                  isSelected={selectedIds.includes(message.id)}
-                  highlighted={highlightId === message.id}
-                  onLongPress={handleLongPress}
-                  onToggleSelect={handleToggleSelect}
-                  onReact={(emoji) => reactTo(message, emoji)}
-                  onOpenMedia={() => setViewerMessageId(message.id)}
-                  onSwipeReply={message.content?.startsWith('call:') || message.deleted ? null : startReply}
-                  onQuoteClick={showInChat}
-                  reactionTrayOpen={trayMessageId === message.id}
-                  onTrayReact={(emoji) => {
-                    reactTo(message, emoji);
-                    clearSelection();
-                  }}
-                  shared={sharedHandlers}
-                />
-              </div>
-            );
-          })}
+          {messageList}
           {uploadProgress && <PendingUpload upload={uploadProgress} onCancel={cancelUpload} />}
           {typing && <div className="typing-indicator"><span /><span /><span /></div>}
           <div ref={messagesEndRef} className="messages-end" aria-hidden="true" />

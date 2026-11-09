@@ -3,14 +3,17 @@ package io.github.bickworld555.hiddenchat;
 import java.util.Locale;
 import org.json.JSONObject;
 
-/** Notification text for a stored message, matching the web app's chat-list previews (src/store.js previewFor). */
+/**
+ * Notification text for a message, the same as the web app's (src/store.js notificationPreview): what it is, so a
+ * voice note, video, audio file, document, GIF or emoji reads right on the lock screen.
+ */
 final class MessagePreview {
     private MessagePreview() {}
 
     static String of(String content) {
         if (content == null) return "";
         if (content.startsWith("voice-opened:")) return "① Opened";
-        if (content.startsWith("voice:")) return content.endsWith(":once") ? "① Voice message" : "🎤 Voice message";
+        if (content.startsWith("voice:")) return content.endsWith(":once") ? "① Voice message" : voice(content);
         if (content.startsWith("media:")) return media(content);
         if (content.startsWith("file:")) return "📎 Attachment";
         if (content.startsWith("location:")) return "📍 Location";
@@ -19,19 +22,42 @@ final class MessagePreview {
         if (content.startsWith("poll:")) return "📊 Poll: " + jsonField(content.substring(5), "question", "");
         if (content.startsWith("event:")) return "📅 " + jsonField(content.substring(6), "title", "Event");
         if (content.startsWith("call-schedule:")) return "📅 Scheduled call";
-        if (content.startsWith("call:")) return "📞 Call";
+        if (content.startsWith("call:")) return "video".equals(jsonField(content.substring(5), "mode", "")) ? "📹 Video call" : "📞 Voice call";
         return content;
     }
 
+    /** voice:<id>:<seconds> → "🎤 Voice message (0:12)". */
+    private static String voice(String content) {
+        String[] parts = content.split(":");
+        double seconds;
+        try {
+            seconds = parts.length > 2 ? Double.parseDouble(parts[2]) : 0;
+        } catch (NumberFormatException malformed) {
+            seconds = 0;
+        }
+        if (!(seconds > 0) || Double.isInfinite(seconds)) return "🎤 Voice message";
+        long whole = Math.round(seconds);
+        return String.format(Locale.ROOT, "🎤 Voice message (%d:%02d)", whole / 60, whole % 60);
+    }
+
+    /** media:<id>:<filename>, by extension as in src/media.js. */
     private static String media(String content) {
-        // media:<id>:<filename>
         int second = content.indexOf(':', 6);
         String filename = second < 0 ? "" : content.substring(second + 1);
-        String lower = filename.toLowerCase(Locale.ROOT);
-        if (lower.matches(".*\\.(jpe?g|png|gif|webp|heic|heif|bmp|avif)$")) return "📷 Photo";
-        if (lower.matches(".*\\.(mp4|mov|webm|mkv|3gp|m4v)$")) return "🎥 Video";
-        if (lower.matches(".*\\.(mp3|m4a|ogg|opus|wav|aac|flac)$")) return "🎵 " + filename;
-        return "📄 " + (filename.isEmpty() ? "Attachment" : filename);
+        if (filename.isEmpty()) return "📎 Attachment";
+        int dot = filename.lastIndexOf('.');
+        String extension = dot < 0 ? "" : filename.substring(dot + 1).toLowerCase(Locale.ROOT);
+        switch (extension) {
+            case "gif": return "🎞️ GIF";
+            case "jpg": case "jpeg": case "png": case "webp": case "bmp": case "avif": case "heic": case "heif": case "svg": case "tif": case "tiff":
+                return "📷 Photo";
+            case "mp4": case "m4v": case "mov": case "webm": case "mkv": case "avi": case "3gp":
+                return "🎥 Video";
+            case "mp3": case "m4a": case "aac": case "wav": case "ogg": case "oga": case "opus": case "flac": case "weba":
+                return "🎵 Audio";
+            default:
+                return "📄 " + filename;
+        }
     }
 
     private static String jsonField(String json, String field, String fallback) {

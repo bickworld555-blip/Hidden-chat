@@ -191,6 +191,8 @@ public class MainActivity extends BridgeActivity {
         if (current == this) current = null;
         // Screen gone (swiped away) but the service still runs: keep the phone reachable.
         if (!isChangingConfigurations() && MessagingService.isRunning()) NativeRelay.start(this);
+        // The call lived in this screen's WebView: without it there is no call any more.
+        if (!isChangingConfigurations()) MessagingService.endOrphanedCall(this, "screen closed");
         super.onDestroy();
     }
 }
