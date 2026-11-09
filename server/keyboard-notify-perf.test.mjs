@@ -125,3 +125,12 @@ test('hard reset when a call ends: call notification deleted, Android call destr
   assert.ok(overlay.includes('useEffect(() => () => { if (nativeShell()) nativeEndCall(); }, []);'), 'and when the call screen closes');
   assert.ok(overlay.includes('const timer = setInterval(() => nativeCallHeartbeat(), CALL_HEARTBEAT_MS);'));
 });
+
+test('Telecom asking for the ringing screen opens it on a locked or dark phone', async () => {
+  const connection = await java('CallConnectionService.java');
+  assert.match(connection, /public void onShowIncomingCallUi\(\) \{[\s\S]*?TelecomCalls\.showCallScreen\(\);/);
+  const alerts = await java('Alerts.java');
+  assert.match(alerts, /static void showCallScreenIfAway\(Context context\) \{[\s\S]*?if \(!locked && !dark\) return;[\s\S]*?context\.startActivity\(new Intent\(show\)\);/);
+  assert.match(alerts, /ringing = false;\s*lastCallScreen = null;/, 'never reopened after the call stopped ringing');
+  assert.ok(alerts.includes('.setFullScreenIntent(showIntent, true)'), 'the full-screen notification stays the main route');
+});

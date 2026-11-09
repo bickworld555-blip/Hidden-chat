@@ -60,7 +60,7 @@ test('Android: ringing calls show over the lock screen at once and stay there wh
   assert.ok(!permissions.includes('SYSTEM_ALERT_WINDOW') && !permissions.includes('REQUEST_IGNORE_BATTERY_OPTIMIZATIONS'), 'only standard permissions, like WhatsApp');
   assert.ok((await java('IncomingCallActivity.java')).includes('connection.setRequestProperty("Authorization", "Bearer " + token);'), "the caller's photo is loaded");
   assert.match(alerts, /SCREEN_BRIGHT_WAKE_LOCK\s*\|\s*android\.os\.PowerManager\.ACQUIRE_CAUSES_WAKEUP/);
-  assert.match(alerts, /ringing = false;\s*releaseScreen\(\);\s*IncomingCallActivity\.dismiss\(\);/);
+  assert.match(alerts, /ringing = false;\s*lastCallScreen = null;\s*releaseScreen\(\);\s*IncomingCallActivity\.dismiss\(\);/);
   const incoming = await java('IncomingCallActivity.java');
   assert.ok(incoming.includes('setShowWhenLocked(true);') && incoming.includes('setTurnScreenOn(true);') && incoming.includes('FLAG_KEEP_SCREEN_ON'));
   assert.ok(incoming.includes('.setAction(Alerts.ACTION_ACCEPT)'), 'Accept opens the app straight into the call');

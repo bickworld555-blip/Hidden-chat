@@ -73,7 +73,9 @@ public class CallConnectionService extends ConnectionService {
 
         @Override
         public void onShowIncomingCallUi() {
-            // The ringing notification and the native call screen are already up (Alerts.showIncomingCall).
+            // The ringing notification (with its full-screen intent) is already up; on a locked phone also open the
+            // native call screen directly, where Android allows it.
+            TelecomCalls.showCallScreen();
         }
 
         @Override

@@ -276,6 +276,11 @@ final class TelecomCalls {
         else MessagingService.refresh();
     }
 
+    static void showCallScreen() {
+        Context context = app;
+        if (context != null) main.post(() -> Alerts.showCallScreenIfAway(context));
+    }
+
     static synchronized void failed(boolean incoming) {
         if (!incoming) placing = false;
         Log.i(TAG, (incoming ? "incoming" : "outgoing") + " call refused by Android (busy with another call)");

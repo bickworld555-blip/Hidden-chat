@@ -95,6 +95,7 @@ final class Alerts {
         // The full-screen call is a native screen: it shows the moment the phone lights up, without waiting for the
         // app's web screen to load (which left a black screen over the lock screen while the ringtone played).
         Intent show = IncomingCallActivity.intent(context, id, name, video, avatar);
+        lastCallScreen = show;
         Intent accept = new Intent(context, MainActivity.class)
             .setAction(ACTION_ACCEPT)
             .setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP)
@@ -161,10 +162,33 @@ final class Alerts {
     static void cancelIncomingCall(Context context) {
         NotificationManagerCompat.from(context).cancel(CALL_TAG, CALL_NOTIFICATION_ID);
         ringing = false;
+        lastCallScreen = null;
         releaseScreen();
         IncomingCallActivity.dismiss();
         MainActivity.callWindowChanged();
         TelecomCalls.ringingStopped();
+    }
+
+    private static volatile Intent lastCallScreen;
+
+    /**
+     * Android's Telecom asks for the ringing call's screen (ConnectionService.onShowIncomingCallUi): on a locked or
+     * dark phone open it directly too, besides the notification's full-screen intent. Where Android does not let a
+     * background app open a screen this is ignored, and the full-screen notification shows it as before.
+     */
+    static void showCallScreenIfAway(Context context) {
+        Intent show = lastCallScreen;
+        if (show == null || !ringing) return;
+        android.app.KeyguardManager keyguard = context.getSystemService(android.app.KeyguardManager.class);
+        android.os.PowerManager power = context.getSystemService(android.os.PowerManager.class);
+        boolean locked = keyguard != null && keyguard.isKeyguardLocked();
+        boolean dark = power != null && !power.isInteractive();
+        if (!locked && !dark) return; // phone in use: the heads-up call banner, like WhatsApp
+        try {
+            context.startActivity(new Intent(show));
+        } catch (RuntimeException blocked) {
+            // Not allowed here: the full-screen notification does it.
+        }
     }
 
     private static android.os.PowerManager.WakeLock screenLock;
