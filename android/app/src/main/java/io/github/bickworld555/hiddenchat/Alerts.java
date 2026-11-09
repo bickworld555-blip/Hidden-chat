@@ -22,7 +22,15 @@ final class Alerts {
     private static final String CALL_TAG = "incoming_call";
     private static final int CALL_NOTIFICATION_ID = 2001;
 
+    // Unread count per conversation notification, shared by the WebView and the background connection.
+    private static final java.util.Map<String, Integer> counts = new java.util.HashMap<>();
+
     private Alerts() {}
+
+    static synchronized int nextCount(String tag) {
+        Integer previous = counts.get(tag);
+        return previous == null ? 1 : previous + 1;
+    }
 
     static PendingIntent openIntent(Context context, String open, int requestCode) {
         Intent intent = new Intent(context, MainActivity.class)
@@ -33,7 +41,12 @@ final class Alerts {
 
     /** A message on the direct_messages or group_messages channel, showing its text; tapping opens that chat. */
     static boolean showMessage(Context context, String channel, String title, String body, String tag, String open) {
-        String channelId = NotificationChannels.GROUP_MESSAGES.equals(channel) ? NotificationChannels.GROUP_MESSAGES : NotificationChannels.DIRECT_MESSAGES;
+        return showMessage(context, channel, title, body, tag, open, 0);
+    }
+
+    /** `count` is this chat's unread total: shown on the notification and, on most launchers, the app icon badge. */
+    static boolean showMessage(Context context, String channel, String title, String body, String tag, String open, int count) {
+        String channelId = NotificationChannels.isMessageChannel(channel) ? channel : NotificationChannels.DIRECT_MESSAGES;
         String key = tag == null || tag.isEmpty() ? channelId : tag;
         NotificationCompat.Builder builder = new NotificationCompat.Builder(context, channelId)
             .setSmallIcon(R.drawable.ic_stat_hidden)
@@ -45,8 +58,15 @@ final class Alerts {
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE);
+        // No count from the caller (groups, reactions): continue this conversation's running count.
+        int unread = count > 0 ? count : nextCount(key);
+        builder.setNumber(unread);
+        synchronized (Alerts.class) { counts.put(key, unread); }
+        if (unread > 1) builder.setSubText(unread + " new messages");
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
-            builder.setSound(NotificationChannels.rawSound(context, NotificationChannels.soundFor(channelId)));
+            builder.setSound(NotificationChannels.isPhoneSound(channelId)
+                ? SystemSounds.defaultUri(false)
+                : NotificationChannels.rawSound(context, NotificationChannels.soundFor(channelId)));
             builder.setDefaults(NotificationCompat.DEFAULT_VIBRATE);
         }
         try {
@@ -59,6 +79,11 @@ final class Alerts {
 
     /** Heads-up / full-screen incoming call with Accept and Reject; the ringtone repeats until it is handled. */
     static boolean showIncomingCall(Context context, String callId, String caller, boolean video) {
+        return showIncomingCall(context, callId, caller, video, false);
+    }
+
+    /** `phoneRingtone`: ring with this phone's default ringtone (the in-app "Default" choice). */
+    static boolean showIncomingCall(Context context, String callId, String caller, boolean video, boolean phoneRingtone) {
         String id = callId == null ? "" : callId;
         Intent show = new Intent(context, MainActivity.class)
             .setAction(ACTION_SHOW_CALL)
@@ -80,7 +105,7 @@ final class Alerts {
 
         String name = caller == null || caller.isEmpty() ? "Hidden Messenger" : caller;
         Person person = new Person.Builder().setName(name).setImportant(true).build();
-        NotificationCompat.Builder builder = new NotificationCompat.Builder(context, NotificationChannels.INCOMING_CALLS)
+        NotificationCompat.Builder builder = new NotificationCompat.Builder(context, phoneRingtone ? NotificationChannels.INCOMING_CALLS_PHONE : NotificationChannels.INCOMING_CALLS)
             .setSmallIcon(R.drawable.ic_stat_hidden)
             .setContentTitle(name)
             .setContentText(video ? "Incoming video call" : "Incoming voice call")
@@ -93,7 +118,7 @@ final class Alerts {
             .setFullScreenIntent(showIntent, true)
             .setStyle(NotificationCompat.CallStyle.forIncomingCall(person, rejectIntent, acceptIntent).setIsVideo(video));
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
-            builder.setSound(NotificationChannels.rawSound(context, R.raw.incoming_call_ringtone));
+            builder.setSound(phoneRingtone ? SystemSounds.defaultUri(true) : NotificationChannels.rawSound(context, R.raw.incoming_call_ringtone));
             builder.setVibrate(new long[] { 0, 800, 600, 800, 600 });
         }
         Notification notification = builder.build();
@@ -103,6 +128,22 @@ final class Alerts {
             return true;
         } catch (SecurityException missingPermission) {
             return false;
+        }
+    }
+
+    /** The chat was read: its notification (and its share of the icon badge) goes away. */
+    static void cancelMessage(Context context, String tag) {
+        if (tag == null || tag.isEmpty()) return;
+        synchronized (Alerts.class) { counts.remove(tag); }
+        NotificationManagerCompat.from(context).cancel(tag, 1);
+    }
+
+    static void cancelAllMessages(Context context) {
+        android.app.NotificationManager manager = context.getSystemService(android.app.NotificationManager.class);
+        synchronized (Alerts.class) { counts.clear(); }
+        if (manager == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return;
+        for (android.service.notification.StatusBarNotification posted : manager.getActiveNotifications()) {
+            if (posted.getId() == 1) manager.cancel(posted.getTag(), posted.getId());
         }
     }
 

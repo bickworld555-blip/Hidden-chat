@@ -1,4 +1,6 @@
-import { Settings, Users, Plus, ChevronRight, LogOut, Bell, Moon, Sun, Pencil, Check, X, Sparkles, Video, ScanFace } from 'lucide-react';
+import { setMediaSaveEnabled, useMediaSave } from '../mediaSave.js';
+import { nativeShell } from '../native.js';
+import { Settings, Users, Plus, ChevronRight, LogOut, Bell, Moon, Sun, Pencil, Check, X, Sparkles, Video, ScanFace, Download } from 'lucide-react';
 import { useChatStore } from '../store.js';
 import ProfilePhoto from './ProfilePhoto.jsx';
 import Avatar from './Avatar.jsx';
@@ -106,6 +108,8 @@ export default function ToolsView({ darkMode, onToggleTheme, onLogout, onNotific
   const callAnimations = useCallAnimationsEnabled();
   const avatarCalls = useAvatarCallsEnabled();
   const persona = usePersona();
+  const mediaSave = useMediaSave();
+  const inApp = nativeShell();
 
   return (
     <div className="tools-view-container">
@@ -224,6 +228,20 @@ export default function ToolsView({ darkMode, onToggleTheme, onLogout, onNotific
               </small>
             </div>
             <span className={`wa-switch${callAnimations ? ' on' : ''}`} aria-hidden="true"><span /></span>
+          </button>
+          <button type="button" className="tool-item" role="switch" aria-checked={mediaSave} disabled={!inApp} onClick={() => setMediaSaveEnabled(!mediaSave)}>
+            <Download size={20} />
+            <div className="tool-item-info">
+              <strong>Media Save</strong>
+              <small>
+                {!inApp
+                  ? 'In the Android app: save received photos, videos and files to the phone'
+                  : mediaSave
+                    ? 'On · received media is saved to Download/Hidden Messenger'
+                    : 'Off · received media stays in the chat until you tap download'}
+              </small>
+            </div>
+            <span className={`wa-switch${mediaSave && inApp ? ' on' : ''}`} aria-hidden="true"><span /></span>
           </button>
           <button className="tool-item" onClick={() => onAccounts?.()}>
             <Users size={20} />

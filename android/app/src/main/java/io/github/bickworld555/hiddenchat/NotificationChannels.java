@@ -18,6 +18,18 @@ final class NotificationChannels {
     static final String GROUP_MESSAGES = "group_messages";
     static final String INCOMING_CALLS = "incoming_calls";
     static final String CONNECTION = "connection";
+    // The same three with the phone's own default sounds, for the in-app "Default" tone choice.
+    static final String DIRECT_MESSAGES_PHONE = "direct_messages_phone";
+    static final String GROUP_MESSAGES_PHONE = "group_messages_phone";
+    static final String INCOMING_CALLS_PHONE = "incoming_calls_phone";
+
+    static boolean isMessageChannel(String channel) {
+        return DIRECT_MESSAGES.equals(channel) || GROUP_MESSAGES.equals(channel) || DIRECT_MESSAGES_PHONE.equals(channel) || GROUP_MESSAGES_PHONE.equals(channel);
+    }
+
+    static boolean isPhoneSound(String channel) {
+        return DIRECT_MESSAGES_PHONE.equals(channel) || GROUP_MESSAGES_PHONE.equals(channel) || INCOMING_CALLS_PHONE.equals(channel);
+    }
 
     private NotificationChannels() {}
 
@@ -67,6 +79,23 @@ final class NotificationChannels {
         connection.setSound(null, null);
         connection.setShowBadge(false);
 
-        manager.createNotificationChannels(Arrays.asList(direct, group, calls, connection));
+        NotificationChannel directPhone = new NotificationChannel(DIRECT_MESSAGES_PHONE, "Direct Messages (phone sound)", NotificationManager.IMPORTANCE_HIGH);
+        directPhone.setDescription("Messages from one person, with this phone's default notification sound");
+        directPhone.setSound(android.provider.Settings.System.DEFAULT_NOTIFICATION_URI, message);
+        directPhone.enableVibration(true);
+
+        NotificationChannel groupPhone = new NotificationChannel(GROUP_MESSAGES_PHONE, "Group Messages (phone sound)", NotificationManager.IMPORTANCE_HIGH);
+        groupPhone.setDescription("Messages in groups, with this phone's default notification sound");
+        groupPhone.setSound(android.provider.Settings.System.DEFAULT_NOTIFICATION_URI, message);
+        groupPhone.enableVibration(true);
+
+        NotificationChannel callsPhone = new NotificationChannel(INCOMING_CALLS_PHONE, "Incoming Calls (phone ringtone)", NotificationManager.IMPORTANCE_HIGH);
+        callsPhone.setDescription("Ringing calls, with this phone's default ringtone");
+        callsPhone.setSound(android.provider.Settings.System.DEFAULT_RINGTONE_URI, ringtone);
+        callsPhone.enableVibration(true);
+        callsPhone.setVibrationPattern(new long[] { 0, 800, 600, 800, 600 });
+        callsPhone.setLockscreenVisibility(android.app.Notification.VISIBILITY_PUBLIC);
+
+        manager.createNotificationChannels(Arrays.asList(direct, group, calls, connection, directPhone, groupPhone, callsPhone));
     }
 }

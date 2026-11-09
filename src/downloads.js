@@ -5,6 +5,8 @@ import { apiFetch } from './api.js';
 import { useSyncExternalStore } from 'react';
 import { PREVIEW_LIMIT_BYTES } from './transfer.js';
 import { downloadMedia, loadMediaBlob, loadMediaInfo, saveBlob } from './media.js';
+import { nativeShell, onNative } from './native.js';
+import { saveMediaToPhone } from './mediaSave.js';
 
 const downloads = new Map();
 const listeners = new Set();
@@ -69,7 +71,7 @@ export function clearDownload(id) {
 
 function finish(id, patch) {
   update(id, patch);
-  setTimeout(() => { if (downloads.get(id)?.status !== 'running') clearDownload(id); }, patch.status === 'error' ? 6000 : 1500);
+  setTimeout(() => { if (downloads.get(id)?.status !== 'running') clearDownload(id); }, patch.status === 'error' ? 6000 : downloads.get(id)?.savedTo ? 3500 : 1500);
 }
 
 async function streamToFile(id, handle, sessionToken, total, controller) {
@@ -113,8 +115,33 @@ async function fetchThenSave(id, filename, sessionToken, total, controller) {
 }
 
 // Starts (or ignores, if already running) a download and reports progress through the store.
+// Android app: a browser download from the WebView never reaches the phone, so the native saver writes the file
+// into Download/Hidden Messenger/<Images|Video|Audio|Documents> (gallery and file manager) with live progress.
+async function saveInApp(id, filename, sessionToken) {
+  update(id, { status: 'running', received: 0, total: 0, fraction: 0, rate: 0, etaSeconds: null, controller: null, filename });
+  const startedAt = Date.now();
+  let rate = 0;
+  const stop = onNative('mediaSaveProgress', (event) => {
+    if (event?.id !== id) return;
+    const total = event.total > 0 ? event.total : 0;
+    const stats = progressStats({ received: event.received, total, startedAt, previousRate: rate });
+    rate = stats.rate;
+    update(id, { received: event.received, total, fraction: stats.fraction, rate, etaSeconds: stats.etaSeconds });
+  });
+  try {
+    const savedTo = await saveMediaToPhone({ id, filename, sessionToken });
+    update(id, { savedTo });
+    finish(id, { status: 'done', fraction: 1 });
+  } catch (error) {
+    finish(id, { status: 'error', error: error?.message || 'Could not save the file.' });
+  } finally {
+    stop();
+  }
+}
+
 export async function downloadWithProgress(id, filename, sessionToken) {
   if (downloads.get(id)?.status === 'running') return;
+  if (nativeShell()) return saveInApp(id, filename, sessionToken);
   const controller = new AbortController();
   update(id, { status: 'running', received: 0, total: 0, fraction: 0, rate: 0, etaSeconds: null, controller, filename });
   try {

@@ -1,3 +1,4 @@
+import { useBackHandler } from '../backStack.js';
 import { useCallback, useEffect, useState } from 'react';
 import { ArrowLeft, KeyRound, Laptop, Smartphone } from 'lucide-react';
 import { useChatStore } from '../store.js';
@@ -92,6 +93,8 @@ function Devices({ devices, onSignOut, error }) {
 export default function AccountSettings({ onClose }) {
   const sessionToken = useChatStore((state) => state.sessionToken);
   const [view, setView] = useState(null);
+  // Android Back leaves a sub-screen first; the screen itself is closed by its opener.
+  useBackHandler(Boolean(view), () => setView(null));
   const [privacy, setPrivacy] = useState(null);
   const [devices, setDevices] = useState(null);
   const [error, setError] = useState('');

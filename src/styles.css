@@ -4158,3 +4158,12 @@ button.groups-setting:hover, label.groups-setting:hover { background: rgba(134, 
 .pending-upload-file-text small { color: #667781; font-size: 12px; }
 .dark-theme .pending-upload-file-text small { color: #8696a0; }
 .wa-call-backdrop.is-pip.is-snapping { transition: left .25s ease, top .25s ease; }
+
+/* ===== Android picture-in-picture during a video call: only the call, edge to edge, no controls ===== */
+html.native-pip .app-shell > *:not(.wa-call-backdrop), html.native-pip .mobile-bottom-nav { visibility: hidden; }
+html.native-pip .wa-call-backdrop, html.native-pip .wa-call-backdrop.is-pip { position: fixed !important; inset: 0 !important; width: 100vw !important; height: 100vh !important; border-radius: 0 !important; box-shadow: none !important; z-index: 2147483000; visibility: visible; }
+html.native-pip .wa-call-screen { border-radius: 0 !important; }
+html.native-pip .wa-call-header, html.native-pip .wa-video-side-toolbar, html.native-pip .wa-video-bottom-dock, html.native-pip .wa-pip-bar,
+html.native-pip .wa-call-more-layer, html.native-pip .wa-call-error-toast, html.native-pip .wa-add-participant { display: none !important; }
+html.native-pip .wa-video-tile.is-pip { width: 30% !important; height: auto !important; aspect-ratio: 3 / 4; top: 6px !important; right: 6px !important; bottom: auto !important; left: auto !important; border-radius: 8px; }
+.dl-overlay.is-saved { background: rgba(0, 168, 132, .92); }

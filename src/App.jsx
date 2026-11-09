@@ -10,7 +10,7 @@ import { initialTabFromUrl } from './pwa.js';
 import { countUnreadConversations, groupRow } from './groupRows.js';
 import { getViewingGroup, readMutedGroups, useMutedGroups } from './groupPrefs.js';
 import { classifyIncoming, groupNotificationText, parseConversationOpenParam, shouldAlertGroup } from './notificationChannels.js';
-import { nativeClearSession, nativeSetSession, nativeShell, nativeStartBackground, nativeState, nativeStopBackground, nativeTakePendingCall, onNative } from './native.js';
+import { nativeClearSession, nativeSetSession, nativeShell, nativeStartBackground, nativeState, nativeStopBackground, nativeTakePendingCall, nativeMoveToBackground, onNative } from './native.js';
 import { PERMISSIONS_ASKED_KEY } from './permissionsKey.js';
 import Sidebar from './components/Sidebar.jsx';
 import ChatWindow from './components/ChatWindow.jsx';
@@ -21,6 +21,9 @@ import { HISTORY_CONCURRENCY, forEachLimited } from './concurrency.js';
 import MobileBottomNav from './components/MobileBottomNav.jsx';
 import ChatsList from './components/ChatsList.jsx';
 import { lazyComponent, preloadLazyScreens } from './lazy.js';
+import { handleBack, useBackHandler } from './backStack.js';
+import { phoneSoundSession } from './phoneSounds.js';
+import { autoSaveIncoming } from './mediaSave.js';
 const AccountSwitcher = lazyComponent(() => import('./components/AccountSwitcher.jsx'));
 const AvatarStudio = lazyComponent(() => import('./components/AvatarStudio.jsx'));
 const PermissionsSheet = lazyComponent(() => import('./components/PermissionsSheet.jsx'));
@@ -189,6 +192,7 @@ export default function App() {
           // Group messages use their own channel: the group tone, vibration and a "<group>" / "<sender>: text" notification.
           if (event.type === 'group:message') {
             const alert = classifyIncoming(event, userId);
+            if (event.message?.senderId !== userId) autoSaveIncoming(event.message?.content, sessionToken);
             if (alert && shouldAlertGroup({ groupId: alert.conversation.id, mutedGroupIds: readMutedGroups(userId), viewingGroupId: getViewingGroup(), pageVisible: document.visibilityState === 'visible' })) {
               playNotificationTone('group');
               vibrateFor('group');
@@ -206,6 +210,7 @@ export default function App() {
             addMessage(event.message);
             if (event.type === 'message:ack') acknowledgeMessage(event.message);
             // This device has it: tell the sender (one tick → two). Reading it is a separate, explicit step.
+            if (incoming) autoSaveIncoming(event.message.content, sessionToken);
             if (incoming && event.message.receiverId === userId && event.message.status === 'sent') {
               realtime?.send({ type: 'message:delivered', messageIds: [event.message.id] });
             }
@@ -219,6 +224,7 @@ export default function App() {
                 tag: `relay-message-${event.message.senderId}`,
                 conversation: { kind: 'chat', id: event.message.senderId },
                 onClick: () => openChatRef.current?.(event.message.senderId),
+                count: sender?.unread ?? 0,
               });
             }
           }
@@ -503,6 +509,18 @@ export default function App() {
   const activeTab = isMobile ? mobileActiveTab : 'chats';
   const showMobileList = isMobile && activeTab === 'chats' && (mobileListOpen || !chat);
   const chatOpenOnMobile = isMobile && activeTab === 'chats' && !showMobileList;
+  // Android Back: close the top screen (newest registered first); a chat goes back to the list, another tab to
+  // Chats; with nothing left the app goes to the background instead of quitting.
+  useBackHandler(isMobile && activeTab !== 'chats', () => setMobileActiveTab('chats'));
+  useBackHandler(chatOpenOnMobile, () => setMobileListOpen(true));
+  useBackHandler(notificationsOpen, () => setNotificationsOpen(false));
+  useBackHandler(accountSettingsOpen, () => setAccountSettingsOpen(false));
+  useBackHandler(accountsOpen, () => setAccountsOpen(false));
+  useBackHandler(avatarStudioOpen, () => setAvatarStudioOpen(false));
+  useBackHandler(pairingOpen, () => setPairingOpen(false));
+  useEffect(() => onNative('backButton', () => { if (!handleBack()) nativeMoveToBackground(); }), []);
+  // Android picture-in-picture during a video call: only the call shows in the small window.
+  useEffect(() => onNative('pictureInPicture', ({ active }) => document.documentElement.classList.toggle('native-pip', Boolean(active))), []);
   // Group rows in the chat list come from the server listing, refreshed on every group:* socket event and reconnect.
   useEffect(() => {
     if (!sessionToken) { setGroupSummaries([]); return undefined; }
@@ -596,12 +614,12 @@ export default function App() {
   useEffect(() => {
     if (!nativeShell() || !userId || !sessionToken) return undefined;
     const origin = new URL(apiUrl('/api/v1/health'), window.location.href).origin;
-    const sync = () => nativeSetSession({ origin, token: sessionToken, userId, mutedChats: useChatStore.getState().mutedChatIds ?? [], mutedGroups: readMutedGroups(userId) });
+    const sync = () => nativeSetSession({ origin, token: sessionToken, userId, mutedChats: useChatStore.getState().mutedChatIds ?? [], mutedGroups: readMutedGroups(userId), ...phoneSoundSession() });
     sync();
     const onHide = () => { if (document.visibilityState === 'hidden') sync(); };
     document.addEventListener('visibilitychange', onHide);
     return () => document.removeEventListener('visibilitychange', onHide);
-  }, [userId, sessionToken, mutedChatIds, mutedGroupIds]);
+  }, [userId, sessionToken, mutedChatIds, mutedGroupIds, notificationSettings]);
 
   // Signed in: offer the permission walkthrough once per device; in the Android app keep the
   // background connection running (and stop it on sign-out). Native state is re-read on resume.

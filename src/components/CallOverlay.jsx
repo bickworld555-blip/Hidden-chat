@@ -1,5 +1,5 @@
 import { apiFetch } from '../api.js';
-import { nativeCancelIncomingCall, nativeEndCallWindow, nativeSetCallActive, nativeShell, nativeShowIncomingCall, onNative } from '../native.js';
+import { nativeCancelIncomingCall, nativeEndCallWindow, nativeSetCallActive, nativeSetSpeaker, nativeShell, nativeShowIncomingCall, onNative } from '../native.js';
 import { useEffect, useRef, useState } from 'react';
 import {
   ArrowLeft,
@@ -41,6 +41,8 @@ import { personaCharacter, usePersona } from '../avatar/persona.js';
 import { createAvatarFilter } from '../avatar/avatarStream.js';
 import { loadFaceTracker } from '../avatar/faceTracker.js';
 import { lazyComponent } from '../lazy.js';
+import { useBackHandler } from '../backStack.js';
+import { usesPhoneSound } from '../phoneSounds.js';
 const AvatarStudio = lazyComponent(() => import('./AvatarStudio.jsx'));
 
 const ICE_CONFIG_TIMEOUT_MS = 3000;
@@ -205,7 +207,17 @@ export default function CallOverlay({
     muted: false, cameraOff: false, facing: 'user', answered: false, connectedAt: 0,
     remoteVideoOff: false, remoteMuted: false, remoteHasVideo: false, videoRequest: null, remoteScreen: false, screenSharing: false,
   }));
-  const [speakerOn, setSpeakerOn] = useState(true);
+  // In the Android app the speaker button routes audio (loudspeaker vs earpiece/headset) and voice calls start on
+  // the earpiece like a phone call; in a browser it can only mute playback, so it starts on.
+  const nativeRouting = nativeShell();
+  const [speakerOn, setSpeakerOn] = useState(() => !nativeRouting || call.mode === 'video');
+  const audioMuted = nativeRouting ? false : !speakerOn;
+  const toggleSpeaker = () => {
+    const next = !speakerOn;
+    setSpeakerOn(next);
+    if (nativeRouting) nativeSetSpeaker(next).then((result) => { if (typeof result?.speaker === 'boolean') setSpeakerOn(result.speaker); });
+  };
+  const speakerLabel = nativeRouting ? (speakerOn ? 'Turn off speaker' : 'Turn on speaker') : (speakerOn ? 'Mute speaker' : 'Turn speaker on');
   const [swapped, setSwapped] = useState(false);
   const [minimized, setMinimized] = useState(false);
   const [canFlip, setCanFlip] = useState(false);
@@ -232,7 +244,8 @@ export default function CallOverlay({
   const callLive = !terminal && !(call.direction === 'incoming' && status === 'idle');
   useEffect(() => {
     if (!nativeShell()) return undefined;
-    nativeSetCallActive(callLive, isVideo);
+    // Starting (or switching to video) picks the default route; the button shows what Android actually chose.
+    nativeSetCallActive(callLive, isVideo).then((result) => { if (callLive && typeof result?.speaker === 'boolean') setSpeakerOn(result.speaker); });
     return () => { if (callLive) nativeSetCallActive(false); };
   }, [callLive, isVideo]);
 
@@ -465,8 +478,8 @@ export default function CallOverlay({
   useMediaElement(remoteAudioRef, remoteStream);
 
   useEffect(() => {
-    if (remoteAudioRef.current) remoteAudioRef.current.muted = !speakerOn;
-  }, [speakerOn, remoteStream]);
+    if (remoteAudioRef.current) remoteAudioRef.current.muted = audioMuted;
+  }, [audioMuted, remoteStream]);
 
   // In the Android app, a call that rings while the app is in the background shows the native call
   // notification (ringtone, Accept / Reject); it is withdrawn once the app is in front or the call moves on.
@@ -476,7 +489,7 @@ export default function CallOverlay({
     if (!nativeShell()) return;
     if (ringingIncoming && pageHidden) {
       stopTone('incomingCall');
-      nativeShowIncomingCall({ callId: call.id, callerName: peer?.name ?? 'Hidden Messenger', mode: call.mode });
+      nativeShowIncomingCall({ callId: call.id, callerName: peer?.name ?? 'Hidden Messenger', mode: call.mode, phoneRingtone: usesPhoneSound('incomingCall', undefined, true) });
     } else nativeCancelIncomingCall();
   }, [ringingIncoming, pageHidden, call.id, call.mode, peer?.name]);
   useEffect(() => () => { nativeCancelIncomingCall(); nativeEndCallWindow(); }, []);
@@ -589,6 +602,10 @@ export default function CallOverlay({
 
   // --- ⋯ sheet: reactions, noise cancellation, flash ---
   const [moreOpen, setMoreOpen] = useState(false);
+  // Android Back during a call: close sheets first, then shrink the call to its floating window (it keeps going).
+  useBackHandler(!minimized && !TERMINAL_STATUSES.includes(status), () => minimizeCall());
+  useBackHandler(addOpen, () => setAddOpen(false));
+  useBackHandler(moreOpen, () => setMoreOpen(false));
   const [floating, setFloating] = useState([]);
   const reactionTimersRef = useRef([]);
   useEffect(() => () => reactionTimersRef.current.forEach(clearTimeout), []);
@@ -858,7 +875,7 @@ export default function CallOverlay({
               {groupGrid && <span className="wa-grid-participant-name">You{muted ? ' · Muted' : ''}</span>}
             </div>
             {extraPeers.map(({ peerId, info, snapshot: item }) => (
-              <ParticipantTile key={peerId} info={info} snapshot={item} video speakerOn={speakerOn} />
+              <ParticipantTile key={peerId} info={info} snapshot={item} video speakerOn={!audioMuted} />
             ))}
           </div>
         )}
@@ -989,13 +1006,13 @@ export default function CallOverlay({
         {!isVideo && extraPeers.length > 0 && (
           <div className="wa-call-participants is-audio" aria-label="Other participants">
             {extraPeers.map(({ peerId, info, snapshot: item }) => (
-              <ParticipantTile key={peerId} info={info} snapshot={item} video={false} speakerOn={speakerOn} />
+              <ParticipantTile key={peerId} info={info} snapshot={item} video={false} speakerOn={!audioMuted} />
             ))}
           </div>
         )}
 
         {/* REMOTE AUDIO ELEMENT (HANDLES SOUND OUTPUT IN BOTH AUDIO & VIDEO CALLS) */}
-        <audio ref={remoteAudioRef} autoPlay playsInline muted={!speakerOn} />
+        <audio ref={remoteAudioRef} autoPlay playsInline muted={audioMuted} />
 
         <FloatingReactions items={floating} />
         {moreOpen && !incomingRinging && !terminal && (
@@ -1089,10 +1106,11 @@ export default function CallOverlay({
 
             <button
               type="button"
-              className={`wa-dock-btn ${!speakerOn ? 'active' : ''}`}
-              onClick={() => setSpeakerOn(!speakerOn)}
-              title={speakerOn ? 'Mute speaker' : 'Turn speaker on'}
-              aria-label={speakerOn ? 'Mute speaker' : 'Turn speaker on'}
+              className={`wa-dock-btn ${nativeRouting ? (speakerOn ? 'active' : '') : (!speakerOn ? 'active' : '')}`}
+              onClick={toggleSpeaker}
+              title={speakerLabel}
+              aria-label={speakerLabel}
+              aria-pressed={speakerOn}
             >
               {speakerOn ? <Volume2 size={22} /> : <VolumeX size={22} />}
             </button>
@@ -1125,7 +1143,9 @@ export default function CallOverlay({
               <button
                 type="button"
                 className={`wa-action-cell ${speakerOn ? 'selected' : ''}`}
-                onClick={() => setSpeakerOn(!speakerOn)}
+                onClick={toggleSpeaker}
+                aria-label={speakerLabel}
+                aria-pressed={speakerOn}
               >
                 <span className="wa-action-bubble">
                   {speakerOn ? <Volume2 size={24} /> : <VolumeX size={24} />}

@@ -16,6 +16,7 @@
             android:label="@string/title_activity_main"
             android:theme="@style/AppTheme.NoActionBarLaunch"
             android:launchMode="singleTask"
+            android:supportsPictureInPicture="true"
             android:exported="true">
 
             <intent-filter>
@@ -65,6 +66,10 @@
     <!-- During a call: keep the microphone and camera working while the app is in the background. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
+    <!-- Voice calls on the earpiece: the proximity sensor turns the screen off against the ear. -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Saving received files on Android 9 and older (newer versions need no permission). -->
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />

@@ -20,17 +20,30 @@ final class RelaySession {
     final String userId;
     final Set<String> mutedChats;
     final Set<String> mutedGroups;
+    // The in-app "Default" tone choice means this phone's own sound for that kind of alert.
+    final boolean phoneMessageSound;
+    final boolean phoneGroupSound;
+    final boolean phoneRingtone;
 
-    private RelaySession(String origin, String token, String userId, Set<String> mutedChats, Set<String> mutedGroups) {
+    private RelaySession(String origin, String token, String userId, Set<String> mutedChats, Set<String> mutedGroups,
+                         boolean phoneMessageSound, boolean phoneGroupSound, boolean phoneRingtone) {
         this.origin = origin;
         this.token = token;
         this.userId = userId;
         this.mutedChats = mutedChats;
         this.mutedGroups = mutedGroups;
+        this.phoneMessageSound = phoneMessageSound;
+        this.phoneGroupSound = phoneGroupSound;
+        this.phoneRingtone = phoneRingtone;
     }
 
     /** Only an https origin (or http on a local test server) with a token and a user id is accepted. */
     static boolean save(Context context, String origin, String token, String userId, Set<String> mutedChats, Set<String> mutedGroups) {
+        return save(context, origin, token, userId, mutedChats, mutedGroups, false, false, false);
+    }
+
+    static boolean save(Context context, String origin, String token, String userId, Set<String> mutedChats, Set<String> mutedGroups,
+                        boolean phoneMessageSound, boolean phoneGroupSound, boolean phoneRingtone) {
         if (origin == null || token == null || userId == null || token.isEmpty() || userId.isEmpty()) return false;
         Uri uri = Uri.parse(origin);
         String scheme = uri.getScheme();
@@ -41,6 +54,9 @@ final class RelaySession {
             .putString("userId", userId)
             .putStringSet("mutedChats", mutedChats == null ? Collections.emptySet() : new HashSet<>(mutedChats))
             .putStringSet("mutedGroups", mutedGroups == null ? Collections.emptySet() : new HashSet<>(mutedGroups))
+            .putBoolean("phoneMessageSound", phoneMessageSound)
+            .putBoolean("phoneGroupSound", phoneGroupSound)
+            .putBoolean("phoneRingtone", phoneRingtone)
             .apply();
         return true;
     }
@@ -53,7 +69,8 @@ final class RelaySession {
         if (origin == null || token == null || userId == null) return null;
         return new RelaySession(origin, token, userId,
             new HashSet<>(prefs.getStringSet("mutedChats", Collections.emptySet())),
-            new HashSet<>(prefs.getStringSet("mutedGroups", Collections.emptySet())));
+            new HashSet<>(prefs.getStringSet("mutedGroups", Collections.emptySet())),
+            prefs.getBoolean("phoneMessageSound", false), prefs.getBoolean("phoneGroupSound", false), prefs.getBoolean("phoneRingtone", false));
     }
 
     static void clear(Context context) {

@@ -242,8 +242,9 @@ final class NativeRelay extends WebSocketListener {
             if (session.mutedChats.contains(sender)) return;
             String name = message.optString("senderName");
             String title = name.isEmpty() ? "@" + message.optString("senderUsername", "someone") : name;
-            Alerts.showMessage(context, NotificationChannels.DIRECT_MESSAGES, title, MessagePreview.of(message.optString("content")),
-                "relay-message-" + sender, "chat:" + sender);
+            String tag = "chat:" + sender;
+            Alerts.showMessage(context, session.phoneMessageSound ? NotificationChannels.DIRECT_MESSAGES_PHONE : NotificationChannels.DIRECT_MESSAGES,
+                title, MessagePreview.of(message.optString("content")), tag, tag, Alerts.nextCount(tag));
         } else if ("group:message".equals(type)) {
             JSONObject message = event.optJSONObject("message");
             if (message == null || session.userId.equals(message.optString("senderId"))) return;
@@ -251,8 +252,9 @@ final class NativeRelay extends WebSocketListener {
             if (session.mutedGroups.contains(groupId)) return;
             String senderName = event.optString("senderName", "");
             String body = MessagePreview.of(message.optString("content"));
-            Alerts.showMessage(context, NotificationChannels.GROUP_MESSAGES, event.optString("groupName", "Group"),
-                senderName.isEmpty() ? body : senderName + ": " + body, "relay-group-" + groupId, "group:" + groupId);
+            String tag = "group:" + groupId;
+            Alerts.showMessage(context, session.phoneGroupSound ? NotificationChannels.GROUP_MESSAGES_PHONE : NotificationChannels.GROUP_MESSAGES,
+                event.optString("groupName", "Group"), senderName.isEmpty() ? body : senderName + ": " + body, tag, tag, Alerts.nextCount(tag));
         } else if ("call:signal".equals(type)) {
             handleCallSignal(event);
         } else if ("call:invite".equals(type)) {
@@ -261,7 +263,7 @@ final class NativeRelay extends WebSocketListener {
                 pendingIce.clear();
                 pendingAt = System.currentTimeMillis();
             }
-            Alerts.showIncomingCall(context, "", callerName(event), "video".equals(event.optString("mode")));
+            Alerts.showIncomingCall(context, "", callerName(event), "video".equals(event.optString("mode")), session.phoneRingtone);
         }
     }
 
@@ -275,7 +277,8 @@ final class NativeRelay extends WebSocketListener {
                 pendingCall = event;
                 pendingIce.clear();
                 pendingAt = System.currentTimeMillis();
-                Alerts.showIncomingCall(context, callId, callerName(event), "video".equals(event.optString("mode")));
+                RelaySession current = RelaySession.read(context);
+                Alerts.showIncomingCall(context, callId, callerName(event), "video".equals(event.optString("mode")), current != null && current.phoneRingtone);
                 return;
             }
             if (pendingCall == null || !callId.equals(pendingCall.optString("callId"))) return;

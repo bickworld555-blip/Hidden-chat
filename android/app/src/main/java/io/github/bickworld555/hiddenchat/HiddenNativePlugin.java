@@ -34,7 +34,9 @@ import org.json.JSONObject;
     permissions = {
         @Permission(alias = "notifications", strings = { Manifest.permission.POST_NOTIFICATIONS }),
         @Permission(alias = "microphone", strings = { Manifest.permission.RECORD_AUDIO }),
-        @Permission(alias = "camera", strings = { Manifest.permission.CAMERA })
+        @Permission(alias = "camera", strings = { Manifest.permission.CAMERA }),
+        // Only Android 9 and older need this to save into Download/Hidden Messenger.
+        @Permission(alias = "storage", strings = { Manifest.permission.WRITE_EXTERNAL_STORAGE })
     }
 )
 public class HiddenNativePlugin extends Plugin {
@@ -179,7 +181,9 @@ public class HiddenNativePlugin extends Plugin {
     public void setSession(PluginCall call) {
         Set<String> mutedChats = new HashSet<>(stringList(call.getArray("mutedChats")));
         Set<String> mutedGroups = new HashSet<>(stringList(call.getArray("mutedGroups")));
-        boolean saved = RelaySession.save(getContext(), call.getString("origin"), call.getString("token"), call.getString("userId"), mutedChats, mutedGroups);
+        boolean saved = RelaySession.save(getContext(), call.getString("origin"), call.getString("token"), call.getString("userId"), mutedChats, mutedGroups,
+            Boolean.TRUE.equals(call.getBoolean("phoneMessageSound", false)), Boolean.TRUE.equals(call.getBoolean("phoneGroupSound", false)),
+            Boolean.TRUE.equals(call.getBoolean("phoneRingtone", false)));
         JSObject result = new JSObject();
         result.put("saved", saved);
         call.resolve(result);
@@ -188,8 +192,112 @@ public class HiddenNativePlugin extends Plugin {
     /** A call started or ended: while active the service keeps the microphone (and camera) working in the background. */
     @PluginMethod
     public void setCallActive(PluginCall call) {
-        MessagingService.setCall(getContext(), Boolean.TRUE.equals(call.getBoolean("active", false)), Boolean.TRUE.equals(call.getBoolean("video", false)));
+        boolean active = Boolean.TRUE.equals(call.getBoolean("active", false));
+        boolean video = Boolean.TRUE.equals(call.getBoolean("video", false));
+        MessagingService.setCall(getContext(), active, video);
+        // Voice calls start on the earpiece (or a headset), video calls on the loudspeaker.
+        if (active) CallAudio.start(getContext(), video);
+        else CallAudio.stop(getContext());
+        JSObject result = new JSObject();
+        result.put("speaker", CallAudio.isSpeaker());
+        call.resolve(result);
+    }
+
+    /** The in-call speaker button: loudspeaker on/off (off = earpiece or headset). */
+    @PluginMethod
+    public void setSpeaker(PluginCall call) {
+        CallAudio.setSpeaker(getContext(), Boolean.TRUE.equals(call.getBoolean("on", false)));
+        JSObject result = new JSObject();
+        result.put("speaker", CallAudio.isSpeaker());
+        call.resolve(result);
+    }
+
+    /** This phone's own default sound (the in-app "Default" choice): ringtone for calls, notification sound otherwise. */
+    @PluginMethod
+    public void playSystemSound(PluginCall call) {
+        boolean played = SystemSounds.play(getContext(), call.getString("key", "default"), Boolean.TRUE.equals(call.getBoolean("ringtone", false)),
+            Boolean.TRUE.equals(call.getBoolean("loop", false)));
+        JSObject result = new JSObject();
+        result.put("played", played);
+        call.resolve(result);
+    }
+
+    @PluginMethod
+    public void stopSystemSound(PluginCall call) {
+        SystemSounds.stop(call.getString("key", "default"));
         call.resolve();
+    }
+
+    /** A chat was read: remove its notification (and its part of the icon badge); no tag clears every chat. */
+    @PluginMethod
+    public void clearMessageNotifications(PluginCall call) {
+        String tag = call.getString("tag");
+        if (tag == null || tag.isEmpty()) Alerts.cancelAllMessages(getContext());
+        else Alerts.cancelMessage(getContext(), tag);
+        call.resolve();
+    }
+
+    /** Saves a file into Download/Hidden Messenger/<Images|Video|Audio|Documents>; progress arrives as "mediaSaveProgress". */
+    @PluginMethod
+    public void saveMedia(PluginCall call) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q && getPermissionState("storage") != PermissionState.GRANTED) {
+            requestPermissionForAlias("storage", call, "storagePermissionDone");
+            return;
+        }
+        startSave(call);
+    }
+
+    @PermissionCallback
+    private void storagePermissionDone(PluginCall call) {
+        if (getPermissionState("storage") == PermissionState.GRANTED) startSave(call);
+        else call.reject("Allow storage access to save files.");
+    }
+
+    private void startSave(PluginCall call) {
+        String url = call.getString("url");
+        String id = call.getString("id", "");
+        if (url == null || !(url.startsWith("https://") || url.startsWith("http://"))) {
+            call.reject("Nothing to save.");
+            return;
+        }
+        MediaSaver.save(getContext(), url, call.getString("filename", "file"), call.getString("mimeType", ""),
+            (received, total) -> {
+                JSObject progress = new JSObject();
+                progress.put("id", id);
+                progress.put("received", received);
+                progress.put("total", total);
+                notifyListeners("mediaSaveProgress", progress);
+            },
+            (result) -> {
+                JSObject saved = new JSObject();
+                saved.put("saved", true);
+                saved.put("path", result.path);
+                call.resolve(saved);
+            },
+            call::reject);
+    }
+
+    /** Nothing left to close on Back: leave the app running in the background, like WhatsApp. */
+    @PluginMethod
+    public void moveToBackground(PluginCall call) {
+        if (getActivity() != null) getActivity().runOnUiThread(() -> getActivity().moveTaskToBack(true));
+        call.resolve();
+    }
+
+    /** Back gesture/button: the web app closes its top screen; false when it is not listening yet. */
+    static boolean emitBack() {
+        HiddenNativePlugin plugin = instance;
+        if (plugin == null || !plugin.hasListeners("backButton")) return false;
+        plugin.notifyListeners("backButton", new JSObject());
+        return true;
+    }
+
+    static void emitPictureInPicture(boolean active) {
+        HiddenNativePlugin plugin = instance;
+        if (plugin == null) return;
+        JSObject data = new JSObject();
+        data.put("active", active);
+        plugin.notifyListeners("pictureInPicture", data, true);
     }
 
     /** Signing out: forget the account and stop the background connection. */
@@ -230,7 +338,7 @@ public class HiddenNativePlugin extends Plugin {
     public void notify(PluginCall call) {
         String channel = call.getString("channel");
         boolean shown = Alerts.showMessage(getContext(), channel, call.getString("title", "Hidden Messenger"), call.getString("body", ""),
-            call.getString("tag", channel), call.getString("open", ""));
+            call.getString("tag", channel), call.getString("open", ""), call.getInt("count", 0));
         JSObject result = new JSObject();
         result.put("shown", shown);
         call.resolve(result);
@@ -240,7 +348,7 @@ public class HiddenNativePlugin extends Plugin {
     @PluginMethod
     public void showIncomingCall(PluginCall call) {
         boolean shown = Alerts.showIncomingCall(getContext(), call.getString("callId", ""), call.getString("callerName", "Hidden Messenger"),
-            "video".equals(call.getString("mode")));
+            "video".equals(call.getString("mode")), Boolean.TRUE.equals(call.getBoolean("phoneRingtone", false)));
         if (shown) setCallWindow(true);
         JSObject result = new JSObject();
         result.put("shown", shown);

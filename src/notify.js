@@ -3,6 +3,7 @@
 import { badgeCount, getNotificationSettings, shouldRemind, soundPlan, systemNotificationAllowed } from './notificationSettings.js';
 import { channelForCategory, conversationOpenParam } from './notificationChannels.js';
 import { nativeNotify, nativeShell } from './native.js';
+import { usesPhoneSound } from './phoneSounds.js';
 
 export function vibrateFor(category) {
   const plan = soundPlan(category, getNotificationSettings());
@@ -29,13 +30,24 @@ export async function requestNotificationPermission() {
 // vibration are handled by the app itself (each channel has its own tone), so the notification is silent.
 // Android Chrome only allows notifications from the service worker (the Notification constructor throws
 // there), so the registration is used whenever one is active; clicks then arrive via postMessage.
-export async function showSystemNotification(category, { title, body, tag, conversation, onClick } = {}) {
+export async function showSystemNotification(category, { title, body, tag, conversation, onClick, count = 0 } = {}) {
   if (typeof document !== 'undefined' && document.visibilityState === 'visible' && document.hasFocus?.()) return null;
   if (!systemNotificationAllowed(category, getNotificationSettings())) return null;
   const channel = channelForCategory(category);
   // Inside the Android app the native channel posts it (with that channel's own sound).
   if (nativeShell()) {
-    const result = await nativeNotify({ channel: channel.id === 'group_messages' ? 'group_messages' : 'direct_messages', title, body, tag: `${channel.id}:${tag ?? conversationOpenParam(conversation)}`, open: conversationOpenParam(conversation) });
+    // One notification per conversation (tag "chat:<id>" / "group:<id>", cleared when the chat is read), with its
+    // unread count for the app icon badge; "Default" tone = the phone's own sound channel.
+    const base = channel.id === 'group_messages' ? 'group_messages' : 'direct_messages';
+    const open = conversationOpenParam(conversation);
+    const result = await nativeNotify({
+      channel: usesPhoneSound(category, undefined, true) ? `${base}_phone` : base,
+      title,
+      body,
+      tag: category === 'reaction' ? `${channel.id}:${tag ?? open}` : (open || tag),
+      open,
+      count,
+    });
     return result?.shown ? 'native' : null;
   }
   if (notificationPermission() !== 'granted') return null;

@@ -1,3 +1,4 @@
+import { useBackHandler } from '../backStack.js';
 import { useEffect, useRef, useState } from 'react';
 import { ArrowLeft, Bell, Minus, Plus, Volume2 } from 'lucide-react';
 import {
@@ -8,7 +9,8 @@ import {
   useNotificationSettings,
 } from '../notificationSettings.js';
 import { defaultToneForCategory, defaultToneId, isCustomChoice, libraryTone, toneChoiceLabel, toneLibrary } from '../tones.js';
-import { addCustomTone, getCustomTones, playToneChoice, removeCustomTone, stopTone } from '../sounds.js';
+import { addCustomTone, getCustomTones, playPhoneSound, playToneChoice, removeCustomTone, stopTone } from '../sounds.js';
+import { nativeShell } from '../native.js';
 import { notificationPermission, requestNotificationPermission, vibrateFor } from '../notify.js';
 
 const RINGTONE_PREVIEW_MS = 4500;
@@ -70,6 +72,8 @@ function TonePicker({ title, kind, defaultId = defaultToneId(kind), value, volum
   const [error, setError] = useState('');
   const fileRef = useRef(null);
   const previewKey = `preview:${kind}`;
+  // In the Android app "Default" is the phone's own sound (set in Android's sound settings).
+  const phoneSounds = nativeShell();
   const defaultTone = libraryTone(kind, defaultId) ?? libraryTone(kind, defaultToneId(kind));
 
   useEffect(() => {
@@ -82,7 +86,8 @@ function TonePicker({ title, kind, defaultId = defaultToneId(kind), value, volum
     onChange(choice);
     stopTone(previewKey);
     if (choice === 'silent') return;
-    playToneChoice(choice, kind, { loop: kind === 'ringtone', volume, key: previewKey, defaultId });
+    if (choice === 'default' && phoneSounds) playPhoneSound(previewKey, { ringtone: kind === 'ringtone', loop: kind === 'ringtone' });
+    else playToneChoice(choice, kind, { loop: kind === 'ringtone', volume, key: previewKey, defaultId });
     if (kind === 'ringtone') window.setTimeout(() => stopTone(previewKey), RINGTONE_PREVIEW_MS);
   }
 
@@ -121,7 +126,7 @@ function TonePicker({ title, kind, defaultId = defaultToneId(kind), value, volum
   return (
     <SubView title={title} onBack={onBack}>
       <section className="wa-info-section notif-card">
-        {option('default', kind === 'ringtone' ? 'Default ringtone' : 'Default notification sound', defaultTone.name)}
+        {option('default', kind === 'ringtone' ? 'Default ringtone' : 'Default notification sound', phoneSounds ? (kind === 'ringtone' ? "Your phone's ringtone" : "Your phone's notification sound") : defaultTone.name)}
         {option('silent', 'Silent')}
       </section>
       <section className="wa-info-section notif-card">
@@ -151,6 +156,8 @@ function TonePicker({ title, kind, defaultId = defaultToneId(kind), value, volum
 export default function NotificationSettings({ onClose }) {
   const settings = useNotificationSettings();
   const [view, setView] = useState(null);
+  // Android Back leaves a sub-screen first; the screen itself is closed by its opener.
+  useBackHandler(Boolean(view), () => setView(null));
   const [custom, setCustom] = useState([]);
   const [permission, setPermission] = useState(() => notificationPermission());
 
@@ -175,7 +182,7 @@ export default function NotificationSettings({ onClose }) {
     if (enabled) setPermission(await requestNotificationPermission());
   }
 
-  const toneLabel = (choice, kind, defaultId) => toneChoiceLabel(choice, kind, custom, defaultId);
+  const toneLabel = (choice, kind, defaultId) => (choice === 'default' && nativeShell() ? 'Default (phone sound)' : toneChoiceLabel(choice, kind, custom, defaultId));
   const sectionDefault = (section) => (section === 'groups' ? defaultToneForCategory('group', 'notification') : undefined);
   const vibrateLabel = (id) => VIBRATE_OPTIONS.find((option) => option.id === id)?.label ?? 'Default';
   const lightLabel = (id) => LIGHT_OPTIONS.find((option) => option.id === id)?.label ?? 'White';

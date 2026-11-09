@@ -12,6 +12,8 @@ import { exportGroupChat, parseScheduledCall, scheduledCallContent, senderColor,
 import { setGroupMuted, setViewingGroup, useMutedGroups } from '../groupPrefs.js';
 import Avatar from './Avatar.jsx';
 import MediaRenderer from './MediaRenderer.jsx';
+import { useBackHandler } from '../backStack.js';
+import { nativeClearMessageNotifications, nativeShell } from '../native.js';
 import { EventBubble, EventComposer, PollBubble, PollComposer } from './RichMessages.jsx';
 import { parsePollContent } from '../polls.js';
 import { parseEventContent } from '../calendarEvents.js';
@@ -228,6 +230,7 @@ export default function GroupsView({ token, userId, revision, onClose, onStartGr
   const viewingId = group && !settings && !creating ? selected : '';
   useEffect(() => {
     setViewingGroup(viewingId);
+    if (viewingId && nativeShell()) nativeClearMessageNotifications(`group:${viewingId}`);
     return () => setViewingGroup('');
   }, [viewingId]);
 
@@ -258,6 +261,9 @@ export default function GroupsView({ token, userId, revision, onClose, onStartGr
       setUploading(0);
     }
   }
+
+  // Android Back walks the same levels as the on-screen back arrow (picker → settings → conversation → list → close).
+  useBackHandler(true, () => goBack());
 
   function goBack() {
     if (callPicker || scheduling) { setCallPicker(''); setScheduling(false); }

@@ -40,13 +40,28 @@ export const nativeRequestBatteryExemption = async () => remember(await invoke('
 // The service needs the account before it starts (it stops itself without one), so starting waits for any
 // session hand-over still in flight.
 let sessionSaved = Promise.resolve(null);
-export function nativeSetSession({ origin, token, userId, mutedChats = [], mutedGroups = [] }) {
-  sessionSaved = invoke('setSession', { origin, token, userId, mutedChats, mutedGroups });
+export function nativeSetSession({ origin, token, userId, mutedChats = [], mutedGroups = [], phoneMessageSound = false, phoneGroupSound = false, phoneRingtone = false }) {
+  sessionSaved = invoke('setSession', { origin, token, userId, mutedChats, mutedGroups, phoneMessageSound, phoneGroupSound, phoneRingtone });
   return sessionSaved;
 }
 export const nativeClearSession = () => invoke('clearSession');
 // While a call is live the service also holds the microphone/camera, so the call keeps working in the background.
 export const nativeSetCallActive = (active, video = false) => invoke('setCallActive', { active: Boolean(active), video: Boolean(video) });
+// Loudspeaker on/off during a call (off = earpiece, or a headset when one is connected). Resolves { speaker }.
+export const nativeSetSpeaker = (on) => invoke('setSpeaker', { on: Boolean(on) });
+// The phone's own default sounds, for the in-app "Default" tone choice.
+export const nativePlaySystemSound = ({ key, ringtone = false, loop = false }) => invoke('playSystemSound', { key, ringtone, loop });
+export const nativeStopSystemSound = (key) => invoke('stopSystemSound', { key });
+// A chat was read: drop its notification and its share of the app icon badge (no tag: every chat).
+export const nativeClearMessageNotifications = (tag) => invoke('clearMessageNotifications', tag ? { tag } : {});
+// Saves into Download/Hidden Messenger/<Images|Video|Audio|Documents>; resolves { saved, path }.
+// Unlike the other calls this one rejects with the reason, so the user can be told why a save failed.
+export async function nativeSaveMedia({ id, url, filename, mimeType = '' }) {
+  const native = (await plugin())?.native;
+  if (!native) return null;
+  return native.saveMedia({ id, url, filename, mimeType });
+}
+export const nativeMoveToBackground = () => invoke('moveToBackground');
 // A call the background service rang while the app was closed: { event, ice[] } or null.
 export const nativeTakePendingCall = async () => (await invoke('takePendingCall'))?.pending ?? null;
 export const nativeStartBackground = async () => {

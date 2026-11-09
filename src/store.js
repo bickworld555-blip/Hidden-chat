@@ -75,10 +75,34 @@ export function orderChatsByActivity(chats) {
 }
 
 // The chat-list summary (preview, time, ordering key) is derived from the conversation's newest message.
+// "📷 4 photos" when the newest messages are a run of photos (or videos) from the same person, like WhatsApp.
+export function chatPreview(messages) {
+  const last = messages?.length ? messages[messages.length - 1] : null;
+  if (!last) return '';
+  const label = previewFor(last.content);
+  const plural = label === '📷 Photo' ? 'photos' : label === '🎥 Video' ? 'videos' : null;
+  if (!plural) return label;
+  let run = 0;
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.senderId !== last.senderId || previewFor(message.content) !== label) break;
+    run += 1;
+  }
+  return run > 1 ? `${label.split(' ')[0]} ${run} ${plural}` : label;
+}
+
+// Messages from this person that I have not read yet (the server's read state is the source of truth).
+export function unreadFrom(messages, peerId, userId) {
+  return (messages ?? []).filter((message) => message.senderId === peerId && message.receiverId === userId
+    && message.status !== 'read' && !message.deleted && !String(message.content ?? '').startsWith('call:')).length;
+}
+
+const pageVisible = () => typeof document === 'undefined' || document.visibilityState === 'visible';
+
 function summarizeChat(chat, messages) {
   const last = messages?.length ? messages[messages.length - 1] : null;
   if (!last) return chat;
-  return { ...chat, preview: previewFor(last.content), time: formatChatListTime(last.timestamp), lastActivityAt: last.timestamp };
+  return { ...chat, preview: chatPreview(messages), time: formatChatListTime(last.timestamp), lastActivityAt: last.timestamp };
 }
 
 // Re-derives a chat's summary after messages were removed; an emptied chat keeps its place in the list.
@@ -351,7 +375,8 @@ export const useChatStore = create((setState, getState) => ({
       const chats = existingChat
         ? state.chats.map((chat) => chat.id === chatId ? summarizeChat({
           ...chat,
-          unread: message.senderId === state.userId || state.activeChatId === chatId ? chat.unread : chat.unread + 1,
+          // An open chat only stays at 0 while it is actually on screen; in the background it counts like any other.
+          unread: message.senderId === state.userId || (state.activeChatId === chatId && pageVisible()) ? chat.unread : chat.unread + 1,
         }, nextMessages) : chat)
         : [summarizeChat({ ...peer, ...restored, unread: 1, online: true }, nextMessages), ...state.chats];
       return {
@@ -388,7 +413,11 @@ export const useChatStore = create((setState, getState) => ({
       const messages = [...merged.values()].sort((left, right) => left.timestamp.localeCompare(right.timestamp));
       return {
         messages: { ...state.messages, [chatId]: messages },
-        chats: orderChatsByActivity(state.chats.map((chat) => chat.id === chatId ? summarizeChat(chat, messages) : chat)),
+        // History carries each message's read state, so the badge is right after the app was closed (messages that
+        // arrived meanwhile were never counted live) and after reading on another device.
+        chats: orderChatsByActivity(state.chats.map((chat) => (chat.id === chatId
+          ? { ...summarizeChat(chat, messages), unread: state.activeChatId === chatId && pageVisible() ? 0 : unreadFrom(messages, chatId, state.userId) }
+          : chat))),
       };
     });
   },

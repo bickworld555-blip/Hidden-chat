@@ -22,6 +22,8 @@ import { hasCustomDisplayName, presentName } from '../profile.js';
 import CallStatusBubble from './CallStatusBubble.jsx';
 import MediaRenderer from './MediaRenderer.jsx';
 import { lazyComponent } from '../lazy.js';
+import { useBackHandler } from '../backStack.js';
+import { nativeClearMessageNotifications, nativeShell } from '../native.js';
 const LocationPicker = lazyComponent(() => import('./LocationPicker.jsx'));
 const MapView = lazyComponent(() => import('./LocationMap.jsx'), (module) => module.MapView);
 const ContactInfoDrawer = lazyComponent(() => import('./ContactInfoDrawer.jsx'));
@@ -726,6 +728,8 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
       }
     }
     markRead(chatId);
+    // Read on screen: its Android notification (and its share of the icon badge) goes away.
+    if (nativeShell()) nativeClearMessageNotifications(`chat:${chatId}`);
   }, [messages, chatId, client, markRead, updateMessage, pageVisible]);
 
   useEffect(() => () => clearTimeout(typingTimerRef.current), []);
@@ -920,6 +924,16 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
   }
 
   const [mapView, setMapView] = useState(null);
+  // Android Back inside a chat closes what is open on top of it, newest first.
+  useBackHandler(selectedIds.length > 0, () => clearSelection());
+  useBackHandler(searchOpen, () => setSearchOpen(false));
+  useBackHandler(emojiOpen, () => setEmojiOpen(false));
+  useBackHandler(menuOpen, () => setMenuOpen(false));
+  useBackHandler(Boolean(picker), () => setPicker(null));
+  useBackHandler(Boolean(forwardSource), () => setForwardSource(null));
+  useBackHandler(contactInfoOpen, () => setContactInfoOpen(false));
+  useBackHandler(Boolean(viewerMessageId), () => setViewerMessageId(null));
+  useBackHandler(Boolean(mapView), () => setMapView(null));
   const liveSend = useCallback((payload) => client?.send?.(payload), [client]);
   const sharedHandlers = useMemo(() => ({
     peerName: chat?.name ?? 'Contact',
