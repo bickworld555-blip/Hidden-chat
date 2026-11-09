@@ -16,7 +16,7 @@ import { parseShare } from './shareTarget.js';
 import ShareSheet from './components/ShareSheet.jsx';
 import CallAccessSheet from './components/CallAccessSheet.jsx';
 import { publishShareShortcuts } from './shareShortcuts.js';
-import { CALL_ACCESS_ASKED_KEY, missingCallAccess } from './callAccess.js';
+import { CALL_ACCESS_ASKED_KEY, shouldAskCallAccess } from './callAccess.js';
 import { PERMISSIONS_ASKED_KEY } from './permissionsKey.js';
 import Sidebar from './components/Sidebar.jsx';
 import ChatWindow from './components/ChatWindow.jsx';
@@ -682,12 +682,13 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [chats, groupRows, userId, sessionToken]);
 
-  // Lock-screen calls and the floating video window need two Android switches; ask once if either is off.
+  // Lock-screen calls and the floating video window need Android switches; ask again every few days while one is off.
   async function checkCallAccess() {
     if (!nativeShell()) return;
-    try { if (localStorage.getItem(CALL_ACCESS_ASKED_KEY) === '1') return; } catch { /* private mode */ }
+    let lastAskedAt = 0;
+    try { lastAskedAt = Number(localStorage.getItem(CALL_ACCESS_ASKED_KEY)) || 0; } catch { /* private mode */ }
     const state = await nativeState();
-    if (missingCallAccess(state).length > 0) setCallAccess(state);
+    if (shouldAskCallAccess(state, lastAskedAt)) setCallAccess(state);
   }
 
   // Motion preference goes on <html> so overlays rendered outside the shell follow it too.

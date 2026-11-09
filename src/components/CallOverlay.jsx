@@ -504,7 +504,7 @@ export default function CallOverlay({
     if (!nativeShell()) return;
     if (ringingIncoming && pageHidden) {
       stopTone('incomingCall');
-      nativeShowIncomingCall({ callId: call.id, callerName: peer?.name ?? 'Hidden Messenger', mode: call.mode, phoneRingtone: usesPhoneSound('incomingCall', undefined, true) });
+      nativeShowIncomingCall({ callId: call.id, callerName: peer?.name ?? 'Hidden Messenger', callerAvatar: typeof peer?.avatar === 'string' && peer.avatar.startsWith('/') ? peer.avatar : null, mode: call.mode, phoneRingtone: usesPhoneSound('incomingCall', undefined, true) });
     } else nativeCancelIncomingCall();
   }, [ringingIncoming, pageHidden, call.id, call.mode, peer?.name]);
   // While it rings the call screen stays over the lock screen, whether or not the notification is still up.

@@ -273,7 +273,7 @@ final class NativeRelay extends WebSocketListener {
                 pendingIce.clear();
                 pendingAt = System.currentTimeMillis();
             }
-            Alerts.showIncomingCall(context, "", callerName(event), "video".equals(event.optString("mode")), session.phoneRingtone);
+            Alerts.showIncomingCall(context, "", callerName(event), "video".equals(event.optString("mode")), session.phoneRingtone, callerAvatar(event));
         }
     }
 
@@ -288,7 +288,7 @@ final class NativeRelay extends WebSocketListener {
                 pendingIce.clear();
                 pendingAt = System.currentTimeMillis();
                 RelaySession current = RelaySession.read(context);
-                Alerts.showIncomingCall(context, callId, callerName(event), "video".equals(event.optString("mode")), current != null && current.phoneRingtone);
+                Alerts.showIncomingCall(context, callId, callerName(event), "video".equals(event.optString("mode")), current != null && current.phoneRingtone, callerAvatar(event));
                 return;
             }
             if (pendingCall == null || !callId.equals(pendingCall.optString("callId"))) return;
@@ -300,6 +300,12 @@ final class NativeRelay extends WebSocketListener {
                 Alerts.cancelIncomingCall(context);
             }
         }
+    }
+
+    private static String callerAvatar(JSONObject event) {
+        JSONObject from = event.optJSONObject("fromUser");
+        String avatar = from == null || from.isNull("avatar") ? "" : from.optString("avatar");
+        return avatar.isEmpty() ? null : avatar;
     }
 
     private static String callerName(JSONObject event) {

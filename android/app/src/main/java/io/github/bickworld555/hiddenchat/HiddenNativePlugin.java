@@ -140,6 +140,8 @@ public class HiddenNativePlugin extends Plugin {
         NotificationManager notifications = context.getSystemService(NotificationManager.class);
         result.put("fullScreenCalls", Build.VERSION.SDK_INT < 34 || (notifications != null && notifications.canUseFullScreenIntent()));
         result.put("pictureInPicture", pictureInPictureAllowed(context));
+        // "Display over other apps": lets the app open its call screen over the lock screen by itself.
+        result.put("overlay", Build.VERSION.SDK_INT < Build.VERSION_CODES.M || Settings.canDrawOverlays(context));
         return result;
     }
 
@@ -162,6 +164,7 @@ public class HiddenNativePlugin extends Plugin {
         Intent intent;
         if ("fullScreen".equals(which) && Build.VERSION.SDK_INT >= 34) intent = new Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT, pkg);
         else if ("pictureInPicture".equals(which)) intent = new Intent("android.settings.PICTURE_IN_PICTURE_SETTINGS", pkg);
+        else if ("overlay".equals(which)) intent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, pkg);
         else intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, pkg);
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         try {
@@ -457,7 +460,7 @@ public class HiddenNativePlugin extends Plugin {
     @PluginMethod
     public void showIncomingCall(PluginCall call) {
         boolean shown = Alerts.showIncomingCall(getContext(), call.getString("callId", ""), call.getString("callerName", "Hidden Messenger"),
-            "video".equals(call.getString("mode")), Boolean.TRUE.equals(call.getBoolean("phoneRingtone", false)));
+            "video".equals(call.getString("mode")), Boolean.TRUE.equals(call.getBoolean("phoneRingtone", false)), call.getString("callerAvatar"));
         if (shown) setCallWindow(true);
         JSObject result = new JSObject();
         result.put("shown", shown);

@@ -81,13 +81,20 @@ final class Alerts {
         return showIncomingCall(context, callId, caller, video, false);
     }
 
-    /** `phoneRingtone`: ring with this phone's default ringtone (the in-app "Default" choice). */
     static boolean showIncomingCall(Context context, String callId, String caller, boolean video, boolean phoneRingtone) {
+        return showIncomingCall(context, callId, caller, video, phoneRingtone, null);
+    }
+
+    /**
+     * `phoneRingtone`: ring with this phone's default ringtone (the in-app "Default" choice). `avatar`: the caller's
+     * profile photo path on the server (shown on the call screen), or null.
+     */
+    static boolean showIncomingCall(Context context, String callId, String caller, boolean video, boolean phoneRingtone, String avatar) {
         String id = callId == null ? "" : callId;
         String name = caller == null || caller.isEmpty() ? "Hidden Messenger" : caller;
         // The full-screen call is a native screen: it shows the moment the phone lights up, without waiting for the
         // app's web screen to load (which left a black screen over the lock screen while the ringtone played).
-        Intent show = IncomingCallActivity.intent(context, id, name, video);
+        Intent show = IncomingCallActivity.intent(context, id, name, video, avatar);
         Intent accept = new Intent(context, MainActivity.class)
             .setAction(ACTION_ACCEPT)
             .setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP)
@@ -123,6 +130,7 @@ final class Alerts {
         try {
             NotificationManagerCompat.from(context).notify(CALL_TAG, CALL_NOTIFICATION_ID, notification);
             ringing = true;
+            openCallScreen(context, show);
             wakeScreen(context);
             // App on screen (or in the background): light the screen and show the call over the lock screen now.
             MainActivity.callWindowChanged();
@@ -159,6 +167,26 @@ final class Alerts {
     private static android.os.PowerManager.WakeLock screenLock;
 
     private static final android.os.Handler main = new android.os.Handler(android.os.Looper.getMainLooper());
+
+    /**
+     * Phone locked or screen off: open the call screen ourselves, like WhatsApp, when "Display over other apps" is
+     * allowed. That permission lets an app start its screen from the background, so the call shows full screen even
+     * where Android 14+ has switched full-screen notifications off (then it would only be a small banner). Without
+     * it Android ignores the request and the notification's full-screen intent does the job where it is allowed.
+     */
+    private static void openCallScreen(Context context, Intent show) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M || !android.provider.Settings.canDrawOverlays(context)) return;
+        android.app.KeyguardManager keyguard = context.getSystemService(android.app.KeyguardManager.class);
+        android.os.PowerManager power = context.getSystemService(android.os.PowerManager.class);
+        boolean locked = keyguard != null && keyguard.isKeyguardLocked();
+        boolean dark = power != null && !power.isInteractive();
+        if (!locked && !dark) return; // in use: the heads-up banner with Answer / Decline, as WhatsApp does
+        try {
+            context.startActivity(new Intent(show));
+        } catch (RuntimeException blocked) {
+            // Not allowed after all: the notification's full-screen intent and the screen wake-up remain.
+        }
+    }
 
     /**
      * Makes sure the screen lights while a call rings. Normally the full-screen call screen does that itself, but

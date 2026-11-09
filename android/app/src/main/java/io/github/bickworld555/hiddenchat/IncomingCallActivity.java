@@ -25,14 +25,16 @@ import android.widget.TextView;
 public class IncomingCallActivity extends Activity {
     static final String EXTRA_CALLER = "hm_caller";
     static final String EXTRA_VIDEO = "hm_video";
+    static final String EXTRA_AVATAR = "hm_avatar";
     private static IncomingCallActivity current;
 
-    static Intent intent(Context context, String callId, String caller, boolean video) {
+    static Intent intent(Context context, String callId, String caller, boolean video, String avatar) {
         return new Intent(context, IncomingCallActivity.class)
             .setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_NO_USER_ACTION)
             .putExtra(Alerts.EXTRA_CALL_ID, callId == null ? "" : callId)
             .putExtra(EXTRA_CALLER, caller)
-            .putExtra(EXTRA_VIDEO, video);
+            .putExtra(EXTRA_VIDEO, video)
+            .putExtra(EXTRA_AVATAR, avatar);
     }
 
     /** The call stopped ringing: take the screen down. */
@@ -97,12 +99,9 @@ public class IncomingCallActivity extends Activity {
         TextView encrypted = text("🔒 End-to-end encrypted", 13, "#8696a0", false);
         root.addView(encrypted);
 
-        TextView title = text(name, 30, "#e9edef", false);
-        title.setPadding(0, dp(20), 0, dp(6));
-        title.setSingleLine(true);
-        title.setEllipsize(android.text.TextUtils.TruncateAt.END);
-        root.addView(title);
-        root.addView(text(video ? "Incoming video call" : "Incoming voice call", 16, "#aebac1", false));
+        // Photo, name and call type sit in the middle of the screen: when Android also shows its call banner at the
+        // top (it does when the app opens this screen itself), it cannot cover who is calling.
+        root.addView(new View(this), new LinearLayout.LayoutParams(1, 0, 1f));
 
         TextView avatar = text(initials(name), 44, "#ffffff", true);
         avatar.setGravity(Gravity.CENTER);
@@ -110,12 +109,23 @@ public class IncomingCallActivity extends Activity {
         circle.setShape(GradientDrawable.OVAL);
         circle.setColor(Color.parseColor("#00a884"));
         avatar.setBackground(circle);
-        LinearLayout.LayoutParams avatarSize = new LinearLayout.LayoutParams(dp(132), dp(132));
-        avatarSize.topMargin = dp(56);
-        root.addView(avatar, avatarSize);
+        android.widget.FrameLayout photoFrame = new android.widget.FrameLayout(this);
+        photoFrame.addView(avatar, new android.widget.FrameLayout.LayoutParams(dp(132), dp(132)));
+        ImageView photo = new ImageView(this);
+        photo.setScaleType(ImageView.ScaleType.FIT_XY);
+        photo.setVisibility(View.GONE);
+        photoFrame.addView(photo, new android.widget.FrameLayout.LayoutParams(dp(132), dp(132)));
+        root.addView(photoFrame, new LinearLayout.LayoutParams(dp(132), dp(132)));
+        loadPhoto(intent.getStringExtra(EXTRA_AVATAR), photo);
 
-        View spacer = new View(this);
-        root.addView(spacer, new LinearLayout.LayoutParams(1, 0, 1f));
+        TextView title = text(name, 30, "#e9edef", false);
+        title.setPadding(0, dp(24), 0, dp(6));
+        title.setSingleLine(true);
+        title.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        root.addView(title);
+        root.addView(text(video ? "Incoming video call" : "Incoming voice call", 16, "#aebac1", false));
+
+        root.addView(new View(this), new LinearLayout.LayoutParams(1, 0, 1.2f));
 
         LinearLayout buttons = new LinearLayout(this);
         buttons.setOrientation(LinearLayout.HORIZONTAL);
@@ -125,6 +135,46 @@ public class IncomingCallActivity extends Activity {
         root.addView(buttons, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
 
         setContentView(root);
+    }
+
+    /**
+     * The caller's profile photo, fetched with the signed-in session the background service keeps; the initials stay
+     * if there is none or it cannot be loaded.
+     */
+    private void loadPhoto(String path, ImageView target) {
+        RelaySession session = RelaySession.read(this);
+        if (path == null || path.isEmpty() || !path.startsWith("/") || session == null) return;
+        String url = session.origin + path;
+        String token = session.token;
+        new Thread(() -> {
+            java.net.HttpURLConnection connection = null;
+            try {
+                connection = (java.net.HttpURLConnection) new java.net.URL(url).openConnection();
+                connection.setConnectTimeout(5000);
+                connection.setReadTimeout(5000);
+                connection.setRequestProperty("Authorization", "Bearer " + token);
+                if (connection.getResponseCode() != 200) return;
+                android.graphics.Bitmap bitmap;
+                try (java.io.InputStream input = connection.getInputStream()) {
+                    bitmap = android.graphics.BitmapFactory.decodeStream(input);
+                }
+                if (bitmap == null) return;
+                int side = Math.min(bitmap.getWidth(), bitmap.getHeight());
+                bitmap = android.graphics.Bitmap.createBitmap(bitmap, (bitmap.getWidth() - side) / 2, (bitmap.getHeight() - side) / 2, side, side);
+                androidx.core.graphics.drawable.RoundedBitmapDrawable round =
+                    androidx.core.graphics.drawable.RoundedBitmapDrawableFactory.create(getResources(), bitmap);
+                round.setCircular(true);
+                runOnUiThread(() -> {
+                    if (isFinishing()) return;
+                    target.setImageDrawable(round);
+                    target.setVisibility(View.VISIBLE);
+                });
+            } catch (Exception unavailable) {
+                // Offline or no photo: the initials stay.
+            } finally {
+                if (connection != null) connection.disconnect();
+            }
+        }).start();
     }
 
     /** Opens the app straight into the call, still over the lock screen (it shows there while a call is on). */
