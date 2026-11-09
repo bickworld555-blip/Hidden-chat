@@ -5,7 +5,7 @@ import { apiFetch } from '../api.js';
 import { uploadFile } from '../upload.js';
 import { useChatStore } from '../store.js';
 import { nativeReadSharedFile } from '../native.js';
-import { SHARE_TARGET_LIMIT, shareSteps, shareSummary } from '../shareTarget.js';
+import { SHARE_TARGET_LIMIT, recentShareTargets, shareSteps, shareSummary } from '../shareTarget.js';
 import { useBackHandler } from '../backStack.js';
 
 async function postToGroup(token, groupId, content) {
@@ -26,7 +26,14 @@ export default function ShareSheet({ share, groups = [], userId, sessionToken, o
   const chats = useChatStore((state) => state.chats);
   const [query, setQuery] = useState('');
   const [searching, setSearching] = useState(false);
-  const [selected, setSelected] = useState([]);
+  // Shared to one of our Android share-sheet shortcuts: that chat starts out chosen.
+  const [selected, setSelected] = useState(() => {
+    const target = share?.target;
+    if (!target) return [];
+    const source = target.kind === 'group' ? groups : useChatStore.getState().chats;
+    const match = source.find((item) => item?.id === target.id);
+    return match ? [{ ...match, kind: target.kind }] : [];
+  });
   const [notice, setNotice] = useState('');
   const [progress, setProgress] = useState('');
   const [error, setError] = useState('');
@@ -51,6 +58,7 @@ export default function ShareSheet({ share, groups = [], userId, sessionToken, o
     ].filter((section) => section.items.length > 0);
   }, [chats, groups, query, userId]);
 
+  const recents = useMemo(() => recentShareTargets(chats, groups, userId), [chats, groups, userId]);
   const key = (item) => `${item.kind}:${item.id}`;
   const selectedKeys = new Set(selected.map(key));
 
@@ -61,15 +69,15 @@ export default function ShareSheet({ share, groups = [], userId, sessionToken, o
     else setSelected((current) => [...current, item]);
   }
 
-  async function send() {
-    if (busy || selected.length === 0) return;
+  async function send(targets = selected) {
+    if (busy || targets.length === 0) return;
     setError('');
     const steps = shareSteps(share);
     const files = new Map();
-    const total = selected.length * steps.length;
+    const total = targets.length * steps.length;
     let done = 0;
     try {
-      for (const target of selected) {
+      for (const target of targets) {
         for (const step of steps) {
           setProgress(total > 1 ? `Sending ${done + 1} of ${total}…` : 'Sending…');
           let content = step.text;
@@ -85,7 +93,7 @@ export default function ShareSheet({ share, groups = [], userId, sessionToken, o
           done += 1;
         }
       }
-      onDone(selected);
+      onDone(targets);
     } catch (caught) {
       setError(caught?.message || 'Sharing failed. Try again.');
     } finally {
@@ -114,6 +122,18 @@ export default function ShareSheet({ share, groups = [], userId, sessionToken, o
           )}
         </header>
         <p className="wa-share-preview">{shareSummary(share)}</p>
+        {recents.length > 0 && !query && (
+          <div className="wa-share-recents" role="list" aria-label="Send straight to a recent chat">
+            {recents.map((item) => (
+              <button type="button" role="listitem" key={key(item)} className="wa-share-recent" onClick={() => send([item])} disabled={busy} aria-label={`Send to ${item.name ?? item.username}`}>
+                {item.kind === 'group'
+                  ? <span className="avatar wa-share-group-avatar"><Users size={22} /></span>
+                  : <Avatar name={item.name} initials={item.initials ?? item.name?.slice(0, 2)?.toUpperCase() ?? '?'} color={item.color} image={item.avatar} />}
+                <span>{item.name ?? item.username}</span>
+              </button>
+            ))}
+          </div>
+        )}
         <div className="wa-forward-list">
           {sections.length === 0 && <p className="wa-forward-empty">{query ? `No results for “${query.trim()}”` : 'No chats yet'}</p>}
           {sections.map((section) => (
@@ -144,7 +164,7 @@ export default function ShareSheet({ share, groups = [], userId, sessionToken, o
         {selected.length > 0 && (
           <footer className="wa-forward-footer">
             <span className="wa-forward-names">{selected.map((item) => item.name ?? item.username).join(', ')}</span>
-            <button type="button" className="wa-forward-send" onClick={send} disabled={busy} aria-label={`Send to ${selected.length} chat${selected.length === 1 ? '' : 's'}`}>
+            <button type="button" className="wa-forward-send" onClick={() => send()} disabled={busy} aria-label={`Send to ${selected.length} chat${selected.length === 1 ? '' : 's'}`}>
               <Send size={20} />
             </button>
           </footer>

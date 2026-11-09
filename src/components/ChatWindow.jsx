@@ -18,7 +18,7 @@ import AttachmentMenu from './AttachmentMenu.jsx';
 import SelectContactModal from './SelectContactModal.jsx';
 import { ContactBubble, LiveLocationBubble, LocationBubble } from './LocationMessages.jsx';
 import { contactContent, liveContent, locationContent, messageKind, parseContact, parseLive, parseLocation } from '../geo.js';
-import { hasCustomDisplayName, presentName } from '../profile.js';
+import { presentName } from '../profile.js';
 import CallStatusBubble from './CallStatusBubble.jsx';
 import MediaRenderer from './MediaRenderer.jsx';
 import { lazyComponent } from '../lazy.js';
@@ -1248,7 +1248,6 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
                 {chat.disappearSeconds > 0 && <Timer size={13} className="conversation-timer" aria-label={`Disappearing messages: ${disappearingLabel(chat.disappearSeconds)}`} />}
               </strong>
               <small>
-                {hasCustomDisplayName(chat) && <span className="conversation-handle">@{chat.username} · </span>}
                 {blocked ? 'Blocked' : connection && connection !== 'online' && connection !== 'connected' ? [status, connection].filter(Boolean).join(' · ') : status}
               </small>
             </span>

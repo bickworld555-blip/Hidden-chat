@@ -86,6 +86,8 @@ export async function nativeOpenExternal(url) {
   return (await invoke('openExternal', { url })) !== null;
 }
 export const nativeClearShare = () => invoke('clearShare');
+// Recent chats for the top row of Android's share sheet: [{ kind, id, name, initials, color, avatar (base64) }].
+export const nativeSetShareTargets = (targets) => invoke('setShareTargets', { targets });
 
 function base64Bytes(data) {
   const binary = atob(data);

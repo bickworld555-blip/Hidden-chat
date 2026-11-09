@@ -342,7 +342,7 @@ test('the UI wires the WhatsApp composer, display names, the live-location sheet
 
   assert.ok(tools.includes('function DisplayNameEditor') && tools.includes('updateDisplayName(draft, sessionToken)') && tools.includes('className="user-handle"') && tools.includes('ID · {userId}'), 'the profile card edits the display name and shows the @handle and ID separately');
   assert.ok(tools.includes('className="display-name-pencil"') && tools.includes('aria-label="Edit display name"') && styles.includes('.display-name-pencil {') && !styles.includes('.display-name-button svg { color: #89969b; opacity: 0;'), 'an always-visible pencil beside the name opens the editor');
-  assert.ok(sidebar.includes('presentName(user)') && drawer.includes('presentName(chat)') && chat.includes('presentName(chat)') && chat.includes('className="conversation-handle"'), 'headers distinguish display name from handle');
+  assert.ok(sidebar.includes('presentName(user)') && drawer.includes('presentName(chat)') && chat.includes('presentName(chat)') && !chat.includes('className="conversation-handle"'), 'headers show the display name; the chat header has no @handle line (like WhatsApp)');
 
   assert.ok(tools.includes('<strong>Animation</strong>') && tools.includes('setAnimationsEnabled(!animations)') && tools.includes('role="switch"'), 'an Animation switch in Settings & Preferences');
   assert.ok(tools.includes('<strong>Animation Video Call</strong>') && tools.includes('setCallAnimationsEnabled(!callAnimations)') && tools.includes('Off while Animation is off'), 'a separate Animation Video Call switch with its own description');

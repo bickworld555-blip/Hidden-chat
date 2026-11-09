@@ -356,6 +356,8 @@ public class HiddenNativePlugin extends Plugin {
     @PluginMethod
     public void clearSession(PluginCall call) {
         RelaySession.clear(getContext());
+        // Signed out: this account's chats must not stay in the share sheet or on the app icon.
+        ShareShortcuts.clear(getContext());
         NativeRelay.stop();
         call.resolve();
     }
@@ -427,6 +429,15 @@ public class HiddenNativePlugin extends Plugin {
         } catch (java.io.IOException | RuntimeException failure) {
             call.reject(failure.getMessage() != null ? failure.getMessage() : "The shared file could not be read.");
         }
+    }
+
+    /** Recent chats for the share sheet's top row: [{ kind, id, name, initials, color, avatar }]. */
+    @PluginMethod
+    public void setShareTargets(PluginCall call) {
+        JSArray targets = call.getArray("targets", new JSArray());
+        JSObject result = new JSObject();
+        result.put("published", ShareShortcuts.publish(getContext(), targets));
+        call.resolve(result);
     }
 
     /** The share was sent or dismissed: release the shared files. */

@@ -94,7 +94,7 @@ test('device names come from the browser and system, with the Android app recogn
   assert.equal(deviceNameFromUserAgent(undefined, 'Linked device'), 'Linked device');
 });
 
-test('the header line reads "online", "last seen today at …", or nothing when hidden', () => {
+test('the header line reads "online", "last seen today at …", "… weeks/months ago", or nothing when hidden', () => {
   const now = new Date(2026, 10, 8, 22, 15);
   assert.equal(presenceLine({ status: 'online' }, now), 'online');
   assert.equal(presenceLine({ status: 'hidden' }, now), '');
@@ -104,8 +104,12 @@ test('the header line reads "online", "last seen today at …", or nothing when 
   assert.equal(formatLastSeen(new Date(2026, 10, 8, 0, 5).getTime(), now), 'last seen today at 12:05 am');
   assert.equal(formatLastSeen(new Date(2026, 10, 7, 12, 0).getTime(), now), 'last seen yesterday at 12:00 pm');
   assert.equal(formatLastSeen(new Date(2026, 10, 4, 8, 7).getTime(), now), 'last seen Wednesday at 8:07 am');
-  assert.equal(formatLastSeen(new Date(2026, 9, 20, 18, 45).getTime(), now), 'last seen 20 Oct at 6:45 pm');
-  assert.equal(formatLastSeen(new Date(2025, 11, 31, 23, 59).getTime(), now), 'last seen 31 Dec 2025 at 11:59 pm');
+  assert.equal(formatLastSeen(new Date(2026, 10, 1, 9, 0).getTime(), now), 'last seen 1 week ago');
+  assert.equal(formatLastSeen(new Date(2026, 9, 20, 18, 45).getTime(), now), 'last seen 2 weeks ago');
+  assert.equal(formatLastSeen(new Date(2026, 9, 10, 8, 0).getTime(), now), 'last seen 4 weeks ago');
+  assert.equal(formatLastSeen(new Date(2026, 9, 5, 8, 0).getTime(), now), 'last seen 1 month ago');
+  assert.equal(formatLastSeen(new Date(2026, 4, 1, 8, 0).getTime(), now), 'last seen 6 months ago');
+  assert.equal(formatLastSeen(new Date(2025, 9, 31, 23, 59).getTime(), now), 'last seen over a year ago');
   // A clock slightly ahead of this device still reads as today, not "tomorrow".
   assert.equal(formatLastSeen(new Date(2026, 10, 8, 22, 16).getTime(), now), 'last seen today at 10:16 pm');
 });

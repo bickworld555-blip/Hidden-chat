@@ -14,6 +14,7 @@ import { nativeClearSession, nativeSetSession, nativeShell, nativeStartBackgroun
 import { parseShare } from './shareTarget.js';
 import ShareSheet from './components/ShareSheet.jsx';
 import CallAccessSheet from './components/CallAccessSheet.jsx';
+import { publishShareShortcuts } from './shareShortcuts.js';
 import { CALL_ACCESS_ASKED_KEY, missingCallAccess } from './callAccess.js';
 import { PERMISSIONS_ASKED_KEY } from './permissionsKey.js';
 import Sidebar from './components/Sidebar.jsx';
@@ -658,6 +659,13 @@ export default function App() {
     return () => document.removeEventListener('visibilitychange', refresh);
   }, [userId]);
 
+  // Android share sheet: keep its top row of recent chats in step with the chat list (debounced).
+  useEffect(() => {
+    if (!userId || !sessionToken || !nativeShell()) return undefined;
+    const timer = setTimeout(() => publishShareShortcuts({ chats, groups: groupRows, userId, sessionToken }), 1500);
+    return () => clearTimeout(timer);
+  }, [chats, groupRows, userId, sessionToken]);
+
   // Lock-screen calls and the floating video window need two Android switches; ask once if either is off.
   async function checkCallAccess() {
     if (!nativeShell()) return;
@@ -688,7 +696,7 @@ export default function App() {
         ) : activeTab === 'tools' ? (
           <ToolsView darkMode={darkMode} onToggleTheme={toggleTheme} onLogout={() => { logout(); }} onNotifications={() => setNotificationsOpen(true)} onAccountSettings={() => setAccountSettingsOpen(true)} onAccounts={() => setAccountsOpen(true)} onAvatarStudio={() => setAvatarStudioOpen(true)} onGroups={() => openGroups()} />
         ) : null}
-        {activeTab === 'chats' && !isMobile && <footer className="workspace-footer"><span><i /> Hidden Messenger workspace</span><span className="workspace-footer-right">Demo mode <span>·</span><button onClick={toggleTheme} title={`Switch to ${darkMode ? 'light' : 'dark'} theme`}>{darkMode ? <Sun size={14} /> : <Moon size={14} />}{darkMode ? 'Light' : 'Dark'}</button><ChevronRight size={13} /></span></footer>}
+        {activeTab === 'chats' && !isMobile && <footer className="workspace-footer"><span /><span className="workspace-footer-right"><button onClick={toggleTheme} title={`Switch to ${darkMode ? 'light' : 'dark'} theme`}>{darkMode ? <Sun size={14} /> : <Moon size={14} />}{darkMode ? 'Light' : 'Dark'}</button><ChevronRight size={13} /></span></footer>}
       </div>
       {isMobile && !chatOpenOnMobile && <MobileBottomNav activeTab={mobileActiveTab} onTabChange={setMobileActiveTab} unreadCount={unreadChats} />}
       {fatalError && <div className="status-toast"><Bell size={15} /><span>{fatalError}</span><button onClick={() => setFatalError('')}>Dismiss</button></div>}

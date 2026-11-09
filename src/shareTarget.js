@@ -3,6 +3,25 @@
 import { firstLink } from './links.js';
 
 export const SHARE_TARGET_LIMIT = 5;
+// How many recent chats appear in the share sheet's top row (ours and Android's).
+export const RECENT_SHARE_COUNT = 8;
+
+// "chat:<id>" / "group:<id>" from an Android share-sheet shortcut; null otherwise.
+export function parseShareTarget(value) {
+  const match = /^(chat|group):(.{1,128})$/.exec(typeof value === 'string' ? value : '');
+  return match ? { kind: match[1], id: match[2] } : null;
+}
+
+// The people and groups chatted with most recently, newest first: the share sheet's one-tap row.
+export function recentShareTargets(chats = [], groups = [], userId = '', limit = RECENT_SHARE_COUNT) {
+  const time = (value) => (value ? new Date(value).getTime() || 0 : 0);
+  return [
+    ...chats.filter((chat) => chat?.id && chat.id !== userId && chat.lastActivityAt).map((chat) => ({ ...chat, kind: 'chat' })),
+    ...groups.filter((group) => group?.id && group.lastActivityAt).map((group) => ({ ...group, kind: 'group' })),
+  ]
+    .sort((left, right) => time(right.lastActivityAt) - time(left.lastActivityAt))
+    .slice(0, limit);
+}
 
 // Normalises the native payload; null when there is nothing to send.
 export function parseShare(raw) {
@@ -20,7 +39,7 @@ export function parseShare(raw) {
       size: Number(file.size) >= 0 ? Number(file.size) : -1,
     }));
   if (!message && files.length === 0) return null;
-  return { text: message.slice(0, 4000), files };
+  return { text: message.slice(0, 4000), files, target: parseShareTarget(raw.target) };
 }
 
 function kindOf(mimeType) {

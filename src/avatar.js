@@ -14,7 +14,7 @@ export function isApiAvatar(src) {
   return typeof src === 'string' && src.startsWith('/api/');
 }
 
-function loadAvatar(src, token) {
+export function loadAvatar(src, token) {
   const key = `${token}\n${src}`;
   if (!objectUrls.has(key)) {
     objectUrls.set(key, apiFetch(src, { headers: { Authorization: 'Bearer ' + token } })

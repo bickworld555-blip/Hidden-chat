@@ -76,6 +76,9 @@ final class SharedContent {
             described.put(file);
         }
         share.put("files", described);
+        // Shared to one of our share-sheet shortcuts ("chat:<id>" / "group:<id>"): that chat is chosen already.
+        String shortcut = intent.getStringExtra(Intent.EXTRA_SHORTCUT_ID);
+        share.put("target", shortcut == null ? "" : shortcut);
         return share;
     }
 

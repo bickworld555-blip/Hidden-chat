@@ -23,6 +23,8 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- Recent chats as direct-share targets in Android's share sheet. -->
+            <meta-data android:name="android.app.shortcuts" android:resource="@xml/shortcuts" />
 
             <!-- In the Android share sheet: links and text (YouTube, Facebook Reels, the browser…), photos, videos and files. -->
             <intent-filter>
