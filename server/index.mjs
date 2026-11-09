@@ -1,6 +1,7 @@
 import { createHash, randomBytes, randomUUID, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto';
 import { copyFileSync, createWriteStream, existsSync, linkSync, mkdirSync } from 'node:fs';
 import { readdir, stat, unlink, writeFile } from 'node:fs/promises';
+import { homedir } from 'node:os';
 import { pipeline } from 'node:stream/promises';
 import { createServer } from 'node:http';
 import { dirname, join, relative, resolve, isAbsolute } from 'node:path';
@@ -22,6 +23,21 @@ import { pdfPageCountOfFile } from './pdfPages.mjs';
 import { canSeePresence, deviceNameFromUserAgent, isLastSeenPrivacy, presenceFor } from './presence.mjs';
 
 const directory = dirname(fileURLToPath(import.meta.url));
+
+// Where uploads (voice notes, photos, documents, profile photos) live. RELAY_DATA_DIRECTORY wins. Without it, a
+// deployed server keeps them in the account's home directory: hosting that rebuilds the app from Git on every push
+// (Hostinger) replaces the app folder, and files kept inside it were lost on each deploy, so every voice note sent
+// before a push turned "unavailable". Development keeps the old .data folder next to the code.
+export function defaultDataDirectory(env = process.env, home = homedir()) {
+  if (env.RELAY_DATA_DIRECTORY) return env.RELAY_DATA_DIRECTORY;
+  const deployed = env.NODE_ENV === 'production' || Boolean(env.DATABASE_URL);
+  if (deployed && home) {
+    const persistent = resolve(home, 'hidden-messenger-data');
+    const inside = relative(resolve(directory, '..'), persistent);
+    if (inside.startsWith('..') || isAbsolute(inside)) return persistent;
+  }
+  return join(directory, '..', '.data');
+}
 const PAIRING_TTL_MS = 1000 * 60 * 2;
 const deleteForEveryoneWindowMs = 24 * 60 * 60 * 1000;
 const EXPIRY_SWEEP_MS = 30 * 1000;
@@ -86,7 +102,7 @@ export function createChatServer({
   databasePath,
   databaseUrl = process.env.DATABASE_URL,
   database = null,
-  dataDirectory = process.env.RELAY_DATA_DIRECTORY || join(directory, '..', '.data'),
+  dataDirectory = defaultDataDirectory(),
   seedDemo = process.env.NODE_ENV !== 'production' && process.env.RELAY_SEED_DEMO === 'true',
   callTimeoutMs = Number(process.env.CALL_RING_TIMEOUT_MS) || 0,
   allowedOrigins = process.env.RELAY_ALLOWED_ORIGINS ?? '',
@@ -105,9 +121,18 @@ export function createChatServer({
       if (url.protocol !== 'https:' || url.origin !== origin.trim()) throw new Error('Production origins must be exact HTTPS origins without paths or credentials.');
     }
   }
+  try {
+    mkdirSync(join(dataDirectory, 'media'), { recursive: true });
+  } catch (error) {
+    // The persistent folder cannot be created here: keep the server running with the folder next to the code
+    // (uploads then do not survive a redeploy, which /api/v1/ready reports as storage: release).
+    const fallback = join(directory, '..', '.data');
+    if (resolve(dataDirectory) === resolve(fallback)) throw error;
+    console.error(`Data directory unavailable (${error.code ?? error.name}); using the app folder instead. Set RELAY_DATA_DIRECTORY to a persistent writable path.`);
+    dataDirectory = fallback;
+    mkdirSync(join(dataDirectory, 'media'), { recursive: true });
+  }
   const mediaDirectory = join(dataDirectory, 'media');
-  mkdirSync(dataDirectory, { recursive: true });
-  mkdirSync(mediaDirectory, { recursive: true });
   const db = database ?? (databaseUrl
     ? createPostgresDatabase({ env: { ...process.env, DATABASE_URL: databaseUrl } })
     : new DatabaseSync(databasePath ?? join(dataDirectory, 'relay.sqlite')));

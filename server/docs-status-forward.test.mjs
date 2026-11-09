@@ -73,3 +73,15 @@ test('a round forward button sits beside photos, videos, documents and voice not
   const css = await source('src/styles.css');
   assert.ok(css.includes('.message-line.mine .wa-quick-forward { order: -1; }'), 'left of your own bubbles');
 });
+
+test('uploads live outside the deployed app, so a redeploy no longer loses voice notes, photos and files', async () => {
+  const { defaultDataDirectory } = await import('./index.mjs');
+  const { resolve } = await import('node:path');
+  const home = resolve('/home/u123');
+  assert.equal(defaultDataDirectory({ RELAY_DATA_DIRECTORY: '/var/lib/relay', NODE_ENV: 'production' }, home), '/var/lib/relay', 'an explicit setting wins');
+  assert.equal(defaultDataDirectory({ NODE_ENV: 'production' }, home), resolve(home, 'hidden-messenger-data'));
+  assert.equal(defaultDataDirectory({ DATABASE_URL: 'postgres://x' }, home), resolve(home, 'hidden-messenger-data'), 'a deployed server (database URL) also counts');
+  assert.match(defaultDataDirectory({}, home), /\.data$/, 'development keeps the folder next to the code');
+  const server = await source('server/index.mjs');
+  assert.ok(server.includes("response.json({ status: 'ok', storage: storageInRelease ? 'release' : 'persistent'"), 'readiness says whether uploads survive a deploy');
+});
