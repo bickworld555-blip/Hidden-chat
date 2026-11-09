@@ -3,7 +3,7 @@ import { copyFileSync, createWriteStream, existsSync, linkSync, mkdirSync } from
 import { readdir, stat, unlink, writeFile } from 'node:fs/promises';
 import { pipeline } from 'node:stream/promises';
 import { createServer } from 'node:http';
-import { dirname, join } from 'node:path';
+import { dirname, join, relative, resolve, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { DatabaseSync } from 'node:sqlite';
@@ -930,10 +930,30 @@ export function createChatServer({
   }
 
   app.get('/api/v1/health', (_request, response) => response.json({ status: 'ok' }));
+  // Whether uploads survive a deploy: files kept inside the deployed release are lost when the next release
+  // replaces it (voice notes, photos and documents then show as unavailable). Reported without any path.
+  const appRoot = resolve(directory, '..');
+  const storageInRelease = (() => {
+    const inside = relative(appRoot, resolve(dataDirectory));
+    return inside === '' || (!inside.startsWith('..') && !isAbsolute(inside));
+  })();
+  if (storageInRelease && process.env.NODE_ENV === 'production') {
+    console.error('RELAY_DATA_DIRECTORY is inside the deployed release: uploads will be lost on the next deploy. Point it at a persistent directory such as /var/lib/relay.');
+  }
+
+  // Of the newest attachments, how many have lost their file (a health signal; no ids or names are reported).
+  async function missingRecentMedia(limit = 50) {
+    const rows = await db.prepare('SELECT disk_name AS "diskName" FROM media ORDER BY created_at DESC LIMIT ?').all(limit);
+    let missing = 0;
+    for (const row of rows) if (!(await stat(join(mediaDirectory, row.diskName)).catch(() => null))) missing += 1;
+    return { checked: rows.length, missing };
+  }
+
   app.get('/api/v1/ready', async (_request, response) => {
     response.set('Cache-Control', 'no-store');
     await db.ready?.();
-    response.json({ status: 'ok' });
+    const recent = await missingRecentMedia().catch(() => null);
+    response.json({ status: 'ok', storage: storageInRelease ? 'release' : 'persistent', ...(recent ? { recentMedia: recent } : {}) });
   });
 
   app.get('/api/v1/rtc-config', requireSession, (_request, response) => {

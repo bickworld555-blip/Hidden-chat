@@ -469,7 +469,8 @@ test('readiness checks the live PostgreSQL schema without changing liveness', as
   const ready = await fetch(`${url}/api/v1/ready`);
   assert.equal(ready.status, 200);
   assert.equal(ready.headers.get('cache-control'), 'no-store');
-  assert.deepEqual(await ready.json(), { status: 'ok' });
+  // Also reports whether uploads survive a deploy (stored outside the release) and lost files among recent ones.
+  assert.deepEqual(await ready.json(), { status: 'ok', storage: 'persistent', recentMedia: { checked: 0, missing: 0 } });
   await engine.exec('DROP SCHEMA relay CASCADE');
   const unavailable = await fetch(`${url}/api/v1/ready`);
   assert.equal(unavailable.status, 503);
