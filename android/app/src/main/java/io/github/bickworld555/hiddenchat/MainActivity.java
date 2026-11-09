@@ -41,7 +41,7 @@ public class MainActivity extends BridgeActivity {
         getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
             @Override
             public void handleOnBackPressed() {
-                if (!HiddenNativePlugin.emitBack()) moveTaskToBack(true);
+                if (!HiddenNativePlugin.emitBack()) leaveApp();
             }
         });
     }
@@ -99,19 +99,33 @@ public class MainActivity extends BridgeActivity {
         });
     }
 
+    /**
+     * Leaving the app with Back (or the web app's "go to background"): during a video call the call keeps playing in
+     * the floating window, exactly as with Home; otherwise the app just goes to the background.
+     */
+    void leaveApp() {
+        if (!enterCallPictureInPicture()) moveTaskToBack(true);
+    }
+
+    /** Puts a video call into the floating window; false when there is no video call or the phone does not allow it. */
+    boolean enterCallPictureInPicture() {
+        if (!MessagingService.isVideoCallActive() || Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false;
+        if (isInPictureInPictureMode()) return true;
+        try {
+            return enterPictureInPictureMode(pipParams(this, false));
+        } catch (IllegalStateException unsupported) {
+            return false;
+        }
+    }
+
     /** Home / app switch during a video call (Android 8–11): keep the call on screen in a picture-in-picture window. */
     @Override
     protected void onUserLeaveHint() {
         super.onUserLeaveHint();
         // Android 12+ enters by itself (auto-enter), but several phone makers ignore that; asking here as well works
         // everywhere, and does nothing when the window is already on its way.
-        if (MessagingService.isVideoCallActive() && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !isInPictureInPictureMode()) {
-            try {
-                enterPictureInPictureMode(pipParams(this, false));
-            } catch (IllegalStateException unsupported) {
-                // The device or the user's settings do not allow picture-in-picture; the call continues in the background.
-            }
-        }
+        // When the device or the user's settings do not allow picture-in-picture the call continues in the background.
+        enterCallPictureInPicture();
     }
 
     @Override

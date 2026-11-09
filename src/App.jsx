@@ -250,7 +250,11 @@ export default function App() {
           if (event.type === 'status:changed' || event.type === 'status:viewed') useChatStore.getState().bumpStatusRevision();
           if (event.type === 'message:updated') updateMessage(event.messageId, { content: event.content });
           if (event.type === 'poll:votes') useChatStore.getState().setPollVotes(event.messageId, event.votes);
-          if (event.type === 'message:deleted') useChatStore.getState().removeMessageById(event.messageId);
+          if (event.type === 'message:deleted') {
+            // Deleted for everyone leaves WhatsApp's placeholder; deleted for me, or disappeared on a timer, goes away.
+            if (event.scope === 'everyone' && event.reason !== 'expired') useChatStore.getState().markMessageDeleted(event.messageId);
+            else useChatStore.getState().removeMessageById(event.messageId);
+          }
           if (event.type === 'message:reaction') {
             const state = useChatStore.getState();
             state.applyReaction(event.messageId, event.userId, event.emoji);

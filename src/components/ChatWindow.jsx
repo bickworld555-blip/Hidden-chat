@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, Camera, Check, CheckCheck, ChevronDown, ChevronUp, CornerUpLeft, Forward, Info, Link2, Mic, MoreVertical, Paperclip, Phone, Search, Send, Smile, Star, Timer, Trash2, Video, X } from 'lucide-react';
+import { ArrowLeft, Ban, Camera, Check, CheckCheck, ChevronDown, ChevronUp, CornerUpLeft, Forward, Info, Link2, Mic, MoreVertical, Paperclip, Phone, Search, Send, Smile, Star, Timer, Trash2, Video, X } from 'lucide-react';
 import { parseVoiceContent, voiceExtension } from '../voice.js';
 import { COMPOSER_EMOJIS, COMPOSER_MAX_LENGTH, composerAction, insertAtCaret } from '../composer.js';
 import { playNotificationTone } from '../sounds.js';
-import { EMPTY_MESSAGES, useChatStore } from '../store.js';
+import { EMPTY_MESSAGES, deletedLabel, useChatStore } from '../store.js';
 import { isBlocked } from '../blocking.js';
 import { searchMessages } from '../contactInfo.js';
 import { disappearingLabel } from '../disappearing.js';
@@ -287,8 +287,11 @@ function MessageBubble({
       {reactionTrayOpen && <ReactionTray onPick={onTrayReact} />}
 
       {isCall ? (
-        <div>
-          <CallStatusBubble callData={parseCall(content)} isOutgoing={mine} timestamp={time} />
+        <CallStatusBubble callData={parseCall(content)} isOutgoing={mine} timestamp={time} onCallBack={selectionActive ? undefined : shared.callBack} />
+      ) : message.deleted ? (
+        <div className={`message-bubble ${mine ? 'outgoing' : 'incoming'} deleted-bubble`}>
+          <p className="deleted-text"><Ban size={15} aria-hidden="true" /><span>{deletedLabel(mine)}</span></p>
+          {meta}
         </div>
       ) : (
         <div
@@ -797,7 +800,8 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
       return;
     }
     setSelectedIds([message.id]);
-    setReactionTrayId(message.id);
+    // Nothing to react to in a deleted message (WhatsApp offers only Delete for me).
+    setReactionTrayId(message.deleted ? null : message.id);
   }, [selectionActive, handleToggleSelect]);
 
   useEffect(() => {
@@ -951,6 +955,7 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
     userId,
     nameFor: (id) => (id === chat?.id ? presentName(chat) : null),
     send: client ? liveSend : null,
+    callBack: onStartCall,
     openLocation: (location) => setMapView({ location }),
     openLive: (sessionId) => setMapView({ sessionId }),
     messageContact: (contact) => {
@@ -958,7 +963,7 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
       if (list.some((item) => item.id === contact.id)) setActiveChat(contact.id);
       else addContact({ id: contact.id, name: contact.name, username: contact.username, initials: contact.initials, color: contact.color, avatar: contact.avatar });
     },
-  }), [chat, userId, client, liveSend]);
+  }), [chat, userId, client, liveSend, onStartCall]);
 
   function handleVoiceSend(blob, seconds, type, { viewOnce = false } = {}) {
     setRecording(false);
@@ -1116,6 +1121,11 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
     let offline = false;
     for (const target of targets) {
       const onServer = !target.content?.startsWith('call:') && target.status !== 'failed';
+      if (target.deleted) {
+        deleteMessage(chatId, target.id);
+        client?.send?.({ type: 'message:delete', messageId: target.id, scope: 'me' });
+        continue;
+      }
       if (!onServer) {
         deleteMessage(chatId, target.id);
       } else if (scope === 'everyone') {
@@ -1163,15 +1173,17 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
                 <CornerUpLeft size={18} />
               </button>
             )}
-            <button
-              type="button"
-              className="icon-button"
-              onClick={starSelection}
-              title={actions.allStarred ? 'Unstar' : 'Star'}
-              aria-label={actions.allStarred ? 'Unstar' : 'Star'}
-            >
-              <Star size={18} fill={actions.allStarred ? 'currentColor' : 'none'} />
-            </button>
+            {actions.canStar && (
+              <button
+                type="button"
+                className="icon-button"
+                onClick={starSelection}
+                title={actions.allStarred ? 'Unstar' : 'Star'}
+                aria-label={actions.allStarred ? 'Unstar' : 'Star'}
+              >
+                <Star size={18} fill={actions.allStarred ? 'currentColor' : 'none'} />
+              </button>
+            )}
             <button
               type="button"
               className="icon-button"
@@ -1331,7 +1343,7 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
                   onToggleSelect={handleToggleSelect}
                   onReact={(emoji) => reactTo(message, emoji)}
                   onOpenMedia={() => setViewerMessageId(message.id)}
-                  onSwipeReply={message.content?.startsWith('call:') ? null : startReply}
+                  onSwipeReply={message.content?.startsWith('call:') || message.deleted ? null : startReply}
                   onQuoteClick={showInChat}
                   reactionTrayOpen={trayMessageId === message.id}
                   onTrayReact={(emoji) => {

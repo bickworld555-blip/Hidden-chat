@@ -282,7 +282,7 @@ test('chat window wires swipe-to-reply, quotes, and the sectioned forward sheet'
   for (const needle of [
     'onPointerDown={handlePointerDown}',
     'swipeReply?.(message)',
-    'onSwipeReply={message.content?.startsWith(\'call:\') ? null : startReply}',
+    'onSwipeReply={message.content?.startsWith(\'call:\') || message.deleted ? null : startReply}',
     'quote={quoteView(message.replyTo, userId, chat.name)}',
     'onQuoteClick={showInChat}',
     'composerInputRef.current?.focus()',

@@ -1,75 +1,28 @@
-import { Phone, PhoneOff, PhoneIncoming, PhoneMissed, Clock } from 'lucide-react';
+import { ArrowDownLeft, ArrowUpRight, Phone, PhoneMissed, Video, VideoOff } from 'lucide-react';
+import { callCardView } from '../callCard.js';
 
-function formatCallDuration(seconds) {
-  if (!seconds || seconds < 0) return '0 secs';
-  if (seconds < 60) return `${Math.floor(seconds)} secs`;
-  const minutes = Math.floor(seconds / 60);
-  const remainingSeconds = Math.floor(seconds % 60);
-  if (minutes < 60) {
-    return remainingSeconds > 0 ? `${minutes}m ${remainingSeconds}s` : `${minutes}m`;
-  }
-  const hours = Math.floor(minutes / 60);
-  const remainingMinutes = minutes % 60;
-  return remainingSeconds > 0 
-    ? `${hours}h ${remainingMinutes}m ${remainingSeconds}s` 
-    : `${hours}h ${remainingMinutes}m`;
-}
-
-export default function CallStatusBubble({ callData, isOutgoing, timestamp }) {
-  const isNoAnswer = callData.status === 'no-answer' || callData.status === 'missed' || !callData.duration;
-  const duration = callData.duration || 0;
-  const isVideo = callData.mode === 'video';
-
+// A finished call in the chat, laid out like WhatsApp's: icon tile, "Voice call" / "Missed video call", the
+// duration or "No answer" underneath, and the time in the corner. Tapping it calls the person back.
+export default function CallStatusBubble({ callData, isOutgoing, timestamp, onCallBack }) {
+  const view = callCardView(callData, isOutgoing);
+  const Icon = view.missed ? (view.video ? VideoOff : PhoneMissed) : view.video ? Video : Phone;
+  const Arrow = isOutgoing ? ArrowUpRight : ArrowDownLeft;
   return (
-    <div className={`call-status-bubble ${isOutgoing ? 'outgoing' : 'incoming'}`}>
-      <div className="call-status-content">
-        <div className="call-status-icon">
-          {isNoAnswer ? (
-            <>
-              <PhoneMissed size={20} className="call-missed-icon" />
-            </>
-          ) : isOutgoing ? (
-            <PhoneIncoming size={20} className="call-outgoing-icon" style={{ transform: 'rotate(135deg)' }} />
-          ) : (
-            <PhoneIncoming size={20} className="call-incoming-icon" />
-          )}
-        </div>
-        
-        <div className="call-status-info">
-          <div className="call-status-type">
-            {isNoAnswer ? (
-              <>
-                <span className="call-type-label">
-                  {isVideo ? 'Video call' : 'Voice call'}
-                </span>
-                <span className="call-no-answer"> / No answer</span>
-              </>
-            ) : (
-              <>
-                <span className="call-type-label">
-                  {isVideo ? 'Video call' : 'Voice call'}
-                </span>
-                {isOutgoing ? (
-                  <span className="call-direction"> (outgoing)</span>
-                ) : (
-                  <span className="call-direction"> (incoming)</span>
-                )}
-              </>
-            )}
-          </div>
-          
-          {!isNoAnswer && (
-            <div className="call-duration">
-              <Clock size={14} />
-              <span>{formatCallDuration(duration)}</span>
-            </div>
-          )}
-          
-          <div className="call-timestamp">
-            {timestamp}
-          </div>
-        </div>
-      </div>
-    </div>
+    <button
+      type="button"
+      className={`message-bubble call-card ${isOutgoing ? 'outgoing' : 'incoming'} ${view.missed ? 'is-missed' : ''}`}
+      onClick={onCallBack ? () => onCallBack(view.video ? 'video' : 'audio') : undefined}
+      aria-label={`${view.title}, ${view.detail}, ${timestamp}. Call back`}
+    >
+      <span className="call-card-icon" aria-hidden="true"><Icon size={20} /></span>
+      <span className="call-card-text">
+        <strong>{view.title}</strong>
+        <small>
+          {!view.missed && <Arrow size={13} className={view.answered ? 'call-card-arrow' : 'call-card-arrow is-unanswered'} aria-hidden="true" />}
+          {view.detail}
+        </small>
+      </span>
+      <time className="call-card-time">{timestamp}</time>
+    </button>
   );
 }

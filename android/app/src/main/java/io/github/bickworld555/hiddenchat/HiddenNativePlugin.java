@@ -332,7 +332,12 @@ public class HiddenNativePlugin extends Plugin {
     /** Nothing left to close on Back: leave the app running in the background, like WhatsApp. */
     @PluginMethod
     public void moveToBackground(PluginCall call) {
-        if (getActivity() != null) getActivity().runOnUiThread(() -> getActivity().moveTaskToBack(true));
+        if (getActivity() instanceof MainActivity) {
+            MainActivity activity = (MainActivity) getActivity();
+            activity.runOnUiThread(activity::leaveApp);
+        } else if (getActivity() != null) {
+            getActivity().runOnUiThread(() -> getActivity().moveTaskToBack(true));
+        }
         call.resolve();
     }
 

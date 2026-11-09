@@ -1643,13 +1643,14 @@ export function createChatServer({
     const recentOwn = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
     const rows = await db.prepare(`SELECT id, sender_id AS "senderId", receiver_id AS "receiverId",
       created_at AS "timestamp", content, status, deleted_at IS NOT NULL AS "deleted",
+      (deleted_at IS NOT NULL AND expires_at IS NOT NULL AND expires_at <= deleted_at) AS "expired",
       reply_to_id AS "replyToId", forwarded, expires_at AS "expiresAt", played_at AS "playedAt" FROM messages
       WHERE (sender_id = ? OR receiver_id = ?)
         AND (created_at > ? OR (sender_id = ? AND created_at > ?))
         AND id NOT IN (SELECT message_id FROM message_hidden WHERE user_id = ?)
       ORDER BY created_at ASC LIMIT 500`)
       .all(userId, userId, after.toISOString(), userId, recentOwn, userId);
-    response.json(await Promise.all(rows.map(async (row) => ({ ...(await presentMessage(row)), deleted: Boolean(row.deleted) }))));
+    response.json(await Promise.all(rows.map(async (row) => ({ ...(await presentMessage(row)), deleted: Boolean(row.deleted), expired: Boolean(row.expired) }))));
   });
 
   app.get('/api/v1/messages', requireSession, async (request, response) => {
@@ -1661,6 +1662,7 @@ export function createChatServer({
     (await expireMessages());
     const rows = (await db.prepare(`SELECT id, sender_id AS "senderId", receiver_id AS "receiverId",
       created_at AS "timestamp", content, status, deleted_at IS NOT NULL AS "deleted",
+      (deleted_at IS NOT NULL AND expires_at IS NOT NULL AND expires_at <= deleted_at) AS "expired",
       reply_to_id AS "replyToId", forwarded, expires_at AS "expiresAt", played_at AS "playedAt" FROM messages
       WHERE ((sender_id = ? AND receiver_id = ?) OR (sender_id = ? AND receiver_id = ?))
         AND id NOT IN (SELECT message_id FROM message_hidden WHERE user_id = ?)
@@ -1678,6 +1680,7 @@ export function createChatServer({
     response.json(await Promise.all(rows.map(async (row) => ({
       ...(await presentMessage(row)),
       deleted: Boolean(row.deleted),
+      expired: Boolean(row.expired),
       reactions: reactionsByMessage.get(row.id) ?? [],
     }))));
   });

@@ -67,8 +67,10 @@ test('the Android app wires Back, picture-in-picture, earpiece calls, phone soun
   assert.ok(manifest.includes('android.permission.WAKE_LOCK'));
   assert.match(manifest, /WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28"/, 'storage permission only for Android 9 and older');
   const activity = await read('MainActivity.java');
-  assert.match(activity, /handleOnBackPressed\(\) \{\s*if \(!HiddenNativePlugin\.emitBack\(\)\) moveTaskToBack\(true\);/, 'Back never destroys the app');
-  assert.match(activity, /onUserLeaveHint[\s\S]*isVideoCallActive\(\)[\s\S]*enterPictureInPictureMode/);
+  assert.match(activity, /handleOnBackPressed\(\) \{\s*if \(!HiddenNativePlugin\.emitBack\(\)\) leaveApp\(\);/, 'Back never destroys the app');
+  assert.match(activity, /void leaveApp\(\) \{\s*if \(!enterCallPictureInPicture\(\)\) moveTaskToBack\(true\);/, 'Back during a video call opens the floating window');
+  assert.ok((await read('HiddenNativePlugin.java')).includes('activity.runOnUiThread(activity::leaveApp);'), "the web app's go-to-background does the same");
+  assert.match(activity, /onUserLeaveHint\(\) \{[\s\S]*?enterCallPictureInPicture\(\);/);
   const audio = await read('CallAudio.java');
   assert.ok(audio.includes('speaker = isVideo'), 'voice calls start on the earpiece, video calls on the loudspeaker');
   assert.ok(audio.includes('PROXIMITY_SCREEN_OFF_WAKE_LOCK'));

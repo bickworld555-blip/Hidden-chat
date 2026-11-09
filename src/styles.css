@@ -299,22 +299,6 @@ button.file-message { border: 0; background: transparent; color: inherit; text-a
 .attachment-menu-item:hover .attachment-menu-icon { transform: scale(1.05); }
 .attachment-menu-label { font-size: 11px; font-weight: 500; color: #17252f; max-width: 80px; word-wrap: break-word; }
 
-/* Call Status Bubble Styles */
-.call-status-bubble { display: flex; align-items: center; padding: 10px 12px; border-radius: 8px; background: #f5f7f7; border: 1px solid #e9edef; margin: 4px 0; }
-.call-status-bubble.outgoing { background: #eaf1de; border-color: #d9e7c5; }
-.call-status-bubble.incoming { background: #f5f7f7; border-color: #e9edef; }
-.call-status-content { display: flex; align-items: center; gap: 10px; width: 100%; }
-.call-status-icon { flex: none; display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 50%; background: rgba(31, 168, 85, 0.1); }
-.call-missed-icon { color: #d85d56; }
-.call-outgoing-icon { color: #1fa855; }
-.call-incoming-icon { color: #53bdeb; }
-.call-status-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
-.call-status-type { font-size: 12px; font-weight: 500; color: #17252f; display: flex; flex-wrap: wrap; align-items: center; gap: 2px; }
-.call-type-label { font-weight: 600; }
-.call-no-answer { color: #d85d56; font-weight: 500; }
-.call-direction { color: #75828a; font-size: 11px; }
-.call-duration { display: flex; align-items: center; gap: 5px; font-size: 11px; color: #5b6a64; font-variant-numeric: tabular-nums; }
-.call-timestamp { font-size: 10px; color: #9aa5a9; }
 
 /* Dark theme for attachment menu */
 .dark-theme .attachment-menu-panel { background: #263532; border-color: #30423b; }
@@ -325,13 +309,6 @@ button.file-message { border: 0; background: transparent; color: inherit; text-a
 .dark-theme .attachment-menu-item:hover { background: #334538; }
 .dark-theme .attachment-menu-label { color: #e3ebe5; }
 
-/* Dark theme for call status bubble */
-.dark-theme .call-status-bubble { background: #334538; border-color: #426854; }
-.dark-theme .call-status-bubble.outgoing { background: #354431; border-color: #426d42; }
-.dark-theme .call-status-type { color: #e3ebe5; }
-.dark-theme .call-direction { color: #a9b6b0; }
-.dark-theme .call-duration { color: #a9b6b0; }
-.dark-theme .call-timestamp { color: #7a8581; }
 
 @keyframes slide-up { from { transform: translateY(100%); } to { transform: translateY(0); } }
 @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
@@ -1693,9 +1670,6 @@ html, body { overflow-x: hidden; }
   .app-shell.is-mobile .voice-play { color: var(--wa-text); }
   .app-shell.is-mobile .voice-duration { color: var(--wa-sub); }
   .app-shell.is-mobile .typing-indicator { margin-left: 0; background: var(--wa-in); border: 0; }
-  .app-shell.is-mobile .call-status-bubble { margin: 2px 0; background: var(--wa-in); border: 0; color: var(--wa-text); }
-  .app-shell.is-mobile .call-status-bubble.outgoing { background: var(--wa-out); }
-  .app-shell.is-mobile .call-timestamp, .app-shell.is-mobile .call-duration { color: var(--wa-sub); }
 
   .app-shell.is-mobile .composer-wrap { padding: 6px 8px calc(8px + env(safe-area-inset-bottom)); border-top: 0; background: var(--wa-chat-bg); }
   .app-shell.is-mobile .scroll-bottom { right: 12px; bottom: calc(72px + env(safe-area-inset-bottom)); width: 40px; height: 40px; border: 0; background: var(--wa-panel); color: var(--wa-sub); box-shadow: 0 1px 3px #0006; }
@@ -4122,8 +4096,13 @@ button.groups-setting:hover, label.groups-setting:hover { background: rgba(134, 
 
 /* ===== Android picture-in-picture during a video call: only the call, edge to edge, no controls ===== */
 html.native-pip .app-shell > *:not(.wa-call-backdrop), html.native-pip .mobile-bottom-nav { visibility: hidden; }
-html.native-pip .wa-call-backdrop, html.native-pip .wa-call-backdrop.is-pip { position: fixed !important; inset: 0 !important; width: 100vw !important; height: 100vh !important; border-radius: 0 !important; box-shadow: none !important; z-index: 2147483000; visibility: visible; }
-html.native-pip .wa-call-screen { border-radius: 0 !important; }
+/* The floating window is narrower than the page's 320px minimum; keeping that minimum made the WebView zoom out, so
+   the call filled only the top-left of the window and the rest showed white. Below 320px nothing has a minimum. */
+@media (max-width: 319px) { body { min-width: 0; } }
+html.native-pip, html.native-pip body { min-width: 0 !important; background: #000 !important; }
+html.native-pip .wa-call-backdrop, html.native-pip .wa-call-backdrop.is-pip { position: fixed !important; inset: 0 !important; width: auto !important; height: auto !important; border-radius: 0 !important; box-shadow: none !important; background: #000 !important; z-index: 2147483000; visibility: visible; }
+html.native-pip .wa-call-screen, html.native-pip .wa-call-backdrop.is-pip .wa-call-screen { width: 100% !important; height: 100% !important; max-width: none !important; border-radius: 0 !important; }
+html.native-pip .wa-video-stage:not(.is-group) .wa-video-element.remote-video:not(.is-screen) { object-fit: cover !important; }
 html.native-pip .wa-call-header, html.native-pip .wa-video-side-toolbar, html.native-pip .wa-video-bottom-dock, html.native-pip .wa-pip-bar,
 html.native-pip .wa-call-more-layer, html.native-pip .wa-call-error-toast, html.native-pip .wa-add-participant { display: none !important; }
 html.native-pip .wa-video-tile.is-pip { width: 30% !important; height: auto !important; aspect-ratio: 3 / 4; top: 6px !important; right: 6px !important; bottom: auto !important; left: auto !important; border-radius: 8px; }
@@ -4216,3 +4195,21 @@ html.native-pip .wa-video-tile.is-pip { width: 30% !important; height: auto !imp
 .wa-share-status-avatar { display: grid; place-items: center; background: #25d366; color: #0b141a; }
 .wa-share-circle { flex: none; display: grid; place-items: center; width: 24px; height: 24px; border: 2px solid var(--wa-text-secondary, #8696a0); border-radius: 50%; color: #0b141a; }
 .wa-share-row.checked .wa-share-circle { border-color: #25d366; background: #25d366; }
+
+/* A call in the chat, like WhatsApp: icon tile, title, duration or "No answer", time in the corner; tap to call back. */
+.message-bubble.call-card { display: grid; grid-template-columns: auto 1fr auto; align-items: center; column-gap: 10px; min-width: 220px; max-width: 280px; padding: 8px 10px 6px 8px; border: 0; font: inherit; text-align: left; color: var(--wa-text, #111b21); cursor: pointer; }
+.call-card-icon { grid-row: span 2; display: grid; place-items: center; width: 40px; height: 40px; border-radius: 50%; background: rgba(11, 20, 26, .07); color: var(--wa-sub, #667781); }
+.dark-theme .call-card-icon { background: rgba(255, 255, 255, .1); color: #aebac1; }
+.call-card.is-missed .call-card-icon { color: #ea0038; }
+.call-card-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.call-card-text strong { font-size: 15px; font-weight: 500; line-height: 1.25; }
+.call-card-text small { display: inline-flex; align-items: center; gap: 3px; color: var(--wa-sub, #667781); font-size: 13px; }
+.call-card-arrow { color: #1fa855; }
+.call-card-arrow.is-unanswered { color: #ea0038; }
+.call-card-time { align-self: end; color: var(--wa-sub, #667781); font-size: 11px; white-space: nowrap; }
+.dark-theme .call-card-text small, .dark-theme .call-card-time { color: #8696a0; }
+/* Deleted for everyone: "🚫 You deleted this message" in grey italics, time in the corner. */
+.message-bubble.deleted-bubble { display: flex; align-items: flex-end; gap: 10px; }
+.app-shell .message-bubble p.deleted-text { display: inline-flex; align-items: center; gap: 6px; margin: 0; color: var(--wa-sub, #667781); font-style: italic; }
+.deleted-text svg { flex: none; opacity: .85; }
+.app-shell.dark-theme .message-bubble p.deleted-text, .dark-theme .app-shell .message-bubble p.deleted-text { color: #8696a0; }

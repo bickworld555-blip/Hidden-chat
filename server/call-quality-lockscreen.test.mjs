@@ -50,7 +50,8 @@ test('Android: ringing calls show over the lock screen at once and stay there wh
 
 test('Android: Home during a video call opens the floating window even where auto-enter is ignored', async () => {
   const activity = await java('MainActivity.java');
-  assert.match(activity, /onUserLeaveHint\(\) \{[\s\S]*?isVideoCallActive\(\) && Build\.VERSION\.SDK_INT >= Build\.VERSION_CODES\.O && !isInPictureInPictureMode\(\)[\s\S]*?enterPictureInPictureMode/);
+  assert.match(activity, /onUserLeaveHint\(\) \{[\s\S]*?enterCallPictureInPicture\(\);/);
+  assert.match(activity, /boolean enterCallPictureInPicture\(\) \{\s*if \(!MessagingService\.isVideoCallActive\(\) \|\| Build\.VERSION\.SDK_INT < Build\.VERSION_CODES\.O\) return false;[\s\S]*?enterPictureInPictureMode\(pipParams\(this, false\)\)/);
   const plugin = await java('HiddenNativePlugin.java');
   assert.ok(plugin.includes('AppOpsManager.OPSTR_PICTURE_IN_PICTURE'), 'a phone that has picture-in-picture switched off is detected');
 });

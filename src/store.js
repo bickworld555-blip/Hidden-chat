@@ -12,6 +12,12 @@ import { scheduledCallPreview } from './groupChat.js';
 
 const EMPTY_MESSAGES = Object.freeze([]);
 
+// A message deleted for everyone keeps its place, sender and time, but nothing of what it said.
+function deletedPlaceholder(message) {
+  const { replyTo: _replyTo, reactions: _reactions, starred: _starred, forwarded: _forwarded, played: _played, ...rest } = message;
+  return { ...rest, content: '', deleted: true };
+}
+
 function mergeMessage(current, incoming) {
   if (!current) return incoming;
   const merged = { ...current, ...incoming, status: mergeMessageStatus(current.status, incoming.status) };
@@ -102,10 +108,16 @@ export function unreadFrom(messages, peerId, userId) {
 
 const pageVisible = () => typeof document === 'undefined' || document.visibilityState === 'visible';
 
+// What a message deleted for everyone reads as, in the chat and in the chat list (WhatsApp's wording).
+export function deletedLabel(mine) {
+  return mine ? 'You deleted this message' : 'This message was deleted';
+}
+
 function summarizeChat(chat, messages) {
   const last = messages?.length ? messages[messages.length - 1] : null;
   if (!last) return chat;
-  return { ...chat, preview: chatPreview(messages), time: formatChatListTime(last.timestamp), lastActivityAt: last.timestamp };
+  const preview = last.deleted ? `🚫 ${deletedLabel(last.senderId !== chat.id)}` : chatPreview(messages);
+  return { ...chat, preview, time: formatChatListTime(last.timestamp), lastActivityAt: last.timestamp };
 }
 
 // Re-derives a chat's summary after messages were removed; an emptied chat keeps its place in the list.
@@ -409,10 +421,15 @@ export const useChatStore = create((setState, getState) => ({
   mergeHistory(chatId, history) {
     setState((state) => {
       const current = state.messages[chatId] ?? [];
-      const deletedIds = new Set(history.filter((message) => message.deleted).map((message) => message.id));
-      const merged = new Map(current.filter((message) => !deletedIds.has(message.id)).map((message) => [message.id, message]));
+      // Messages that disappeared (timer) are gone; ones deleted for everyone stay as a "deleted" placeholder.
+      const expiredIds = new Set(history.filter((message) => message.deleted && message.expired).map((message) => message.id));
+      const merged = new Map(current.filter((message) => !expiredIds.has(message.id)).map((message) => [message.id, message]));
       for (const message of history) {
-        if (!message.deleted && !hiddenByBlock(message, state.blockedChats[chatId], state.userId)) {
+        if (expiredIds.has(message.id) || hiddenByBlock(message, state.blockedChats[chatId], state.userId)) continue;
+        if (message.deleted) {
+          const { expired: _expired, ...placeholder } = message;
+          merged.set(message.id, deletedPlaceholder({ ...merged.get(message.id), ...placeholder }));
+        } else {
           merged.set(message.id, mergeMessage(merged.get(message.id), message));
         }
       }
@@ -493,6 +510,20 @@ export const useChatStore = create((setState, getState) => ({
     setState((state) => ({ chats: state.chats.map((chat) => chat.id === chatId ? { ...chat, disappearSeconds: seconds } : chat) }));
     const userId = getState().userId;
     if (userId) getState().persistContacts(userId);
+  },
+  // Deleted for everyone: the bubble turns into "You deleted this message" / "This message was deleted".
+  markMessageDeleted(messageId) {
+    setState((state) => {
+      const chatId = Object.keys(state.messages).find((id) => state.messages[id].some((m) => m.id === messageId));
+      if (!chatId) return {};
+      const chatMessages = state.messages[chatId].map((m) => (m.id === messageId ? deletedPlaceholder(m) : m));
+      return {
+        messages: { ...state.messages, [chatId]: chatMessages },
+        chats: state.chats.map((c) => (c.id === chatId ? { ...summarizeChat(c, chatMessages), unread: Math.min(c.unread ?? 0, unreadFrom(chatMessages, chatId, state.userId)) } : c)),
+      };
+    });
+    const { userId } = getState();
+    if (userId) getState().persistMessages(userId);
   },
   removeMessageById(messageId) {
     const chatId = Object.keys(getState().messages).find((id) => getState().messages[id].some((m) => m.id === messageId));
