@@ -1,5 +1,5 @@
 import { apiFetch } from '../api.js';
-import { nativeCancelIncomingCall, nativeEndCallWindow, nativeSetCallActive, nativeSetCallRinging, nativeSetSpeaker, nativeShell, nativeShowIncomingCall, onNative } from '../native.js';
+import { nativeCancelIncomingCall, nativeEndCallWindow, nativeSetCallActive, nativeSetCallRinging, nativeSetCallVideoShown, nativeSetSpeaker, nativeShell, nativeShowIncomingCall, onNative } from '../native.js';
 import { useEffect, useRef, useState } from 'react';
 import {
   ArrowLeft,
@@ -303,6 +303,8 @@ export default function CallOverlay({
   const [addOpen, setAddOpen] = useState(false);
   const chats = useChatStore((state) => state.chats);
   const userId = useChatStore((state) => state.userId);
+  const me = useChatStore((state) => state.user);
+  const myName = me?.name || me?.username || 'You';
 
   // Animation Video Call: the cartoon avatar replaces the camera on every pair engine of this call.
   const avatarCalls = useAvatarCallsEnabled();
@@ -313,6 +315,14 @@ export default function CallOverlay({
   const [studioOpen, setStudioOpen] = useState(false);
   const avatarStatsRef = useRef(avatarStats);
   const extrasCount = Object.keys(extraSnapshots).length;
+  // One-to-one video call where both people have turned their camera off: like WhatsApp, the audio leaves the
+  // loudspeaker for the earpiece so the phone can go to the ear; when either camera comes back it returns.
+  const peerVideoShown = Boolean(remoteStream) && remoteHasVideo && !remoteVideoOff;
+  const bothCamerasOff = isVideo && status === 'connected' && cameraOff && !peerVideoShown && extrasCount === 0;
+  useEffect(() => {
+    if (!nativeShell() || !isVideo || !callLive) return;
+    nativeSetCallVideoShown(!bothCamerasOff).then((result) => { if (typeof result?.speaker === 'boolean') setSpeakerOn(result.speaker); });
+  }, [bothCamerasOff]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!isVideo || terminal) return undefined;
     if (!avatarOn || !persona) {
@@ -885,7 +895,9 @@ export default function CallOverlay({
                 autoPlay
                 playsInline
                 muted
-                style={{ filter: filterStyles[filterEffect] }}
+                // Android draws video on its own surface above the page, so a camera that is off must be hidden or
+                // it shows as a black box over the profile picture.
+                style={{ filter: filterStyles[filterEffect], visibility: cameraOff && !screenSharing ? 'hidden' : 'visible' }}
               />
               {screenSharing && <span className="wa-share-badge mine"><MonitorUp size={13} /> You're sharing your screen</span>}
               {!screenSharing && avatarStatus === 'loading' && <span className="wa-share-badge mine"><ScanFace size={13} /> Loading face tracker…</span>}
@@ -894,10 +906,11 @@ export default function CallOverlay({
                   <ScanFace size={13} /> {personaCharacter(persona).name} · {avatarStats.fps} fps · {avatarStats.latencyMs} ms{avatarStats.tracking ? '' : ' · looking for your face'}
                 </span>
               )}
-              {cameraOff && (
+              {cameraOff && !screenSharing && (
                 <div className="wa-video-off-notice">
-                  <VideoOff size={28} />
-                  <span>Camera off</span>
+                  <Avatar name={myName} initials={me?.initials ?? myName.slice(0, 2).toUpperCase()} color={me?.color} image={me?.avatar} size={selfFull ? 'large' : 'normal'} />
+                  <strong className="wa-video-off-name">{selfFull ? myName : 'You'}</strong>
+                  <span className="wa-video-off-status"><VideoOff size={13} aria-hidden="true" /> Camera off</span>
                 </div>
               )}
               {canSwapTile && !selfFull && (

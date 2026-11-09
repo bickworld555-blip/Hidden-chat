@@ -255,6 +255,15 @@ public class HiddenNativePlugin extends Plugin {
         call.resolve();
     }
 
+    /** Video call: whether any camera is on. Both off → earpiece like a voice call; one back on → loudspeaker. */
+    @PluginMethod
+    public void setCallVideoShown(PluginCall call) {
+        CallAudio.setVideoShown(getContext(), Boolean.TRUE.equals(call.getBoolean("shown", true)));
+        JSObject result = new JSObject();
+        result.put("speaker", CallAudio.isSpeaker());
+        call.resolve(result);
+    }
+
     /** The in-call speaker button: loudspeaker on/off (off = earpiece or headset). */
     @PluginMethod
     public void setSpeaker(PluginCall call) {

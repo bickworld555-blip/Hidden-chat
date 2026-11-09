@@ -50,6 +50,8 @@ export const nativeClearSession = () => invoke('clearSession');
 export const nativeSetCallActive = (active, video = false, name = '') => invoke('setCallActive', { active: Boolean(active), video: Boolean(video), name: String(name || '') });
 // Loudspeaker on/off during a call (off = earpiece, or a headset when one is connected). Resolves { speaker }.
 export const nativeSetSpeaker = (on) => invoke('setSpeaker', { on: Boolean(on) });
+// Video call with both cameras off: the phone goes to the ear (earpiece + proximity sensor); a camera back on → loudspeaker.
+export const nativeSetCallVideoShown = (shown) => invoke('setCallVideoShown', { shown: Boolean(shown) });
 // The phone's own default sounds, for the in-app "Default" tone choice.
 export const nativePlaySystemSound = ({ key, ringtone = false, loop = false }) => invoke('playSystemSound', { key, ringtone, loop });
 export const nativeStopSystemSound = (key) => invoke('stopSystemSound', { key });

@@ -4213,3 +4213,13 @@ html.native-pip .wa-video-tile.is-pip { width: 30% !important; height: auto !imp
 .app-shell .message-bubble p.deleted-text { display: inline-flex; align-items: center; gap: 6px; margin: 0; color: var(--wa-sub, #667781); font-style: italic; }
 .deleted-text svg { flex: none; opacity: .85; }
 .app-shell.dark-theme .message-bubble p.deleted-text, .dark-theme .app-shell .message-bubble p.deleted-text { color: #8696a0; }
+/* Your camera off: your profile picture and name on the tile instead of a black box (WhatsApp). */
+.wa-video-off-notice { z-index: 1; padding: 6px; text-align: center; }
+.wa-video-off-name { color: #e9edef; font-size: 15px; font-weight: 500; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wa-video-off-status { display: inline-flex; align-items: center; gap: 4px; color: #8696a0; font-size: 12px; }
+.wa-video-tile.is-pip .wa-video-off-notice { gap: 4px; }
+.wa-video-tile.is-pip .wa-video-off-notice .avatar { width: 48px; height: 48px; font-size: 15px; }
+.wa-video-tile.is-pip .wa-video-off-name { font-size: 12px; }
+.wa-video-tile.is-pip .wa-video-off-status { font-size: 10px; }
+.wa-call-backdrop.is-pip .wa-video-tile.is-pip .wa-video-off-notice .avatar { width: 28px; height: 28px; font-size: 10px; }
+.wa-call-backdrop.is-pip .wa-video-tile.is-pip .wa-video-off-name, .wa-call-backdrop.is-pip .wa-video-tile.is-pip .wa-video-off-status { display: none; }

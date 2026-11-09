@@ -44,6 +44,18 @@ final class CallAudio {
         watch(context);
     }
 
+    /**
+     * A video call where both cameras are now off (or one came back on): with no picture to look at, the phone goes
+     * to the ear like a voice call (earpiece, proximity sensor); a camera coming back puts it on the loudspeaker.
+     * Only a change does anything, so a speaker choice made meanwhile is kept.
+     */
+    static synchronized void setVideoShown(Context context, boolean shown) {
+        if (!active || shown == video) return;
+        video = shown;
+        speaker = shown;
+        apply(context);
+    }
+
     static synchronized void setSpeaker(Context context, boolean on) {
         speaker = on;
         if (active) apply(context);

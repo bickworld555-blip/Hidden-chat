@@ -147,3 +147,14 @@ test('Android floating video window: the call fills the whole window, and Back o
   assert.match(css, /html\.native-pip \.wa-call-screen, html\.native-pip \.wa-call-backdrop\.is-pip \.wa-call-screen \{ width: 100% !important; height: 100% !important;/);
   assert.ok(!/html\.native-pip[^{]*\{[^}]*100v[wh]/.test(css), 'viewport units are the PiP window, not the zoomed page');
 });
+
+test('video call: your camera off shows your profile picture, and both cameras off moves audio to the earpiece', async () => {
+  const overlay = await source('src/components/CallOverlay.jsx');
+  assert.ok(overlay.includes("visibility: cameraOff && !screenSharing ? 'hidden' : 'visible'"), 'the black camera surface is hidden');
+  assert.ok(overlay.includes('<Avatar name={myName} initials={me?.initials ?? myName.slice(0, 2).toUpperCase()} color={me?.color} image={me?.avatar}'));
+  assert.ok(overlay.includes('const bothCamerasOff = isVideo && status === \'connected\' && cameraOff && !peerVideoShown && extrasCount === 0;'));
+  assert.ok(overlay.includes('nativeSetCallVideoShown(!bothCamerasOff)'));
+  const audio = await source('android/app/src/main/java/io/github/bickworld555/hiddenchat/CallAudio.java');
+  assert.match(audio, /static synchronized void setVideoShown\(Context context, boolean shown\) \{\s*if \(!active \|\| shown == video\) return;\s*video = shown;\s*speaker = shown;\s*apply\(context\);/);
+  assert.match(audio, /boolean wanted = active && !speaker && !video;/, 'the proximity sensor turns the screen off at the ear');
+});
