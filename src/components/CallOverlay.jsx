@@ -529,10 +529,15 @@ export default function CallOverlay({
     return () => { stopPip(); document.removeEventListener('visibilitychange', onVisible); clearInterval(timer); };
   }, []);
   const callActionsRef = useRef(null);
-  useEffect(() => onNative('callAction', ({ action, callId }) => {
+  useEffect(() => onNative('callAction', ({ action, callId, cameraOff: answerWithCameraOff, text }) => {
     if (callId && callId !== latest.current.call.id) return;
-    if (action === 'accept') callActionsRef.current?.accept();
+    if (action === 'accept') callActionsRef.current?.accept({ cameraOff: Boolean(answerWithCameraOff) });
     else if (action === 'reject' || action === 'hangup') callActionsRef.current?.reject();
+    // "Message" on the lock-screen call: decline and send the chosen quick reply to the caller.
+    else if (action === 'reply') {
+      if (typeof text === 'string' && text.trim()) useChatStore.getState().sendMessage(latest.current.call.peerId, text.trim());
+      callActionsRef.current?.reject();
+    }
   }), []);
 
   useEffect(() => {
@@ -611,7 +616,14 @@ export default function CallOverlay({
     onClose();
   }
 
-  callActionsRef.current = { accept: acceptCall, reject: endCall };
+  callActionsRef.current = {
+    // "Turn off your video" on the lock-screen call: answer, then switch the camera off right away.
+    accept: ({ cameraOff: off = false } = {}) => {
+      acceptCall();
+      if (off) allEngines().forEach((engine) => engine.setCameraOff(true));
+    },
+    reject: endCall,
+  };
 
   function inviteParticipant(contact) {
     setAddOpen(false);

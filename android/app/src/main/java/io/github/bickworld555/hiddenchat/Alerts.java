@@ -130,6 +130,7 @@ final class Alerts {
         try {
             NotificationManagerCompat.from(context).notify(CALL_TAG, CALL_NOTIFICATION_ID, notification);
             ringing = true;
+            MainActivity.callRinging(context);
             openCallScreen(context, show);
             wakeScreen(context);
             // App on screen (or in the background): light the screen and show the call over the lock screen now.

@@ -91,16 +91,27 @@ public class HiddenNativePlugin extends Plugin {
         }
         if (ACTION_ACCEPT.equals(intent.getAction())) {
             cancelCallNotification(getContext());
-            emitCallAction("accept", intent.getStringExtra(EXTRA_CALL_ID));
+            JSObject extra = new JSObject();
+            extra.put("cameraOff", intent.getBooleanExtra(IncomingCallActivity.EXTRA_CAMERA_OFF, false));
+            emitCallAction("accept", intent.getStringExtra(EXTRA_CALL_ID), extra);
             intent.setAction(null);
         }
     }
 
     /** Returns false when no WebView is listening (the app's screen is gone). */
     static boolean emitCallAction(String action, String callId) {
+        return emitCallAction(action, callId, null);
+    }
+
+    /** `extra`: e.g. { cameraOff } for an accept, { text } for a quick reply. */
+    static boolean emitCallAction(String action, String callId, JSObject extra) {
         JSObject data = new JSObject();
         data.put("action", action);
         data.put("callId", callId);
+        if (extra != null) for (java.util.Iterator<String> keys = extra.keys(); keys.hasNext();) {
+            String key = keys.next();
+            data.put(key, extra.opt(key));
+        }
         HiddenNativePlugin plugin = instance;
         if (plugin == null) return false;
         plugin.notifyListeners("callAction", data, true);

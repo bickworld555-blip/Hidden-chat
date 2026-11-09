@@ -81,6 +81,22 @@ final class NativeRelay extends WebSocketListener {
         return result;
     }
 
+    /** "Message" on a ringing call while the app was closed: send the quick reply to the caller first. */
+    static synchronized boolean replyToPendingCall(String callId, String text) {
+        if (pendingCall == null || current == null || current.socket == null || text == null || text.trim().isEmpty()) return false;
+        if (callId != null && !callId.isEmpty() && !callId.equals(pendingCall.optString("callId"))) return false;
+        try {
+            JSONObject message = new JSONObject()
+                .put("id", UUID.randomUUID().toString())
+                .put("receiverId", pendingCall.optString("from"))
+                .put("content", text.trim());
+            current.socket.send(new JSONObject().put("type", "message:send").put("message", message).toString());
+            return true;
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
     /** "Reject" tapped while the app was closed: tell the caller through this connection. */
     static synchronized boolean declinePendingCall(String callId) {
         if (pendingCall == null || current == null || current.socket == null) return false;

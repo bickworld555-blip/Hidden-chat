@@ -20,6 +20,8 @@ import { ContactBubble, LiveLocationBubble, LocationBubble } from './LocationMes
 import { contactContent, liveContent, locationContent, messageKind, parseContact, parseLive, parseLocation } from '../geo.js';
 import { presentName } from '../profile.js';
 import CallStatusBubble from './CallStatusBubble.jsx';
+import LinkPreview from './LinkPreview.jsx';
+import { firstLink } from '../links.js';
 import MediaRenderer from './MediaRenderer.jsx';
 import { lazyComponent } from '../lazy.js';
 import { useBackHandler } from '../backStack.js';
@@ -80,6 +82,20 @@ function parseCall(content) {
   } catch {
     return {};
   }
+}
+
+// A text message with a link gets WhatsApp's preview card above it. A message that is only the link shows the card
+// alone once it has loaded (the address is on the card); without a preview the link text stays.
+const bareLink = (value) => value.trim().replace(/^https?:\/\//i, '').replace(/\/$/, '');
+function TextWithPreview({ content, sessionToken }) {
+  const href = firstLink(content);
+  const onlyLink = Boolean(href) && bareLink(content) === bareLink(href);
+  return (
+    <>
+      {href && <LinkPreview href={href} sessionToken={sessionToken} />}
+      <p className={onlyLink ? 'link-preview-url' : undefined}><LinkText text={content} /></p>
+    </>
+  );
 }
 
 function MessageStatus({ status }) {
@@ -339,7 +355,7 @@ function MessageBubble({
                 : sharedKind === 'location' && parseLocation(content) ? <LocationBubble location={parseLocation(content)} onOpen={shared.openLocation} />
                 : sharedKind === 'live' && parseLive(content) ? <LiveLocationBubble live={parseLive(content)} mine={mine} peerName={shared.peerName} send={shared.send} onOpen={shared.openLive} />
                 : sharedKind === 'contact' && parseContact(content) ? <ContactBubble contact={parseContact(content)} onMessage={shared.messageContact} />
-                : <p><LinkText text={content} /></p>}
+                : <TextWithPreview content={content} sessionToken={sessionToken} />}
               {meta}
             </>
           )}

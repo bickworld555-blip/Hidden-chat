@@ -26,6 +26,15 @@ public class IncomingCallActivity extends Activity {
     static final String EXTRA_CALLER = "hm_caller";
     static final String EXTRA_VIDEO = "hm_video";
     static final String EXTRA_AVATAR = "hm_avatar";
+    static final String EXTRA_CAMERA_OFF = "hm_camera_off";
+    // WhatsApp's quick replies under "Message": the call is declined and the text sent, without unlocking.
+    static final String[] QUICK_REPLIES = {
+        "Can't talk now. What's up?",
+        "I'll call you right back.",
+        "I'll call you later.",
+        "Can't talk now. Call me later?",
+    };
+    private boolean cameraOff;
     private static IncomingCallActivity current;
 
     static Intent intent(Context context, String callId, String caller, boolean video, String avatar) {
@@ -127,11 +136,34 @@ public class IncomingCallActivity extends Activity {
 
         root.addView(new View(this), new LinearLayout.LayoutParams(1, 0, 1.2f));
 
+        if (video) {
+            // "Turn off your video": answer the video call with the camera off (tap again to keep it on).
+            TextView camera = text("", 15, "#ffffff", false);
+            camera.setPadding(dp(20), dp(10), dp(20), dp(10));
+            GradientDrawable pill = new GradientDrawable();
+            pill.setCornerRadius(dp(24));
+            pill.setColor(Color.parseColor("#3b4a54"));
+            camera.setBackground(pill);
+            camera.setClickable(true);
+            Runnable label = () -> {
+                camera.setText(cameraOff ? "📷  Turn on your video" : "🚫  Turn off your video");
+                camera.setContentDescription(cameraOff ? "Answer with camera on" : "Answer with camera off");
+            };
+            label.run();
+            camera.setOnClickListener((v) -> { cameraOff = !cameraOff; label.run(); });
+            LinearLayout.LayoutParams cameraSize = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+            cameraSize.bottomMargin = dp(28);
+            root.addView(camera, cameraSize);
+        }
+
         LinearLayout buttons = new LinearLayout(this);
         buttons.setOrientation(LinearLayout.HORIZONTAL);
-        buttons.setGravity(Gravity.CENTER);
-        buttons.addView(action("Decline", "#ea0038", 135f, "Decline call", (v) -> decline(callId)), new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
-        buttons.addView(action(video ? "Video" : "Accept", "#1fa855", 0f, video ? "Accept video call" : "Accept call", (v) -> accept(callId)), new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        buttons.setGravity(Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
+        buttons.addView(action("Decline", "#ea0038", android.R.drawable.ic_menu_call, 135f, "Decline call", (v) -> decline(callId)), new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        LinearLayout acceptColumn = action("Swipe up to accept", "#1fa855", android.R.drawable.ic_menu_call, 0f, video ? "Accept video call" : "Accept call", (v) -> accept(callId));
+        swipeUpToAccept(acceptColumn.getChildAt(0), () -> accept(callId));
+        buttons.addView(acceptColumn, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.4f));
+        buttons.addView(action("Message", "#2a3942", android.R.drawable.sym_action_chat, 0f, "Decline with a message", (v) -> chooseReply(callId)), new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
         root.addView(buttons, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
 
         setContentView(root);
@@ -183,9 +215,54 @@ public class IncomingCallActivity extends Activity {
             .setAction(Alerts.ACTION_ACCEPT)
             .setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP)
             .putExtra(Alerts.EXTRA_CALL, true)
+            .putExtra(EXTRA_CAMERA_OFF, cameraOff)
             .putExtra(Alerts.EXTRA_CALL_ID, callId == null ? "" : callId);
         startActivity(accept);
         finish();
+    }
+
+    /** Dragging the green button upwards answers, like WhatsApp's "Swipe up to accept"; a tap answers too. */
+    private void swipeUpToAccept(View button, Runnable onAccept) {
+        final float[] start = new float[1];
+        final int threshold = dp(90);
+        button.setOnTouchListener((view, event) -> {
+            switch (event.getActionMasked()) {
+                case android.view.MotionEvent.ACTION_DOWN:
+                    start[0] = event.getRawY();
+                    return false;
+                case android.view.MotionEvent.ACTION_MOVE:
+                    float lift = Math.max(0, start[0] - event.getRawY());
+                    view.setTranslationY(-Math.min(lift, threshold * 1.4f));
+                    if (lift >= threshold) {
+                        view.setTranslationY(0);
+                        onAccept.run();
+                        return true;
+                    }
+                    return lift > dp(8);
+                case android.view.MotionEvent.ACTION_UP:
+                case android.view.MotionEvent.ACTION_CANCEL:
+                    boolean dragged = view.getTranslationY() < -dp(8);
+                    view.animate().translationY(0).setDuration(150).start();
+                    return dragged;
+                default:
+                    return false;
+            }
+        });
+    }
+
+    /** "Message": pick a quick reply; the call is declined and the reply sent to the caller, still locked. */
+    private void chooseReply(String callId) {
+        new android.app.AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+            .setTitle("Reply with a message")
+            .setItems(QUICK_REPLIES, (dialog, which) -> {
+                sendBroadcast(new Intent(this, CallActionReceiver.class)
+                    .setAction(CallActionReceiver.ACTION_REPLY)
+                    .putExtra(Alerts.EXTRA_CALL_ID, callId == null ? "" : callId)
+                    .putExtra(CallActionReceiver.EXTRA_TEXT, QUICK_REPLIES[which]));
+                finish();
+            })
+            .setNegativeButton("Cancel", null)
+            .show();
     }
 
     /** Rejects without opening the app or unlocking, through the same path as the notification's Decline. */
@@ -196,12 +273,12 @@ public class IncomingCallActivity extends Activity {
         finish();
     }
 
-    private LinearLayout action(String label, String color, float rotation, String description, View.OnClickListener onClick) {
+    private LinearLayout action(String label, String color, int icon, float rotation, String description, View.OnClickListener onClick) {
         LinearLayout column = new LinearLayout(this);
         column.setOrientation(LinearLayout.VERTICAL);
         column.setGravity(Gravity.CENTER_HORIZONTAL);
         ImageView button = new ImageView(this);
-        button.setImageResource(android.R.drawable.ic_menu_call);
+        button.setImageResource(icon);
         button.setColorFilter(Color.WHITE);
         button.setRotation(rotation);
         button.setScaleType(ImageView.ScaleType.CENTER_INSIDE);

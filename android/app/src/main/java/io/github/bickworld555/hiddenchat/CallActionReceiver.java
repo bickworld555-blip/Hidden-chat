@@ -8,6 +8,8 @@ import android.content.Intent;
 public class CallActionReceiver extends BroadcastReceiver {
     static final String ACTION_REJECT = "io.github.bickworld555.hiddenchat.CALL_REJECT";
     static final String ACTION_HANGUP = "io.github.bickworld555.hiddenchat.CALL_HANGUP";
+    static final String ACTION_REPLY = "io.github.bickworld555.hiddenchat.CALL_REPLY";
+    static final String EXTRA_TEXT = "hm_text";
 
     @Override
     public void onReceive(Context context, Intent intent) {
@@ -17,6 +19,19 @@ public class CallActionReceiver extends BroadcastReceiver {
             if (!HiddenNativePlugin.emitCallAction("hangup", null)) {
                 MessagingService.setCall(context, false, false, null);
                 CallAudio.stop(context);
+            }
+            return;
+        }
+        if (ACTION_REPLY.equals(intent.getAction())) {
+            // "Message" on the ringing call: decline it and send a quick reply, without opening the app.
+            String callId = intent.getStringExtra(Alerts.EXTRA_CALL_ID);
+            String text = intent.getStringExtra(EXTRA_TEXT);
+            Alerts.cancelIncomingCall(context);
+            boolean byService = NativeRelay.replyToPendingCall(callId, text) && NativeRelay.declinePendingCall(callId);
+            if (!byService) {
+                com.getcapacitor.JSObject extra = new com.getcapacitor.JSObject();
+                extra.put("text", text);
+                HiddenNativePlugin.emitCallAction("reply", callId, extra);
             }
             return;
         }

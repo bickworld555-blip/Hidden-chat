@@ -18,6 +18,20 @@ import java.util.Collections;
 public class MainActivity extends BridgeActivity {
     private static volatile boolean alive;
     private static MainActivity current;
+    private static volatile boolean visible;
+    // The call was answered from the lock screen, the call screen or a notification while the app was not in front:
+    // when it ends the phone goes back to where it was (lock screen, home, the other app), not to the chat list.
+    private static volatile boolean returnAfterCall;
+    // Captured when a call starts ringing: Android marks the app visible again before it delivers the Accept, so
+    // whether the user was elsewhere has to be known from before.
+    private static volatile boolean ringingWhileAway;
+
+    /** A call started ringing: remember whether the app was in front (unlocked) at that moment. */
+    static void callRinging(Context context) {
+        android.app.KeyguardManager keyguard = context.getSystemService(android.app.KeyguardManager.class);
+        ringingWhileAway = !visible || (keyguard != null && keyguard.isKeyguardLocked());
+    }
+    private static final android.os.Handler handler = new android.os.Handler(android.os.Looper.getMainLooper());
 
     /** Whether the app's screen (and so its WebView connection) currently exists. */
     static boolean isAlive() {
@@ -36,6 +50,7 @@ public class MainActivity extends BridgeActivity {
         // Opened by a ringing call's full-screen notification: show over the lock screen and light the screen at
         // once, before the web app has loaded (otherwise the call would wait behind the lock screen).
         if (getIntent() != null && getIntent().getBooleanExtra(Alerts.EXTRA_CALL, false)) applyCallWindow(true);
+        noteAnsweredFromOutside(getIntent());
         // Back closes the top screen inside the app (chat → chat list, drawers, viewer…); with nothing left to close
         // the app goes to the background instead of being destroyed, like WhatsApp.
         getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
@@ -47,7 +62,37 @@ public class MainActivity extends BridgeActivity {
     }
 
     @Override
+    public void onStart() {
+        super.onStart();
+        visible = true;
+    }
+
+    @Override
+    public void onStop() {
+        visible = false;
+        super.onStop();
+    }
+
+    private void noteAnsweredFromOutside(Intent intent) {
+        if (intent == null || !Alerts.ACTION_ACCEPT.equals(intent.getAction())) return;
+        // Captured when it started ringing (with the app closed nothing was visible, so that counts too).
+        returnAfterCall = ringingWhileAway;
+    }
+
+    /** The call ended (still ended a moment later, so a voice/video switch does not count): step back if asked. */
+    static void callEnded() {
+        handler.removeCallbacksAndMessages(null);
+        handler.postDelayed(() -> {
+            MainActivity activity = current;
+            if (!returnAfterCall || MessagingService.isCallActive() || Alerts.isRinging() || activity == null) return;
+            returnAfterCall = false;
+            activity.moveTaskToBack(true);
+        }, 1500);
+    }
+
+    @Override
     protected void onNewIntent(Intent intent) {
+        noteAnsweredFromOutside(intent);
         if (intent != null && intent.getBooleanExtra(Alerts.EXTRA_CALL, false)) applyCallWindow(true);
         super.onNewIntent(intent);
     }

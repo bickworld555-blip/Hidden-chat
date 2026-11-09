@@ -4231,3 +4231,21 @@ html.native-pip .wa-video-tile.is-pip { width: 30% !important; height: auto !imp
 .wa-quick-forward { flex: none; align-self: center; display: grid; place-items: center; width: 32px; height: 32px; margin: 0 6px; padding: 0; border: 0; border-radius: 50%; background: rgba(11, 20, 26, .28); color: #fff; cursor: pointer; }
 .message-line.mine .wa-quick-forward { order: -1; }
 .dark-theme .wa-quick-forward { background: rgba(255, 255, 255, .12); color: #e9edef; }
+/* Link preview card (Facebook reels, YouTube, sites), like WhatsApp: thumbnail, title, description, site + logo. */
+.link-preview { display: flex; flex-direction: column; width: min(300px, 66vw); margin: -4px -6px 6px; overflow: hidden; border-radius: 6px; background: rgba(11, 20, 26, .06); color: inherit; text-decoration: none; }
+.dark-theme .link-preview { background: rgba(0, 0, 0, .22); }
+.link-preview-image { position: relative; display: block; aspect-ratio: 16 / 10; background: #000; }
+.link-preview.is-video .link-preview-image { aspect-ratio: 4 / 5; max-height: 360px; }
+.link-preview-image img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.link-preview-badge { position: absolute; left: 8px; bottom: 8px; display: inline-flex; align-items: center; gap: 4px; padding: 2px 6px; border-radius: 4px; background: rgba(0, 0, 0, .55); color: #fff; font-size: 12px; font-weight: 600; }
+.link-preview-text { display: flex; flex-direction: column; gap: 3px; padding: 8px 10px; }
+.link-preview-text strong { display: -webkit-box; overflow: hidden; color: var(--wa-text, #111b21); font-size: 14px; font-weight: 600; line-height: 1.3; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
+.link-preview-text small { display: -webkit-box; overflow: hidden; color: var(--wa-sub, #667781); font-size: 12.5px; line-height: 1.3; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.link-preview-site { display: flex; align-items: center; gap: 5px; margin-top: 2px; color: var(--wa-sub, #667781); font-size: 12.5px; }
+.link-preview-site > span:first-of-type { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.link-provider { display: grid; place-items: center; flex: none; width: 18px; height: 18px; border-radius: 50%; color: #fff; font-size: 11px; font-weight: 700; line-height: 1; }
+.link-provider.is-facebook { background: #1877f2; font-family: Arial, sans-serif; }
+.link-provider.is-youtube { border-radius: 4px; background: #ff0000; font-size: 8px; }
+.link-provider.is-instagram { background: linear-gradient(45deg, #f9ce34, #ee2a7b, #6228d7); }
+.link-provider.is-tiktok { background: #000; }
+.app-shell .message-bubble .link-preview + p.link-preview-url { display: none; }

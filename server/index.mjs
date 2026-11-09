@@ -20,6 +20,7 @@ import { createPostgresDatabase, describeDatabaseError, isDatabaseUnavailable } 
 import { DEMO_USERS } from './demo.mjs';
 import { createEventPilot } from './eventPilot.mjs';
 import { pdfPageCountOfFile } from './pdfPages.mjs';
+import { createLinkPreviews } from './linkPreview.mjs';
 import { canSeePresence, deviceNameFromUserAgent, isLastSeenPrivacy, presenceFor } from './presence.mjs';
 
 const directory = dirname(fileURLToPath(import.meta.url));
@@ -108,6 +109,7 @@ export function createChatServer({
   allowedOrigins = process.env.RELAY_ALLOWED_ORIGINS ?? '',
   webDirectory = join(directory, '..', 'dist'),
   migrate = false,
+  linkPreviews = null,
 } = {}) {
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('PORT must be an integer from 0 to 65535.');
   if (process.env.NODE_ENV === 'production' && port === 0) throw new Error('Production requires a fixed nonzero PORT.');
@@ -979,6 +981,19 @@ export function createChatServer({
     await db.ready?.();
     const recent = await missingRecentMedia().catch(() => null);
     response.json({ status: 'ok', storage: storageInRelease ? 'release' : 'persistent', ...(recent ? { recentMedia: recent } : {}) });
+  });
+
+  // WhatsApp-style card for a link in a message: thumbnail, title, description and site (Facebook, YouTube…).
+  const linkPreview = linkPreviews ?? createLinkPreviews();
+  app.get('/api/v1/link-preview', requireSession, async (request, response) => {
+    const raw = String(request.query.url ?? '').slice(0, 2048);
+    let url;
+    try { url = new URL(raw); } catch { return response.status(400).json({ error: 'Give a web link as ?url=.' }); }
+    if (!['http:', 'https:'].includes(url.protocol)) return response.status(400).json({ error: 'Give a web link as ?url=.' });
+    const preview = await linkPreview(url.href);
+    response.set('Cache-Control', 'private, max-age=3600');
+    if (!preview) return response.status(204).end();
+    response.json(preview);
   });
 
   app.get('/api/v1/rtc-config', requireSession, (_request, response) => {
