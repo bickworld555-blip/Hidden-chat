@@ -46,6 +46,9 @@ export function nativeSetSession({ origin, token, userId, mutedChats = [], muted
 export const nativeClearSession = () => invoke('clearSession');
 // While a call is live the service also holds the microphone/camera, so the call keeps working in the background,
 // and shows "<name> · Ongoing call" with a Hang up button (which arrives as callAction "hangup").
+// The call is over: the native side clears the call state, Android's call, audio and notifications at once.
+export const nativeEndCall = () => invoke('endCall');
+export const nativeCallHeartbeat = () => invoke('callHeartbeat');
 export const nativeSetCallActive = (active, video = false, name = '') => invoke('setCallActive', { active: Boolean(active), video: Boolean(video), name: String(name || '') });
 // Loudspeaker on/off during a call (off = earpiece, or a headset when one is connected). Resolves { speaker }.
 export const nativeSetSpeaker = (on) => invoke('setSpeaker', { on: Boolean(on) });

@@ -110,3 +110,18 @@ test('watchdogs: no Android call or call notification outlives the call in the a
   assert.ok(calls.includes('end(state == Connection.STATE_RINGING ? DisconnectCause.MISSED : DisconnectCause.LOCAL);'));
   assert.ok(calls.includes('main.postDelayed(check, CHECK_INTERVAL_MS);'), 'started for every new connection');
 });
+
+test('hard reset when a call ends: call notification deleted, Android call destroyed, heartbeat backstop', async () => {
+  const service = await java('MessagingService.java');
+  assert.ok(service.includes('private static final int CALL_NOTIFICATION_ID = 1002;'), 'the call notification has its own id');
+  assert.ok(service.includes('if (!callActive) androidx.core.app.NotificationManagerCompat.from(this).cancel(CALL_NOTIFICATION_ID);'), 'deleted, not turned back into "Connected"');
+  assert.match(service, /static void hardReset\(Context context, String why\) \{[\s\S]*?TelecomCalls\.endAll\(\);\s*CallAudio\.stop\(context\);\s*androidx\.core\.app\.NotificationManagerCompat\.from\(context\)\.cancel\(CALL_NOTIFICATION_ID\);/);
+  assert.ok(service.includes('endOrphanedCall(context, "the app stopped confirming the call");'));
+  const calls = await java('TelecomCalls.java');
+  assert.match(calls, /static void endAll\(\) \{[\s\S]*?end\(DisconnectCause\.LOCAL\);/);
+  assert.match(calls, /ending\.setDisconnected\(new DisconnectCause\(cause\)\);\s*ending\.destroy\(\);/);
+  const overlay = await source('src/components/CallOverlay.jsx');
+  assert.ok(overlay.includes('useEffect(() => { if (nativeShell() && terminal) nativeEndCall(); }, [terminal]);'), 'the moment the call ends');
+  assert.ok(overlay.includes('useEffect(() => () => { if (nativeShell()) nativeEndCall(); }, []);'), 'and when the call screen closes');
+  assert.ok(overlay.includes('const timer = setInterval(() => nativeCallHeartbeat(), CALL_HEARTBEAT_MS);'));
+});

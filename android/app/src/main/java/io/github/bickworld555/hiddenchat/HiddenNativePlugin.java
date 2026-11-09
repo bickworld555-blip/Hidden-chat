@@ -247,6 +247,24 @@ public class HiddenNativePlugin extends Plugin {
         call.resolve(result);
     }
 
+    /** The call ended in the app: clear every trace of it at once (see MessagingService.hardReset). */
+    @PluginMethod
+    public void endCall(PluginCall call) {
+        Context context = getContext();
+        new android.os.Handler(android.os.Looper.getMainLooper()).post(() -> {
+            MessagingService.hardReset(context, "ended in the app");
+            setCallWindow(false);
+            call.resolve();
+        });
+    }
+
+    /** The web app's call is still live (sent every few seconds while it lasts). */
+    @PluginMethod
+    public void callHeartbeat(PluginCall call) {
+        MessagingService.heartbeat();
+        call.resolve();
+    }
+
     /** Outgoing-call ringback on the call stream (earpiece by default for voice calls). Resolves { played }. */
     @PluginMethod
     public void startRingback(PluginCall call) {

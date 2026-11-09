@@ -1,5 +1,5 @@
 import { apiFetch } from '../api.js';
-import { nativeCancelIncomingCall, nativeEndCallWindow, nativeSetCallActive, nativeSetCallRinging, nativeSetCallVideoShown, nativeSetSpeaker, nativeShell, nativeShowIncomingCall, onNative } from '../native.js';
+import { nativeCallHeartbeat, nativeCancelIncomingCall, nativeEndCall, nativeEndCallWindow, nativeSetCallActive, nativeSetCallRinging, nativeSetCallVideoShown, nativeSetSpeaker, nativeShell, nativeShowIncomingCall, onNative } from '../native.js';
 import { useEffect, useRef, useState } from 'react';
 import {
   ArrowLeft,
@@ -194,6 +194,8 @@ function FloatingReactions({ items }) {
   );
 }
 
+const CALL_HEARTBEAT_MS = 10_000;
+
 export default function CallOverlay({
   call,
   peer,
@@ -253,6 +255,17 @@ export default function CallOverlay({
     nativeSetCallActive(callLive, isVideo, callTitle).then((result) => { if (callLive && typeof result?.speaker === 'boolean') setSpeakerOn(result.speaker); });
     return () => { if (callLive) nativeSetCallActive(false); };
   }, [callLive, isVideo, callTitle]);
+  // While live, tell Android every few seconds that the call goes on; if the confirmations stop, it ends the call
+  // there by itself, so a timer can never keep running on the lock screen for a call that is gone.
+  useEffect(() => {
+    if (!nativeShell() || !callLive) return undefined;
+    nativeCallHeartbeat();
+    const timer = setInterval(() => nativeCallHeartbeat(), CALL_HEARTBEAT_MS);
+    return () => clearInterval(timer);
+  }, [callLive]);
+  // The moment the call ends (either side, any way), and when this screen closes: hard reset on the native side.
+  useEffect(() => { if (nativeShell() && terminal) nativeEndCall(); }, [terminal]);
+  useEffect(() => () => { if (nativeShell()) nativeEndCall(); }, []);
 
   // Shared across the room: one screen capture feeds every pair (each engine gets its own clone).
   const displayShareRef = useRef(null);

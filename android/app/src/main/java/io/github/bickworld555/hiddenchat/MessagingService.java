@@ -25,6 +25,13 @@ import androidx.core.content.ContextCompat;
  */
 public class MessagingService extends Service {
     private static final int NOTIFICATION_ID = 1001;
+    // The ongoing-call notification (the timer on the lock screen / Samsung Now Bar) has its own id: when the call
+    // ends it is cancelled outright. Turning it back into the "Connected" notification under the same id left some
+    // phones showing the old call and its running timer.
+    private static final int CALL_NOTIFICATION_ID = 1002;
+    // Heartbeat from the web app while a call is live; without one for this long the call is over.
+    private static final long HEARTBEAT_TIMEOUT_MS = 90_000;
+    private static volatile long lastHeartbeat;
     private static volatile boolean running;
     private static MessagingService instance;
     // During a call the service also holds the microphone (and camera for video) types, so Android keeps them
@@ -69,6 +76,8 @@ public class MessagingService extends Service {
         if (service != null) new Handler(Looper.getMainLooper()).post(service::promote);
         else if (active) start(context);
         else androidx.core.app.NotificationManagerCompat.from(context).cancel(NOTIFICATION_ID);
+        if (!active) androidx.core.app.NotificationManagerCompat.from(context).cancel(CALL_NOTIFICATION_ID);
+        if (active) lastHeartbeat = 0;
         watch(context.getApplicationContext(), active);
     }
 
@@ -91,6 +100,11 @@ public class MessagingService extends Service {
                     endOrphanedCall(context, "no screen holds the call");
                     return;
                 }
+                long beat = lastHeartbeat;
+                if (beat != 0 && android.os.SystemClock.elapsedRealtime() - beat > HEARTBEAT_TIMEOUT_MS) {
+                    endOrphanedCall(context, "the app stopped confirming the call");
+                    return;
+                }
                 watchdog.postDelayed(this, WATCH_INTERVAL_MS);
             }
         }, WATCH_INTERVAL_MS);
@@ -107,6 +121,24 @@ public class MessagingService extends Service {
      * call cannot go on, so its ongoing notification (the timer on the lock screen), Android's call and the audio
      * route end now instead of counting on forever.
      */
+    /** The web app confirms every few seconds that its call is still live. */
+    static void heartbeat() {
+        if (callActive) lastHeartbeat = android.os.SystemClock.elapsedRealtime();
+    }
+
+    /**
+     * The call ended (any way): everything about it goes, unconditionally and at once — the call state, Android's
+     * call (Telecom), the audio route, the ongoing-call notification and the ringing screen of that call.
+     */
+    static void hardReset(Context context, String why) {
+        android.util.Log.i("MessagingService", "call hard reset: " + why);
+        if (callActive) setCall(context, false, false, null);
+        TelecomCalls.endAll();
+        CallAudio.stop(context);
+        androidx.core.app.NotificationManagerCompat.from(context).cancel(CALL_NOTIFICATION_ID);
+        lastHeartbeat = 0;
+    }
+
     static void endOrphanedCall(Context context, String why) {
         if (!callActive) return;
         android.util.Log.i("MessagingService", "call state cleared: " + why);
@@ -144,6 +176,7 @@ public class MessagingService extends Service {
             .setPriority(NotificationCompat.PRIORITY_MIN)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .build();
+        int id = callActive ? CALL_NOTIFICATION_ID : NOTIFICATION_ID;
         int types = serviceTypes();
         int fallback = Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE ? ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE : 0;
         // Most to least: with the phone-call type, without it, then the connection type alone (Android only grants
@@ -151,7 +184,10 @@ public class MessagingService extends Service {
         int withoutPhoneCall = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q ? types & ~ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL : types;
         for (int attempt : new int[] { types, withoutPhoneCall, fallback }) {
             try {
-                ServiceCompat.startForeground(this, NOTIFICATION_ID, notification, attempt);
+                ServiceCompat.startForeground(this, id, notification, attempt);
+                // Back to "Connected": the call notification is deleted, not left behind or reused.
+                if (!callActive) androidx.core.app.NotificationManagerCompat.from(this).cancel(CALL_NOTIFICATION_ID);
+                else androidx.core.app.NotificationManagerCompat.from(this).cancel(NOTIFICATION_ID);
                 return;
             } catch (RuntimeException notAllowedNow) {
                 if (attempt == fallback) throw notAllowedNow;

@@ -202,6 +202,19 @@ final class TelecomCalls {
         }, RINGING_GRACE_MS);
     }
 
+    /** Hard reset: Android has no call of ours left (setDisconnected + destroy), now if on the main thread. */
+    static void endAll() {
+        Runnable reset = () -> {
+            synchronized (TelecomCalls.class) {
+                placing = false;
+                main.removeCallbacks(check);
+                end(DisconnectCause.LOCAL);
+            }
+        };
+        if (Looper.myLooper() == Looper.getMainLooper()) reset.run();
+        else main.post(reset);
+    }
+
     private static void end(int cause) {
         CallConnectionService.CallConnection ending = connection;
         connection = null;
