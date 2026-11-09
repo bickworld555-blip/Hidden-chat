@@ -18,6 +18,8 @@ final class NotificationChannels {
     static final String GROUP_MESSAGES = "group_messages";
     static final String INCOMING_CALLS = "incoming_calls";
     static final String CONNECTION = "connection";
+    // The ongoing call (timer and Hang up): visible in the shade but silent.
+    static final String ONGOING_CALL = "ongoing_call";
     // The same three with the phone's own default sounds, for the in-app "Default" tone choice.
     static final String DIRECT_MESSAGES_PHONE = "direct_messages_phone";
     static final String GROUP_MESSAGES_PHONE = "group_messages_phone";
@@ -79,6 +81,13 @@ final class NotificationChannels {
         connection.setSound(null, null);
         connection.setShowBadge(false);
 
+        NotificationChannel ongoingCall = new NotificationChannel(ONGOING_CALL, "Ongoing calls", NotificationManager.IMPORTANCE_DEFAULT);
+        ongoingCall.setDescription("The call in progress, with a Hang up button");
+        ongoingCall.setSound(null, null);
+        ongoingCall.enableVibration(false);
+        ongoingCall.setShowBadge(false);
+        ongoingCall.setLockscreenVisibility(android.app.Notification.VISIBILITY_PUBLIC);
+
         NotificationChannel directPhone = new NotificationChannel(DIRECT_MESSAGES_PHONE, "Direct Messages (phone sound)", NotificationManager.IMPORTANCE_HIGH);
         directPhone.setDescription("Messages from one person, with this phone's default notification sound");
         directPhone.setSound(android.provider.Settings.System.DEFAULT_NOTIFICATION_URI, message);
@@ -96,6 +105,6 @@ final class NotificationChannels {
         callsPhone.setVibrationPattern(new long[] { 0, 800, 600, 800, 600 });
         callsPhone.setLockscreenVisibility(android.app.Notification.VISIBILITY_PUBLIC);
 
-        manager.createNotificationChannels(Arrays.asList(direct, group, calls, connection, directPhone, groupPhone, callsPhone));
+        manager.createNotificationChannels(Arrays.asList(direct, group, calls, connection, ongoingCall, directPhone, groupPhone, callsPhone));
     }
 }

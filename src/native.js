@@ -45,8 +45,9 @@ export function nativeSetSession({ origin, token, userId, mutedChats = [], muted
   return sessionSaved;
 }
 export const nativeClearSession = () => invoke('clearSession');
-// While a call is live the service also holds the microphone/camera, so the call keeps working in the background.
-export const nativeSetCallActive = (active, video = false) => invoke('setCallActive', { active: Boolean(active), video: Boolean(video) });
+// While a call is live the service also holds the microphone/camera, so the call keeps working in the background,
+// and shows "<name> · Ongoing call" with a Hang up button (which arrives as callAction "hangup").
+export const nativeSetCallActive = (active, video = false, name = '') => invoke('setCallActive', { active: Boolean(active), video: Boolean(video), name: String(name || '') });
 // Loudspeaker on/off during a call (off = earpiece, or a headset when one is connected). Resolves { speaker }.
 export const nativeSetSpeaker = (on) => invoke('setSpeaker', { on: Boolean(on) });
 // The phone's own default sounds, for the in-app "Default" tone choice.
@@ -73,6 +74,39 @@ export const nativeNotify = (options) => invoke('notify', options);
 export const nativeShowIncomingCall = (options) => invoke('showIncomingCall', options);
 export const nativeCancelIncomingCall = () => invoke('cancelIncomingCall');
 export const nativeEndCallWindow = () => invoke('endCallWindow');
+// Opens a link in the app that handles it (YouTube, Facebook, the browser); Back returns to Hidden Messenger.
+// Resolves true when Android took it, false outside the app (the caller then opens it in a new tab).
+export async function nativeOpenExternal(url) {
+  if (!nativeShell()) return false;
+  return (await invoke('openExternal', { url })) !== null;
+}
+export const nativeClearShare = () => invoke('clearShare');
+
+function base64Bytes(data) {
+  const binary = atob(data);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+  return bytes;
+}
+
+// A file shared to the app from Android's share sheet, read in 512 KB parts into a File for uploading.
+export async function nativeReadSharedFile({ index, name, mimeType }, onProgress) {
+  const native = (await plugin())?.native;
+  if (!native) throw new Error('Shared files can only be read in the Android app.');
+  const parts = [];
+  let offset = 0;
+  for (;;) {
+    const chunk = await native.readSharedChunk({ index, offset });
+    if (chunk?.data) {
+      const bytes = base64Bytes(chunk.data);
+      parts.push(bytes);
+      offset += bytes.length;
+      onProgress?.(offset);
+    }
+    if (!chunk || chunk.done) break;
+  }
+  return new File(parts, name || 'shared-file', { type: mimeType || 'application/octet-stream' });
+}
 
 // While the app is in the background inside the Android shell with notifications allowed, the native
 // channel (its own sound) is what alerts; the web app stays quiet so nothing plays twice.

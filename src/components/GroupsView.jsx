@@ -17,6 +17,7 @@ import { nativeClearMessageNotifications, nativeShell } from '../native.js';
 import { EventBubble, EventComposer, PollBubble, PollComposer } from './RichMessages.jsx';
 import { parsePollContent } from '../polls.js';
 import { parseEventContent } from '../calendarEvents.js';
+import LinkText from './LinkText.jsx';
 
 const DELETE_WINDOW_MS = 24 * 60 * 60 * 1000;
 
@@ -545,7 +546,7 @@ export default function GroupsView({ token, userId, revision, onClose, onStartGr
                       ) : isMedia ? <MediaRenderer mediaRef={message.content} sessionToken={token} />
                         : poll ? <PollBubble messageId={message.id} poll={poll} sessionToken={token} userId={userId} nameFor={(id) => group.members.find((member) => member.id === id)?.name} />
                         : event ? <EventBubble messageId={message.id} event={event} />
-                        : <p>{message.content}</p>}
+                        : <p><LinkText text={message.content} /></p>}
                       <span className="groups-message-meta">
                         {canDelete && <button type="button" disabled={busy} aria-label="Delete message" title="Delete message" onClick={() => perform(() => groupRequest(token, `${groupPath}/messages/${encodeURIComponent(message.id)}`, { method: 'DELETE' }))}><Trash2 size={13} /></button>}
                         {message.expiresAt && <Timer size={12} aria-label="Disappears after 24 hours" />}

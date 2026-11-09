@@ -13,6 +13,7 @@ import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
 import androidx.core.app.NotificationCompat;
+import androidx.core.app.Person;
 import androidx.core.app.ServiceCompat;
 import androidx.core.content.ContextCompat;
 
@@ -30,6 +31,8 @@ public class MessagingService extends Service {
     // working when the user switches apps or turns the screen off; otherwise a backgrounded call goes silent.
     private static volatile boolean callActive;
     private static volatile boolean callVideo;
+    private static volatile String callName;
+    private static volatile long callStartedAt;
 
     static void start(Context context) {
         ContextCompat.startForegroundService(context, new Intent(context, MessagingService.class));
@@ -48,9 +51,11 @@ public class MessagingService extends Service {
     }
 
     /** Called by the web app when a call starts and ends (HiddenNative.setCallActive). */
-    static void setCall(Context context, boolean active, boolean video) {
+    static void setCall(Context context, boolean active, boolean video, String name) {
+        if (active && !callActive) callStartedAt = System.currentTimeMillis();
         callActive = active;
         callVideo = active && video;
+        callName = active && name != null && !name.trim().isEmpty() ? name.trim() : null;
         MainActivity.videoCallChanged(callVideo);
         MessagingService service = instance;
         if (service != null) new Handler(Looper.getMainLooper()).post(service::promote);
@@ -75,15 +80,15 @@ public class MessagingService extends Service {
     private void promote() {
         Intent open = new Intent(this, MainActivity.class).setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
         PendingIntent content = PendingIntent.getActivity(this, 0, open, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
-        Notification notification = new NotificationCompat.Builder(this, NotificationChannels.CONNECTION)
+        Notification notification = callActive ? callNotification(content) : new NotificationCompat.Builder(this, NotificationChannels.CONNECTION)
             .setSmallIcon(R.drawable.ic_stat_hidden)
             .setContentTitle("Hidden Messenger")
-            .setContentText(callActive ? "Call in progress" : "Connected · receiving messages and calls")
+            .setContentText("Connected · receiving messages and calls")
             .setContentIntent(content)
             .setOngoing(true)
             .setShowWhen(false)
             .setPriority(NotificationCompat.PRIORITY_MIN)
-            .setCategory(callActive ? NotificationCompat.CATEGORY_CALL : NotificationCompat.CATEGORY_SERVICE)
+            .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .build();
         try {
             ServiceCompat.startForeground(this, NOTIFICATION_ID, notification, serviceTypes());
@@ -92,6 +97,33 @@ public class MessagingService extends Service {
             int fallback = Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE ? ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE : 0;
             ServiceCompat.startForeground(this, NOTIFICATION_ID, notification, fallback);
         }
+    }
+
+    /**
+     * During a call: "<name> · Ongoing voice/video call" with a running timer and a Hang up button, like WhatsApp.
+     * It uses its own visible (silent) channel, since the connection channel is minimised in the shade.
+     */
+    private Notification callNotification(PendingIntent content) {
+        Intent hangUp = new Intent(this, CallActionReceiver.class).setAction(CallActionReceiver.ACTION_HANGUP);
+        PendingIntent hangUpIntent = PendingIntent.getBroadcast(this, 3, hangUp, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+        String name = callName != null ? callName : "Hidden Messenger";
+        String text = callVideo ? "Ongoing video call" : "Ongoing voice call";
+        Person caller = new Person.Builder().setName(name).setImportant(true).build();
+        return new NotificationCompat.Builder(this, NotificationChannels.ONGOING_CALL)
+            .setSmallIcon(R.drawable.ic_stat_hidden)
+            .setContentTitle(name)
+            .setContentText(text)
+            .setContentIntent(content)
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setSilent(true)
+            .setWhen(callStartedAt)
+            .setShowWhen(true)
+            .setUsesChronometer(true)
+            .setCategory(NotificationCompat.CATEGORY_CALL)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setStyle(NotificationCompat.CallStyle.forOngoingCall(caller, hangUpIntent))
+            .build();
     }
 
     @Override

@@ -82,6 +82,11 @@ public class HiddenNativePlugin extends Plugin {
             notifyListeners("notificationOpen", data, true);
             intent.removeExtra(EXTRA_OPEN);
         }
+        if (SharedContent.isShare(intent)) {
+            // Shared from another app's share sheet: the web app shows a chat picker. Retained until it listens.
+            notifyListeners("shareReceived", SharedContent.read(getContext(), intent), true);
+            intent.setAction(null);
+        }
         if (ACTION_ACCEPT.equals(intent.getAction())) {
             cancelCallNotification(getContext());
             emitCallAction("accept", intent.getStringExtra(EXTRA_CALL_ID));
@@ -89,11 +94,15 @@ public class HiddenNativePlugin extends Plugin {
         }
     }
 
-    static void emitCallAction(String action, String callId) {
+    /** Returns false when no WebView is listening (the app's screen is gone). */
+    static boolean emitCallAction(String action, String callId) {
         JSObject data = new JSObject();
         data.put("action", action);
         data.put("callId", callId);
-        if (instance != null) instance.notifyListeners("callAction", data, true);
+        HiddenNativePlugin plugin = instance;
+        if (plugin == null) return false;
+        plugin.notifyListeners("callAction", data, true);
+        return true;
     }
 
     static void cancelCallNotification(Context context) {
@@ -194,7 +203,7 @@ public class HiddenNativePlugin extends Plugin {
     public void setCallActive(PluginCall call) {
         boolean active = Boolean.TRUE.equals(call.getBoolean("active", false));
         boolean video = Boolean.TRUE.equals(call.getBoolean("video", false));
-        MessagingService.setCall(getContext(), active, video);
+        MessagingService.setCall(getContext(), active, video, call.getString("name"));
         // Voice calls start on the earpiece (or a headset), video calls on the loudspeaker.
         if (active) CallAudio.start(getContext(), video);
         else CallAudio.stop(getContext());
@@ -359,6 +368,57 @@ public class HiddenNativePlugin extends Plugin {
     public void cancelIncomingCall(PluginCall call) {
         cancelCallNotification(getContext());
         call.resolve();
+    }
+
+    /** Reads the next part of a file shared from another app (see SharedContent). */
+    @PluginMethod
+    public void readSharedChunk(PluginCall call) {
+        Integer index = call.getInt("index");
+        Double offset = call.getDouble("offset", 0.0);
+        if (index == null) {
+            call.reject("Give the shared file's index.");
+            return;
+        }
+        try {
+            call.resolve(SharedContent.readChunk(getContext(), index, offset == null ? 0 : offset.longValue()));
+        } catch (java.io.IOException | RuntimeException failure) {
+            call.reject(failure.getMessage() != null ? failure.getMessage() : "The shared file could not be read.");
+        }
+    }
+
+    /** The share was sent or dismissed: release the shared files. */
+    @PluginMethod
+    public void clearShare(PluginCall call) {
+        SharedContent.clear();
+        call.resolve();
+    }
+
+    /**
+     * Opens a link in the app that handles it (YouTube, Facebook, the browser…). It opens on top of Hidden Messenger,
+     * so Back returns here.
+     */
+    @PluginMethod
+    public void openExternal(PluginCall call) {
+        String url = call.getString("url", "");
+        Uri uri = Uri.parse(url);
+        String scheme = uri.getScheme() == null ? "" : uri.getScheme().toLowerCase(java.util.Locale.ROOT);
+        if (!"http".equals(scheme) && !"https".equals(scheme)) {
+            call.reject("Only web links can be opened.");
+            return;
+        }
+        if (getActivity() == null) {
+            call.reject("The app is not on screen.");
+            return;
+        }
+        Intent view = new Intent(Intent.ACTION_VIEW, uri).addCategory(Intent.CATEGORY_BROWSABLE);
+        getActivity().runOnUiThread(() -> {
+            try {
+                getActivity().startActivity(view);
+                call.resolve();
+            } catch (android.content.ActivityNotFoundException none) {
+                call.reject("No app on this phone can open this link.");
+            }
+        });
     }
 
     /** Called by the web app once a call is no longer ringing or has ended. */

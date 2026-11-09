@@ -29,6 +29,7 @@ const MapView = lazyComponent(() => import('./LocationMap.jsx'), (module) => mod
 const ContactInfoDrawer = lazyComponent(() => import('./ContactInfoDrawer.jsx'));
 const MediaViewer = lazyComponent(() => import('./MediaViewer.jsx'));
 import VoiceMessage from './VoiceMessage.jsx';
+import LinkText from './LinkText.jsx';
 import VoiceRecorderBar from './VoiceRecorderBar.jsx';
 import { presenceLine } from '../presence.js';
 import PendingUpload from './PendingUpload.jsx';
@@ -311,7 +312,17 @@ function MessageBubble({
           {voice?.viewOnce ? (
             <ViewOnceVoice messageId={message.id} seconds={voice.seconds} opened={voice.opened} mine={mine} sessionToken={sessionToken}>{meta}</ViewOnceVoice>
           ) : isVoice ? (
-            <VoiceMessage id={voice.id} seconds={voice.seconds} sessionToken={sessionToken} sender={sender}>{meta}</VoiceMessage>
+            <VoiceMessage
+              id={voice.id}
+              seconds={voice.seconds}
+              sessionToken={sessionToken}
+              sender={sender}
+              played={Boolean(message.played)}
+              onPlayed={mine ? undefined : () => {
+                shared.send?.({ type: 'message:played', messageId: message.id });
+                useChatStore.getState().updateMessage(message.id, { played: true, status: 'read' });
+              }}
+            >{meta}</VoiceMessage>
           ) : poll ? (
             <PollBubble messageId={message.id} poll={poll} sessionToken={sessionToken} userId={shared.userId} nameFor={shared.nameFor}>{meta}</PollBubble>
           ) : event ? (
@@ -322,7 +333,7 @@ function MessageBubble({
                 : sharedKind === 'location' && parseLocation(content) ? <LocationBubble location={parseLocation(content)} onOpen={shared.openLocation} />
                 : sharedKind === 'live' && parseLive(content) ? <LiveLocationBubble live={parseLive(content)} mine={mine} peerName={shared.peerName} send={shared.send} onOpen={shared.openLive} />
                 : sharedKind === 'contact' && parseContact(content) ? <ContactBubble contact={parseContact(content)} onMessage={shared.messageContact} />
-                : <p>{content}</p>}
+                : <p><LinkText text={content} /></p>}
               {meta}
             </>
           )}

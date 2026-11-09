@@ -7,7 +7,9 @@ import Avatar from './Avatar.jsx';
 
 const SPEEDS = [1, 1.5, 2];
 
-export default function VoiceMessage({ id, seconds, sessionToken, sender, children }) {
+// `played`: the recipient has listened to it (mic and dot turn from green to blue, like WhatsApp). `onPlayed` is
+// given to the recipient only, and runs the first time they play it.
+export default function VoiceMessage({ id, seconds, sessionToken, sender, played = false, onPlayed, children }) {
   const audioRef = useRef(null);
   const urlRef = useRef('');
   const speedRef = useRef(1);
@@ -65,6 +67,7 @@ export default function VoiceMessage({ id, seconds, sessionToken, sender, childr
         audio.playbackRate = speedRef.current;
         await audio.play();
         setPlaying(true);
+        if (!played) onPlayed?.();
       } else {
         audio.pause();
         setPlaying(false);
@@ -99,7 +102,7 @@ export default function VoiceMessage({ id, seconds, sessionToken, sender, childr
   }
 
   return (
-    <div className="voice-row">
+    <div className={`voice-row ${played ? 'is-played' : 'is-unplayed'}`}>
       <span className="voice-avatar">
         <Avatar name={sender?.name} initials={sender?.initials ?? sender?.name?.slice(0, 2)?.toUpperCase() ?? '?'} color={sender?.color} image={sender?.avatar} />
         <span className="voice-badge"><Mic size={11} /></span>

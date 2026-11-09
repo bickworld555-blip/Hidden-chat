@@ -120,6 +120,41 @@ test('a view once voice note plays once for the recipient, then the audio is gon
   recipientSocket.close();
 });
 
+test('a voice note turns "played" (blue) once the recipient listens; only the recipient can mark it', async () => {
+  const sender = await register('vps');
+  const recipient = await register('vpr');
+  const senderSocket = await connect(sender);
+  const recipientSocket = await connect(recipient);
+  const media = await uploadVoice(sender, recipient, Buffer.from('OggS voice note that will be played'));
+  senderSocket.send(JSON.stringify({ type: 'message:send', message: { id: 'played-1', receiverId: recipient.user.id, content: `voice:${media.id}:3` } }));
+  senderSocket.send(JSON.stringify({ type: 'message:send', message: { id: 'played-text', receiverId: recipient.user.id, content: 'not a voice note' } }));
+  await recipientSocket.wait('message:new', (event) => event.message.id === 'played-text');
+
+  // The sender cannot mark their own note, and text messages cannot be "played".
+  senderSocket.send(JSON.stringify({ type: 'message:played', messageId: 'played-1' }));
+  recipientSocket.send(JSON.stringify({ type: 'message:played', messageId: 'played-text' }));
+  const before = (await api(`/api/v1/messages?peerId=${recipient.user.id}`, { session: sender })).data;
+  assert.equal(before.find((message) => message.id === 'played-1').played, undefined);
+  assert.equal(before.find((message) => message.id === 'played-text').played, undefined);
+
+  recipientSocket.send(JSON.stringify({ type: 'message:played', messageId: 'played-1' }));
+  await senderSocket.wait('message:played', (event) => event.messageId === 'played-1');
+  const status = await senderSocket.wait('message:status', (event) => event.messageId === 'played-1');
+  assert.equal(status.status, 'read', 'listening also reads it');
+  const history = (await api(`/api/v1/messages?peerId=${recipient.user.id}`, { session: sender })).data;
+  assert.equal(history.find((message) => message.id === 'played-1').played, true);
+  const synced = (await api('/api/v1/messages/sync?after=2000-01-01T00:00:00Z', { session: recipient })).data;
+  assert.equal(synced.find((message) => message.id === 'played-1').played, true, 'catch-up sync carries it too');
+
+  // A second play is not announced again.
+  const count = senderSocket.events.filter((event) => event.type === 'message:played').length;
+  recipientSocket.send(JSON.stringify({ type: 'message:played', messageId: 'played-1' }));
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  assert.equal(senderSocket.events.filter((event) => event.type === 'message:played').length, count);
+  senderSocket.close();
+  recipientSocket.close();
+});
+
 test('only a fresh upload to this chat can be sent as view once', async () => {
   const sender = await register('vfs');
   const first = await register('vff');

@@ -14,7 +14,7 @@ export const IMPORT_TABLES = Object.freeze([
   // Groups precede media and uploads, whose group_id references them.
   { name: 'groups', columns: ['id', 'name', 'created_by', 'created_at'], users: ['created_by'] },
   { name: 'group_members', columns: ['group_id', 'user_id', 'role', 'auto_delete', 'joined_at', 'last_read_at', 'cleared_at'], users: ['user_id'], key: ['group_id', 'user_id'] },
-  { name: 'messages', columns: ['id', 'sender_id', 'receiver_id', 'created_at', 'content', 'status', 'deleted_at', 'reply_to_id', 'forwarded', 'expires_at'], users: ['sender_id', 'receiver_id'] },
+  { name: 'messages', columns: ['id', 'sender_id', 'receiver_id', 'created_at', 'content', 'status', 'deleted_at', 'reply_to_id', 'forwarded', 'expires_at', 'played_at'], users: ['sender_id', 'receiver_id'] },
   { name: 'media', columns: ['id', 'sender_id', 'receiver_id', 'group_id', 'filename', 'content_type', 'byte_size', 'disk_name', 'created_at'], users: ['sender_id', 'receiver_id'] },
   { name: 'pairing_codes', columns: ['code_hash', 'user_id', 'expires_at'], users: ['user_id'] },
   { name: 'chat_settings', columns: ['user_a', 'user_b', 'disappear_seconds', 'updated_by', 'updated_at'], users: ['user_a', 'user_b', 'updated_by'], key: ['user_a', 'user_b'] },

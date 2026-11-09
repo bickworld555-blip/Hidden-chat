@@ -14,7 +14,10 @@ const EMPTY_MESSAGES = Object.freeze([]);
 
 function mergeMessage(current, incoming) {
   if (!current) return incoming;
-  return { ...current, ...incoming, status: mergeMessageStatus(current.status, incoming.status) };
+  const merged = { ...current, ...incoming, status: mergeMessageStatus(current.status, incoming.status) };
+  // Once played, a voice note stays played (a stale copy of the history must not turn it green again).
+  if (current.played || incoming.played) merged.played = true;
+  return merged;
 }
 
 const PERSIST_DELAY_MS = 400;

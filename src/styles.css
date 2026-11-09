@@ -4167,3 +4167,17 @@ html.native-pip .wa-call-header, html.native-pip .wa-video-side-toolbar, html.na
 html.native-pip .wa-call-more-layer, html.native-pip .wa-call-error-toast, html.native-pip .wa-add-participant { display: none !important; }
 html.native-pip .wa-video-tile.is-pip { width: 30% !important; height: auto !important; aspect-ratio: 3 / 4; top: 6px !important; right: 6px !important; bottom: auto !important; left: auto !important; border-radius: 8px; }
 .dl-overlay.is-saved { background: rgba(0, 168, 132, .92); }
+/* Video call answered: your full-screen camera shrinks into the corner as the other person takes the screen. */
+.wa-video-stage:not(.is-group) .wa-video-tile.is-pip { animation: wa-self-shrink .38s cubic-bezier(.2, .8, .2, 1); transform-origin: 100% 100%; }
+@keyframes wa-self-shrink { from { transform: scale(2.6); opacity: .6; } to { transform: none; opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .wa-video-stage:not(.is-group) .wa-video-tile.is-pip { animation: none; } }
+/* Voice notes: green until the recipient plays them, then blue (mic badge, position dot and played bars). */
+.voice-row.is-unplayed .voice-thumb { background: #1fa855; }
+.voice-row.is-played .voice-badge, .voice-row.is-played .voice-thumb { background: #53bdeb; }
+.voice-row.is-played .voice-wave span.played { background: #53bdeb; }
+/* Share from another app: what is being shared, and group rows in the picker. */
+.wa-share-preview { margin: 0; padding: 10px 16px; border-bottom: 1px solid var(--wa-border, rgba(0, 0, 0, .08)); color: var(--wa-text-secondary, #667781); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wa-share-group-avatar { display: grid; place-items: center; color: #fff; background: #8696a0; }
+/* Links in messages open in YouTube, Facebook or the browser. */
+.message-link { color: #027eb5; text-decoration: underline; word-break: break-all; }
+.dark-theme .message-link { color: #53bdeb; }

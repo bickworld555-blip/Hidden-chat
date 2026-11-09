@@ -45,6 +45,9 @@ import { useBackHandler } from '../backStack.js';
 import { usesPhoneSound } from '../phoneSounds.js';
 const AvatarStudio = lazyComponent(() => import('./AvatarStudio.jsx'));
 
+// Android WebView draws a grey "play" poster on a <video> until its first frame; calls show nothing instead.
+const NO_POSTER = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+
 const ICE_CONFIG_TIMEOUT_MS = 3000;
 const CLOSE_DELAY_MS = { failed: 5000, busy: 4000, default: 2500 };
 
@@ -242,12 +245,14 @@ export default function CallOverlay({
   // Android: from the moment we place or answer a call until it ends, the background service holds the microphone
   // (and camera for video) so switching apps or locking the screen does not freeze or silence the call.
   const callLive = !terminal && !(call.direction === 'incoming' && status === 'idle');
+  // Name on the ongoing-call notification.
+  const callTitle = call.groupName || peer?.name || '';
   useEffect(() => {
     if (!nativeShell()) return undefined;
     // Starting (or switching to video) picks the default route; the button shows what Android actually chose.
-    nativeSetCallActive(callLive, isVideo).then((result) => { if (callLive && typeof result?.speaker === 'boolean') setSpeakerOn(result.speaker); });
+    nativeSetCallActive(callLive, isVideo, callTitle).then((result) => { if (callLive && typeof result?.speaker === 'boolean') setSpeakerOn(result.speaker); });
     return () => { if (callLive) nativeSetCallActive(false); };
-  }, [callLive, isVideo]);
+  }, [callLive, isVideo, callTitle]);
 
   // Shared across the room: one screen capture feeds every pair (each engine gets its own clone).
   const displayShareRef = useRef(null);
@@ -497,7 +502,7 @@ export default function CallOverlay({
   useEffect(() => onNative('callAction', ({ action, callId }) => {
     if (callId && callId !== latest.current.call.id) return;
     if (action === 'accept') callActionsRef.current?.accept();
-    else if (action === 'reject') callActionsRef.current?.reject();
+    else if (action === 'reject' || action === 'hangup') callActionsRef.current?.reject();
   }), []);
 
   useEffect(() => {
@@ -780,6 +785,10 @@ export default function CallOverlay({
   const incomingRinging = call.direction === 'incoming' && status === 'idle';
   // The remote tile shows the peer's avatar until their video is live, and again whenever they cover their camera.
   const remoteVideoLive = Boolean(remoteStream) && remoteHasVideo && !remoteVideoOff;
+  // Like WhatsApp: while a video call rings, your own camera fills the screen; once the other side answers (or
+  // their video arrives) they take the full screen and your camera shrinks into the corner.
+  const remoteJoined = Boolean(remoteStream) && (remoteVideoLive || status === 'connected' || status === 'reconnecting');
+  const selfFull = swapped || !remoteJoined;
   const filterStyles = ['', 'sepia(0.35) contrast(1.05)', 'hue-rotate(180deg)', 'grayscale(1)'];
 
   return (
@@ -815,6 +824,7 @@ export default function CallOverlay({
             >
               <video
                 ref={remoteVideoRef}
+                poster={NO_POSTER}
                 className={`wa-video-element remote-video ${remoteScreen ? 'is-screen' : ''}`}
                 autoPlay
                 playsInline
@@ -843,13 +853,14 @@ export default function CallOverlay({
 
             {/* Local video tile (PiP by default when remote is connected, or Full while waiting/swapped) */}
             <div
-              className={`wa-video-tile ${swapped ? 'is-full' : (remoteStream ? 'is-pip' : 'is-full')} ${cameraOff ? 'camera-off' : ''}`}
-              {...(canSwapTile && !swapped && remoteStream ? tileProps : {})}
-              aria-label={canSwapTile && !swapped && remoteStream ? 'Swap self view to full screen' : undefined}
-              title={canSwapTile && !swapped && remoteStream ? 'Tap to enlarge' : undefined}
+              className={`wa-video-tile ${selfFull ? 'is-full' : 'is-pip'} ${cameraOff ? 'camera-off' : ''}`}
+              {...(canSwapTile && !selfFull ? tileProps : {})}
+              aria-label={canSwapTile && !selfFull ? 'Swap self view to full screen' : undefined}
+              title={canSwapTile && !selfFull ? 'Tap to enlarge' : undefined}
             >
               <video
                 ref={localVideoRef}
+                poster={NO_POSTER}
                 className={`wa-video-element local-video ${facing === 'user' && !screenSharing && !videoFilter ? 'mirror' : ''} ${screenSharing ? 'is-screen' : ''}`}
                 autoPlay
                 playsInline
@@ -869,7 +880,7 @@ export default function CallOverlay({
                   <span>Camera off</span>
                 </div>
               )}
-              {canSwapTile && !swapped && remoteStream && (
+              {canSwapTile && !selfFull && (
                 <div className="wa-pip-label-overlay">Tap to swap</div>
               )}
               {groupGrid && <span className="wa-grid-participant-name">You{muted ? ' · Muted' : ''}</span>}

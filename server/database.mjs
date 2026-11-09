@@ -2,9 +2,9 @@ import { readFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import pg from 'pg';
 
-export const DATABASE_SCHEMA_VERSION = 4;
+export const DATABASE_SCHEMA_VERSION = 5;
 // Additive migrations applied in order to reach each version from the one before it.
-const MIGRATIONS = { 2: '002_groups.sql', 3: '003_group_media.sql', 4: '004_presence_polls.sql' };
+const MIGRATIONS = { 2: '002_groups.sql', 3: '003_group_media.sql', 4: '004_presence_polls.sql', 5: '005_voice_played.sql' };
 
 let chatEventsPool;
 

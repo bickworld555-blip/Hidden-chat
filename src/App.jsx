@@ -10,7 +10,9 @@ import { initialTabFromUrl } from './pwa.js';
 import { countUnreadConversations, groupRow } from './groupRows.js';
 import { getViewingGroup, readMutedGroups, useMutedGroups } from './groupPrefs.js';
 import { classifyIncoming, groupNotificationText, parseConversationOpenParam, shouldAlertGroup } from './notificationChannels.js';
-import { nativeClearSession, nativeSetSession, nativeShell, nativeStartBackground, nativeState, nativeStopBackground, nativeTakePendingCall, nativeMoveToBackground, onNative } from './native.js';
+import { nativeClearSession, nativeSetSession, nativeShell, nativeStartBackground, nativeState, nativeStopBackground, nativeTakePendingCall, nativeMoveToBackground, nativeClearShare, onNative } from './native.js';
+import { parseShare } from './shareTarget.js';
+import ShareSheet from './components/ShareSheet.jsx';
 import { PERMISSIONS_ASKED_KEY } from './permissionsKey.js';
 import Sidebar from './components/Sidebar.jsx';
 import ChatWindow from './components/ChatWindow.jsx';
@@ -102,6 +104,8 @@ export default function App() {
   const [groupsInitialId, setGroupsInitialId] = useState('');
   const [groupSummaries, setGroupSummaries] = useState([]);
   const [permissionsOpen, setPermissionsOpen] = useState(false);
+  // Something shared to Hidden Messenger from another app's share sheet, waiting for the user to pick chats.
+  const [incomingShare, setIncomingShare] = useState(null);
   const [switchingId, setSwitchingId] = useState(null);
   const [callsSeenAt, setCallsSeenAt] = useState(() => Number(localStorage.getItem('relay:calls-seen-at')) || 0);
   const openChatRef = useRef(null);
@@ -237,6 +241,7 @@ export default function App() {
           }
           if (event.type === 'location:live') useChatStore.getState().applyLiveEvent(event, (payload) => realtime.send(payload));
           if (event.type === 'message:status') updateMessage(event.messageId, { status: event.status });
+          if (event.type === 'message:played') updateMessage(event.messageId, { played: true });
           if (event.type === 'message:updated') updateMessage(event.messageId, { content: event.content });
           if (event.type === 'poll:votes') useChatStore.getState().setPollVotes(event.messageId, event.votes);
           if (event.type === 'message:deleted') useChatStore.getState().removeMessageById(event.messageId);
@@ -519,6 +524,12 @@ export default function App() {
   useBackHandler(avatarStudioOpen, () => setAvatarStudioOpen(false));
   useBackHandler(pairingOpen, () => setPairingOpen(false));
   useEffect(() => onNative('backButton', () => { if (!handleBack()) nativeMoveToBackground(); }), []);
+  // Shared from another app (Android share sheet): pick chats to send it to.
+  useEffect(() => onNative('shareReceived', (raw) => setIncomingShare(parseShare(raw))), []);
+  const closeShare = () => {
+    setIncomingShare(null);
+    nativeClearShare();
+  };
   // Android picture-in-picture during a video call: only the call shows in the small window.
   useEffect(() => onNative('pictureInPicture', ({ active }) => document.documentElement.classList.toggle('native-pip', Boolean(active))), []);
   // Group rows in the chat list come from the server listing, refreshed on every group:* socket event and reconnect.
@@ -672,6 +683,22 @@ export default function App() {
       {accountsOpen && <AccountSwitcher busyId={switchingId} onSwitch={switchAccount} onRemove={removeAccountFromDevice} onAdd={() => { setAccountsOpen(false); setAuthOpen(true); }} onClose={() => setAccountsOpen(false)} />}
       {avatarStudioOpen && <AvatarStudio onClose={() => setAvatarStudioOpen(false)} />}
       {groupsOpen && sessionToken && <GroupsView key={userId} token={sessionToken} userId={userId} revision={groupRevision} initialCreate={groupsCreate} initialGroupId={groupsInitialId} onStartGroupCall={initiateGroupCall} onClose={() => setGroupsOpen(false)} />}
+      {incomingShare && userId && sessionToken && (
+        <ShareSheet
+          share={incomingShare}
+          groups={groupRows}
+          userId={userId}
+          sessionToken={sessionToken}
+          onClose={closeShare}
+          onDone={(targets) => {
+            closeShare();
+            // Like WhatsApp, sharing to one chat opens it.
+            if (targets.length !== 1) return;
+            if (targets[0].kind === 'group') openGroups(false, targets[0].id);
+            else openChatRef.current?.(targets[0].id);
+          }}
+        />
+      )}
       {permissionsOpen && userId && <PermissionsSheet onDone={() => setPermissionsOpen(false)} />}
       {authReady && (!userId || authOpen) && <UsernameGate onAuthenticated={acceptSession} onClose={userId ? () => setAuthOpen(false) : undefined} />}
       {call && callPeer && <CallOverlay

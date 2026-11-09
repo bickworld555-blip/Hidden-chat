@@ -189,6 +189,7 @@ export function createChatServer({
   if (!messageColumns.has('reply_to_id')) db.exec('ALTER TABLE messages ADD COLUMN reply_to_id TEXT');
   if (!messageColumns.has('forwarded')) db.exec('ALTER TABLE messages ADD COLUMN forwarded INTEGER NOT NULL DEFAULT 0');
   if (!messageColumns.has('expires_at')) db.exec('ALTER TABLE messages ADD COLUMN expires_at INTEGER');
+  if (!messageColumns.has('played_at')) db.exec('ALTER TABLE messages ADD COLUMN played_at INTEGER');
   db.exec(`CREATE INDEX IF NOT EXISTS messages_expiry ON messages(expires_at) WHERE expires_at IS NOT NULL AND deleted_at IS NULL`);
   // One disappearing-messages timer per conversation, shared by both people (user_a < user_b).
   db.exec(`CREATE TABLE IF NOT EXISTS chat_settings (
@@ -333,13 +334,15 @@ export function createChatServer({
   // a message deleted for everyone is quoted without its content.
   const quotedMessage = db.prepare(`SELECT id, sender_id AS "senderId", content, deleted_at IS NOT NULL AS "deleted"
     FROM messages WHERE id = ?`);
-  async function presentMessage({ replyToId, forwarded, expiresAt, ...message }) {
+  async function presentMessage({ replyToId, forwarded, expiresAt, playedAt, ...message }) {
     const quoted = replyToId ? (await quotedMessage.get(replyToId)) : null;
     return {
       ...message,
       ...(quoted ? { replyTo: quoted.deleted ? { id: quoted.id, senderId: quoted.senderId, deleted: true } : { id: quoted.id, senderId: quoted.senderId, content: quoted.content } } : {}),
       ...(forwarded ? { forwarded: true } : {}),
       ...(expiresAt ? { expiresAt: new Date(expiresAt).toISOString() } : {}),
+      // A voice note the recipient has listened to (its mic and waveform turn blue for both people).
+      ...(playedAt ? { played: true } : {}),
     };
   }
 
@@ -1508,7 +1511,7 @@ export function createChatServer({
     const recentOwn = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
     const rows = await db.prepare(`SELECT id, sender_id AS "senderId", receiver_id AS "receiverId",
       created_at AS "timestamp", content, status, deleted_at IS NOT NULL AS "deleted",
-      reply_to_id AS "replyToId", forwarded, expires_at AS "expiresAt" FROM messages
+      reply_to_id AS "replyToId", forwarded, expires_at AS "expiresAt", played_at AS "playedAt" FROM messages
       WHERE (sender_id = ? OR receiver_id = ?)
         AND (created_at > ? OR (sender_id = ? AND created_at > ?))
         AND id NOT IN (SELECT message_id FROM message_hidden WHERE user_id = ?)
@@ -1526,7 +1529,7 @@ export function createChatServer({
     (await expireMessages());
     const rows = (await db.prepare(`SELECT id, sender_id AS "senderId", receiver_id AS "receiverId",
       created_at AS "timestamp", content, status, deleted_at IS NOT NULL AS "deleted",
-      reply_to_id AS "replyToId", forwarded, expires_at AS "expiresAt" FROM messages
+      reply_to_id AS "replyToId", forwarded, expires_at AS "expiresAt", played_at AS "playedAt" FROM messages
       WHERE ((sender_id = ? AND receiver_id = ?) OR (sender_id = ? AND receiver_id = ?))
         AND id NOT IN (SELECT message_id FROM message_hidden WHERE user_id = ?)
       ORDER BY created_at ASC LIMIT 500`)
@@ -1928,6 +1931,21 @@ export function createChatServer({
           const statusEvent = { type: 'message:status', messageId, status: 'read' };
           broadcastUser(message.sender_id, statusEvent);
           broadcastUser(userId, statusEvent, socket);
+        }
+        return;
+      }
+
+      // The recipient listened to a voice note: it counts as read, and the sender sees the note turn blue.
+      if (event.type === 'message:played') {
+        const { messageId } = event;
+        if (typeof messageId !== 'string' || messageId.length >= 80) return;
+        const played = await db.prepare(`UPDATE messages SET played_at = ?, status = 'read'
+          WHERE id = ? AND receiver_id = ? AND played_at IS NULL AND deleted_at IS NULL AND content LIKE 'voice:%'
+          RETURNING sender_id AS "senderId"`).get(Date.now(), messageId, userId);
+        if (!played) return;
+        for (const update of [{ type: 'message:status', messageId, status: 'read' }, { type: 'message:played', messageId }]) {
+          broadcastUser(played.senderId, update);
+          broadcastUser(userId, update, socket);
         }
         return;
       }
