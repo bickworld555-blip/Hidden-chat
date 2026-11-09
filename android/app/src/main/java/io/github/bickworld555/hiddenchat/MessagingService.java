@@ -68,6 +68,32 @@ public class MessagingService extends Service {
         MessagingService service = instance;
         if (service != null) new Handler(Looper.getMainLooper()).post(service::promote);
         else if (active) start(context);
+        else androidx.core.app.NotificationManagerCompat.from(context).cancel(NOTIFICATION_ID);
+        watch(context.getApplicationContext(), active);
+    }
+
+    private static final Handler watchdog = new Handler(Looper.getMainLooper());
+    private static final long WATCH_INTERVAL_MS = 5000;
+
+    /**
+     * While a call is marked live, check every few seconds that the app screen holding it still exists. If it is
+     * gone without having said so, the call cannot be going on: end it, so no call timer keeps counting on the
+     * lock screen.
+     */
+    private static void watch(Context context, boolean active) {
+        watchdog.removeCallbacksAndMessages(null);
+        if (!active) return;
+        watchdog.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                if (!callActive) return;
+                if (!MainActivity.isAlive()) {
+                    endOrphanedCall(context, "no screen holds the call");
+                    return;
+                }
+                watchdog.postDelayed(this, WATCH_INTERVAL_MS);
+            }
+        }, WATCH_INTERVAL_MS);
     }
 
     /** Re-posts the notification with the current service types (e.g. once Android has the call as a phone call). */

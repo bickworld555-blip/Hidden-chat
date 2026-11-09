@@ -100,3 +100,13 @@ test('a call that ended never leaves its timer on the lock screen', async () => 
   const app = await source('src/App.jsx');
   assert.match(app, /if \(!nativeShell\(\) \|\| call\) return undefined;\s*const sync = \(\) => \{ if \(document\.visibilityState === 'visible'\) nativeSetCallActive\(false\); \};/, 'opening the app with no call clears a stale one');
 });
+
+test('watchdogs: no Android call or call notification outlives the call in the app', async () => {
+  const service = await java('MessagingService.java');
+  assert.match(service, /if \(!MainActivity\.isAlive\(\)\) \{\s*endOrphanedCall\(context, "no screen holds the call"\);/, 'live call with no app screen ends');
+  assert.ok(service.includes('else androidx.core.app.NotificationManagerCompat.from(context).cancel(NOTIFICATION_ID);'), 'call notification cancelled even with no service running');
+  const calls = await java('TelecomCalls.java');
+  assert.ok(calls.includes('boolean backed = state == Connection.STATE_RINGING ? Alerts.isRinging() || MessagingService.isCallActive() : MessagingService.isCallActive();'));
+  assert.ok(calls.includes('end(state == Connection.STATE_RINGING ? DisconnectCause.MISSED : DisconnectCause.LOCAL);'));
+  assert.ok(calls.includes('main.postDelayed(check, CHECK_INTERVAL_MS);'), 'started for every new connection');
+});

@@ -213,7 +213,42 @@ final class TelecomCalls {
 
     // --- From CallConnectionService ---
 
+    /** A call the app answered must be live in the app within this time, or Android drops it. */
+    private static final long ACTIVE_WITHOUT_APP_CALL_MS = 20000;
+    private static final long RINGING_WITHOUT_ALERT_MS = 5000;
+    private static final long CHECK_INTERVAL_MS = 2500;
+    private static long unbackedSince;
+
+    /**
+     * Android shows a call (the lock-screen call chip with its timer) for as long as the connection exists, so a
+     * connection the app no longer backs is never left behind: active with no call in the app, or ringing with
+     * nothing ringing. Runs while a connection exists.
+     */
+    private static final Runnable check = new Runnable() {
+        @Override
+        public void run() {
+            synchronized (TelecomCalls.class) {
+                if (connection == null) return;
+                int state = connection.getState();
+                boolean backed = state == Connection.STATE_RINGING ? Alerts.isRinging() || MessagingService.isCallActive() : MessagingService.isCallActive();
+                long now = android.os.SystemClock.elapsedRealtime();
+                if (backed) unbackedSince = 0;
+                else if (unbackedSince == 0) unbackedSince = now;
+                long limit = state == Connection.STATE_RINGING ? RINGING_WITHOUT_ALERT_MS : ACTIVE_WITHOUT_APP_CALL_MS;
+                if (unbackedSince != 0 && now - unbackedSince >= limit) {
+                    Log.i(TAG, "dropping a call the app no longer has");
+                    end(state == Connection.STATE_RINGING ? DisconnectCause.MISSED : DisconnectCause.LOCAL);
+                    return;
+                }
+                main.postDelayed(this, CHECK_INTERVAL_MS);
+            }
+        }
+    };
+
     static synchronized void created(CallConnectionService.CallConnection created) {
+        unbackedSince = 0;
+        main.removeCallbacks(check);
+        main.postDelayed(check, CHECK_INTERVAL_MS);
         if (!created.incoming) placing = false;
         if (connection != null && connection != created) {
             CallConnectionService.CallConnection previous = connection;
