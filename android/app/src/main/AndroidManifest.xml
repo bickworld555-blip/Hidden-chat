@@ -47,6 +47,17 @@
 
         </activity>
 
+        <!-- The ringing call over the lock screen: native, so it shows at once (no waiting for the web screen). -->
+        <activity
+            android:name=".IncomingCallActivity"
+            android:theme="@style/AppTheme.NoActionBar"
+            android:taskAffinity=".incoming_call"
+            android:launchMode="singleTask"
+            android:excludeFromRecents="true"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true"
+            android:exported="false" />
+
         <!-- Keeps the app process (and its live WebSocket) running while in the background. -->
         <service
             android:name=".MessagingService"

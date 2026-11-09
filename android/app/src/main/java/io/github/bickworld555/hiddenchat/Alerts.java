@@ -18,7 +18,6 @@ final class Alerts {
     static final String EXTRA_CALL_ID = "hm_call_id";
     static final String EXTRA_CALL = "hm_call";
     static final String ACTION_ACCEPT = "io.github.bickworld555.hiddenchat.CALL_ACCEPT";
-    static final String ACTION_SHOW_CALL = "io.github.bickworld555.hiddenchat.CALL_SHOW";
     private static final String CALL_TAG = "incoming_call";
     private static final int CALL_NOTIFICATION_ID = 2001;
 
@@ -85,11 +84,10 @@ final class Alerts {
     /** `phoneRingtone`: ring with this phone's default ringtone (the in-app "Default" choice). */
     static boolean showIncomingCall(Context context, String callId, String caller, boolean video, boolean phoneRingtone) {
         String id = callId == null ? "" : callId;
-        Intent show = new Intent(context, MainActivity.class)
-            .setAction(ACTION_SHOW_CALL)
-            .setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP)
-            .putExtra(EXTRA_CALL, true)
-            .putExtra(EXTRA_CALL_ID, id);
+        String name = caller == null || caller.isEmpty() ? "Hidden Messenger" : caller;
+        // The full-screen call is a native screen: it shows the moment the phone lights up, without waiting for the
+        // app's web screen to load (which left a black screen over the lock screen while the ringtone played).
+        Intent show = IncomingCallActivity.intent(context, id, name, video);
         Intent accept = new Intent(context, MainActivity.class)
             .setAction(ACTION_ACCEPT)
             .setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP)
@@ -103,7 +101,6 @@ final class Alerts {
         PendingIntent acceptIntent = PendingIntent.getActivity(context, 3002, accept, flags);
         PendingIntent rejectIntent = PendingIntent.getBroadcast(context, 3003, reject, flags);
 
-        String name = caller == null || caller.isEmpty() ? "Hidden Messenger" : caller;
         Person person = new Person.Builder().setName(name).setImportant(true).build();
         NotificationCompat.Builder builder = new NotificationCompat.Builder(context, phoneRingtone ? NotificationChannels.INCOMING_CALLS_PHONE : NotificationChannels.INCOMING_CALLS)
             .setSmallIcon(R.drawable.ic_stat_hidden)
@@ -126,6 +123,7 @@ final class Alerts {
         try {
             NotificationManagerCompat.from(context).notify(CALL_TAG, CALL_NOTIFICATION_ID, notification);
             ringing = true;
+            wakeScreen(context);
             // App on screen (or in the background): light the screen and show the call over the lock screen now.
             MainActivity.callWindowChanged();
             return true;
@@ -153,7 +151,51 @@ final class Alerts {
     static void cancelIncomingCall(Context context) {
         NotificationManagerCompat.from(context).cancel(CALL_TAG, CALL_NOTIFICATION_ID);
         ringing = false;
+        releaseScreen();
+        IncomingCallActivity.dismiss();
         MainActivity.callWindowChanged();
+    }
+
+    private static android.os.PowerManager.WakeLock screenLock;
+
+    private static final android.os.Handler main = new android.os.Handler(android.os.Looper.getMainLooper());
+
+    /**
+     * Makes sure the screen lights while a call rings. Normally the full-screen call screen does that itself, but
+     * Android 14+ turns "full-screen notifications" off for apps installed outside the Play Store, and some phone
+     * makers ignore them: then the phone only rang with a dark screen. With the screen on, the lock screen shows the
+     * call with its Decline and Answer buttons. Without the permission it wakes at once; with it, only if the screen
+     * is still dark a moment later (waking first would make Android show a small banner instead of the call screen).
+     */
+    private static void wakeScreen(Context context) {
+        Context app = context.getApplicationContext();
+        android.app.NotificationManager notifications = app.getSystemService(android.app.NotificationManager.class);
+        boolean fullScreenAllowed = Build.VERSION.SDK_INT < 34 || notifications == null || notifications.canUseFullScreenIntent();
+        if (!fullScreenAllowed) {
+            holdScreenOn(app);
+            return;
+        }
+        main.postDelayed(() -> {
+            android.os.PowerManager power = app.getSystemService(android.os.PowerManager.class);
+            if (ringing && power != null && !power.isInteractive()) holdScreenOn(app);
+        }, 2000);
+    }
+
+    /** Screen on until the call stops ringing (at the latest after a minute). */
+    @SuppressWarnings("deprecation")
+    private static synchronized void holdScreenOn(Context context) {
+        android.os.PowerManager power = context.getSystemService(android.os.PowerManager.class);
+        if (power == null) return;
+        if (screenLock == null) {
+            screenLock = power.newWakeLock(android.os.PowerManager.SCREEN_BRIGHT_WAKE_LOCK
+                | android.os.PowerManager.ACQUIRE_CAUSES_WAKEUP | android.os.PowerManager.ON_AFTER_RELEASE, "HiddenMessenger:ringing");
+            screenLock.setReferenceCounted(false);
+        }
+        screenLock.acquire(60 * 1000L);
+    }
+
+    private static synchronized void releaseScreen() {
+        if (screenLock != null && screenLock.isHeld()) screenLock.release();
     }
 
     private static volatile boolean ringing;

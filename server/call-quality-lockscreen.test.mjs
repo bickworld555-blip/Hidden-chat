@@ -45,7 +45,18 @@ test('Android: ringing calls show over the lock screen at once and stay there wh
   assert.ok(plugin.includes('Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT'));
   const alerts = await java('Alerts.java');
   assert.ok(alerts.includes('.setFullScreenIntent(showIntent, true)'));
-  assert.match(alerts, /ringing = true;\s*\/\/[^\n]*\n\s*MainActivity\.callWindowChanged\(\);/);
+  assert.match(alerts, /ringing = true;\s*wakeScreen\(context\);\s*\/\/[^\n]*\n\s*MainActivity\.callWindowChanged\(\);/);
+  // The full-screen call is native (no black screen while the web app loads) and the screen lights even where
+  // full-screen notifications are switched off; both end when the call stops ringing.
+  assert.ok(alerts.includes('Intent show = IncomingCallActivity.intent(context, id, name, video);'));
+  assert.match(alerts, /SCREEN_BRIGHT_WAKE_LOCK\s*\|\s*android\.os\.PowerManager\.ACQUIRE_CAUSES_WAKEUP/);
+  assert.match(alerts, /ringing = false;\s*releaseScreen\(\);\s*IncomingCallActivity\.dismiss\(\);/);
+  const incoming = await java('IncomingCallActivity.java');
+  assert.ok(incoming.includes('setShowWhenLocked(true);') && incoming.includes('setTurnScreenOn(true);') && incoming.includes('FLAG_KEEP_SCREEN_ON'));
+  assert.ok(incoming.includes('.setAction(Alerts.ACTION_ACCEPT)'), 'Accept opens the app straight into the call');
+  assert.ok(incoming.includes('.setAction(CallActionReceiver.ACTION_REJECT)'), 'Decline rejects without unlocking');
+  const manifest = await source('android/app/src/main/AndroidManifest.xml');
+  assert.match(manifest, /android:name="\.IncomingCallActivity"[\s\S]*?android:showWhenLocked="true"[\s\S]*?android:turnScreenOn="true"/);
 });
 
 test('Android: Home during a video call opens the floating window even where auto-enter is ignored', async () => {
