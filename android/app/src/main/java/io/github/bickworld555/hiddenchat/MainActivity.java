@@ -30,6 +30,20 @@ public class MainActivity extends BridgeActivity {
     static void callRinging(Context context) {
         android.app.KeyguardManager keyguard = context.getSystemService(android.app.KeyguardManager.class);
         ringingWhileAway = !visible || (keyguard != null && keyguard.isKeyguardLocked());
+        // A new call decides afresh: a hand-back left from an earlier call that never connected must not apply.
+        returnAfterCall = false;
+    }
+
+    // An answer that does not become a call within this long (failed to connect) forgets its hand-back.
+    private static final long ANSWER_TO_CALL_MS = 60_000;
+    private static final Runnable forgetUnusedHandBack = () -> {
+        if (!MessagingService.isCallActive()) returnAfterCall = false;
+    };
+
+    private static void armHandBack() {
+        returnAfterCall = ringingWhileAway;
+        handler.removeCallbacks(forgetUnusedHandBack);
+        if (returnAfterCall) handler.postDelayed(forgetUnusedHandBack, ANSWER_TO_CALL_MS);
     }
     private static final android.os.Handler handler = new android.os.Handler(android.os.Looper.getMainLooper());
 
@@ -50,6 +64,8 @@ public class MainActivity extends BridgeActivity {
         // The WebView takes over the connection; the service's own one would only duplicate notifications.
         NativeRelay.stop();
         super.onCreate(savedInstanceState);
+        // Screen security (FLAG_SECURE) from the first frame, before the web app has loaded.
+        AppSecurity.apply(this);
         // Opened by a ringing call's full-screen notification: show over the lock screen and light the screen at
         // once, before the web app has loaded (otherwise the call would wait behind the lock screen).
         if (getIntent() != null && getIntent().getBooleanExtra(Alerts.EXTRA_CALL, false)) applyCallWindow(true);
@@ -78,25 +94,38 @@ public class MainActivity extends BridgeActivity {
 
     /** Answered through Android (headset, car, watch): the same hand-back as an answer from the call screen. */
     static void answeredFromOutside() {
-        returnAfterCall = ringingWhileAway;
+        armHandBack();
     }
 
     private void noteAnsweredFromOutside(Intent intent) {
-        if (intent == null || !Alerts.ACTION_ACCEPT.equals(intent.getAction())) return;
+        if (intent == null) return;
+        // Opened from the launcher or recents during a call: the user wants the app, so it stays when the call ends
+        // (as with WhatsApp, where opening the main app during a call keeps you there).
+        if (Intent.ACTION_MAIN.equals(intent.getAction()) && intent.hasCategory(Intent.CATEGORY_LAUNCHER)) {
+            returnAfterCall = false;
+            return;
+        }
+        if (!Alerts.ACTION_ACCEPT.equals(intent.getAction())) return;
         // Captured when it started ringing (with the app closed nothing was visible, so that counts too).
-        returnAfterCall = ringingWhileAway;
+        armHandBack();
     }
 
     /** The call ended (still ended a moment later, so a voice/video switch does not count): step back if asked. */
     static void callEnded() {
-        handler.removeCallbacksAndMessages(null);
-        handler.postDelayed(() -> {
+        handler.removeCallbacks(handBack);
+        handler.removeCallbacks(forgetUnusedHandBack);
+        handler.postDelayed(handBack, 1500);
+    }
+
+    private static final Runnable handBack = new Runnable() {
+        @Override
+        public void run() {
             MainActivity activity = current;
             if (!returnAfterCall || MessagingService.isCallActive() || Alerts.isRinging() || activity == null) return;
             returnAfterCall = false;
             activity.moveTaskToBack(true);
-        }, 1500);
-    }
+        }
+    };
 
     @Override
     protected void onNewIntent(Intent intent) {

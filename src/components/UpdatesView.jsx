@@ -6,6 +6,7 @@ import Avatar from './Avatar.jsx';
 import { loadMediaBlob } from '../media.js';
 import { presentName } from '../profile.js';
 import { useBackHandler } from '../backStack.js';
+import { mutedStatusUsers, setStatusMuted } from './extras/ExtrasPanels.jsx';
 import {
   STATUS_BACKGROUNDS, deleteStatus, fetchStatuses, markStatusSeen, postMediaStatus, postTextStatus, statusKind, statusTime, statusViewers,
 } from '../statusApi.js';
@@ -30,14 +31,14 @@ export default function UpdatesView() {
   const refresh = useCallback(async () => {
     if (!token) return;
     try {
-      const next = await fetchStatuses(token);
+      const next = await fetchStatuses(token, userId);
       setFeed(next);
       useChatStore.getState().setStatusRings(next);
       setError('');
     } catch (caught) {
       setError(caught.message);
     }
-  }, [token]);
+  }, [token, userId]);
   useEffect(() => { refresh(); }, [refresh, revision]);
   useBackHandler(adding, () => setAdding(false));
 
@@ -55,8 +56,12 @@ export default function UpdatesView() {
     }
   }
 
-  const recent = feed.others.filter((entry) => !entry.allSeen);
-  const viewed = feed.others.filter((entry) => entry.allSeen);
+  // Muted people (Status privacy) move to their own section at the bottom and never count as new.
+  const [muted, setMuted] = useState(mutedStatusUsers);
+  const unmuted = feed.others.filter((entry) => !muted.includes(entry.user.id));
+  const mutedEntries = feed.others.filter((entry) => muted.includes(entry.user.id));
+  const recent = unmuted.filter((entry) => !entry.allSeen);
+  const viewed = unmuted.filter((entry) => entry.allSeen);
   const mine = feed.mine;
   const myLast = mine.at(-1);
 
@@ -88,6 +93,8 @@ export default function UpdatesView() {
         ))}
         {viewed.length > 0 && <h4 className="status-section">Viewed updates</h4>}
         {viewed.map((entry) => <StatusPerson key={entry.user.id} entry={entry} seen onOpen={() => setViewing({ owner: entry.user.id, index: 0 })} />)}
+        {mutedEntries.length > 0 && <h4 className="status-section">Muted updates</h4>}
+        {mutedEntries.map((entry) => <StatusPerson key={entry.user.id} entry={entry} seen onOpen={() => setViewing({ owner: entry.user.id, index: 0 })} />)}
         {feed.others.length === 0 && !error && (
           <div className="status-empty">
             <Eye size={40} strokeWidth={1.5} />
@@ -119,10 +126,32 @@ export default function UpdatesView() {
           startIndex={viewing.index}
           onClose={() => { setViewing(null); refresh(); }}
           onDeleted={refresh}
+          muted={viewing.owner !== 'me' && muted.includes(viewing.owner)}
+          onToggleMute={() => setMuted(setStatusMuted(viewing.owner, !muted.includes(viewing.owner)))}
         />,
         document.body,
       )}
     </div>
+  );
+}
+
+// A reply goes to the author's chat, end-to-end encrypted, quoting the status (src/e2e/client.js statusReply).
+function StatusReply({ status, authorId, onFocus, onBlur, onSent }) {
+  const [text, setText] = useState('');
+  const sendMessage = useChatStore((state) => state.sendMessage);
+  const quote = statusKind(status.content);
+  function send(event) {
+    event.preventDefault();
+    if (!text.trim() || !authorId) return;
+    sendMessage(authorId, text.trim(), { statusReply: { kind: quote.kind, text: quote.kind === 'text' ? quote.text.slice(0, 200) : '' } });
+    setText('');
+    onSent?.();
+  }
+  return (
+    <form className="status-reply" onSubmit={send} onPointerDown={(event) => event.stopPropagation()}>
+      <input value={text} maxLength={4000} placeholder="Reply" onFocus={onFocus} onBlur={onBlur} onChange={(event) => setText(event.target.value)} aria-label="Reply to this status" />
+      <button type="submit" disabled={!text.trim()} aria-label="Send reply"><Send size={18} /></button>
+    </form>
   );
 }
 
@@ -197,7 +226,7 @@ function StatusMedia({ status, token, onReady, videoRef }) {
 }
 
 // Full-screen viewer with a progress bar per status: tap right for next, left for previous; marks each seen.
-function StatusViewer({ token, owner, startIndex = 0, onClose, onDeleted }) {
+function StatusViewer({ token, owner, startIndex = 0, onClose, onDeleted, muted = false, onToggleMute }) {
   const [index, setIndex] = useState(startIndex);
   const [duration, setDuration] = useState(0);
   const [elapsed, setElapsed] = useState(0);
@@ -258,6 +287,7 @@ function StatusViewer({ token, owner, startIndex = 0, onClose, onDeleted }) {
         <Avatar name={owner.user?.name} initials={owner.user?.initials ?? 'ME'} color={owner.user?.color} image={owner.user?.avatar} />
         <span className="status-viewer-title"><strong>{owner.mine ? 'My status' : presentName(owner.user)}</strong><small>{statusTime(status.createdAt)}</small></span>
         {owner.mine && <button type="button" onClick={remove} aria-label="Delete this status"><Trash2 size={20} /></button>}
+        {!owner.mine && <button type="button" className="status-mute" onClick={onToggleMute} aria-label={muted ? 'Unmute status updates' : 'Mute status updates'}>{muted ? 'Unmute' : 'Mute'}</button>}
       </header>
       <div
         className="status-stage"
@@ -273,6 +303,9 @@ function StatusViewer({ token, owner, startIndex = 0, onClose, onDeleted }) {
       </div>
       {owner.mine && (
         <button type="button" className="status-views" onClick={showViewers}><Eye size={18} /> {status.views ?? 0}</button>
+      )}
+      {!owner.mine && (
+        <StatusReply status={status} authorId={owner.user?.id} onFocus={() => setPaused(true)} onBlur={() => setPaused(false)} onSent={onClose} />
       )}
       {viewers && (
         <div className="status-viewers" onClick={() => { setViewers(null); setPaused(false); }}>

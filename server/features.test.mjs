@@ -1,4 +1,5 @@
 // Floating/PiP calls, screen sharing, download progress, camera shortcut, multi-account and the tone library.
+import { callUiSource } from './callUiSource.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
@@ -236,7 +237,7 @@ test('the library grew with richer timbres and stays consistent', () => {
 
 test('the UI wires PiP calls, screen sharing, download progress, the camera shortcut and account switching', async () => {
   const read = async (path) => (await readFile(new URL(path, import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
-  const overlay = await read('../src/components/CallOverlay.jsx');
+  const overlay = await callUiSource();
   const list = await read('../src/components/ChatsList.jsx');
   const renderer = await read('../src/components/MediaRenderer.jsx');
   const viewer = await read('../src/components/MediaViewer.jsx');
@@ -267,12 +268,12 @@ test('the UI wires PiP calls, screen sharing, download progress, the camera shor
 test('the UI wires group chats: attachments, unread badges, group-bound calls, clear and report', async () => {
   const read = async (path) => (await readFile(new URL(path, import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
   const groups = await read('../src/components/GroupsView.jsx');
-  const overlay = await read('../src/components/CallOverlay.jsx');
+  const overlay = await callUiSource();
   const app = await read('../src/App.jsx');
   const upload = await read('../src/upload.js');
   const styles = await read('../src/styles.css');
 
-  assert.ok(groups.includes('uploadFile(file, { groupId: selected, sessionToken: token') && groups.includes('<MediaRenderer mediaRef={message.content} sessionToken={token} />'), 'attachments upload to the group and render inline');
+  assert.ok(groups.includes('uploadFile(upload, { groupId: selected, sessionToken: token') && groups.includes('<MediaRenderer mediaRef={message.content} sessionToken={token} />'), 'attachments upload to the group and render inline');
   assert.ok(upload.includes("groupId ? `groupId=${encodeURIComponent(groupId)}`") && upload.includes('...(groupId ? { groupId } : { receiverId })'), 'both upload paths accept a group target');
   assert.ok(groups.includes("className={`groups-message ${mine ? 'mine' : 'theirs'}") && styles.includes('.groups-message.mine { align-self: flex-end'), 'own messages sit on the right, others on the left');
   assert.ok(groups.includes("className={`groups-unread ${isMuted ? 'is-muted' : ''}`}") &&groups.includes('`${groupPath}/read`, { method: \'PUT\' }'), 'unread badges from the server, cleared when the chat is viewed');

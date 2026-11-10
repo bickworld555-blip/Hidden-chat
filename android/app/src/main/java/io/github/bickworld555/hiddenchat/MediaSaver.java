@@ -60,6 +60,23 @@ final class MediaSaver {
         });
     }
 
+    /** Saves bytes made on the phone (a chat backup or export) into Download/Hidden Messenger/<folder>. */
+    static void saveBytes(Context context, byte[] bytes, String filename, String mimeType, java.util.function.Consumer<Result> done, java.util.function.Consumer<String> failed) {
+        Context app = context.getApplicationContext();
+        pool.execute(() -> {
+            try (InputStream input = new java.io.ByteArrayInputStream(bytes)) {
+                String name = safeName(filename);
+                String type = mimeType == null || mimeType.isEmpty() ? "application/octet-stream" : mimeType;
+                String folder = folderFor(type, name);
+                done.accept(Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q
+                    ? saveScoped(app, input, name, type, folder, bytes.length, null)
+                    : saveLegacy(app, input, name, folder, bytes.length, null));
+            } catch (Exception error) {
+                failed.accept(error.getMessage() == null ? "Could not save the file." : error.getMessage());
+            }
+        });
+    }
+
     /**
      * Downloads a received file into the app's cache (replacing an earlier copy) for "Open with": the file is then
      * shared read-only with the app the user picks through the FileProvider, never written to shared storage.
@@ -80,6 +97,24 @@ final class MediaSaver {
                 done.accept(target);
             } catch (Exception error) {
                 failed.accept(error.getMessage() == null ? "Could not open the file." : error.getMessage());
+            }
+        });
+    }
+
+    /** Bytes this app already has (an end-to-end encrypted file, decrypted on the phone) → a private file to open. */
+    static void writeForOpening(Context context, byte[] bytes, String filename, java.util.function.Consumer<File> done, java.util.function.Consumer<String> failed) {
+        Context app = context.getApplicationContext();
+        pool.execute(() -> {
+            try {
+                File directory = new File(app.getCacheDir(), "opened");
+                if (!directory.isDirectory() && !directory.mkdirs()) throw new IOException("Could not prepare the file.");
+                File target = new File(directory, safeName(filename));
+                try (OutputStream output = new FileOutputStream(target)) {
+                    output.write(bytes);
+                }
+                done.accept(target);
+            } catch (Exception error) {
+                failed.accept("Could not open the file.");
             }
         });
     }

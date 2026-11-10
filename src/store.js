@@ -1,7 +1,9 @@
 import { pollSummary } from './polls.js';
 import { eventSummary } from './calendarEvents.js';
 import { create } from 'zustand';
-import { del, get, set } from 'idb-keyval';
+// Everything this device stores about the account is encrypted at rest (src/secureStorage.js).
+import { secureDel as del, secureGet as get, secureSet as set, secureStorage } from './secureStorage.js';
+import { createMessageDb, diffMessages, MESSAGE_WINDOW, snapshotOf } from './messageDb.js';
 import { endBlock, hiddenByBlock, startBlock } from './blocking.js';
 import { mediaPreviewLabel } from './media.js';
 import { haversineDistance, isLiveExpired, parseContact, parseLocation, shouldSendLiveUpdate } from './geo.js';
@@ -9,6 +11,12 @@ import { mergeMessageStatus } from './messageStatus.js';
 import { formatChatListTime } from './time.js';
 import { splitLinks } from './contactBook.js';
 import { scheduledCallPreview } from './groupChat.js';
+import { stickerPreview } from './stickers.js';
+import { onCloudStars, toggleStar as toggleCloudStar, uploadLocalStars } from './accountData.js';
+import { transmitDirect } from './e2e/messaging.js';
+import { isNotice } from './e2e/notices.js';
+import { extrasPreview } from './mediaExtras.js';
+import { orderPreview } from './orders.js';
 
 const EMPTY_MESSAGES = Object.freeze([]);
 
@@ -18,25 +26,57 @@ function deletedPlaceholder(message) {
   return { ...rest, content: '', deleted: true };
 }
 
+// Starred message ids from the account (null until loaded: then the device's own flags are kept).
+let cloudStars = null;
+const withCloudStar = (message) => (cloudStars && message?.id && Boolean(cloudStars[message.id]) !== Boolean(message.starred)
+  ? { ...message, starred: Boolean(cloudStars[message.id]) } : message);
+
 function mergeMessage(current, incoming) {
-  if (!current) return incoming;
+  if (!current) return withCloudStar(incoming);
   const merged = { ...current, ...incoming, status: mergeMessageStatus(current.status, incoming.status) };
   // Once played, a voice note stays played (a stale copy of the history must not turn it green again).
   if (current.played || incoming.played) merged.played = true;
-  return merged;
+  return withCloudStar(merged);
 }
 
 const PERSIST_DELAY_MS = 400;
 let persistTimer = null;
 let pendingPersistUser = null;
 
-export async function flushPersistedMessages() {
+// Messages live one row each in IndexedDB (src/messageDb.js), each sealed at rest. A save writes only what changed
+// since the last save (`saved` is that copy); chats cleared meanwhile are dropped whole, older rows included.
+let messageDb = null;
+const messageStore = () => (messageDb ??= createMessageDb({ seal: (name, value) => secureStorage().seal(name, value), open: (name, record) => secureStorage().open(name, record) }));
+let saved = { owner: null, chats: new Map() };
+const clearedChats = new Set();
+let persistChain = Promise.resolve();
+
+/** For tests: use another message store (e.g. over fake-indexeddb). */
+export function setMessageDbForTesting(db) {
+  messageDb = db;
+  saved = { owner: null, chats: new Map() };
+}
+
+export function flushPersistedMessages() {
   clearTimeout(persistTimer);
   persistTimer = null;
   const userId = pendingPersistUser;
   pendingPersistUser = null;
-  const state = useChatStore.getState();
-  if (userId && userId === state.userId) await set(`relay:messages:${userId}`, state.messages);
+  persistChain = persistChain.then(async () => {
+    const state = useChatStore.getState();
+    if (!userId || userId !== state.userId || saved.owner !== userId) return;
+    const current = state.messages;
+    const cleared = new Set(clearedChats);
+    clearedChats.clear();
+    try {
+      await messageStore().apply(userId, diffMessages(saved.chats, current, cleared));
+      if (saved.owner === userId) saved = { owner: userId, chats: snapshotOf(current) };
+    } catch (error) {
+      for (const chat of cleared) clearedChats.add(chat);
+      console.error('Could not save messages:', error);
+    }
+  });
+  return persistChain;
 }
 
 if (typeof document !== 'undefined') {
@@ -47,8 +87,11 @@ export function previewFor(content) {
   if (typeof content !== 'string') return '';
   if (content.startsWith('voice-opened:')) return '① Opened';
   if (content.startsWith('voice:')) return content.endsWith(':once') ? '① Voice message' : '🎤 Voice message';
-  // End-to-end encrypted envelopes (see e2ee.js / mediaCrypto.js): never show ciphertext.
-  if (content.startsWith('e2e1:')) return '🔒 Message';
+  // End-to-end encrypted content this device could not open (src/e2e/): never show ciphertext.
+  if (content.startsWith('e2e1:') || content.startsWith('e2e2:')) return '🔒 Message';
+  if (isNotice(content)) return '🔒 Security code changed';
+  const extra = extrasPreview(content) ?? orderPreview(content);
+  if (extra) return extra;
   if (content.startsWith('emedia:')) return mediaPreviewLabel(`media:x:${content.split(':').slice(3).join(':')}`);
   if (content.startsWith('poll:')) return pollSummary(content) ?? '📊 Poll';
   if (content.startsWith('event:')) return eventSummary(content) ?? '📅 Event';
@@ -59,6 +102,8 @@ export function previewFor(content) {
   const scheduled = scheduledCallPreview(content);
   if (scheduled) return scheduled;
   if (content.startsWith('contact:')) return `👤 ${parseContact(content)?.name || 'Contact'}`;
+  if (content.startsWith('sticker:')) return stickerPreview(content);
+  if (content.startsWith('product:')) return '🛍️ Product';
   if (content.startsWith('call:')) {
     try {
       return JSON.parse(content.slice(5))?.mode === 'video' ? '📹 Video call' : '📞 Voice call';
@@ -163,6 +208,8 @@ const PREFERENCES = {
   favouriteChatIds: 'favourites',
   blockedChats: 'blocked',
   chatThemes: 'themes',
+  // Locked chats (src/chatLock.js): row keys (peer id or "group:<id>"), kept on this device.
+  lockedChatIds: 'locked',
 };
 
 function toggleId(ids, id) {
@@ -208,6 +255,7 @@ export const useChatStore = create((setState, getState) => ({
   pinnedChatIds: [],
   mutedChatIds: [],
   favouriteChatIds: [],
+  lockedChatIds: [],
   blockedChats: {},
   chatThemes: {},
   presence: {},
@@ -221,6 +269,8 @@ export const useChatStore = create((setState, getState) => ({
   liveSessions: {},
   setUserId(userId) {
     stopLiveTracking();
+    saved = { owner: null, chats: new Map() };
+    clearedChats.clear();
     setState((state) => ({
       userId,
       activeChatId: null,
@@ -308,8 +358,10 @@ export const useChatStore = create((setState, getState) => ({
     if (!receiverId || !userId || !content) return null;
     const message = { id: crypto.randomUUID(), senderId: userId, receiverId, timestamp: new Date().toISOString(), content, status: 'sent', ...extras };
     getState().addMessage(message);
-    const accepted = client?.send?.({ type: 'message:send', message: { id: message.id, receiverId, content, ...extras } });
-    if (!accepted) getState().updateMessage(message.id, { status: 'failed' });
+    getState().queueMessage(message);
+    // Sealed per device before it leaves (src/e2e/messaging.js); the outbox resends it after a failure.
+    transmitDirect(client, { id: message.id, receiverId, content, ...extras })
+      .then((accepted) => { if (!accepted) getState().updateMessage(message.id, { status: 'failed' }); });
     return message;
   },
 
@@ -531,6 +583,8 @@ export const useChatStore = create((setState, getState) => ({
   // Clear chat keeps the conversation in the list and removes its messages, except the ids the user kept.
   clearChat(chatId, keepIds = []) {
     const keep = new Set(keepIds);
+    // On this device too: the chat's stored rows go (older ones not in memory included); kept ones are rewritten.
+    clearedChats.add(chatId);
     setState((state) => {
       const chatMessages = (state.messages[chatId] ?? []).filter((message) => keep.has(message.id));
       return {
@@ -592,14 +646,17 @@ export const useChatStore = create((setState, getState) => ({
     return next;
   },
   // Stars are personal and stay on this device, like WhatsApp; server history merges keep the flag.
+  // Starring is saved to the account (every device sees it); the flag shows at once and reverts if refused.
   toggleStar(chatId, messageId) {
+    const message = (getState().messages[chatId] ?? []).find((item) => item.id === messageId);
+    if (!message) return Promise.resolve();
+    return toggleCloudStar(messageId, chatId, !message.starred).catch(() => {});
+  },
+  // Applies the account's starred list to every message on this device.
+  applyCloudStars(starred) {
+    cloudStars = starred;
     setState((state) => ({
-      messages: {
-        ...state.messages,
-        [chatId]: (state.messages[chatId] ?? []).map((message) => (
-          message.id === messageId ? { ...message, starred: !message.starred } : message
-        )),
-      },
+      messages: Object.fromEntries(Object.entries(state.messages).map(([chatId, messages]) => [chatId, messages.map(withCloudStar)])),
     }));
     const userId = getState().userId;
     if (userId) getState().persistMessages(userId);
@@ -629,6 +686,9 @@ export const useChatStore = create((setState, getState) => ({
   },
   toggleMuteChat(chatId) {
     getState().setPreference('mutedChatIds', (ids) => toggleId(ids, chatId));
+  },
+  toggleLockedChat(key) {
+    getState().setPreference('lockedChatIds', (ids) => toggleId(ids ?? [], key));
   },
   toggleFavouriteChat(chatId) {
     getState().setPreference('favouriteChatIds', (ids) => toggleId(ids, chatId));
@@ -676,6 +736,58 @@ export const useChatStore = create((setState, getState) => ({
       getState().persistMessages(userId);
     }
   },
+  /**
+   * Restores a decrypted backup (src/backup.js) into this device without losing anything newer: chats the device
+   * doesn't have are added, messages are merged by id (current copies win), call history is merged, and
+   * preferences are combined. Returns counts for the confirmation.
+   */
+  restoreBackup(data) {
+    const state = getState();
+    let addedChats = 0;
+    let addedMessages = 0;
+    const chats = [...state.chats];
+    const messages = { ...state.messages };
+    for (const peer of data.chats) {
+      if (!peer?.id || peer.id === state.userId) continue;
+      if (!chats.some((chat) => chat.id === peer.id)) {
+        chats.push({ ...peer, preview: '', time: '', unread: 0, online: false });
+        addedChats += 1;
+      }
+    }
+    for (const [chatId, list] of Object.entries(data.messages)) {
+      if (!chats.some((chat) => chat.id === chatId)) continue;
+      const current = new Map((messages[chatId] ?? []).map((message) => [message.id, message]));
+      for (const message of list) {
+        if (current.has(message.id)) continue;
+        current.set(message.id, message);
+        addedMessages += 1;
+      }
+      messages[chatId] = [...current.values()].sort((left, right) => left.timestamp.localeCompare(right.timestamp));
+    }
+    const knownCalls = new Set(state.callLogs.map((entry) => entry.id));
+    const callLogs = [...state.callLogs, ...(data.callLogs ?? []).filter((entry) => entry?.id && !knownCalls.has(entry.id))]
+      .sort((left, right) => String(right.timestamp).localeCompare(String(left.timestamp)));
+    const preferences = {};
+    for (const name of Object.keys(PREFERENCES)) {
+      const saved = data.preferences?.[name];
+      if (Array.isArray(state[name]) && Array.isArray(saved)) preferences[name] = [...new Set([...state[name], ...saved])];
+      else if (state[name] && typeof state[name] === 'object' && saved && typeof saved === 'object' && !Array.isArray(saved)) preferences[name] = { ...saved, ...state[name] };
+    }
+    setState({
+      ...preferences,
+      callLogs,
+      messages,
+      chats: orderChatsByActivity(chats.map((chat) => (messages[chat.id]?.length ? summarizeChat(chat, messages[chat.id]) : chat))),
+    });
+    const userId = state.userId;
+    if (userId) {
+      getState().persistMessages(userId);
+      getState().persistContacts(userId);
+      getState().persistCallLogs(userId);
+      for (const name of Object.keys(preferences)) set(`relay:${PREFERENCES[name]}:${userId}`, preferences[name]);
+    }
+    return { addedChats, addedMessages };
+  },
   async hydratePreferences(userId) {
     if (!userId) return;
     const names = Object.keys(PREFERENCES);
@@ -697,13 +809,55 @@ export const useChatStore = create((setState, getState) => ({
     if (userId && userId === getState().userId) await set(`relay:calls:${userId}`, getState().callLogs);
   },
   async hydrateMessages(userId) {
-    const saved = await get(`relay:messages:${userId}`);
-    if (saved && userId === getState().userId) {
-      setState((state) => {
-        const messages = { ...state.messages, ...saved };
-        return { messages, chats: orderChatsByActivity(state.chats.map((chat) => summarizeChat(chat, messages[chat.id]))) };
-      });
+    const db = messageStore();
+    // Once: the old single record ("relay:messages:<user>") becomes one row per message, then it is deleted.
+    const legacy = await get(`relay:messages:${userId}`).catch(() => null);
+    if (legacy && typeof legacy === 'object') {
+      const puts = Object.entries(legacy).flatMap(([chat, list]) => (Array.isArray(list) ? list : []).map((message) => ({ chat, message })));
+      await db.apply(userId, { puts });
+      await del(`relay:messages:${userId}`);
     }
+    const { messages: loaded, more } = await db.loadRecent(userId, MESSAGE_WINDOW).catch((error) => {
+      console.error('Could not read saved messages:', error);
+      return { messages: {}, more: new Set() };
+    });
+    if (userId !== getState().userId) return;
+    saved = { owner: userId, chats: snapshotOf(loaded) };
+    setState((state) => {
+      // Cloud stars are applied after hydration (markMessagesHydrated), once device-only stars are uploaded.
+      const messages = { ...state.messages };
+      for (const [chat, list] of Object.entries(loaded)) {
+        const byId = new Map(list.map((message) => [message.id, message]));
+        for (const message of messages[chat] ?? []) byId.set(message.id, message);
+        messages[chat] = [...byId.values()].sort((left, right) => left.timestamp.localeCompare(right.timestamp));
+      }
+      return {
+        messages,
+        olderOnDevice: Object.fromEntries([...more].map((chat) => [chat, true])),
+        chats: orderChatsByActivity(state.chats.map((chat) => summarizeChat(chat, messages[chat.id]))),
+      };
+    });
+    markMessagesHydrated(userId);
+  },
+  // Chats keep their newest messages in memory; scrolling back reads older ones from this device's store.
+  olderOnDevice: {},
+  async loadOlderMessages(chatId) {
+    const { userId, messages } = getState();
+    const list = messages[chatId] ?? [];
+    if (!userId || !list.length || !getState().olderOnDevice[chatId]) return 0;
+    const before = Date.parse(list[0].timestamp);
+    const { messages: older, more } = await messageStore().loadOlder(userId, chatId, before, MESSAGE_WINDOW);
+    if (userId !== getState().userId) return 0;
+    const known = new Set(list.map((message) => message.id));
+    const added = older.filter((message) => !known.has(message.id));
+    const chatSaved = saved.chats.get(chatId) ?? new Map();
+    for (const message of added) chatSaved.set(message.id, message);
+    saved.chats.set(chatId, chatSaved);
+    setState((state) => ({
+      messages: { ...state.messages, [chatId]: [...added, ...(state.messages[chatId] ?? [])] },
+      olderOnDevice: { ...state.olderOnDevice, [chatId]: more },
+    }));
+    return added.length;
   },
   // Saving copies every message on the main thread, so bursts (history loading, a busy group) are coalesced into
   // one write per PERSIST_DELAY_MS; leaving the app flushes at once (flushPersistedMessages).
@@ -725,3 +879,30 @@ export const useChatStore = create((setState, getState) => ({
 }));
 
 export { EMPTY_MESSAGES };
+// Stars that were kept only on this device (before they followed the account) are uploaded once per account,
+// as soon as both the saved messages and the account's list are here; until then the device's flags stay.
+const hydratedAccounts = new Set();
+const migratedStarAccounts = new Set();
+function migrateLocalStars() {
+  const state = useChatStore.getState();
+  if (!state.userId || cloudStars === null || !hydratedAccounts.has(state.userId) || migratedStarAccounts.has(state.userId)) return false;
+  migratedStarAccounts.add(state.userId);
+  const localOnly = Object.values(state.messages).flat().filter((message) => message.starred && !cloudStars[message.id]).map((message) => message.id);
+  if (!localOnly.length) return false;
+  uploadLocalStars(localOnly).catch(() => {});
+  return true;
+}
+export function markMessagesHydrated(userId) {
+  hydratedAccounts.add(userId);
+  if (!migrateLocalStars() && cloudStars !== null) useChatStore.getState().applyCloudStars(cloudStars);
+}
+onCloudStars((starred) => {
+  if (starred === null) {
+    cloudStars = null;
+    return;
+  }
+  const first = cloudStars === null;
+  cloudStars = starred;
+  if (first && migrateLocalStars()) return;
+  useChatStore.getState().applyCloudStars(starred);
+});

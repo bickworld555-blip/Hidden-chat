@@ -1,5 +1,6 @@
 // Sharing into Hidden Messenger from other apps, tappable links, the ongoing-call notification's Hang up, the video
 // call self-view hand-over, and the voice note "played" colours.
+import { callUiSource } from './callUiSource.mjs';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
@@ -57,12 +58,12 @@ test('Android: share sheet entry, link opening, and Hang up on the ongoing-call 
   assert.ok(service.includes('setUsesChronometer(true)') && service.includes('"Ongoing video call"') && service.includes('"Ongoing voice call"'));
   const receiver = await java('CallActionReceiver.java');
   assert.match(receiver, /ACTION_HANGUP\.equals[\s\S]*emitCallAction\("hangup"/);
-  const overlay = await source('src/components/CallOverlay.jsx');
+  const overlay = await callUiSource();
   assert.ok(overlay.includes("action === 'hangup'"), 'the web app ends the WebRTC call on Hang up');
 });
 
 test('video calls start on your own camera and hand the full screen to the other person once they answer', async () => {
-  const overlay = await source('src/components/CallOverlay.jsx');
+  const overlay = await callUiSource();
   assert.match(overlay, /const remoteJoined = Boolean\(remoteStream\) && \(remoteVideoLive \|\| status === 'connected' \|\| status === 'reconnecting'\);/);
   assert.match(overlay, /const selfFull = swapped \|\| !remoteJoined;/);
   assert.ok(overlay.includes("wa-video-tile ${selfFull ? 'is-full' : 'is-pip'}"));
@@ -83,8 +84,10 @@ test('voice calls ring back on the earpiece; Speaker keeps its icon; the PiP win
   assert.ok(audio.includes('new ToneGenerator(AudioManager.STREAM_VOICE_CALL, 80)'), 'ringback on the call stream, not media (loudspeaker)');
   const sounds = await source('src/sounds.js');
   assert.match(sounds, /categoryId === 'outgoingCall'\) \{\s*\/\/[^\n]*\n\s*if \(nativeShell\(\)\)/);
-  const overlay = await source('src/components/CallOverlay.jsx');
-  assert.equal((overlay.match(/speakerOn \|\| nativeRouting \? <Volume2/g) ?? []).length, 2, 'earpiece is not shown as a muted speaker');
+  const overlay = await callUiSource();
+  // One icon rule for both the video dock and the voice card (ControlCard's speakerIcon helper).
+  assert.ok(overlay.includes('const speakerIcon = (size) => (c.speakerOn || c.nativeRouting ? <Volume2 size={size} /> : <VolumeX size={size} />);'), 'earpiece is not shown as a muted speaker');
+  assert.equal((overlay.match(/\{speakerIcon\(2[24]\)\}/g) ?? []).length, 2, 'both the dock and the card use it');
   const activity = await java('MainActivity.java');
   assert.match(activity, /setActions\(Collections\.singletonList\(new RemoteAction\([\s\S]*"Hang up"/);
   assert.ok(activity.includes('if (!active && activity.isInPictureInPictureMode()) activity.moveTaskToBack(false);'), 'the floating window closes when the call ends');

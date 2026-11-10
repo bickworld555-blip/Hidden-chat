@@ -53,6 +53,9 @@ export default function UsernameGate({ onAuthenticated, onClose }) {
   const [error, setError] = useState('');
   const [createdSession, setCreatedSession] = useState(null);
   const [copied, setCopied] = useState(false);
+  // Two-step verification: the server asks for the 6-digit PIN after the password matched.
+  const [pinRequired, setPinRequired] = useState(false);
+  const [pin, setPin] = useState('');
   const normalized = username.trim().replace(/^@+/, '').toLowerCase();
 
   useEffect(() => {
@@ -87,9 +90,14 @@ export default function UsernameGate({ onAuthenticated, onClose }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(mode === 'register'
           ? { username: normalized, dob, password }
-          : { identity: identity.trim(), password }),
+          : { identity: identity.trim(), password, ...(pinRequired ? { pin } : {}) }),
       });
       const result = await response.json();
+      if (mode === 'login' && response.status === 401 && result.twoStepRequired) {
+        setPinRequired(true);
+        if (result.wrongPin) setPin('');
+        if (!pinRequired || result.wrongPin) throw new Error(result.wrongPin ? result.error : 'Enter your two-step verification PIN.');
+      }
       if (!response.ok) throw new Error(result.error ?? 'Could not continue with this handle.');
       if (mode === 'register') setCreatedSession(result);
       else onAuthenticated(result);
@@ -108,7 +116,7 @@ export default function UsernameGate({ onAuthenticated, onClose }) {
 
   const canSubmit = mode === 'register'
     ? availability?.valid && availability.available && dob && password.length >= 10
-    : identity.trim() && password;
+    : identity.trim() && password && (!pinRequired || /^\d{6}$/.test(pin));
 
   if (createdSession) return (
     <div className="identity-backdrop">
@@ -155,13 +163,18 @@ export default function UsernameGate({ onAuthenticated, onClose }) {
             <input className="identity-text-input" id="relay-dob" type="date" value={dob} max={new Date().toISOString().slice(0, 10)} onChange={(event) => setDob(event.target.value)} autoComplete="bday" />
           </> : <>
             <label className="identity-label" htmlFor="relay-identity">Username or unique ID</label>
-            <div className="handle-input"><AtSign size={17} /><input id="relay-identity" value={identity} onChange={(event) => setIdentity(event.target.value)} placeholder="@yourname or UUID" autoComplete="username" /></div>
+            <div className="handle-input"><AtSign size={17} /><input id="relay-identity" value={identity} onChange={(event) => { setIdentity(event.target.value); setPinRequired(false); setPin(''); }} placeholder="@yourname or UUID" autoComplete="username" /></div>
           </>}
           <label className="identity-label password-label" htmlFor="relay-password">Password</label>
           <div className="identity-password">
             <input className="identity-text-input" id="relay-password" type={showPassword ? 'text' : 'password'} value={password} onChange={(event) => setPassword(event.target.value)} placeholder={mode === 'register' ? 'At least 10 characters' : 'Your password'} autoComplete={mode === 'register' ? 'new-password' : 'current-password'} maxLength={128} />
             <button type="button" className="password-toggle" aria-label={showPassword ? 'Hide password' : 'Show password'} aria-pressed={showPassword} onClick={() => setShowPassword(!showPassword)}>{showPassword ? <EyeOff size={20} /> : <Eye size={20} />}</button>
           </div>
+          {mode === 'login' && pinRequired && <>
+            <label className="identity-label" htmlFor="relay-pin">Two-step verification PIN</label>
+            <input className="identity-text-input" id="relay-pin" type="password" inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={pin} autoFocus
+              onChange={(event) => setPin(event.target.value.replace(/\D/g, '').slice(0, 6))} placeholder="6-digit PIN" />
+          </>}
           <button className="identity-submit" type="submit" disabled={!canSubmit || submitting}>
             {submitting ? 'One moment…' : mode === 'register' ? 'Create account' : 'Sign in'}<ShieldMark className="button-mark" />
           </button>

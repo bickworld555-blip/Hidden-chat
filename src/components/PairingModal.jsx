@@ -2,7 +2,7 @@ import { apiFetch } from '../api.js';
 import { useEffect, useState } from 'react';
 import { Check, Copy, Monitor, ShieldCheck, Smartphone, X } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
-import { set } from 'idb-keyval';
+import { secureSet as set } from '../secureStorage.js';
 
 export default function PairingModal({ onClose, token, userId }) {
   const [pairing, setPairing] = useState(null);

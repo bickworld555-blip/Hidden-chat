@@ -16,7 +16,14 @@ final class MessagePreview {
         if (content.startsWith("voice:")) return content.endsWith(":once") ? "① Voice message" : voice(content);
         if (content.startsWith("media:")) return media(content);
         // End-to-end encrypted envelopes (src/e2ee.js, src/mediaCrypto.js): never show ciphertext.
-        if (content.startsWith("e2e1:")) return "🔒 Message";
+        if (content.startsWith("e2e1:") || content.startsWith("e2e2:")) return "🔒 Message";
+        // Kept in step with src/mediaExtras.js extrasPreview.
+        if (content.startsWith("viewonce:")) return content.matches("(?s).*\\.(mp4|webm|mov|m4v|3gp|mkv)$") ? "① Video" : "① Photo";
+        if (content.equals("media-opened:")) return "① Opened";
+        if (content.startsWith("vnote:")) return "📹 Video note";
+        if (content.startsWith("csticker:")) return "🎨 Sticker";
+        if (content.startsWith("order-status:")) return "🛒 Order update";
+        if (content.startsWith("order:")) return "🛒 Order";
         if (content.startsWith("emedia:")) {
             String[] parts = content.split(":", 4);
             return media("media:x:" + (parts.length == 4 ? parts[3] : ""));
@@ -25,6 +32,9 @@ final class MessagePreview {
         if (content.startsWith("location:")) return "📍 Location";
         if (content.startsWith("live:")) return "📍 Live location";
         if (content.startsWith("contact:")) return "👤 Contact";
+        // Stickers and shared catalog items (src/stickers.js, ProductCard.jsx), as the chat list shows them.
+        if (content.startsWith("sticker:")) return "🏷️ Sticker";
+        if (content.startsWith("product:")) return "🛍️ Product";
         if (content.startsWith("poll:")) return "📊 Poll: " + jsonField(content.substring(5), "question", "");
         if (content.startsWith("event:")) return "📅 " + jsonField(content.substring(6), "title", "Event");
         if (content.startsWith("call-schedule:")) return "📅 Scheduled call";

@@ -1,16 +1,27 @@
 // Actions offered when a chat row is long-pressed or right-clicked, and the wording around deleting threads.
 import { isSavedContact } from './contactBook.js';
 
-export function chatRowActions(chat, { pinned = false, muted = false, favourite = false } = {}) {
+export function chatRowActions(chat, { pinned = false, muted = false, favourite = false, archived = false, locked = false } = {}) {
+  const archive = { id: 'archive', label: archived ? 'Unarchive chat' : 'Archive chat' };
+  const label = { id: 'label', label: 'Label chat' };
+  const lock = { id: 'lock', label: locked ? 'Unlock chat' : 'Lock chat' };
+  // Group rows: the group screen owns mute, delete and the rest.
+  if (chat?.kind === 'group') return [{ id: 'open', label: 'Open group' }, archive, label, lock];
   return [
     { id: 'open', label: 'Open chat' },
     { id: 'pin', label: pinned ? 'Unpin chat' : 'Pin chat' },
     { id: 'mute', label: muted ? 'Unmute notifications' : 'Mute notifications' },
     { id: 'favourite', label: favourite ? 'Remove from favourites' : 'Add to favourites' },
+    archive,
+    label,
+    lock,
     { id: 'select', label: 'Select chats' },
     { id: 'delete', label: 'Delete chat', danger: true },
   ];
 }
+
+/** The account-level key of a chat-list row (direct: the peer id; group: "group:<id>"). */
+export const rowChatKey = (row) => (row?.kind === 'group' ? `group:${row.id}` : row?.id);
 
 export function deleteChatPrompt(chats) {
   const list = Array.isArray(chats) ? chats : [chats];

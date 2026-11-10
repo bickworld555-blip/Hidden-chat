@@ -26,9 +26,11 @@ export function createLongPress(onLongPress, { delay = LONG_PRESS_MS, slop = LON
     },
     cancel: reset,
     onPointerDown(event) {
+      // Every new press starts fresh, a right-click included: otherwise a second right-click (with no left click in
+      // between) would be taken for the contextmenu of the previous long press and ignored.
+      fired = false;
       if (event.button !== undefined && event.button !== 0) return;
       reset();
-      fired = false;
       pointerId = event.pointerId ?? null;
       origin = { x: event.clientX ?? 0, y: event.clientY ?? 0 };
       timer = setTimer(() => {

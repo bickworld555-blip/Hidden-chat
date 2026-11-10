@@ -17,6 +17,8 @@ export const TERMINAL_STATUSES = Object.freeze(['ended', 'no-answer', 'failed', 
 export const CALL_STATUSES = Object.freeze(['idle', 'connecting', 'ringing', 'connected', 'reconnecting', ...TERMINAL_STATUSES]);
 
 export const CONNECT_TIMEOUT_MS = 30_000;
+// An unanswered call stops ringing on both phones after this long (the server enforces the same limit).
+export const RING_TIMEOUT_MS = 60_000;
 export const RECONNECT_GRACE_MS = 15_000;
 export const ICE_RESTART_DELAY_MS = 2_000;
 export const MAX_ICE_RESTARTS = 2;
@@ -146,7 +148,7 @@ export function createCallEngine({
   const pendingCandidates = [];
   const queue = [];
   let draining = false;
-  const timers = { connect: null, reconnect: null, restart: null, videoRequest: null };
+  const timers = { connect: null, reconnect: null, restart: null, videoRequest: null, ring: null };
   const seenSignalIds = new Set();
 
   function emit() {
@@ -231,6 +233,25 @@ export function createCallEngine({
     timers.reconnect = null;
     set({ status: 'connected', error: '', answered: true, connectedAt: state.connectedAt || Date.now(), iceRestarts: 0 });
     if (state.muted || state.cameraOff) announceMedia();
+  }
+
+  /**
+   * Ringing is bounded: the caller gets "No answer", the callee a missed call. Cleared the moment the call is
+   * answered. The callee does not signal the end itself (the caller's own timer and the server do).
+   */
+  function armRingTimeout() {
+    if (timers.ring != null) clearTimer(timers.ring);
+    timers.ring = setTimer(() => {
+      timers.ring = null;
+      if (closed || state.answered) return;
+      if (direction === 'outgoing') finish('no-answer', { reason: 'no-answer', message: 'No answer.' });
+      else if (state.status === 'idle') finish('no-answer', { reason: 'no-answer', message: '', notify: false });
+    }, RING_TIMEOUT_MS);
+  }
+
+  function stopRinging() {
+    if (timers.ring != null) clearTimer(timers.ring);
+    timers.ring = null;
   }
 
   function armConnectTimeout() {
@@ -557,7 +578,8 @@ export function createCallEngine({
       }
       await applyRemoteDescription(description);
       if (state.status === 'ringing' || state.status === 'connecting') {
-        // Ringing is unbounded; the transport gets a bounded window once both descriptions exist.
+        // Answered: ringing stops; the transport gets a bounded window once both descriptions exist.
+        stopRinging();
         armConnectTimeout();
         set({ status: 'connecting', answered: true });
       }
@@ -670,6 +692,7 @@ export function createCallEngine({
       if (direction !== 'outgoing') throw new Error('Only outgoing calls start.');
       if (closed || state.status !== 'idle') return;
       set({ status: 'connecting' });
+      armRingTimeout();
       try {
         const stream = await captureLocal(state.mode);
         await ensureConnection();
@@ -683,6 +706,7 @@ export function createCallEngine({
     async accept() {
       if (direction !== 'incoming') throw new Error('Only incoming calls accept.');
       if (closed || state.status !== 'idle') return;
+      stopRinging();
       set({ status: 'connecting' });
       try {
         const stream = await captureLocal(state.mode);
@@ -978,5 +1002,7 @@ export function createCallEngine({
     },
   };
 
+  // An incoming call rings from the moment it exists; unanswered it becomes a missed call.
+  if (direction === 'incoming') armRingTimeout();
   return engine;
 }

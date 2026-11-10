@@ -58,6 +58,18 @@ jobs:
           done
           printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/hidden-chat-release.jks"
           chmod 600 "$RUNNER_TEMP/hidden-chat-release.jks"
+      - name: Provide Firebase config for push notifications
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        run: |
+          set -euo pipefail
+          if [ -n "$GOOGLE_SERVICES_JSON" ]; then
+            printf '%s' "$GOOGLE_SERVICES_JSON" > android/app/google-services.json
+            node -e "JSON.parse(require('fs').readFileSync('android/app/google-services.json', 'utf8')).project_info.project_id"
+            echo 'Firebase push: google-services.json provided.'
+          else
+            echo '::warning::GOOGLE_SERVICES_JSON secret is not set: this APK is built without Firebase push.'
+          fi
       - name: Build signed release APK
         working-directory: android
         env:
@@ -87,4 +99,4 @@ jobs:
           retention-days: 14
       - name: Remove signing material
         if: always()
-        run: rm -f "$RUNNER_TEMP/hidden-chat-release.jks"
+        run: rm -f "$RUNNER_TEMP/hidden-chat-release.jks" android/app/google-services.json

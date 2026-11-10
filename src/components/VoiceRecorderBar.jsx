@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from 'react';
 import { Pause, Play, Send, Square, Trash2 } from 'lucide-react';
 import { formatClock } from '../voice.js';
 import { createRecordingClock, voiceAudioConstraints, voiceRecorderOptions } from '../voiceRecording.js';
+import { levelFromSamples } from '../audioLevel.js';
+import { drawWaveform } from '../waveformCanvas.js';
 
 const SAMPLE_MS = 90;
 const MAX_BARS = 36;
@@ -10,7 +12,8 @@ export default function VoiceRecorderBar({ onSend, onCancel, onError, allowViewO
   const [seconds, setSeconds] = useState(0);
   const [paused, setPaused] = useState(false);
   const [previewing, setPreviewing] = useState(false);
-  const [levels, setLevels] = useState([]);
+  // The waveform lives on a canvas, fed from a ref: recording never re-renders the bar for a new sample.
+  const canvasRef = useRef(null);
   const [viewOnce, setViewOnce] = useState(false);
   const [toast, setToast] = useState('');
   const viewOnceRef = useRef(false);
@@ -22,7 +25,7 @@ export default function VoiceRecorderBar({ onSend, onCancel, onError, allowViewO
     let disposed = false;
     const session = {
       recorder: null, stream: null, chunks: [], mode: 'cancel',
-      clock: createRecordingClock(), ctx: null, analyser: null, timer: 0, preview: null, previewUrl: '',
+      clock: createRecordingClock(), ctx: null, analyser: null, timer: 0, frame: 0, levels: [], preview: null, previewUrl: '',
     };
     sessionRef.current = session;
 
@@ -37,6 +40,7 @@ export default function VoiceRecorderBar({ onSend, onCancel, onError, allowViewO
     };
     session.release = () => {
       clearInterval(session.timer);
+      cancelAnimationFrame(session.frame);
       session.stopPreview();
       session.stream?.getTracks().forEach((track) => track.stop());
       session.stream = null;
@@ -97,16 +101,21 @@ export default function VoiceRecorderBar({ onSend, onCancel, onError, allowViewO
         }
       }
       const samples = new Uint8Array(256);
+      // A new bar every SAMPLE_MS while recording (frozen while paused); the seconds only re-render when they change.
       session.timer = setInterval(() => {
         if (recorder.state !== 'recording') return;
         setSeconds(Math.floor(session.elapsedNow()));
         if (!session.analyser) return;
         session.analyser.getByteTimeDomainData(samples);
-        let sum = 0;
-        for (const value of samples) sum += ((value - 128) / 128) ** 2;
-        const level = Math.min(1, Math.sqrt(sum / samples.length) * 4);
-        setLevels((current) => [...current.slice(-(MAX_BARS - 1)), level]);
+        session.levels.push(levelFromSamples(samples));
+        if (session.levels.length > MAX_BARS) session.levels.shift();
       }, SAMPLE_MS);
+      // Drawn once per screen frame from the ref, like WhatsApp's VoiceParticipantAudioWave (canvas, not views).
+      const paint = () => {
+        session.frame = requestAnimationFrame(paint);
+        drawWaveform(canvasRef.current, session.levels, MAX_BARS);
+      };
+      session.frame = requestAnimationFrame(paint);
 
       // Slices every second, so a pause can preview everything recorded so far.
       recorder.start(1000);
@@ -195,9 +204,7 @@ export default function VoiceRecorderBar({ onSend, onCancel, onError, allowViewO
         <i className="recording-dot" />
         {formatClock(seconds)}
       </span>
-      <div className="recording-wave" aria-hidden="true">
-        {levels.map((level, index) => <span key={index} style={{ height: `${Math.max(10, level * 100)}%` }} />)}
-      </div>
+      <canvas ref={canvasRef} className="recording-wave" aria-hidden="true" />
       <button type="button" className="recording-pause" onClick={togglePause} aria-label={paused ? 'Resume recording' : 'Pause recording'}>
         {paused ? <Play size={18} /> : <Pause size={18} />}
       </button>

@@ -1,7 +1,8 @@
 // Multiple signed-in accounts on one device. Each account keeps its own session token; one is active.
 // Stored in IndexedDB; the legacy single `relay:session` record is migrated on first load.
 import { useSyncExternalStore } from 'react';
-import { del, get, set } from 'idb-keyval';
+// Session tokens are encrypted at rest (src/secureStorage.js).
+import { secureDel as del, secureGet as get, secureSet as set } from './secureStorage.js';
 
 export const ACCOUNTS_KEY = 'relay:accounts';
 export const LEGACY_SESSION_KEY = 'relay:session';

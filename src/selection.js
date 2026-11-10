@@ -1,4 +1,17 @@
+// One list of structured (not editable) formats, shared with the server (src/e2e/envelope.js).
+import { STRUCTURED } from './e2e/envelope.js';
 export const DELETE_FOR_EVERYONE_WINDOW_MS = 24 * 60 * 60 * 1000;
+// WhatsApp lets you edit a text message for 15 minutes after sending it (server/parity.mjs EDIT_WINDOW_MS).
+export const EDIT_WINDOW_MS = 15 * 60 * 1000;
+
+/** Whether the sender may still edit this message's text. */
+export function canEditMessage(message, userId, now = Date.now()) {
+  if (!message || message.senderId !== userId || message.deleted || message.status === 'failed') return false;
+  if (typeof message.content !== 'string' || !message.content || STRUCTURED.test(message.content)) return false;
+  const raw = message.timestamp ?? message.createdAt;
+  const sentAt = typeof raw === 'number' ? raw : Date.parse(raw);
+  return Number.isFinite(sentAt) && now - sentAt <= EDIT_WINDOW_MS;
+}
 
 const isCall = (message) => typeof message?.content === 'string' && message.content.startsWith('call:');
 // Call cards and "This message was deleted" placeholders can only be deleted for me: nothing to reply to, forward or star.
@@ -34,5 +47,7 @@ export function selectionActions(selected, userId, now = Date.now()) {
     allStarred: count > 0 && selected.every((message) => message.starred),
     deleteForEveryone: count > 0 && selected.every((message) => canDeleteForEveryone(message, userId, now)),
     hasMedia: selected.some((message) => /^(media|voice):/.test(message.content ?? '')),
+    canEdit: Boolean(single) && canEditMessage(single, userId, now),
+    canPin: Boolean(single) && !isInert(single) && single.status !== 'failed',
   };
 }

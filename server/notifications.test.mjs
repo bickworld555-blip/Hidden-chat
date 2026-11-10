@@ -1,4 +1,5 @@
 // Notification settings: model, sound planning, reminders/badge logic, the tone library and UI wiring.
+import { callUiSource } from './callUiSource.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
@@ -168,7 +169,7 @@ test('the panel and the app are wired: sections, pickers, tones on events, vibra
   const read = async (path) => (await readFile(new URL(path, import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
   const panel = await read('../src/components/NotificationSettings.jsx');
   const app = await read('../src/App.jsx');
-  const overlay = await read('../src/components/CallOverlay.jsx');
+  const overlay = await callUiSource();
   const chatWindow = await read('../src/components/ChatWindow.jsx');
   const tools = await read('../src/components/ToolsView.jsx');
   const sidebar = await read('../src/components/Sidebar.jsx');

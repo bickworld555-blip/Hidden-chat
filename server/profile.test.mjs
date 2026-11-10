@@ -217,5 +217,5 @@ test('the UI shows the pencil on the own photo, filled hearts for favourites, an
   for (const [name, source] of [['ChatsList', list], ['ChatWindow', chatWindow], ['ContactInfoDrawer', drawer]]) {
     assert.ok(/image=\{(chat|contact)\.avatar\}/.test(source), `${name} passes the contact photo to Avatar`);
   }
-  assert.ok(drawer.includes('<small>Messages are stored on your Hidden Messenger server and are not end-to-end encrypted.</small>'), 'the encryption notice is unchanged');
+  assert.ok(drawer.includes('<small>Messages are end-to-end encrypted on your devices. The server stores only ciphertext it cannot read.</small>'), 'the encryption notice states end-to-end encryption');
 });

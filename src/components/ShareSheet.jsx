@@ -3,6 +3,8 @@ import { ArrowLeft, Check, CircleDashed, Search, Send, Users } from 'lucide-reac
 import Avatar from './Avatar.jsx';
 import { apiFetch } from '../api.js';
 import { uploadFile } from '../upload.js';
+import { attachmentContent, sealForUpload } from '../mediaCrypto.js';
+import { sendGroupContent } from '../e2e/client.js';
 import { useChatStore } from '../store.js';
 import { nativeReadSharedFile } from '../native.js';
 import { SHARE_TARGET_LIMIT, shareSections, shareSteps, shareSummary } from '../shareTarget.js';
@@ -10,16 +12,23 @@ import { STATUS_BACKGROUNDS, postMediaStatus, postTextStatus } from '../statusAp
 import { presentName } from '../profile.js';
 import { useBackHandler } from '../backStack.js';
 
-async function postToGroup(token, groupId, content) {
-  const response = await apiFetch(`/api/v1/groups/${encodeURIComponent(groupId)}/messages`, {
-    method: 'POST',
-    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ content }),
+// Sealed for the group's devices (src/e2e/client.js), re-sealed if they changed meanwhile.
+function postToGroup(token, groupId, plain) {
+  return sendGroupContent(groupId, plain, async (content) => {
+    const response = await apiFetch(`/api/v1/groups/${encodeURIComponent(groupId)}/messages`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content }),
+    });
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      const error = new Error(data.error || `The group message could not be sent (${response.status}).`);
+      error.status = response.status;
+      error.data = data;
+      throw error;
+    }
+    return response.json().catch(() => null);
   });
-  if (!response.ok) {
-    const data = await response.json().catch(() => ({}));
-    throw new Error(data.error || `The group message could not be sent (${response.status}).`);
-  }
 }
 
 const MY_STATUS = { kind: 'status', id: 'me' };
@@ -90,8 +99,9 @@ export default function ShareSheet({ share, groups = [], userId, sessionToken, o
           if (step.kind === 'file') {
             // Read once from Android, then uploaded to each chat (attachments belong to their conversation).
             const file = await readShared(step.file);
-            const data = await uploadFile(file, target.kind === 'group' ? { groupId: target.id, sessionToken } : { receiverId: target.id, sessionToken });
-            content = `media:${data.id}:${data.filename || file.name}`;
+            const { upload, descriptor } = await sealForUpload(file);
+            const data = await uploadFile(upload, target.kind === 'group' ? { groupId: target.id, sessionToken } : { receiverId: target.id, sessionToken });
+            content = attachmentContent(data.id, descriptor ? file.name || 'attachment' : data.filename || file.name, descriptor);
           }
           if (target.kind === 'group') await postToGroup(sessionToken, target.id, content);
           else if (!useChatStore.getState().sendMessage(target.id, content)) throw new Error('Sign in again to send messages.');

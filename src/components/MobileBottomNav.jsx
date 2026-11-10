@@ -1,6 +1,8 @@
 import { MessageCircle, Phone, Eye, Settings } from 'lucide-react';
+import { useT } from '../i18n.js';
 
 export default function MobileBottomNav({ activeTab, onTabChange, unreadCount = 0 }) {
+  const t = useT();
   const tabs = [
     { id: 'chats', label: 'Chats', icon: MessageCircle, unread: unreadCount },
     { id: 'calls', label: 'Calls', icon: Phone, unread: 0 },
@@ -25,7 +27,7 @@ export default function MobileBottomNav({ activeTab, onTabChange, unreadCount = 
               <Icon size={24} strokeWidth={2} />
               {tab.unread > 0 && <span className="unread-badge">{tab.unread}</span>}
             </div>
-            <span className="nav-label">{tab.label}</span>
+            <span className="nav-label">{t(tab.label)}</span>
           </button>
         );
       })}

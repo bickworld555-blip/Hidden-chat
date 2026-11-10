@@ -16,12 +16,13 @@
     "db:import": "node --env-file=.env scripts/import-sqlite.mjs",
     "start:production": "node --env-file=.env server/main.mjs",
     "android:configure": "node scripts/configure-android.mjs",
-    "android:sync": "npm run android:configure && cap sync android",
+    "android:sync": "npm run android:configure && npm run android:web && cap sync android",
     "mediapipe:sync": "node scripts/sync-mediapipe.mjs",
     "prebuild": "node scripts/sync-mediapipe.mjs",
     "predev": "node scripts/sync-mediapipe.mjs",
     "predev:web": "node scripts/sync-mediapipe.mjs",
-    "eas-build-post-install": "node scripts/eas-build-post-install.mjs"
+    "eas-build-post-install": "node scripts/eas-build-post-install.mjs",
+    "android:web": "node scripts/build-android-web.mjs"
   },
   "dependencies": {
     "@capacitor/android": "8.6.0",
@@ -32,8 +33,8 @@
     "express": "^5.1.0",
     "idb-keyval": "^6.2.2",
     "leaflet": "^1.9.4",
-    "pg": "^8.16.3",
     "lucide-react": "^0.468.0",
+    "pg": "^8.16.3",
     "qrcode.react": "^4.2.0",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
@@ -45,6 +46,7 @@
     "@capacitor/cli": "8.6.0",
     "@electric-sql/pglite": "^0.3.14",
     "@roamhq/wrtc": "^0.10.0",
-    "concurrently": "^9.2.1"
+    "concurrently": "^9.2.1",
+    "fake-indexeddb": "^6.2.8"
   }
 }

@@ -1,5 +1,6 @@
 // The keyboard-open layout, the lock-screen call timer that kept counting after a call, notification text per
 // kind of message, and typing that no longer re-renders every message in the chat.
+import { callUiSource } from './callUiSource.mjs';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
@@ -32,7 +33,7 @@ test('the background service words notifications the same way', async () => {
   assert.ok(preview.includes('"🎤 Voice message (%d:%02d)"'));
   assert.ok(preview.includes('case "gif": return "🎞️ GIF";') && preview.includes('return "🎵 Audio";') && preview.includes('return "🎥 Video";'));
   const app = await source('src/App.jsx');
-  assert.ok(app.includes('body: notificationPreview(event.message.content),'));
+  assert.ok(app.includes('body: locked ? LOCKED_NOTIFICATION.body : notificationPreview(event.message.content),'), 'locked chats name no one and show no text');
   assert.ok(app.includes('Reacted ${event.emoji} to: “${notificationPreview(event.messageContent)}”'), 'reactions quote the message the same way');
 });
 
@@ -82,7 +83,7 @@ test('typing re-renders the composer only: the message list is memoised with sta
   const start = chat.indexOf('const messageList = useMemo');
   assert.ok(start > 0);
   const deps = /\}, \[([^\]]*)\]\);/.exec(chat.slice(start))[1].split(',').map((name) => name.trim());
-  assert.ok(deps.includes('messages') && deps.includes('selectedIds') && !deps.includes('text'), 'the draft text is not a dependency');
+  assert.ok(deps.includes('visibleMessages') && deps.includes('selectedIds') && !deps.includes('text'), 'the draft text is not a dependency');
   assert.ok(start < chat.indexOf('<h1>Select a conversation</h1>'), 'hooks come before the early return');
   assert.ok(chat.includes('{messageList}'));
 });
@@ -120,7 +121,7 @@ test('hard reset when a call ends: call notification deleted, Android call destr
   const calls = await java('TelecomCalls.java');
   assert.match(calls, /static void endAll\(\) \{[\s\S]*?end\(DisconnectCause\.LOCAL\);/);
   assert.match(calls, /ending\.setDisconnected\(new DisconnectCause\(cause\)\);\s*ending\.destroy\(\);/);
-  const overlay = await source('src/components/CallOverlay.jsx');
+  const overlay = await callUiSource();
   assert.ok(overlay.includes('useEffect(() => { if (nativeShell() && terminal) nativeEndCall(); }, [terminal]);'), 'the moment the call ends');
   assert.ok(overlay.includes('useEffect(() => () => { if (nativeShell()) nativeEndCall(); }, []);'), 'and when the call screen closes');
   assert.ok(overlay.includes('const timer = setInterval(() => nativeCallHeartbeat(), CALL_HEARTBEAT_MS);'));

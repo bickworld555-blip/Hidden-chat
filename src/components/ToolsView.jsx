@@ -1,6 +1,6 @@
 import { setMediaSaveEnabled, useMediaSave } from '../mediaSave.js';
 import { nativeShell } from '../native.js';
-import { Settings, Users, Plus, ChevronRight, LogOut, Bell, Moon, Sun, Pencil, Check, X, Sparkles, Video, ScanFace, Download } from 'lucide-react';
+import { Settings, Users, Plus, ChevronRight, LogOut, Bell, Moon, Sun, Pencil, Check, X, Sparkles, Video, ScanFace, Download, Store, Star, DatabaseBackup, HardDrive, Radio, Megaphone, Clock, Link2, EyeOff, Languages } from 'lucide-react';
 import { useChatStore } from '../store.js';
 import ProfilePhoto from './ProfilePhoto.jsx';
 import Avatar from './Avatar.jsx';
@@ -99,7 +99,7 @@ function DisplayNameEditor({ user, userId }) {
   );
 }
 
-export default function ToolsView({ darkMode, onToggleTheme, onLogout, onNotifications, onAccountSettings, onAccounts, onAvatarStudio, onGroups }) {
+export default function ToolsView({ darkMode, onToggleTheme, onLogout, onNotifications, onAccountSettings, onAccounts, onAvatarStudio, onGroups, onCommunities, onBusinessTools, onStarred, onBackup, onStorage, onSheet }) {
   const user = useChatStore((state) => state.user);
   const userId = useChatStore((state) => state.userId);
   const { accounts } = useAccounts();
@@ -158,11 +158,60 @@ export default function ToolsView({ darkMode, onToggleTheme, onLogout, onNotific
             </div>
             <ChevronRight size={16} />
           </button>
-          <button className="tool-item">
+          <button className="tool-item" onClick={() => onCommunities?.()}>
             <Users size={20} />
             <div className="tool-item-info">
               <strong>Create a community</strong>
               <small>Organize groups under one space</small>
+            </div>
+            <ChevronRight size={16} />
+          </button>
+          <button className="tool-item" onClick={() => onBusinessTools?.()}>
+            <Store size={20} />
+            <div className="tool-item-info">
+              <strong>Business tools</strong>
+              <small>Catalog, labels, quick replies, away and greeting messages</small>
+            </div>
+            <ChevronRight size={16} />
+          </button>
+          {[
+            ['channels', Radio, 'Channels', 'Follow channels or start your own'],
+            ['broadcasts', Megaphone, 'Broadcast lists', 'One message, sent privately to many'],
+            ['scheduled', Clock, 'Scheduled messages', 'Write now, send later (end-to-end encrypted)'],
+            ['calllinks', Link2, 'Call links', 'Let people call you with a link'],
+            ['statusprivacy', EyeOff, 'Status privacy', 'Who sees your status, muted updates'],
+            ['language', Languages, 'App language', 'English, বাংলা, हिन्दी, Español'],
+          ].map(([id, Icon, title, detail]) => (
+            <button key={id} className="tool-item" onClick={() => onSheet?.(id)}>
+              <Icon size={20} />
+              <div className="tool-item-info">
+                <strong>{title}</strong>
+                <small>{detail}</small>
+              </div>
+              <ChevronRight size={16} />
+            </button>
+          ))}
+          <button className="tool-item" onClick={() => onStarred?.()}>
+            <Star size={20} />
+            <div className="tool-item-info">
+              <strong>Starred messages</strong>
+              <small>Saved on your account, on every device</small>
+            </div>
+            <ChevronRight size={16} />
+          </button>
+          <button className="tool-item" onClick={() => onBackup?.()}>
+            <DatabaseBackup size={20} />
+            <div className="tool-item-info">
+              <strong>Chat backup</strong>
+              <small>Encrypted backup, restore and chat export</small>
+            </div>
+            <ChevronRight size={16} />
+          </button>
+          <button className="tool-item" onClick={() => onStorage?.()}>
+            <HardDrive size={20} />
+            <div className="tool-item-info">
+              <strong>Storage and data</strong>
+              <small>Manage storage, photo upload quality</small>
             </div>
             <ChevronRight size={16} />
           </button>

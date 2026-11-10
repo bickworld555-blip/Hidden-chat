@@ -63,13 +63,15 @@ export async function checkGroupContract({ api, register, service }) {
   assert.equal((await api(`${path}/report`, { session: stranger, method: 'POST', body: { reason: 'x' } })).status, 201, 'the stranger was added as a member above');
   assert.equal(Number((await service.db.prepare('SELECT count(*) AS total FROM group_reports WHERE group_id = ?').get(id)).total), 2);
 
-  assert.equal((await api(`${path}/membership`, { session: admin, method: 'DELETE' })).status, 409);
   assert.equal((await api(`${path}/membership`, { session: member, method: 'DELETE' })).status, 204);
   assert.equal((await api(`${path}/membership`, { session: member, method: 'DELETE' })).status, 404);
   assert.equal((await api(path, { session: member })).status, 404);
   assert.equal((await api(`${path}/messages`, { session: member })).status, 404);
   assert.equal((await api('/api/v1/groups', { session: member })).data.length, 0);
   assert.equal((await api(path, { session: admin })).data.members.length, 2);
+  // An admin may leave too: the longest-standing remaining member becomes admin.
+  assert.equal((await api(`${path}/membership`, { session: admin, method: 'DELETE' })).status, 204);
+  assert.equal((await api(path, { session: stranger })).data.role, 'admin');
 }
 
 // Attachments: upload scoped to a group, readable only by members, and the file disappears with the last message

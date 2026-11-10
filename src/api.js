@@ -11,6 +11,11 @@ export function normalizeApiBaseUrl(value = '') {
 
 const apiBaseUrl = normalizeApiBaseUrl(import.meta.env?.VITE_API_BASE_URL);
 
+/** The public web origin for links people share (invites): the server the app talks to, else this page. */
+export function publicOrigin(baseUrl = apiBaseUrl, page = globalThis.location) {
+  return normalizeApiBaseUrl(baseUrl) || page?.origin || 'https://hiddenmessenger.com';
+}
+
 export function apiUrl(path, baseUrl = apiBaseUrl) {
   if (typeof path !== 'string' || !path.startsWith('/api/')) {
     throw new TypeError('API path must start with /api/.');

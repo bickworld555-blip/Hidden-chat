@@ -1,4 +1,5 @@
 // Real WebRTC peer connections (via @roamhq/wrtc) negotiated through the real signaling server.
+import { callUiSource } from './callUiSource.mjs';
 import test, { after, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
@@ -7,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import WebSocket from 'ws';
 import { createChatServer } from './index.mjs';
-import { createCallEngine, cameraSwitchPlans, CONNECT_TIMEOUT_MS, RECONNECT_GRACE_MS } from '../src/callEngine.js';
+import { createCallEngine, cameraSwitchPlans, CONNECT_TIMEOUT_MS, RECONNECT_GRACE_MS, RING_TIMEOUT_MS } from '../src/callEngine.js';
 import { getStatusLabel } from '../src/callStatus.js';
 import { normalizeIceServers, orderCodecs, readDescription, tuneOpusSdp, turnServerFromEnv } from '../src/rtc.js';
 
@@ -539,12 +540,12 @@ test('a call that never connects after the answer fails with guidance instead of
   const engine = createCallEngine({ callId: 'c1', direction: 'outgoing', mode: 'video', rtc, getUserMedia, send: (payload) => { sent.push(payload.signal); return true; }, setTimer: clock.setTimer, clearTimer: clock.clearTimer });
   await engine.start();
   assert.equal(sent[0].type, 'offer');
-  assert.equal(clock.pending, 0, 'ringing has no client-side deadline');
-  await clock.advance(CONNECT_TIMEOUT_MS * 2);
-  assert.equal(engine.state.status, 'connecting');
+  assert.equal(clock.pending, 1, 'ringing has one deadline (the ring timeout), not the connect timeout');
+  await clock.advance(CONNECT_TIMEOUT_MS * 1.5);
+  assert.equal(engine.state.status, 'connecting', 'still ringing well past the connect timeout');
 
   engine.deliver({ type: 'answer', sdp: 'v=0\r\nfake-answer' });
-  await until(() => clock.pending === 1, { label: 'connect timer armed' });
+  await until(() => engine.state.answered && clock.pending === 1, { label: 'connect timer armed' });
   await clock.advance(CONNECT_TIMEOUT_MS - 1);
   assert.equal(engine.state.status, 'connecting');
   await clock.advance(1);
@@ -562,7 +563,7 @@ test('a brief disconnect reconnects silently; a long one ends the call once', as
   const engine = createCallEngine({ callId: 'c2', direction: 'outgoing', mode: 'audio', rtc, getUserMedia, send: (payload) => { sent.push(payload.signal); return true; }, setTimer: clock.setTimer, clearTimer: clock.clearTimer });
   await engine.start();
   engine.deliver({ type: 'answer', sdp: 'v=0\r\nfake-answer' });
-  await until(() => clock.pending === 1, { label: 'armed' });
+  await until(() => engine.state.answered && clock.pending === 1, { label: 'armed' });
   const pc = connections[0];
   pc.transition('connected');
   assert.equal(engine.state.status, 'connected');
@@ -643,7 +644,7 @@ test('repeated failures give up after the ICE restart budget', async () => {
   const engine = createCallEngine({ callId: 'c3', direction: 'outgoing', mode: 'audio', rtc, getUserMedia, send: () => true, setTimer: clock.setTimer, clearTimer: clock.clearTimer });
   await engine.start();
   engine.deliver({ type: 'answer', sdp: 'v=0\r\nfake-answer' });
-  await until(() => clock.pending === 1, { label: 'armed' });
+  await until(() => engine.state.answered && clock.pending === 1, { label: 'armed' });
   const pc = connections[0];
   pc.transition('connected');
   for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -710,7 +711,7 @@ test('codec ordering and Opus tuning are stable and idempotent', () => {
 test('the React overlay delegates all WebRTC work to the engine and no public relay is hardcoded', async () => {
   const { readFile } = await import('node:fs/promises');
   const read = async (path) => (await readFile(new URL(path, import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
-  const overlay = await read('../src/components/CallOverlay.jsx');
+  const overlay = await callUiSource();
   const app = await read('../src/App.jsx');
   const engine = await read('../src/callEngine.js');
 
@@ -838,7 +839,7 @@ test('room helpers: invite capacity, room offers and the peer registry', () => {
 test('the overlay restores from PiP on a tap, adds participants, and the chat header has the full menu', async () => {
   const { readFile } = await import('node:fs/promises');
   const read = async (path) => (await readFile(new URL(path, import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
-  const overlay = await read('../src/components/CallOverlay.jsx');
+  const overlay = await callUiSource();
   const chatWindow = await read('../src/components/ChatWindow.jsx');
   const app = await read('../src/App.jsx');
   assert.ok(overlay.includes("onClick={minimized ? (event) => { const dragged = draggedRef.current; draggedRef.current = false; if (!dragged && !event.target.closest('button') && !dragRef.current) restoreCall(); } : undefined}"), 'tapping the floating window restores it, finishing a drag does not');
@@ -861,4 +862,24 @@ test('the overlay restores from PiP on a tap, adds participants, and the chat he
   assert.ok(styles.includes('.conversation { flex: 1; min-width: 0; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr);'), 'the chat column is capped at its container');
   assert.ok(styles.includes('.conversation-person { flex: 1 1 auto; min-width: 0;') && styles.includes('.conversation-actions { flex: none;') && styles.includes('.conversation-person strong, .conversation-person small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }'), 'the name truncates instead of pushing the icons out');
   assert.ok(styles.includes('.message-bubble p, .message-bubble .wa-file-name, .wa-reply-quote, .wa-composer-reply-content span { overflow-wrap: anywhere;') && styles.includes('.composer-wrap, .composer-row, .composer { min-width: 0; }') && styles.includes('html, body { overflow-x: hidden; }'), 'long tokens wrap and the composer shrinks; no horizontal scroll');
+});
+
+test('ringing is bounded on the phone too: the caller gets "No answer" and the callee a missed call after a minute', async () => {
+  assert.equal(RING_TIMEOUT_MS, 60_000);
+  const { rtc, getUserMedia } = fakeRtc();
+  const clock = fakeClock();
+  const sent = [];
+  const caller = createCallEngine({ callId: 'r1', direction: 'outgoing', mode: 'audio', rtc, getUserMedia, send: (payload) => { sent.push(payload.signal); return true; }, setTimer: clock.setTimer, clearTimer: clock.clearTimer });
+  await caller.start();
+  await clock.advance(RING_TIMEOUT_MS - 1);
+  assert.notEqual(caller.state.status, 'no-answer');
+  await clock.advance(1);
+  assert.equal(caller.state.status, 'no-answer');
+  assert.deepEqual(sent.at(-1), { type: 'end', reason: 'no-answer' }, 'the callee stops ringing');
+
+  const callee = createCallEngine({ callId: 'r2', direction: 'incoming', mode: 'audio', rtc, getUserMedia, send: (payload) => { sent.push(payload.signal); return true }, setTimer: clock.setTimer, clearTimer: clock.clearTimer });
+  const before = sent.length;
+  await clock.advance(RING_TIMEOUT_MS);
+  assert.equal(callee.state.status, 'no-answer', 'a missed call');
+  assert.equal(sent.length, before, 'the callee does not signal; the caller and the server already end it');
 });

@@ -2,16 +2,16 @@
 // the sender makes a random key per file, encrypts the file before upload, and the key travels inside the
 // message, so the media server only ever stores ciphertext.
 //
-// Not switched on yet (ENCRYPTED_MEDIA_ENABLED): today the server also reads uploads (thumbnails, PDF page counts,
-// inline playback by content type), which needs the plain file. Turning this on means sending the descriptor
-// with the message (see encodeEncryptedMediaRef) and decrypting on download (decryptMedia) — the formats below
-// are versioned so that can happen without breaking older messages.
+// Switched on (ENCRYPTED_MEDIA_ENABLED): photos, videos, documents and voice notes are encrypted on the device
+// before upload, under a neutral name (encrypted.bin), and the descriptor travels inside the end-to-end
+// encrypted message (src/e2e/). Viewers decrypt through src/media.js; nothing is streamed or linked as plain.
 //
 // Format v1: the file is cut into 1 MiB chunks; each chunk is AES-256-GCM with its own nonce (base nonce with the
 // chunk index in its last 4 bytes), so large videos are encrypted and decrypted chunk by chunk, never whole in
 // memory, and a reordered or truncated file fails to decrypt.
 
-export const ENCRYPTED_MEDIA_ENABLED = false;
+export const ENCRYPTED_MEDIA_ENABLED = true;
+export const ENCRYPTED_UPLOAD_NAME = 'encrypted.bin';
 export const MEDIA_CRYPTO_VERSION = 1;
 export const MEDIA_CHUNK_BYTES = 1024 * 1024;
 const TAG_BYTES = 16;
@@ -94,18 +94,42 @@ async function digestBlob(blob, api) {
 
 /** Message content for an encrypted attachment: "emedia:<mediaId>:<descriptor, base64url JSON>:<filename>". */
 export function encodeEncryptedMediaRef(mediaId, descriptor, filename) {
-  const packed = btoa(JSON.stringify(descriptor)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-  return `emedia:${mediaId}:${packed}:${filename}`;
+  return `emedia:${mediaId}:${packDescriptor(descriptor)}:${filename}`;
+}
+
+/** A descriptor as base64url JSON (no ":", so it fits inside colon-separated message formats). */
+export function packDescriptor(descriptor) {
+  return btoa(JSON.stringify(descriptor)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+export function unpackDescriptor(packed) {
+  try {
+    const padded = String(packed).replace(/-/g, '+').replace(/_/g, '/');
+    const descriptor = JSON.parse(atob(padded + '='.repeat((4 - (padded.length % 4)) % 4)));
+    return descriptor?.v === MEDIA_CRYPTO_VERSION && typeof descriptor.key === 'string' ? descriptor : null;
+  } catch {
+    return null;
+  }
 }
 
 export function parseEncryptedMediaRef(content) {
   const match = /^emedia:([^:]+):([A-Za-z0-9_-]+):(.*)$/s.exec(typeof content === 'string' ? content : '');
   if (!match) return null;
-  try {
-    const padded = match[2].replace(/-/g, '+').replace(/_/g, '/');
-    const descriptor = JSON.parse(atob(padded + '='.repeat((4 - (padded.length % 4)) % 4)));
-    return descriptor?.v === MEDIA_CRYPTO_VERSION ? { mediaId: match[1], descriptor, filename: match[3] } : null;
-  } catch {
-    return null;
-  }
+  const descriptor = unpackDescriptor(match[2]);
+  return descriptor ? { mediaId: match[1], descriptor, filename: match[3] } : null;
+}
+
+/**
+ * What to upload for a file: { upload, descriptor }. With encryption on, the ciphertext under a neutral name and
+ * the descriptor for the message; otherwise the file itself (descriptor null).
+ */
+export async function sealForUpload(file, options = {}) {
+  if (!ENCRYPTED_MEDIA_ENABLED) return { upload: file, descriptor: null };
+  const sealed = await encryptMedia(file, options);
+  return { upload: new File([sealed.blob], ENCRYPTED_UPLOAD_NAME, { type: 'application/octet-stream' }), descriptor: sealed.descriptor };
+}
+
+/** Message content for an uploaded attachment: encrypted ("emedia:") when it was sealed, plain "media:" otherwise. */
+export function attachmentContent(mediaId, filename, descriptor) {
+  return descriptor ? encodeEncryptedMediaRef(mediaId, descriptor, filename) : `media:${mediaId}:${filename}`;
 }

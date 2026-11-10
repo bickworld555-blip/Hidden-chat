@@ -22,7 +22,13 @@ import { createEventPilot } from './eventPilot.mjs';
 import { pdfPageCountOfFile } from './pdfPages.mjs';
 import { createLinkPreviews } from './linkPreview.mjs';
 import { createPushSender, encryptForDevice, loadServiceAccount, validDeviceKey } from './push.mjs';
-import { canSeePresence, deviceNameFromUserAgent, isLastSeenPrivacy, presenceFor } from './presence.mjs';
+import { createLoginThrottle, ensureParitySchema, registerParity } from './parity.mjs';
+import { ensureE2eSchema, registerE2e } from './e2e.mjs';
+import { registerSfu } from './sfu.mjs';
+import { ensureExtrasSchema, registerExtras, statusAudienceSql } from './extras.mjs';
+import { BUNDLED_APP_ORIGIN } from '../scripts/configure-android.mjs';
+import { effectiveRouting, isEnvelope, MAX_DIRECT_ENVELOPE, parseRouting, routingFor } from '../src/e2e/envelope.js';
+import { audienceAllows, canSeePresence, deviceNameFromUserAgent, isLastSeenPrivacy, parsePrivacyPatch, presenceFor, visibleStatus } from './presence.mjs';
 
 const directory = dirname(fileURLToPath(import.meta.url));
 
@@ -43,6 +49,8 @@ export function defaultDataDirectory(env = process.env, home = homedir()) {
 const PAIRING_TTL_MS = 1000 * 60 * 2;
 const deleteForEveryoneWindowMs = 24 * 60 * 60 * 1000;
 const EXPIRY_SWEEP_MS = 30 * 1000;
+// A status sealed for every device of its audience (one ciphertext per device).
+const MAX_STATUS_ENVELOPE = 900_000;
 // Bounds the request body of a "keep starred" clear; express.json already caps it at 16 kB.
 const MAX_CLEAR_KEEP_IDS = 500;
 const CALL_END_REASONS = new Set(['ended', 'no-answer', 'disconnected', 'busy', 'failed']);
@@ -357,6 +365,14 @@ export function createChatServer({
   if (!userColumns.has('last_seen_privacy')) {
     db.exec("ALTER TABLE users ADD COLUMN last_seen_privacy TEXT NOT NULL DEFAULT 'everyone' CHECK (last_seen_privacy IN ('everyone', 'contacts', 'nobody'))");
   }
+  // WhatsApp-style privacy categories beyond last seen (Postgres: migration 009).
+  if (!userColumns.has('online_privacy')) {
+    db.exec("ALTER TABLE users ADD COLUMN online_privacy TEXT NOT NULL DEFAULT 'same_as_last_seen' CHECK (online_privacy IN ('everyone', 'same_as_last_seen'))");
+  }
+  if (!userColumns.has('photo_privacy')) {
+    db.exec("ALTER TABLE users ADD COLUMN photo_privacy TEXT NOT NULL DEFAULT 'everyone' CHECK (photo_privacy IN ('everyone', 'contacts', 'nobody'))");
+  }
+  if (!userColumns.has('read_receipts')) db.exec('ALTER TABLE users ADD COLUMN read_receipts INTEGER NOT NULL DEFAULT 1 CHECK (read_receipts IN (0, 1))');
   const sessionColumns = new Set(db.prepare("PRAGMA table_info(sessions)").all().map((column) => column.name));
   if (!sessionColumns.has('created_at')) db.exec('ALTER TABLE sessions ADD COLUMN created_at INTEGER');
   if (!sessionColumns.has('last_active_at')) db.exec('ALTER TABLE sessions ADD COLUMN last_active_at INTEGER');
@@ -372,6 +388,9 @@ export function createChatServer({
   const contactColumns = new Set(db.prepare("PRAGMA table_info(contacts)").all().map((column) => column.name));
   if (!contactColumns.has('saved')) db.exec('ALTER TABLE contacts ADD COLUMN saved INTEGER NOT NULL DEFAULT 1');
   if (!contactColumns.has('hidden')) db.exec('ALTER TABLE contacts ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0');
+  ensureParitySchema(db);
+  ensureE2eSchema(db);
+  ensureExtrasSchema(db);
   }
   const upsertLink = db.prepare(`INSERT INTO contacts(owner_id, contact_id, created_at, saved, hidden) VALUES (?, ?, ?, ?, 0)
     ON CONFLICT(owner_id, contact_id) DO UPDATE SET saved = CASE WHEN contacts.saved > excluded.saved THEN contacts.saved ELSE excluded.saved END, hidden = 0`);
@@ -400,7 +419,7 @@ export function createChatServer({
   // a message deleted for everyone is quoted without its content.
   const quotedMessage = db.prepare(`SELECT id, sender_id AS "senderId", content, deleted_at IS NOT NULL AS "deleted"
     FROM messages WHERE id = ?`);
-  async function presentMessage({ replyToId, forwarded, expiresAt, playedAt, ...message }) {
+  async function presentMessage({ replyToId, forwarded, expiresAt, playedAt, editedAt, ...message }) {
     const quoted = replyToId ? (await quotedMessage.get(replyToId)) : null;
     return {
       ...message,
@@ -409,6 +428,8 @@ export function createChatServer({
       ...(expiresAt ? { expiresAt: new Date(expiresAt).toISOString() } : {}),
       // A voice note the recipient has listened to (its mic and waveform turn blue for both people).
       ...(playedAt ? { played: true } : {}),
+      // Edited text shows "Edited" next to its time (server/parity.mjs).
+      ...(editedAt ? { editedAt: new Date(Number(editedAt)).toISOString() } : {}),
     };
   }
 
@@ -418,15 +439,25 @@ export function createChatServer({
     return (await disappearingSetting.get(...pairOf(left, right)))?.seconds ?? 0;
   }
 
+  // The upload a message refers to: "media:<id>:…", "voice:<id>:…" and end-to-end encrypted attachments
+  // "emedia:<id>:<descriptor>:<filename>" (src/mediaCrypto.js) — same ownership, forwarding and clean-up rules.
+  // Encrypted messages ("e2e2:<routing>|…", src/e2e/envelope.js) are judged by their routing part.
+  // One reading for every attachment format (media:, emedia:, voice:, viewonce:, vnote:, csticker:): src/e2e/envelope.js.
   function mediaIdOf(content) {
-    return content.startsWith('media:') || content.startsWith('voice:') ? content.slice(6).split(':', 1)[0] : null;
+    if (typeof content !== 'string') return null;
+    return parseRouting(isEnvelope(content) ? effectiveRouting(content) ?? '' : routingFor(content))?.mediaId ?? null;
   }
+  /** The routing form of a message ("voice:<id>:<s>:once", …): its own content, or an envelope's routing part. */
+  const routingOf = (content) => (isEnvelope(content) ? effectiveRouting(content) ?? '' : routingFor(content));
+
 
   // View once voice notes are "voice:<mediaId>:<seconds>:once". The recipient gets the audio exactly once, from
   // POST /messages/:id/view-once, which turns the message into "voice-opened:<seconds>" and deletes the audio.
-  const VIEW_ONCE_VOICE = /^voice:[^:]+:\d+(?:\.\d+)?:once$/;
+  // View once voice notes, photos and videos (routing "voice:<id>:<s>:once" / "media:<id>:once").
+  const VIEW_ONCE_VOICE = /^(?:voice:[^:]+:\d+(?:\.\d+)?|media:[^:]+):once$/;
   async function isViewOnceMedia(mediaId) {
-    return Boolean(await db.prepare('SELECT 1 FROM messages WHERE deleted_at IS NULL AND content LIKE ? LIMIT 1').get(`voice:${mediaId}:%:once`));
+    return Boolean(await db.prepare('SELECT 1 FROM messages WHERE deleted_at IS NULL AND (content LIKE ? OR content LIKE ? OR content LIKE ? OR content LIKE ?) LIMIT 1')
+      .get(`voice:${mediaId}:%:once`, `e2e2:voice:${mediaId}:%:once|%`, `e2e2:media:${mediaId}:once|%`, `viewonce:%media:${mediaId}:%`));
   }
 
   // Expired disappearing messages become deleted-for-everyone tombstones, so devices that were offline drop them on
@@ -446,6 +477,29 @@ export function createChatServer({
       broadcastUser(row.receiverId, event);
     }
     return deleted;
+  }
+
+  async function deliverDirectMessage({ senderId, receiverId, content }) {
+    const sender = await db.prepare(`SELECT ${USER_COLUMNS} FROM users WHERE id = ?`).get(senderId);
+    const recipient = await db.prepare(`SELECT ${USER_COLUMNS} FROM users WHERE id = ?`).get(receiverId);
+    if (!sender || !recipient) return null;
+    const disappearSeconds = await disappearSecondsFor(senderId, receiverId);
+    const message = {
+      id: randomUUID(), senderId, receiverId,
+      senderUsername: sender.username, senderName: sender.name, senderInitials: sender.initials, senderColor: sender.color,
+      receiverUsername: recipient.username, receiverName: recipient.name, receiverInitials: recipient.initials, receiverColor: recipient.color,
+      timestamp: new Date().toISOString(), content, status: 'sent', replyToId: null, forwarded: false,
+      expiresAt: disappearSeconds > 0 ? Date.now() + disappearSeconds * 1000 : null,
+    };
+    await db.prepare(`INSERT INTO messages(id, sender_id, receiver_id, created_at, content, status, reply_to_id, forwarded, expires_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(message.id, senderId, receiverId, message.timestamp, content, 'sent', null, 0, message.expiresAt);
+    await linkUsers(senderId, receiverId);
+    await linkUsers(receiverId, senderId);
+    const delivered = await presentMessage(message);
+    broadcastUser(receiverId, { type: 'message:new', message: delivered });
+    broadcastUser(senderId, { type: 'message:new', message: delivered });
+    if (needsPush(receiverId)) pushInBackground(receiverId, { t: 'msg', id: message.id, from: senderId, senderName: sender.name || `@${sender.username}`, content: pushContent(content) }, { collapseKey: `chat:${senderId}` });
+    return delivered;
   }
 
   // Two people may call and signal each other when they are contacts, have chatted, or share a group.
@@ -482,7 +536,8 @@ export function createChatServer({
     .map((origin) => origin.trim())
     .filter(Boolean);
   function originAllowed(origin) {
-    if (process.env.NODE_ENV === 'production') return configuredOrigins.includes(origin);
+    // The Android app runs its bundled copy at https://localhost (scripts/configure-android.mjs); it is always allowed.
+    if (process.env.NODE_ENV === 'production') return configuredOrigins.includes(origin) || origin === BUNDLED_APP_ORIGIN;
     return isAllowedAppOrigin(origin, configuredOrigins);
   }
   app.use((request, response, next) => {
@@ -498,11 +553,16 @@ export function createChatServer({
     }
     return next();
   });
-  app.use(express.json({ limit: '16kb' }));
+  // Encrypted group messages (with key distributions), edits and key uploads are larger than ordinary requests.
+  const smallJson = express.json({ limit: '16kb' });
+  const largeJson = express.json({ limit: '1mb' });
+  const LARGE_JSON_ROUTES = /^\/api\/v1\/(?:groups\/[^/]+\/messages(?:\/[^/]+)?|messages\/[^/]+|e2e\/keys|polls\/[^/]+\/sealed-vote|statuses)$/;
+  app.use((request, response, next) => (LARGE_JSON_ROUTES.test(request.path) ? largeJson : smallJson)(request, response, next));
   const server = createServer(app);
   const websocketServer = new WebSocketServer({
     noServer: true,
-    maxPayload: 64 * 1024,
+    // Encrypted direct messages carry one ciphertext per device (src/e2e/envelope.js: at most MAX_DIRECT_ENVELOPE).
+    maxPayload: 128 * 1024,
     handleProtocols(protocols) { return protocols.has('relay.v1') ? 'relay.v1' : false; },
   });
   const connections = new Map();
@@ -652,13 +712,20 @@ export function createChatServer({
     return sent;
   }
 
+  // A push carries no ciphertext (it could not be read in the notification and would not fit): the phone shows
+  // "New message" for an end-to-end encrypted one (MessagePreview.java, store.js previewFor).
+  const pushContent = (content) => (isEnvelope(content) ? 'e2e2:' : content);
+
   /** Fire-and-forget push for an event that already went out over the sockets. */
   function pushInBackground(userId, body, options) {
     trackSocketTask(pushToUser(userId, body, options).catch((error) => console.error('Push failed:', error.message)));
   }
 
+  // Called whenever sessions are deleted (log out, remote sign-out, password change): the devices' push
+  // registrations and end-to-end keys go with them.
   async function forgetPushDevicesOf(sessionHashes) {
     for (const hash of sessionHashes) await db.prepare('DELETE FROM push_devices WHERE session_hash = ?').run(hash);
+    if (sessionHashes.length) await e2e.forgetStaleDevices();
   }
 
   /** One tick becomes two: the receiver's device has these messages. Returns how many changed. */
@@ -702,11 +769,12 @@ export function createChatServer({
     const mediaId = mediaIdOf(content);
     if (!mediaId) return false;
     const exact = [`media:${mediaId}`, `voice:${mediaId}`];
-    const prefixed = exact.map((value) => `${value}:%`);
+    const prefixed = [...exact, `emedia:${mediaId}`, `e2e2:voice:${mediaId}`].map((value) => `${value}:%`);
+    const sealed = `e2e2:media:${mediaId}%|%`;
     const referenced = (await db.prepare(`SELECT 1 FROM group_messages
-      WHERE content IN (?, ?) OR content LIKE ? OR content LIKE ? LIMIT 1`).get(...exact, ...prefixed))
-      || (await db.prepare(`SELECT 1 FROM messages WHERE deleted_at IS NULL AND (content IN (?, ?) OR content LIKE ? OR content LIKE ?) LIMIT 1`)
-        .get(...exact, ...prefixed));
+      WHERE content IN (?, ?) OR content LIKE ? OR content LIKE ? OR content LIKE ? OR content LIKE ? OR content LIKE ? LIMIT 1`).get(...exact, ...prefixed, sealed))
+      || (await db.prepare(`SELECT 1 FROM messages WHERE deleted_at IS NULL AND (content IN (?, ?) OR content LIKE ? OR content LIKE ? OR content LIKE ? OR content LIKE ? OR content LIKE ?) LIMIT 1`)
+        .get(...exact, ...prefixed, sealed));
     if (referenced) return false;
     if (await db.prepare('SELECT 1 FROM statuses WHERE content IN (?, ?) OR content LIKE ? LIMIT 1').get(exact[0], exact[1], prefixed[0])) return false;
     const media = await db.prepare('DELETE FROM media WHERE id = ? RETURNING disk_name AS "diskName"').get(mediaId);
@@ -768,7 +836,7 @@ export function createChatServer({
 
   app.get('/api/v1/groups', requireSession, async (request, response) => {
     const now = Date.now();
-    const groups = await db.prepare(`SELECT g.id, g.name, g.created_by AS "createdBy", g.created_at AS "createdAt",
+    const groups = await db.prepare(`SELECT g.id, g.name, g.created_by AS "createdBy", g.created_at AS "createdAt", g.community_id AS "communityId", g.is_announcement AS "isAnnouncement",
       m.role, m.auto_delete AS "autoDelete", latest.content AS "lastContent",
       latest.sender_id AS "lastSenderId", sender.name AS "lastSenderName", latest.created_at AS "lastMessageAt",
       (SELECT count(*) FROM group_messages x WHERE x.group_id = g.id AND x.sender_id <> m.user_id
@@ -780,7 +848,7 @@ export function createChatServer({
       )
       LEFT JOIN users sender ON sender.id = latest.sender_id
       WHERE m.user_id = ? ORDER BY COALESCE(latest.created_at, g.created_at) DESC, g.id`).all(now, now, request.session.user_id);
-    response.json(groups.map((group) => ({ ...group, autoDelete: Boolean(group.autoDelete), unread: Number(group.unread) })));
+    response.json(groups.map((group) => ({ ...group, communityId: group.communityId ?? null, isAnnouncement: Number(group.isAnnouncement) === 1, autoDelete: Boolean(group.autoDelete), unread: Number(group.unread) })));
   });
 
   app.post('/api/v1/groups', requireSession, async (request, response) => {
@@ -814,7 +882,7 @@ export function createChatServer({
       u.avatar_type, u.avatar_updated_at, m.role, m.joined_at AS "joinedAt" FROM group_members m
       JOIN users u ON u.id = m.user_id WHERE m.group_id = ? ORDER BY m.joined_at, u.id`).all(groupId);
     const own = await groupMembership.get(groupId, request.session.user_id);
-    response.json({ ...group, role: own.role, autoDelete: Boolean(own.autoDelete), members: members.map((member) => ({ ...publicUser(member), role: member.role, joinedAt: member.joinedAt })) });
+    response.json({ ...group, ...(await parity.groupExtras(groupId, own.role)), role: own.role, autoDelete: Boolean(own.autoDelete), members: members.map((member) => ({ ...publicUser(member), role: member.role, joinedAt: member.joinedAt })) });
   });
 
   app.post('/api/v1/groups/:groupId/members', requireSession, async (request, response) => {
@@ -832,23 +900,10 @@ export function createChatServer({
       if (!await db.prepare('SELECT 1 FROM users WHERE id = ?').get(memberId)) return response.status(404).json({ error: 'User not found.' });
       return response.status(409).json({ error: 'User is already a group member.' });
     }
+    await db.prepare('DELETE FROM group_join_requests WHERE group_id = ? AND user_id = ?').run(groupId, memberId);
+    await parity.afterMemberAdded(groupId, memberId);
     await notifyGroup(groupId, { type: 'group:changed', groupId });
     response.status(201).json({ userId: memberId });
-  });
-
-  app.delete('/api/v1/groups/:groupId/membership', requireSession, async (request, response) => {
-    const { groupId } = request.params;
-    const userId = request.session.user_id;
-    const removed = await db.prepare(`DELETE FROM group_members
-      WHERE group_id = ? AND user_id = ? AND role = 'member' RETURNING user_id`).get(groupId, userId);
-    if (!removed) {
-      const membership = await groupMembership.get(groupId, userId);
-      if (!membership) return response.status(404).json({ error: 'Group not found.' });
-      return response.status(409).json({ error: 'An admin cannot leave until admin transfer is supported.' });
-    }
-    broadcastUser(userId, { type: 'group:changed', groupId });
-    await notifyGroup(groupId, { type: 'group:changed', groupId });
-    response.status(204).end();
   });
 
   app.put('/api/v1/groups/:groupId/member-settings', requireSession, async (request, response) => {
@@ -867,7 +922,7 @@ export function createChatServer({
     if (!membership) return response.status(404).json({ error: 'Group not found.' });
     await expireGroupMessages();
     const messages = await db.prepare(`SELECT * FROM (SELECT id, group_id AS "groupId", sender_id AS "senderId", created_at AS "createdAt",
-      content, expires_at AS "expiresAt" FROM group_messages WHERE group_id = ? AND created_at > ? ORDER BY created_at DESC, id DESC LIMIT 500)
+      content, expires_at AS "expiresAt", edited_at AS "editedAt" FROM group_messages WHERE group_id = ? AND created_at > ? ORDER BY created_at DESC, id DESC LIMIT 500)
       AS recent ORDER BY "createdAt", id`).all(groupId, membership.clearedAt);
     response.json(messages);
   });
@@ -918,11 +973,16 @@ export function createChatServer({
     const { groupId } = request.params;
     const userId = request.session.user_id;
     const content = request.body?.content;
-    if (typeof content !== 'string' || !content.trim() || content.length > 10000 || content.startsWith('voice:')) {
+    if (typeof content !== 'string' || !content.trim() || (!isEnvelope(content) && content.length > 10000) || content.startsWith('voice:') || routingOf(content).startsWith('voice:')
+      || parseRouting(routingOf(content))?.once) {
       return response.status(400).json({ error: 'Provide a text message or an attachment uploaded to this group.' });
     }
+    const allowed = await parity.canPostToGroup(groupId, userId);
+    if (!allowed.ok) return response.status(allowed.status).json({ error: allowed.error });
+    const sealedProblem = await e2e.checkGroupEnvelope(content, { groupId, senderId: userId, senderDeviceId: request.session.device_id });
+    if (sealedProblem) return response.status(sealedProblem.status).json(sealedProblem);
     // An attachment must have been uploaded by this sender for this group; nothing from elsewhere can be referenced.
-    if (content.startsWith('media:')) {
+    if (routingOf(content).startsWith('media:') || content.startsWith('emedia:')) {
       const mediaId = mediaIdOf(content);
       const owned = mediaId && await db.prepare('SELECT 1 FROM media WHERE id = ? AND group_id = ? AND sender_id = ?').get(mediaId, groupId, userId);
       if (!owned) return response.status(400).json({ error: 'Upload the attachment to this group first.' });
@@ -945,7 +1005,7 @@ export function createChatServer({
       const members = await db.prepare('SELECT user_id AS "userId" FROM group_members WHERE group_id = ? AND user_id <> ?').all(groupId, userId);
       for (const member of members) {
         if (!needsPush(member.userId)) continue;
-        pushInBackground(member.userId, { t: 'gmsg', id: row.id, groupId, groupName: names?.groupName ?? 'Group', senderName: names?.senderName ?? '', content: row.content }, { collapseKey: `group:${groupId}` });
+        pushInBackground(member.userId, { t: 'gmsg', id: row.id, groupId, groupName: names?.groupName ?? 'Group', senderName: names?.senderName ?? '', content: pushContent(row.content) }, { collapseKey: `group:${groupId}` });
       }
     }
     response.status(201).json(row);
@@ -968,9 +1028,26 @@ export function createChatServer({
     response.status(204).end();
   });
 
+  // End-to-end encryption: key directory and fan-out checks (server/e2e.mjs).
+  const e2e = registerE2e({ app, db, requireSession });
+  // Broadcast lists, channels, scheduled messages, status privacy and call links (server/extras.mjs).
+  const extras = registerExtras({
+    app, db, requireSession, broadcastUser, publicUser, userColumns: USER_COLUMNS, linkUsers: (a, b) => linkUsers(a, b),
+    deliverDirectMessage: (message) => deliverDirectMessage(message),
+  });
+  // Group calls through an SFU when one is configured (server/sfu.mjs); mesh otherwise.
+  registerSfu({ app, db, requireSession });
+
+  // WhatsApp (Business) parity features: edits, stars, archive, pins, group admin, communities, business, two-step.
+  const parity = registerParity({
+    e2e,
+    app, db, requireSession, broadcastUser, notifyGroup, groupMembership, publicUser, hashPassword, verifyPassword,
+    isOnline: (id) => isOnline(id), deliverDirectMessage, detectImage: detectAvatarImage, dataDirectory, runBatch: runGroupBatch,
+  });
+
   // Presence (online / last seen) honours each owner's "Last seen and online" privacy: every viewer is told
   // only what that setting allows them to see; a hidden owner reads as status 'hidden' with no time.
-  const presenceOwner = db.prepare('SELECT id, last_seen_at AS "lastSeenAt", last_seen_privacy AS "privacy" FROM users WHERE id = ?');
+  const presenceOwner = db.prepare('SELECT id, last_seen_at AS "lastSeenAt", last_seen_privacy AS "privacy", online_privacy AS "onlinePrivacy" FROM users WHERE id = ?');
   const savedContactIds = db.prepare('SELECT contact_id AS "id" FROM contacts WHERE owner_id = ? AND saved = 1');
 
   async function presenceViewer(ownerId) {
@@ -978,10 +1055,12 @@ export function createChatServer({
     if (!owner) return () => null;
     const contactIds = owner.privacy === 'contacts' ? new Set((await savedContactIds.all(ownerId)).map((row) => row.id)) : null;
     const online = isOnline(ownerId);
-    return (viewerId) => ({
-      userId: ownerId,
-      ...presenceFor({ online, lastSeenAt: owner.lastSeenAt, visible: canSeePresence({ ownerId, viewerId, privacy: owner.privacy, ownerContactIds: contactIds }) }),
-    });
+    return (viewerId) => {
+      const visible = canSeePresence({ ownerId, viewerId, privacy: owner.privacy, ownerContactIds: contactIds });
+      // "Who can see when I'm online": everyone, or the same people as last seen.
+      const onlineVisible = owner.onlinePrivacy === 'everyone' ? true : visible;
+      return { userId: ownerId, ...presenceFor({ online, lastSeenAt: owner.lastSeenAt, visible, onlineVisible }) };
+    };
   }
 
   // "Online" means the app is open on screen somewhere: a connection that is backgrounded (the app minimised,
@@ -1139,6 +1218,7 @@ export function createChatServer({
     response.status(201).json(session);
   });
 
+  const loginThrottle = createLoginThrottle();
   app.post('/api/v1/auth/login', async (request, response) => {
     const identity = typeof request.body?.identity === 'string' ? request.body.identity.trim() : '';
     const password = request.body?.password;
@@ -1149,8 +1229,21 @@ export function createChatServer({
     const user = USERNAME_PATTERN.test(username)
       ? (await db.prepare("SELECT id, password_hash FROM users WHERE lower(username) = lower(?)").get(username))
       : (await db.prepare("SELECT id, password_hash FROM users WHERE id = ?").get(identity));
+    // Per account (behind the hosting proxy every client shares one address, so addresses are not used).
+    const throttleKeys = [`account:${(user?.id ?? username).toLowerCase()}`];
+    const wait = loginThrottle.retryAfter(throttleKeys);
+    if (wait) return response.status(429).set('Retry-After', String(Math.ceil(wait / 1000))).json({ error: `Too many attempts. Try again in ${Math.ceil(wait / 1000)} seconds.`, retryAfterMs: wait });
     const valid = user?.password_hash && await verifyPassword(password, user.password_hash);
-    if (!valid) return response.status(401).json({ error: 'Credentials do not match.' });
+    if (!valid) {
+      loginThrottle.fail(throttleKeys);
+      return response.status(401).json({ error: 'Credentials do not match.' });
+    }
+    const twoStep = await parity.checkTwoStep(user.id, request.body?.pin);
+    if (twoStep) {
+      if (twoStep.wrongPin) loginThrottle.fail(throttleKeys);
+      return response.status(401).json(twoStep);
+    }
+    loginThrottle.succeed(throttleKeys);
     response.json((await issueSession(user.id, deviceNameFromUserAgent(request.get('user-agent')))));
   });
 
@@ -1163,7 +1256,28 @@ export function createChatServer({
     });
   });
 
-  // --- Account: last-seen privacy, password, and the devices signed in to this account. ---
+  // --- Account: privacy, password, and the devices signed in to this account. ---
+
+  const readReceiptsRow = db.prepare('SELECT read_receipts AS "on" FROM users WHERE id = ?');
+  async function readReceiptsOn(userId) {
+    const row = await readReceiptsRow.get(userId);
+    return row ? Number(row.on) === 1 : true;
+  }
+  async function receiptsBetween(senderId, receiverId) {
+    return (await readReceiptsOn(senderId)) && (await readReceiptsOn(receiverId));
+  }
+  /** History as the viewer may see it: "read" on their own messages only while both sides have receipts on. */
+  async function maskReceipts(viewerId, messages) {
+    const cache = new Map();
+    const receiptsOf = async (id) => {
+      if (!cache.has(id)) cache.set(id, await readReceiptsOn(id));
+      return cache.get(id);
+    };
+    const viewerReceipts = await receiptsOf(viewerId);
+    return Promise.all(messages.map(async (message) => (message.senderId === viewerId && message.status === 'read'
+      ? { ...message, status: visibleStatus('read', { senderReceipts: viewerReceipts, receiverReceipts: await receiptsOf(message.receiverId) }) }
+      : message)));
+  }
 
   function closeSessionSockets(tokenHashes, reason) {
     for (const socket of websocketServer.clients) {
@@ -1171,17 +1285,28 @@ export function createChatServer({
     }
   }
 
+  const privacyRow = db.prepare(`SELECT last_seen_privacy AS "lastSeen", online_privacy AS "online", photo_privacy AS "profilePhoto",
+    read_receipts AS "readReceipts" FROM users WHERE id = ?`);
+  async function privacyOf(userId) {
+    const row = await privacyRow.get(userId);
+    return { lastSeen: row?.lastSeen ?? 'everyone', online: row?.online ?? 'same_as_last_seen', profilePhoto: row?.profilePhoto ?? 'everyone', readReceipts: row ? Number(row.readReceipts) === 1 : true };
+  }
+
   app.get('/api/v1/me/privacy', requireSession, async (request, response) => {
-    const owner = await presenceOwner.get(request.session.user_id);
-    response.json({ lastSeen: owner?.privacy ?? 'everyone' });
+    response.json(await privacyOf(request.session.user_id));
   });
 
+  // Partial updates: { lastSeen?, online?, profilePhoto?, readReceipts? } — answers with all settings.
   app.put('/api/v1/me/privacy', requireSession, async (request, response) => {
-    const lastSeen = request.body?.lastSeen;
-    if (!isLastSeenPrivacy(lastSeen)) return response.status(400).json({ error: 'Choose Everyone, My contacts or Nobody.' });
-    await db.prepare('UPDATE users SET last_seen_privacy = ? WHERE id = ?').run(lastSeen, request.session.user_id);
-    await broadcastPresence(request.session.user_id);
-    response.json({ lastSeen });
+    const { patch, error } = parsePrivacyPatch(request.body);
+    if (error) return response.status(400).json({ error });
+    const userId = request.session.user_id;
+    const columns = { lastSeen: 'last_seen_privacy', online: 'online_privacy', profilePhoto: 'photo_privacy', readReceipts: 'read_receipts' };
+    for (const [name, value] of Object.entries(patch)) {
+      await db.prepare(`UPDATE users SET ${columns[name]} = ? WHERE id = ?`).run(name === 'readReceipts' ? (value ? 1 : 0) : value, userId);
+    }
+    if ('lastSeen' in patch || 'online' in patch) await broadcastPresence(userId);
+    response.json(await privacyOf(userId));
   });
 
   // Changing the password signs every other device out; this one stays signed in.
@@ -1266,8 +1391,14 @@ export function createChatServer({
   });
 
   app.get('/api/v1/users/:id/avatar', requireSession, async (request, response) => {
-    const row = (await db.prepare("SELECT avatar_disk_name, avatar_type FROM users WHERE id = ?").get(request.params.id));
+    const row = (await db.prepare("SELECT avatar_disk_name, avatar_type, photo_privacy FROM users WHERE id = ?").get(request.params.id));
     if (!row?.avatar_disk_name) return response.status(404).json({ error: 'No profile photo.' });
+    // "Who can see my profile photo": everyone, my contacts (people the owner saved) or nobody.
+    const audience = row.photo_privacy ?? 'everyone';
+    const contactIds = audience === 'contacts' ? new Set((await savedContactIds.all(request.params.id)).map((item) => item.id)) : null;
+    if (!audienceAllows({ ownerId: request.params.id, viewerId: request.session.user_id, audience, ownerContactIds: contactIds })) {
+      return response.status(404).json({ error: 'No profile photo.' });
+    }
     response.set({
       'Content-Type': row.avatar_type,
       'Content-Security-Policy': "sandbox; default-src 'none'; img-src 'self'",
@@ -1434,13 +1565,17 @@ export function createChatServer({
       FROM media WHERE id = ? AND (sender_id = ? OR receiver_id = ?
         OR (group_id IS NOT NULL AND EXISTS (SELECT 1 FROM group_members WHERE group_id = media.group_id AND user_id = ?))
         OR EXISTS (SELECT 1 FROM statuses s JOIN contacts c ON c.owner_id = s.user_id AND c.contact_id = ? AND c.hidden = 0
-          WHERE s.user_id = media.sender_id AND s.content LIKE ? AND s.expires_at > ?))`)
-      .get(mediaId, userId, userId, userId, userId, `media:${mediaId}:%`, Date.now()));
+          WHERE s.user_id = media.sender_id AND (s.content LIKE ? OR s.content LIKE ?) AND s.expires_at > ? AND ${statusAudienceSql('s.user_id', 'c.contact_id')}))`)
+      .get(mediaId, userId, userId, userId, userId, `media:${mediaId}:%`, `e2e2:media:${mediaId}|%`, Date.now()));
   }
 
   // --- Polls: "poll:{question, options[], multiple}" messages in direct or group chats; votes are per option. ---
 
   function parsePoll(content) {
+    if (isEnvelope(content)) {
+      const route = parseRouting(effectiveRouting(content) ?? '');
+      return route?.kind === 'poll' && route.options >= 2 && route.options <= 12 ? { optionCount: route.options, multiple: route.multiple } : null;
+    }
     if (typeof content !== 'string' || !content.startsWith('poll:')) return null;
     try {
       const poll = JSON.parse(content.slice(5));
@@ -1455,11 +1590,11 @@ export function createChatServer({
   async function pollFor(userId, messageId) {
     const direct = await db.prepare(`SELECT content, sender_id AS "senderId", receiver_id AS "receiverId" FROM messages
       WHERE id = ? AND deleted_at IS NULL AND (sender_id = ? OR receiver_id = ?)`).get(messageId, userId, userId);
-    if (direct) return { poll: parsePoll(direct.content), notify: (event) => { broadcastUser(direct.senderId, event); broadcastUser(direct.receiverId, event); } };
+    if (direct) return { poll: parsePoll(direct.content), chat: { kind: 'direct', a: direct.senderId, b: direct.receiverId }, notify: (event) => { broadcastUser(direct.senderId, event); broadcastUser(direct.receiverId, event); } };
     const group = await db.prepare(`SELECT group_messages.content, group_messages.group_id AS "groupId" FROM group_messages
       JOIN group_members ON group_members.group_id = group_messages.group_id AND group_members.user_id = ?
       WHERE group_messages.id = ?`).get(userId, messageId);
-    if (group) return { poll: parsePoll(group.content), notify: (event) => notifyGroup(group.groupId, event) };
+    if (group) return { poll: parsePoll(group.content), chat: { kind: 'group', groupId: group.groupId }, notify: (event) => notifyGroup(group.groupId, event) };
     return null;
   }
 
@@ -1471,10 +1606,36 @@ export function createChatServer({
     return votes;
   }
 
+  // End-to-end encrypted votes: the server keeps each voter's sealed choice and cannot count them; every device
+  // opens the votes and counts (src/e2e/polls.js). Plain votes (from apps without encryption) are counted here.
+  const sealedVotes = (messageId) => db.prepare('SELECT user_id AS "userId", sealed FROM poll_sealed_votes WHERE message_id = ? ORDER BY voted_at, user_id').all(messageId);
+
   app.get('/api/v1/polls/:messageId', requireSession, async (request, response) => {
     const found = await pollFor(request.session.user_id, request.params.messageId);
     if (!found?.poll) return response.status(404).json({ error: 'Poll not found.' });
-    response.json({ messageId: request.params.messageId, votes: await pollVotes(request.params.messageId) });
+    response.json({ messageId: request.params.messageId, votes: await pollVotes(request.params.messageId), sealedVotes: await sealedVotes(request.params.messageId) });
+  });
+
+  app.put('/api/v1/polls/:messageId/sealed-vote', requireSession, async (request, response) => {
+    const userId = request.session.user_id;
+    const { messageId } = request.params;
+    const found = await pollFor(userId, messageId);
+    if (!found?.poll) return response.status(404).json({ error: 'Poll not found.' });
+    const sealed = request.body?.sealed ?? null;
+    if (sealed !== null && !isEnvelope(sealed)) return response.status(400).json({ error: 'A sealed vote is end-to-end encrypted.' });
+    if (sealed) {
+      const problem = found.chat.kind === 'group'
+        ? await e2e.checkGroupEnvelope(sealed, { groupId: found.chat.groupId, senderId: userId, senderDeviceId: request.session.device_id })
+        : await e2e.checkDirectEnvelope(sealed, { senderId: userId, senderDeviceId: request.session.device_id, receiverId: found.chat.a === userId ? found.chat.b : found.chat.a });
+      if (problem) return response.status(problem.status).json(problem);
+    }
+    // One choice per voter: a sealed vote replaces any plain one, and the other way round.
+    await db.prepare('DELETE FROM poll_votes WHERE message_id = ? AND user_id = ?').run(messageId, userId);
+    await db.prepare('DELETE FROM poll_sealed_votes WHERE message_id = ? AND user_id = ?').run(messageId, userId);
+    if (sealed) await db.prepare('INSERT INTO poll_sealed_votes(message_id, user_id, sealed, voted_at) VALUES (?, ?, ?, ?)').run(messageId, userId, sealed, Date.now());
+    const body = { messageId, votes: await pollVotes(messageId), sealedVotes: await sealedVotes(messageId) };
+    await found.notify({ type: 'poll:votes', ...body });
+    response.json(body);
   });
 
   // Replaces this user's choice; an empty list withdraws the vote.
@@ -1491,13 +1652,15 @@ export function createChatServer({
     }
     const now = Date.now();
     await db.prepare('DELETE FROM poll_votes WHERE message_id = ? AND user_id = ?').run(messageId, userId);
+    await db.prepare('DELETE FROM poll_sealed_votes WHERE message_id = ? AND user_id = ?').run(messageId, userId);
     for (const option of options) {
       await db.prepare('INSERT INTO poll_votes(message_id, user_id, option_index, voted_at) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING')
         .run(messageId, userId, option, now);
     }
     const votes = await pollVotes(messageId);
-    await found.notify({ type: 'poll:votes', messageId, votes });
-    response.json({ messageId, votes });
+    const sealed = await sealedVotes(messageId);
+    await found.notify({ type: 'poll:votes', messageId, votes, sealedVotes: sealed });
+    response.json({ messageId, votes, sealedVotes: sealed });
   });
 
   // The only way to hear a view once voice note: the recipient claims it (atomically, so two devices or a retry
@@ -1507,10 +1670,12 @@ export function createChatServer({
     const row = await db.prepare(`SELECT id, sender_id AS "senderId", receiver_id AS "receiverId", content
       FROM messages WHERE id = ? AND deleted_at IS NULL`).get(request.params.id);
     if (!row || (row.senderId !== userId && row.receiverId !== userId)) return response.status(404).json({ error: 'Message not found.' });
-    if (!VIEW_ONCE_VOICE.test(row.content)) return response.status(410).json({ error: 'This voice message was already played.' });
-    if (row.receiverId !== userId) return response.status(403).json({ error: 'Only the recipient can play a view once voice message.' });
-    const [, mediaId, seconds] = row.content.split(':');
-    const opened = `voice-opened:${seconds}`;
+    const route = parseRouting(routingOf(row.content));
+    if (!route?.once) return response.status(410).json({ error: 'This view once message was already opened.' });
+    if (row.receiverId !== userId) return response.status(403).json({ error: 'Only the recipient can open a view once message.' });
+    const { mediaId } = route;
+    // What stays: "voice-opened:<seconds>" or "media-opened:" (the server writes it; it says nothing private).
+    const opened = route.kind === 'voice' ? `voice-opened:${route.seconds}` : 'media-opened:';
     const claimed = await db.prepare('UPDATE messages SET content = ? WHERE id = ? AND content = ? RETURNING id').get(opened, row.id, row.content);
     if (!claimed) return response.status(410).json({ error: 'This voice message was already played.' });
     const media = await db.prepare('SELECT filename, content_type AS "contentType", disk_name AS "diskName" FROM media WHERE id = ?').get(mediaId);
@@ -1586,32 +1751,7 @@ export function createChatServer({
     response.status(204).end();
   });
 
-  // --- Identity keys (end-to-end encryption foundation): each account publishes one public key; the private key
-  // stays on the device. Clients fetch a peer's key to encrypt to them and to show a safety number.
-  const IDENTITY_ALGORITHMS = new Set(['ECDH-P256', 'X25519']);
-  app.put('/api/v1/me/identity-key', requireSession, async (request, response) => {
-    const { publicKey, algorithm } = request.body ?? {};
-    if (typeof publicKey !== 'string' || !/^[A-Za-z0-9+/]+={0,2}$/.test(publicKey) || publicKey.length < 40 || publicKey.length > 256 || !IDENTITY_ALGORITHMS.has(algorithm)) {
-      return response.status(400).json({ error: 'Give a base64 public key and an algorithm (ECDH-P256 or X25519).' });
-    }
-    const userId = request.session.user_id;
-    const previous = await db.prepare('SELECT public_key AS "publicKey" FROM identity_keys WHERE user_id = ?').get(userId);
-    const now = Date.now();
-    await db.prepare(`INSERT INTO identity_keys(user_id, public_key, algorithm, updated_at) VALUES (?, ?, ?, ?)
-      ON CONFLICT(user_id) DO UPDATE SET public_key = excluded.public_key, algorithm = excluded.algorithm, updated_at = excluded.updated_at`)
-      .run(userId, publicKey, algorithm, now);
-    // A new key changes the safety number: people chatting with this account are told (WhatsApp's "security code changed").
-    if (previous && previous.publicKey !== publicKey) {
-      const peers = await db.prepare('SELECT owner_id AS "ownerId" FROM contacts WHERE contact_id = ?').all(userId);
-      for (const peer of peers) broadcastUser(peer.ownerId, { type: 'identity:changed', userId, updatedAt: now });
-    }
-    response.json({ publicKey, algorithm, updatedAt: now });
-  });
-  app.get('/api/v1/users/:userId/identity-key', requireSession, async (request, response) => {
-    const row = await db.prepare('SELECT public_key AS "publicKey", algorithm, updated_at AS "updatedAt" FROM identity_keys WHERE user_id = ?').get(request.params.userId);
-    if (!row) return response.status(404).json({ error: 'This person has no identity key yet.' });
-    response.json({ ...row, updatedAt: Number(row.updatedAt) });
-  });
+  // End-to-end encryption keys are per device: server/e2e.mjs (the older one-key-per-account table is no longer used).
 
   // --- Push devices: the Android app registers its FCM token and payload key for this session. ---
   // { push: true } means this server sends pushes, so the phone can drop its always-on connection.
@@ -1663,9 +1803,23 @@ export function createChatServer({
   const STATUS_TTL_MS = 24 * 60 * 60 * 1000;
   const STATUS_BACKGROUNDS = new Set(['#00a884', '#128c7e', '#7e57c2', '#ef6c00', '#c2185b', '#1e88e5', '#5d4037', '#37474f']);
   // Everyone who has this author saved or linked: they can see the author's status.
+  // Who sees an author's statuses: their contacts, narrowed by status privacy (server/extras.mjs).
   async function statusAudience(authorId) {
-    return (await db.prepare('SELECT contact_id AS "id" FROM contacts WHERE owner_id = ? AND hidden = 0').all(authorId)).map((row) => row.id);
+    return (await db.prepare(`SELECT c.contact_id AS "id" FROM contacts c WHERE c.owner_id = ? AND c.hidden = 0
+      AND ${statusAudienceSql('c.owner_id', 'c.contact_id')}`).all(authorId)).map((row) => row.id);
   }
+
+  // End-to-end encrypted statuses are sealed for every device of this audience (and the author's other devices).
+  app.get('/api/v1/e2e/status-audience', requireSession, async (request, response) => {
+    const userId = request.session.user_id;
+    const members = await statusAudience(userId);
+    const devices = {};
+    for (const id of [...members, userId]) {
+      const list = await e2e.devicesOf(id);
+      if (list.length) devices[id] = list;
+    }
+    response.json({ members, devices });
+  });
   function presentStatus(row, viewerId) {
     return {
       id: row.id,
@@ -1686,8 +1840,9 @@ export function createChatServer({
         (SELECT count(*) FROM status_views v WHERE v.status_id = s.id) AS "views",
         EXISTS (SELECT 1 FROM status_views v WHERE v.status_id = s.id AND v.viewer_id = ?) AS "seen"
       FROM statuses s
-      WHERE s.expires_at > ? AND (s.user_id = ? OR EXISTS (
-        SELECT 1 FROM contacts c WHERE c.owner_id = s.user_id AND c.contact_id = ? AND c.hidden = 0))
+      WHERE s.expires_at > ? AND (s.user_id = ? OR (EXISTS (
+        SELECT 1 FROM contacts c WHERE c.owner_id = s.user_id AND c.contact_id = ? AND c.hidden = 0
+        AND ${statusAudienceSql('s.user_id', 'c.contact_id')})))
       ORDER BY s.created_at ASC`).all(userId, now, userId, userId);
     const mine = rows.filter((row) => row.userId === userId).map((row) => presentStatus(row, userId));
     const byAuthor = new Map();
@@ -1705,11 +1860,14 @@ export function createChatServer({
     response.json({ mine, others });
   });
 
-  app.post('/api/v1/statuses', requireSession, express.json({ limit: '16kb' }), async (request, response) => {
+  app.post('/api/v1/statuses', requireSession, async (request, response) => {
     const userId = request.session.user_id;
     const content = typeof request.body?.content === 'string' ? request.body.content.trim() : '';
-    const mediaId = content.startsWith('media:') ? mediaIdOf(content) : null;
-    if (!content || content.length > (mediaId ? 1200 : 700)) return response.status(400).json({ error: 'A status is up to 700 characters of text, or a photo or video.' });
+    const sealed = isEnvelope(content);
+    const route = sealed ? parseRouting(effectiveRouting(content) ?? '') : null;
+    if (sealed && (!route || !['text', 'media'].includes(route.kind) || route.once)) return response.status(400).json({ error: 'A status is text, or a photo or video.' });
+    const mediaId = sealed ? route.mediaId ?? null : content.startsWith('media:') ? mediaIdOf(content) : null;
+    if (!content || content.length > (sealed ? MAX_STATUS_ENVELOPE : mediaId ? 1200 : 700)) return response.status(400).json({ error: 'A status is up to 700 characters of text, or a photo or video.' });
     if (content.startsWith('voice:')) return response.status(400).json({ error: 'Voice messages cannot be posted as a status.' });
     if (mediaId && !(await db.prepare('SELECT 1 FROM media WHERE id = ? AND sender_id = ?').get(mediaId, userId))) {
       return response.status(400).json({ error: 'Upload the photo or video first.' });
@@ -1871,13 +2029,13 @@ export function createChatServer({
     const rows = await db.prepare(`SELECT id, sender_id AS "senderId", receiver_id AS "receiverId",
       created_at AS "timestamp", content, status, deleted_at IS NOT NULL AS "deleted",
       (deleted_at IS NOT NULL AND expires_at IS NOT NULL AND expires_at <= deleted_at) AS "expired",
-      reply_to_id AS "replyToId", forwarded, expires_at AS "expiresAt", played_at AS "playedAt" FROM messages
+      reply_to_id AS "replyToId", forwarded, expires_at AS "expiresAt", played_at AS "playedAt", edited_at AS "editedAt" FROM messages
       WHERE (sender_id = ? OR receiver_id = ?)
         AND (created_at > ? OR (sender_id = ? AND created_at > ?))
         AND id NOT IN (SELECT message_id FROM message_hidden WHERE user_id = ?)
       ORDER BY created_at ASC LIMIT 500`)
       .all(userId, userId, after.toISOString(), userId, recentOwn, userId);
-    response.json(await Promise.all(rows.map(async (row) => ({ ...(await presentMessage(row)), deleted: Boolean(row.deleted), expired: Boolean(row.expired) }))));
+    response.json(await maskReceipts(userId, await Promise.all(rows.map(async (row) => ({ ...(await presentMessage(row)), deleted: Boolean(row.deleted), expired: Boolean(row.expired) })))));
   });
 
   app.get('/api/v1/messages', requireSession, async (request, response) => {
@@ -1887,13 +2045,14 @@ export function createChatServer({
       return response.status(400).json({ error: 'Choose a valid conversation.' });
     }
     (await expireMessages());
-    const rows = (await db.prepare(`SELECT id, sender_id AS "senderId", receiver_id AS "receiverId",
+    // The newest 500, oldest first (a long chat used to get its oldest 500 and miss everything recent).
+    const rows = (await db.prepare(`SELECT * FROM (SELECT id, sender_id AS "senderId", receiver_id AS "receiverId",
       created_at AS "timestamp", content, status, deleted_at IS NOT NULL AS "deleted",
       (deleted_at IS NOT NULL AND expires_at IS NOT NULL AND expires_at <= deleted_at) AS "expired",
-      reply_to_id AS "replyToId", forwarded, expires_at AS "expiresAt", played_at AS "playedAt" FROM messages
+      reply_to_id AS "replyToId", forwarded, expires_at AS "expiresAt", played_at AS "playedAt", edited_at AS "editedAt" FROM messages
       WHERE ((sender_id = ? AND receiver_id = ?) OR (sender_id = ? AND receiver_id = ?))
         AND id NOT IN (SELECT message_id FROM message_hidden WHERE user_id = ?)
-      ORDER BY created_at ASC LIMIT 500`)
+      ORDER BY created_at DESC, id DESC LIMIT 500) AS newest ORDER BY "timestamp" ASC, id ASC`)
       .all(request.session.user_id, peerId, peerId, request.session.user_id, request.session.user_id));
     const reactionRows = (await db.prepare(`SELECT r.message_id AS "messageId", r.user_id AS "userId", r.emoji
       FROM message_reactions r JOIN messages m ON m.id = r.message_id
@@ -1904,12 +2063,12 @@ export function createChatServer({
       if (!reactionsByMessage.has(reaction.messageId)) reactionsByMessage.set(reaction.messageId, []);
       reactionsByMessage.get(reaction.messageId).push({ userId: reaction.userId, emoji: reaction.emoji });
     }
-    response.json(await Promise.all(rows.map(async (row) => ({
+    response.json(await maskReceipts(request.session.user_id, await Promise.all(rows.map(async (row) => ({
       ...(await presentMessage(row)),
       deleted: Boolean(row.deleted),
       expired: Boolean(row.expired),
       reactions: reactionsByMessage.get(row.id) ?? [],
-    }))));
+    })))));
   });
 
   const socketTasks = new Set();
@@ -1995,7 +2154,7 @@ export function createChatServer({
     (await expireMessages());
     const pendingMessages = (await db.prepare(`SELECT messages.id, messages.sender_id AS "senderId",
       messages.receiver_id AS "receiverId", messages.created_at AS "timestamp", messages.content,
-      messages.reply_to_id AS "replyToId", messages.forwarded, messages.expires_at AS "expiresAt",
+      messages.reply_to_id AS "replyToId", messages.forwarded, messages.expires_at AS "expiresAt", messages.edited_at AS "editedAt",
       sender.username AS "senderUsername", sender.name AS "senderName", sender.initials AS "senderInitials",
       sender.color AS "senderColor", receiver.username AS "receiverUsername", receiver.name AS "receiverName",
       receiver.initials AS "receiverInitials", receiver.color AS "receiverColor"
@@ -2225,9 +2384,15 @@ export function createChatServer({
         const row = typeof messageId === 'string'
           ? (await db.prepare("SELECT sender_id, receiver_id FROM messages WHERE id = ? AND deleted_at IS NULL").get(messageId))
           : null;
-        const validEmoji = emoji === null || (typeof emoji === 'string' && emoji.length > 0 && emoji.length <= 16);
+        // A reaction is an emoji, or end-to-end encrypted ("e2e2:…", sealed for the same devices as a message).
+        const sealedReaction = isEnvelope(emoji);
+        const validEmoji = emoji === null || (typeof emoji === 'string' && emoji.length > 0 && emoji.length <= (sealedReaction ? MAX_DIRECT_ENVELOPE : 16));
         if (!row || (row.sender_id !== userId && row.receiver_id !== userId) || !validEmoji) {
           return json(socket, { type: 'message:reaction:error', messageId, message: 'Reaction is invalid.' });
+        }
+        if (sealedReaction) {
+          const problem = await e2e.checkDirectEnvelope(emoji, { senderId: userId, senderDeviceId: socket.deviceId, receiverId: row.sender_id === userId ? row.receiver_id : row.sender_id });
+          if (problem) return json(socket, { type: 'message:reaction:error', messageId, ...problem, message: problem.error });
         }
         if (emoji === null) (await db.prepare("DELETE FROM message_reactions WHERE message_id = ? AND user_id = ?").run(messageId, userId));
         else (await db.prepare(`INSERT INTO message_reactions(message_id, user_id, emoji) VALUES (?, ?, ?)
@@ -2239,9 +2404,11 @@ export function createChatServer({
         if (emoji && row.sender_id !== userId) {
           const reactor = await db.prepare('SELECT name, username FROM users WHERE id = ?').get(userId);
           const reacted = await db.prepare('SELECT content FROM messages WHERE id = ?').get(messageId);
-          broadcastUser(peerId, { ...reactionEvent, messageSenderId: row.sender_id, reactorName: reactor?.name || `@${reactor?.username ?? 'someone'}`, messageContent: String(reacted?.content ?? '').slice(0, 200) });
+          // Never ciphertext in a notice: the phone has the message itself; an encrypted emoji is only opened there.
+          const quoted = isEnvelope(reacted?.content) ? '' : String(reacted?.content ?? '').slice(0, 200);
+          broadcastUser(peerId, { ...reactionEvent, messageSenderId: row.sender_id, reactorName: reactor?.name || `@${reactor?.username ?? 'someone'}`, messageContent: quoted });
           if (needsPush(peerId)) {
-            pushInBackground(peerId, { t: 'react', id: messageId, from: userId, emoji, reactorName: reactor?.name || `@${reactor?.username ?? 'someone'}`, content: String(reacted?.content ?? '').slice(0, 200) });
+            pushInBackground(peerId, { t: 'react', id: messageId, from: userId, emoji: sealedReaction ? '' : emoji, reactorName: reactor?.name || `@${reactor?.username ?? 'someone'}`, content: quoted });
           }
         } else broadcastUser(peerId, reactionEvent);
         broadcastUser(userId, reactionEvent);
@@ -2315,7 +2482,8 @@ export function createChatServer({
         if (result.changes) {
           const message = (await db.prepare("SELECT sender_id FROM messages WHERE id = ?").get(messageId));
           const statusEvent = { type: 'message:status', messageId, status: 'read' };
-          broadcastUser(message.sender_id, statusEvent);
+          // The reader's own devices always learn it (their unread counts); the sender only with receipts on both sides.
+          if (await receiptsBetween(message.sender_id, userId)) broadcastUser(message.sender_id, statusEvent);
           broadcastUser(userId, statusEvent, socket);
         }
         return;
@@ -2326,7 +2494,7 @@ export function createChatServer({
         const { messageId } = event;
         if (typeof messageId !== 'string' || messageId.length >= 80) return;
         const played = await db.prepare(`UPDATE messages SET played_at = ?, status = 'read'
-          WHERE id = ? AND receiver_id = ? AND played_at IS NULL AND deleted_at IS NULL AND content LIKE 'voice:%'
+          WHERE id = ? AND receiver_id = ? AND played_at IS NULL AND deleted_at IS NULL AND (content LIKE 'voice:%' OR content LIKE 'e2e2:voice:%')
           RETURNING sender_id AS "senderId"`).get(Date.now(), messageId, userId);
         if (!played) return;
         for (const update of [{ type: 'message:status', messageId, status: 'read' }, { type: 'message:played', messageId }]) {
@@ -2346,8 +2514,14 @@ export function createChatServer({
       const media = mediaId ? (await db.prepare(`SELECT id, sender_id AS "senderId", receiver_id AS "receiverId", filename,
         content_type AS "contentType", byte_size AS "byteSize", disk_name AS "diskName"
         FROM media WHERE id = ? AND (sender_id = ? OR receiver_id = ?)`).get(mediaId, userId, userId)) : null;
-      if (!receiver || receiverId === userId || !content || content.length > 4000 || (mediaId && !media)) {
+      if (!receiver || receiverId === userId || !content || content.length > (isEnvelope(content) ? MAX_DIRECT_ENVELOPE : 4000) || (mediaId && !media)) {
         return json(socket, { type: 'error', message: 'Message is invalid or too long.' });
+      }
+      // End-to-end encrypted: it must be addressed to every device that should get it; if the sender's device list
+      // is out of date it is told the current one and encrypts again (no generic error banner).
+      const sealedProblem = await e2e.checkDirectEnvelope(content, { senderId: userId, senderDeviceId: socket.deviceId, receiverId });
+      if (sealedProblem) {
+        return json(socket, { type: 'message:rejected', messageId: typeof payload.id === 'string' ? payload.id : null, receiverId, ...sealedProblem });
       }
 
       const messageId = typeof payload.id === 'string' && payload.id.length > 0 && payload.id.length < 80
@@ -2364,7 +2538,7 @@ export function createChatServer({
       if (mediaId && await isViewOnceMedia(mediaId)) {
         return json(socket, { type: 'error', message: 'View once messages can’t be forwarded.' });
       }
-      if (VIEW_ONCE_VOICE.test(content) && (payload.forwarded === true || media.senderId !== userId || media.receiverId !== receiverId)) {
+      if (VIEW_ONCE_VOICE.test(routingOf(content)) && (payload.forwarded === true || media.senderId !== userId || media.receiverId !== receiverId)) {
         return json(socket, { type: 'error', message: 'Only a new voice message can be sent as view once.' });
       }
 
@@ -2389,7 +2563,8 @@ export function createChatServer({
         (await db.prepare(`INSERT INTO media(id, sender_id, receiver_id, filename, content_type, byte_size, disk_name, created_at)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
           .run(copyId, userId, receiverId, media.filename, media.contentType, media.byteSize, diskName, Date.now()));
-        const prefixLength = content.indexOf(':') + 1;
+        // An encrypted forward names the copy in its routing part; the receiver uses that id (envelope.js withRoutedMedia).
+        const prefixLength = isEnvelope(content) ? content.indexOf(':', 5) + 1 : content.indexOf(':') + 1;
         storedContent = `${content.slice(0, prefixLength)}${copyId}${content.slice(prefixLength + mediaId.length)}`;
       }
 
@@ -2432,10 +2607,13 @@ export function createChatServer({
       const delivered = (await presentMessage(message));
       broadcastUser(receiverId, { type: 'message:new', message: delivered });
       if (needsPush(receiverId)) {
-        pushInBackground(receiverId, { t: 'msg', id: message.id, from: userId, senderName: message.senderName || `@${message.senderUsername}`, content: message.content }, { collapseKey: `chat:${userId}` });
+        pushInBackground(receiverId, { t: 'msg', id: message.id, from: userId, senderName: message.senderName || `@${message.senderUsername}`, content: pushContent(message.content) }, { collapseKey: `chat:${userId}` });
       }
       broadcastUser(userId, { type: 'message:new', message: delivered }, socket);
       json(socket, { type: 'message:ack', message: delivered });
+      parity.afterDirectMessage({ senderId: userId, receiverId, messageId: message.id }).catch((error) => {
+        console.error('Automatic reply failed:', error.code ?? error.name);
+      });
     }
 
     socket.on('close', () => {
@@ -2502,6 +2680,8 @@ export function createChatServer({
     expireMessages,
     expireGroupMessages,
     removeOrphanedMedia,
+    // Sends scheduled messages that are due (normally every EXPIRY_SWEEP_MS).
+    deliverScheduled: (now) => extras.deliverScheduled(now),
     discardStaleUploads,
     avatarDirectory,
     liveSessions,
@@ -2523,6 +2703,7 @@ export function createChatServer({
         throw error;
       }
       expiryTimer = setInterval(() => {
+        sweep(() => extras.deliverScheduled());
         sweep(expireMessages);
         sweep(expireGroupMessages);
         sweep(expireStatuses);

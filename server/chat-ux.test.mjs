@@ -287,7 +287,7 @@ test('chat window wires swipe-to-reply, quotes, and the sectioned forward sheet'
     'onQuoteClick={stableShowInChat}',
     'composerInputRef.current?.focus()',
     'sendToChat(target.id, source.content, { forwarded: true })',
-    "message: { id: message.id, receiverId, content, ...extras }",
+    "transmitDirect(client, { id: message.id, receiverId, content, ...extras, ...(linkPreview ? { linkPreview } : {}) })",
     'onSend={handleForwardMessage}',
     'forwardSections(',
   ]) {

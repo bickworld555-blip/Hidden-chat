@@ -337,8 +337,8 @@ test('chat header opens the contact info drawer with WhatsApp sections and no ph
   assert.equal((drawer.match(/title="(Clear chat|Delete chat)" danger/g) ?? []).length, 2);
   assert.ok(drawer.includes('`Report ${name}`} danger'));
   assert.doesNotMatch(drawer, /phone number|\.phone\b/i);
-  assert.ok(drawer.includes('<small>Messages are stored on your Hidden Messenger server and are not end-to-end encrypted.</small>'));
-  assert.doesNotMatch(drawer, /Messages are end-to-end encrypted/);
+  assert.ok(drawer.includes('<small>Messages are end-to-end encrypted on your devices. The server stores only ciphertext it cannot read.</small>'));
+  assert.doesNotMatch(drawer, /not end-to-end encrypted/);
 
   const css = read('src/styles.css');
   assert.ok(css.includes('@keyframes wa-info-slide-in'));

@@ -252,6 +252,114 @@ public class HiddenNativePlugin extends Plugin {
         call.resolve(result);
     }
 
+    /**
+     * Seals a secret with the Android Keystore (SecureStore) — used by the web app to protect its local data key:
+     * { value } → { sealed }. The Keystore key never leaves Android, so the sealed value is useless off the phone.
+     */
+    @PluginMethod
+    public void sealSecret(PluginCall call) {
+        try {
+            JSObject result = new JSObject();
+            result.put("sealed", SecureStore.seal(call.getString("value")));
+            call.resolve(result);
+        } catch (Exception broken) {
+            call.reject("The Android Keystore is not available.");
+        }
+    }
+
+    /** App lock and screen security state: { biometric: available|none|unsupported, secureScreen, transcription }. */
+    @PluginMethod
+    public void securityStatus(PluginCall call) {
+        JSObject result = new JSObject();
+        result.put("biometric", AppSecurity.status(getContext()));
+        result.put("secureScreen", AppSecurity.secureScreen(getContext()));
+        result.put("transcription", VoiceTranscriber.available(getContext()));
+        call.resolve(result);
+    }
+
+    /** The phone's own unlock (fingerprint, face, or its PIN / pattern / password): { ok, error? }. */
+    @PluginMethod
+    public void authenticate(PluginCall call) {
+        AppSecurity.authenticate(getActivity(), call.getString("title"), call.getString("subtitle"), (ok, error) -> {
+            JSObject result = new JSObject();
+            result.put("ok", ok);
+            if (error != null) result.put("error", error);
+            call.resolve(result);
+        });
+    }
+
+    /** Screen security (FLAG_SECURE): no screenshots or recordings, blank in recent apps. */
+    @PluginMethod
+    public void setSecureScreen(PluginCall call) {
+        boolean enabled = Boolean.TRUE.equals(call.getBoolean("enabled", false));
+        AppSecurity.setSecureScreen(getActivity(), enabled);
+        JSObject result = new JSObject();
+        result.put("secureScreen", enabled);
+        call.resolve(result);
+    }
+
+    /** Saves bytes made on the phone (a chat backup or export, base64) into Download/Hidden Messenger. */
+    @PluginMethod
+    public void saveBytes(PluginCall call) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q && getPermissionState("storage") != PermissionState.GRANTED) {
+            requestPermissionForAlias("storage", call, "saveBytesPermissionDone");
+            return;
+        }
+        startSaveBytes(call);
+    }
+
+    @PermissionCallback
+    private void saveBytesPermissionDone(PluginCall call) {
+        if (getPermissionState("storage") == PermissionState.GRANTED) startSaveBytes(call);
+        else call.reject("Allow storage access to save files.");
+    }
+
+    private void startSaveBytes(PluginCall call) {
+        byte[] bytes;
+        try {
+            bytes = android.util.Base64.decode(call.getString("data", ""), android.util.Base64.DEFAULT);
+        } catch (IllegalArgumentException broken) {
+            call.reject("Nothing to save.");
+            return;
+        }
+        MediaSaver.saveBytes(getContext(), bytes, call.getString("filename", "file"), call.getString("mimeType", ""), (saved) -> {
+            JSObject result = new JSObject();
+            result.put("saved", true);
+            result.put("path", saved.path);
+            call.resolve(result);
+        }, call::reject);
+    }
+
+    /** A voice message transcript made on the phone (Android 13+): { text } or { error }. */
+    @PluginMethod
+    public void transcribeAudio(PluginCall call) {
+        byte[] audio;
+        try {
+            audio = android.util.Base64.decode(call.getString("data", ""), android.util.Base64.DEFAULT);
+        } catch (IllegalArgumentException broken) {
+            call.reject("No audio.");
+            return;
+        }
+        VoiceTranscriber.transcribe(getContext(), audio, call.getString("language"), (text, error) -> {
+            JSObject result = new JSObject();
+            if (text != null) result.put("text", text);
+            if (error != null) result.put("error", error);
+            call.resolve(result);
+        });
+    }
+
+    /** Opens what sealSecret produced: { sealed } → { value }. */
+    @PluginMethod
+    public void openSecret(PluginCall call) {
+        try {
+            JSObject result = new JSObject();
+            result.put("value", SecureStore.open(call.getString("sealed")));
+            call.resolve(result);
+        } catch (Exception broken) {
+            call.reject("This secret cannot be opened on this phone (the Keystore key changed).");
+        }
+    }
+
     /** The web app's upload queue: { count, label, progress } — keeps a "Sending…" foreground service while count > 0. */
     @PluginMethod
     public void setUploads(PluginCall call) {
@@ -381,13 +489,14 @@ public class HiddenNativePlugin extends Plugin {
     @PluginMethod
     public void openMedia(PluginCall call) {
         String url = call.getString("url");
-        if (url == null || !(url.startsWith("https://") || url.startsWith("http://"))) {
+        String data = call.getString("data");
+        if (data == null && (url == null || !(url.startsWith("https://") || url.startsWith("http://")))) {
             call.reject("Nothing to open.");
             return;
         }
         String filename = call.getString("filename", "file");
         String mimeType = call.getString("mimeType", "");
-        MediaSaver.downloadForOpening(getContext(), url, filename, (file) -> {
+        java.util.function.Consumer<java.io.File> open = (file) -> {
             android.app.Activity activity = getActivity();
             if (activity == null) {
                 call.reject("Could not open the file.");
@@ -412,7 +521,20 @@ public class HiddenNativePlugin extends Plugin {
                     call.reject("Could not open the file.");
                 }
             });
-        }, call::reject);
+        };
+        // End-to-end encrypted files arrive as bytes the app decrypted (data, base64); others are downloaded.
+        if (data != null) {
+            byte[] bytes;
+            try {
+                bytes = android.util.Base64.decode(data, android.util.Base64.DEFAULT);
+            } catch (IllegalArgumentException error) {
+                call.reject("Nothing to open.");
+                return;
+            }
+            MediaSaver.writeForOpening(getContext(), bytes, filename, open, call::reject);
+        } else {
+            MediaSaver.downloadForOpening(getContext(), url, filename, open, call::reject);
+        }
     }
 
     /** Nothing left to close on Back: leave the app running in the background, like WhatsApp. */
@@ -544,6 +666,29 @@ public class HiddenNativePlugin extends Plugin {
      * Opens a link in the app that handles it (YouTube, Facebook, the browser…). It opens on top of Hidden Messenger,
      * so Back returns here.
      */
+    /** Link preview on the sender's phone: the page's HTML (src/linkPreviewSender.js parses it). */
+    @PluginMethod
+    public void fetchPage(PluginCall call) {
+        LinkFetcher.fetchPage(call.getString("url"), (text, finalUrl, type) -> {
+            JSObject result = new JSObject();
+            result.put("html", text);
+            result.put("url", finalUrl);
+            result.put("contentType", type);
+            call.resolve(result);
+        }, call::reject);
+    }
+
+    /** The preview's image, fetched by the phone (base64), to become a small thumbnail inside the message. */
+    @PluginMethod
+    public void fetchImage(PluginCall call) {
+        LinkFetcher.fetchImage(call.getString("url"), (data, finalUrl, type) -> {
+            JSObject result = new JSObject();
+            result.put("data", data);
+            result.put("contentType", type);
+            call.resolve(result);
+        }, call::reject);
+    }
+
     @PluginMethod
     public void openExternal(PluginCall call) {
         String url = call.getString("url", "");

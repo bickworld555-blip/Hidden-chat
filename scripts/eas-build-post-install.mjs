@@ -2,7 +2,7 @@
 // Capacitor shell, so before Gradle runs we build the web assets, generate the gitignored Capacitor config
 // pointing at ANDROID_APP_URL, and make sure Gradle runs on JDK 21 (Capacitor 8 targets Java 21).
 import { execSync } from 'node:child_process';
-import { appendFileSync, existsSync, mkdirSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -12,6 +12,18 @@ const run = (command, env = {}) => execSync(command, { stdio: 'inherit', env: { 
 if (!process.env.ANDROID_APP_URL) throw new Error('Set ANDROID_APP_URL in the eas.json build profile.');
 run('npm run build');
 run('npm run android:sync');
+
+// Firebase push: GOOGLE_SERVICES_JSON is an EAS file secret (a path) or the JSON itself. Without it the APK builds
+// without push (build.gradle applies the Google services plugin only when the file is there).
+const services = process.env.GOOGLE_SERVICES_JSON;
+if (services) {
+  const text = existsSync(services) ? readFileSync(services, 'utf8') : services;
+  if (!JSON.parse(text)?.project_info?.project_id) throw new Error('GOOGLE_SERVICES_JSON is not a google-services.json file.');
+  writeFileSync('android/app/google-services.json', text);
+  console.log('Firebase push: google-services.json provided.');
+} else {
+  console.warn('GOOGLE_SERVICES_JSON is not set: this APK is built without Firebase push.');
+}
 
 function javaMajor(javaHome) {
   const java = javaHome ? join(javaHome, 'bin', 'java') : 'java';

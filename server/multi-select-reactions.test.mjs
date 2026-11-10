@@ -61,7 +61,7 @@ test('ChatWindow auto-scrolls to the latest message and offers a jump-to-latest 
   assert.ok(content.includes("scrollToBottom(firstLoad ? 'auto' : 'smooth')"), 'new messages scroll smoothly to the bottom');
   assert.ok(content.includes('new ResizeObserver'), 'ChatWindow re-anchors when the feed or container changes height');
   assert.ok(content.includes('stickToBottomRef'), 'ChatWindow tracks whether the reader is pinned to the bottom');
-  assert.ok(content.includes('onScroll={syncScrollState}'), 'ChatWindow re-evaluates pinning as the user scrolls through history');
+  assert.ok(content.includes('onScroll={() => { syncScrollState(); loadOlderIfNearTop(); }}'), 'ChatWindow re-evaluates pinning as the user scrolls through history');
   assert.ok(content.includes('onWheel={cancelAutoScroll}'), 'user scroll gestures cancel an in-flight auto-scroll');
   assert.ok(content.includes('className="scroll-bottom"') && content.includes('scroll-bottom-badge'), 'ChatWindow renders a jump-to-latest button with an unseen badge');
   assert.ok(css.includes('.scroll-bottom-badge'), 'styles define the jump-to-latest badge');

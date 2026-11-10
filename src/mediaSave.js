@@ -4,7 +4,8 @@
 import { useSyncExternalStore } from 'react';
 import { apiFetch, apiUrl } from './api.js';
 import { nativeOpenMedia, nativeSaveMedia, nativeShell } from './native.js';
-import { parseMediaRef } from './media.js';
+import { isEncryptedMedia, loadMediaBlob, parseMediaRef } from './media.js';
+import { blobToBase64, saveFile } from './fileSave.js';
 import { parseVoiceContent } from './voice.js';
 
 export const MEDIA_SAVE_KEY = 'hm:media-save';
@@ -44,6 +45,14 @@ export function savableMedia(content) {
 
 // Saves one attachment to the phone through the app's native saver; resolves the folder path it landed in.
 export async function saveMediaToPhone({ id, filename, sessionToken }) {
+  // End-to-end encrypted: the server only has ciphertext, so the phone decrypts and saves the bytes itself.
+  if (isEncryptedMedia(id)) {
+    const blob = await loadMediaBlob(id, sessionToken);
+    const saved = await saveFile(blob, filename || 'file', blob.type || 'application/octet-stream');
+    if (!saved?.path) throw new Error('Could not save the file.');
+    rememberSaved(id);
+    return saved.path;
+  }
   const response = await apiFetch(`/api/v1/media/${encodeURIComponent(id)}/link`, { method: 'POST', headers: { Authorization: `Bearer ${sessionToken}` } });
   const link = await response.json().catch(() => null);
   if (!response.ok || !link?.url) throw new Error(link?.error || 'This file is no longer available.');
@@ -56,6 +65,10 @@ export async function saveMediaToPhone({ id, filename, sessionToken }) {
 
 // Android app: opens a received document with the phone's "Open with" chooser (Drive, a PDF reader…).
 export async function openMediaOnPhone({ id, filename, contentType, sessionToken }) {
+  if (isEncryptedMedia(id)) {
+    const blob = await loadMediaBlob(id, sessionToken);
+    return nativeOpenMedia({ data: await blobToBase64(blob), filename: filename || 'file', mimeType: contentType || blob.type || '' });
+  }
   const response = await apiFetch(`/api/v1/media/${encodeURIComponent(id)}/link`, { method: 'POST', headers: { Authorization: `Bearer ${sessionToken}` } });
   const link = await response.json().catch(() => null);
   if (!response.ok || !link?.url) throw new Error(link?.error || 'This file is no longer available.');

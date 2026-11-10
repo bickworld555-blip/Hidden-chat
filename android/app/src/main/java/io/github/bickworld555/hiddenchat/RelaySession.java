@@ -50,7 +50,8 @@ final class RelaySession {
         if (uri.getHost() == null || !("https".equals(scheme) || "http".equals(scheme))) return false;
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
             .putString("origin", scheme + "://" + uri.getAuthority())
-            .putString("token", token)
+            // The session token is sealed with the Android Keystore (SecureStore): unreadable if the files are copied.
+            .putString("token", SecureStore.sealOrKeep(token))
             .putString("userId", userId)
             .putStringSet("mutedChats", mutedChats == null ? Collections.emptySet() : new HashSet<>(mutedChats))
             .putStringSet("mutedGroups", mutedGroups == null ? Collections.emptySet() : new HashSet<>(mutedGroups))
@@ -64,9 +65,15 @@ final class RelaySession {
     static RelaySession read(Context context) {
         SharedPreferences prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         String origin = prefs.getString("origin", null);
-        String token = prefs.getString("token", null);
+        String stored = prefs.getString("token", null);
+        String token = SecureStore.openOrNull(stored);
         String userId = prefs.getString("userId", null);
         if (origin == null || token == null || userId == null) return null;
+        // Saved by an older version in the clear: seal it now.
+        if (!SecureStore.isSealed(stored)) {
+            String sealed = SecureStore.sealOrKeep(token);
+            if (SecureStore.isSealed(sealed)) prefs.edit().putString("token", sealed).apply();
+        }
         return new RelaySession(origin, token, userId,
             new HashSet<>(prefs.getStringSet("mutedChats", Collections.emptySet())),
             new HashSet<>(prefs.getStringSet("mutedGroups", Collections.emptySet())),

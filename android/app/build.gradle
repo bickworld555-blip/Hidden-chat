@@ -70,6 +70,8 @@ dependencies {
     implementation project(':capacitor-android')
     // WebSocket client for the background service's own connection (NativeRelay).
     implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+    // App lock: the phone's biometrics or screen-lock credential (AppSecurity.java).
+    implementation 'androidx.biometric:biometric:1.1.0'
     // Firebase Cloud Messaging: pushes wake the idle app for messages and calls (no always-on connection).
     implementation platform('com.google.firebase:firebase-bom:33.7.0')
     implementation 'com.google.firebase:firebase-messaging'

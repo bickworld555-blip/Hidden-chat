@@ -29,6 +29,7 @@ import { parseMediaRef, saveBlob } from '../media.js';
 import { formatViewerTimestamp } from '../time.js';
 import { hasCustomDisplayName, presentName } from '../profile.js';
 import Avatar from './Avatar.jsx';
+import { safetyNumberWith } from '../e2e/client.js';
 import { GalleryTile } from './MediaViewer.jsx';
 
 const CLOSE_ANIMATION_MS = 200;
@@ -76,6 +77,33 @@ function ConfirmDialog({ title, children, confirmLabel, danger = true, busy, onC
           <button type="button" className={`wa-info-dialog-confirm${danger ? ' danger' : ''}`} onClick={onConfirm} disabled={busy}>{confirmLabel}</button>
         </div>
       </div>
+    </div>
+  );
+}
+
+// The 60-digit security code for this chat (the same on both phones), over every device key of both accounts:
+// comparing it in person proves no one substituted a key, so the end-to-end encryption reaches the right devices.
+function SecurityCode({ peerId, peerName, sessionToken }) {
+  const [code, setCode] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const next = await safetyNumberWith(peerId);
+        if (!cancelled) setCode(next);
+      } catch {
+        if (!cancelled) setCode('');
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [peerId, sessionToken]);
+  if (code === null) return <p className="wa-info-note">Loading the security code…</p>;
+  if (!code) return <p className="wa-info-note">A security code appears once {peerName} opens an updated Hidden Messenger.</p>;
+  return (
+    <div className="wa-security-code">
+      <strong>Security code</strong>
+      <code aria-label={`Security code ${code}`}>{code}</code>
+      <small>The same 60 digits show on {peerName}'s phone. Compare them in person to check your keys. Messages and calls in this chat are end-to-end encrypted.</small>
     </div>
   );
 }
@@ -313,6 +341,7 @@ export default function ContactInfoDrawer({
           your Hidden Messenger server and stored there, so anyone who runs or can read that server can read this chat.
         </p>
         <p className="wa-info-note">Use HTTPS to protect messages in transit, and only use Hidden Messenger servers you trust.</p>
+        <SecurityCode peerId={chatId} peerName={name} sessionToken={sessionToken} />
       </SubView>
     );
   } else {
@@ -358,7 +387,7 @@ export default function ContactInfoDrawer({
               <LockOpen size={20} aria-hidden="true" />
               <span>
                 <strong>Encryption</strong>
-                <small>Messages are stored on your Hidden Messenger server and are not end-to-end encrypted.</small>
+                <small>Messages are end-to-end encrypted on your devices. The server stores only ciphertext it cannot read.</small>
               </span>
             </button>
           </section>

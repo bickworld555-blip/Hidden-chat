@@ -1,9 +1,18 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, Ban, Camera, Check, CheckCheck, ChevronDown, ChevronUp, CornerUpLeft, Forward, Info, Link2, Mic, MoreVertical, Paperclip, Phone, Search, Send, Smile, Star, Timer, Trash2, Video, X } from 'lucide-react';
-import { parseVoiceContent, voiceExtension } from '../voice.js';
+import { isEnvelope, STRUCTURED } from '../e2e/envelope.js';
+import { transmitDirect, transmitReaction } from '../e2e/messaging.js';
+import { buildLinkPreview } from '../linkPreviewSender.js';
+import { translate, useLanguage } from '../i18n.js';
+import { contactEncrypted } from '../e2e/client.js';
+import { isNotice, noticeText } from '../e2e/notices.js';
+import { isMediaContent } from '../media.js';
+import { LOAD_OLDER_STEP, RENDER_WINDOW, renderCountFor, windowedMessages } from '../messageWindow.js';
+import { attachmentContent, sealForUpload } from '../mediaCrypto.js';
+import { ArrowLeft, Ban, Camera, Check, CheckCheck, ChevronDown, ChevronUp, CornerUpLeft, Forward, Info, Link2, Mic, MoreVertical, Paperclip, Pencil, Phone, Pin, PinOff, Search, Send, Smile, Star, Timer, Trash2, Video, X } from 'lucide-react';
+import { parseVoiceContent, voiceContent, voiceExtension } from '../voice.js';
 import { COMPOSER_EMOJIS, COMPOSER_MAX_LENGTH, composerAction, insertAtCaret } from '../composer.js';
 import { playNotificationTone } from '../sounds.js';
-import { EMPTY_MESSAGES, deletedLabel, useChatStore } from '../store.js';
+import { EMPTY_MESSAGES, deletedLabel, previewFor, useChatStore } from '../store.js';
 import { isBlocked } from '../blocking.js';
 import { searchMessages } from '../contactInfo.js';
 import { disappearingLabel } from '../disappearing.js';
@@ -21,6 +30,10 @@ import { contactContent, liveContent, locationContent, messageKind, parseContact
 import { presentName } from '../profile.js';
 import CallStatusBubble from './CallStatusBubble.jsx';
 import LinkPreview from './LinkPreview.jsx';
+import { OrderBubble, OrderComposer } from './OrderMessages.jsx';
+import { orderStatusLabel, parseOrder, parseOrderStatus } from '../orders.js';
+import { CustomStickerBubble, MediaOpenedBubble, StickerMaker, VideoNoteBubble, VideoNoteRecorder, ViewOnceMediaBubble, ViewOnceViewerHost } from './MediaExtras.jsx';
+import { CUSTOM_STICKER_PREFIX, VIDEO_NOTE_PREFIX, VIEW_ONCE_PREFIX, isCustomSticker, isMediaOpened, isVideoNote, isViewOnceMedia } from '../mediaExtras.js';
 import { firstLink } from '../links.js';
 import MediaRenderer from './MediaRenderer.jsx';
 import { lazyComponent } from '../lazy.js';
@@ -38,6 +51,16 @@ import PendingUpload from './PendingUpload.jsx';
 import { EventBubble, EventComposer, PollBubble, PollComposer, ViewOnceVoice } from './RichMessages.jsx';
 import { parsePollContent } from '../polls.js';
 import { parseEventContent } from '../calendarEvents.js';
+import { editDirectMessage } from '../parityApi.js';
+import { loadPins, setMessagePinned, useAccountData } from '../accountData.js';
+import { appSettings } from '../settings.js';
+import { prepareForSend } from '../mediaQuality.js';
+import { isStickerContent, stickerContent } from '../stickers.js';
+import { StickerMessage, StickerPalette } from './parity/Stickers.jsx';
+import { ComposerAssist } from './parity/ComposerAssist.jsx';
+import PinnedBanner from './parity/PinnedBanner.jsx';
+import { ProductCard, parseProductContent, productContent } from './parity/ProductCard.jsx';
+const CatalogPicker = lazyComponent(() => import('./parity/CatalogPicker.jsx'));
 
 function usePageVisible() {
   const [visible, setVisible] = useState(() => typeof document === 'undefined' || document.visibilityState === 'visible');
@@ -87,13 +110,36 @@ function parseCall(content) {
 // A text message with a link gets WhatsApp's preview card above it. A message that is only the link shows the card
 // alone once it has loaded (the address is on the card); without a preview the link text stays.
 const bareLink = (value) => value.trim().replace(/^https?:\/\//i, '').replace(/\/$/, '');
-function TextWithPreview({ content, sessionToken }) {
+// The time and ticks sit at the end of the text's last line, like WhatsApp (its ConversationRowFooterContainer):
+// an invisible copy of the footer (pin, star, Edited, time, ticks) ends the text, so the reserved room always
+// matches what is shown, and the real footer is pinned to the bottom-right corner over it. When the last line is
+// too full the spacer wraps to a line of its own, so the footer never covers the text.
+// The card comes with the message (made by the sender); only old unencrypted messages still ask the server.
+function TextWithPreview({ content, sessionToken, meta, message }) {
   const href = firstLink(content);
+  const card = href ? <LinkPreview href={href} sessionToken={sessionToken} preview={message?.linkPreview ?? null} fetchAllowed={!message?.e2e} /> : null;
+  // A reply to a status quotes it (the quote travels inside the encryption).
+  const reply = message?.statusReply;
+  const quote = reply ? <p className="status-reply-quote"><strong>Status</strong> · {reply.kind === 'text' ? reply.text : reply.kind === 'video' ? '🎥 Video' : '📷 Photo'}</p> : null;
   const onlyLink = Boolean(href) && bareLink(content) === bareLink(href);
+  if (onlyLink) {
+    return (
+      <>
+        {quote}
+        {card}
+        <p className="link-preview-url"><LinkText text={content} /></p>
+        {meta}
+      </>
+    );
+  }
   return (
     <>
-      {href && <LinkPreview href={href} sessionToken={sessionToken} />}
-      <p className={onlyLink ? 'link-preview-url' : undefined}><LinkText text={content} /></p>
+      {quote}
+      {card}
+      <div className="text-with-meta">
+        <p><LinkText text={content} /><span className="meta-spacer" aria-hidden="true">{meta}</span></p>
+        {meta}
+      </div>
     </>
   );
 }
@@ -261,18 +307,26 @@ function MessageBubble({
 
   const voice = parseVoiceContent(content);
   const isVoice = Boolean(voice);
-  const isMedia = content.startsWith('media:');
+  const isMedia = isMediaContent(content);
   const sharedKind = messageKind(content);
   const poll = parsePollContent(content);
   const event = parseEventContent(content);
+  const productId = parseProductContent(content);
 
   const meta = (
-    <div className="message-meta">
+    <span className="message-meta">
+      {shared?.pinnedIds?.has(message?.id) && <Pin size={11} className="message-pin" aria-label="Pinned" />}
       {message?.starred && <Star size={11} className="message-star" fill="currentColor" aria-label="Starred" />}
+      {message?.editedAt && !message.deleted && <span className="message-edited">{translate('Edited')}</span>}
+      {message?.unencrypted && !message.deleted && <span className="message-unencrypted" title="Not end-to-end encrypted">{translate('Not encrypted')}</span>}
       <time>{time}</time>
       {mine && <MessageStatus status={message?.status} />}
-    </div>
+    </span>
   );
+
+  // Plain text (and links) carry their own time at the end of the last line; other bubbles show it below.
+  const textBody = !isMedia && !(sharedKind === 'location' && parseLocation(content)) && !(sharedKind === 'live' && parseLive(content))
+    && !(sharedKind === 'contact' && parseContact(content));
 
   const reactions = Array.isArray(message?.reactions) ? message.reactions : [];
   // Group reactions by emoji and count
@@ -305,13 +359,36 @@ function MessageBubble({
       )}
       {reactionTrayOpen && <ReactionTray onPick={onTrayReact} />}
 
-      {isCall ? (
+      {isNotice(content) ? (
+        <p className="chat-notice"><span aria-hidden="true">🔒</span> {noticeText(content, shared.peerName)}</p>
+      ) : isCall ? (
         <CallStatusBubble callData={parseCall(content)} isOutgoing={mine} timestamp={time} onCallBack={selectionActive ? undefined : shared.callBack} />
+      ) : message.e2eError || isEnvelope(content) ? (
+        // End-to-end encrypted and not readable on this device (no cipher yet, or a missing key): never show
+        // ciphertext, like WhatsApp's "Waiting for this message".
+        <div className={`message-bubble ${mine ? 'outgoing' : 'incoming'} deleted-bubble encrypted-bubble`}>
+          <p className="deleted-text"><span aria-hidden="true">🔒</span><span>Waiting for this message. It is end-to-end encrypted.</span></p>
+          {meta}
+        </div>
       ) : message.deleted ? (
         <div className={`message-bubble ${mine ? 'outgoing' : 'incoming'} deleted-bubble`}>
           <p className="deleted-text"><Ban size={15} aria-hidden="true" /><span>{deletedLabel(mine)}</span></p>
           {meta}
         </div>
+      ) : isStickerContent(content) ? (
+        <StickerMessage content={content}>{meta}</StickerMessage>
+      ) : parseOrder(content) ? (
+        <div className={`message-bubble ${mine ? 'outgoing' : 'incoming'} attachment-bubble`}><OrderBubble message={message} mine={mine} peerId={mine ? message.receiverId : message.senderId} onStatus={(update) => update && shared.sendText?.(update)}>{meta}</OrderBubble></div>
+      ) : parseOrderStatus(content) ? (
+        <p className="chat-notice">🛒 {mine ? 'You marked the order' : 'Order'} {orderStatusLabel(parseOrderStatus(content).status).toLowerCase()}{parseOrderStatus(content).note ? ` · ${parseOrderStatus(content).note}` : ''}</p>
+      ) : isCustomSticker(content) ? (
+        <CustomStickerBubble content={content} sessionToken={sessionToken}>{meta}</CustomStickerBubble>
+      ) : isVideoNote(content) ? (
+        <VideoNoteBubble content={content} sessionToken={sessionToken}>{meta}</VideoNoteBubble>
+      ) : isViewOnceMedia(content) ? (
+        <div className={`message-bubble ${mine ? 'outgoing' : 'incoming'}`}><ViewOnceMediaBubble message={message} mine={mine} sessionToken={sessionToken}>{meta}</ViewOnceMediaBubble></div>
+      ) : isMediaOpened(content) ? (
+        <div className={`message-bubble ${mine ? 'outgoing' : 'incoming'}`}><MediaOpenedBubble>{meta}</MediaOpenedBubble></div>
       ) : (
         <div
           className={`message-bubble ${mine ? 'outgoing' : 'incoming'} ${isVoice ? 'voice-bubble' : ''} ${isMedia || sharedKind !== 'text' ? 'attachment-bubble' : ''} ${Object.keys(reactionCounts).length > 0 ? 'has-reactions' : ''}`}
@@ -332,7 +409,7 @@ function MessageBubble({
             </button>
           )}
           {voice?.viewOnce ? (
-            <ViewOnceVoice messageId={message.id} seconds={voice.seconds} opened={voice.opened} mine={mine} sessionToken={sessionToken}>{meta}</ViewOnceVoice>
+            <ViewOnceVoice messageId={message.id} seconds={voice.seconds} opened={voice.opened} mine={mine} sessionToken={sessionToken} descriptor={voice.descriptor ?? null}>{meta}</ViewOnceVoice>
           ) : isVoice ? (
             <VoiceMessage
               id={voice.id}
@@ -346,17 +423,19 @@ function MessageBubble({
               }}
             >{meta}</VoiceMessage>
           ) : poll ? (
-            <PollBubble messageId={message.id} poll={poll} sessionToken={sessionToken} userId={shared.userId} nameFor={shared.nameFor}>{meta}</PollBubble>
+            <PollBubble messageId={message.id} poll={poll} sessionToken={sessionToken} userId={shared.userId} nameFor={shared.nameFor} context={shared.pollContext}>{meta}</PollBubble>
           ) : event ? (
             <EventBubble messageId={message.id} event={event}>{meta}</EventBubble>
+          ) : productId ? (
+            <ProductCard itemId={productId} sessionToken={sessionToken}>{meta}</ProductCard>
           ) : (
             <>
               {isMedia ? <MediaRenderer mediaRef={content} sessionToken={sessionToken} onOpen={onOpenMedia} />
                 : sharedKind === 'location' && parseLocation(content) ? <LocationBubble location={parseLocation(content)} onOpen={shared.openLocation} />
                 : sharedKind === 'live' && parseLive(content) ? <LiveLocationBubble live={parseLive(content)} mine={mine} peerName={shared.peerName} send={shared.send} onOpen={shared.openLive} />
                 : sharedKind === 'contact' && parseContact(content) ? <ContactBubble contact={parseContact(content)} onMessage={shared.messageContact} />
-                : <TextWithPreview content={content} sessionToken={sessionToken} />}
-              {meta}
+                : <TextWithPreview content={content} sessionToken={sessionToken} meta={meta} message={message} />}
+              {!textBody && meta}
             </>
           )}
 
@@ -559,6 +638,9 @@ function ContactSharePicker({ contacts, onSelect, onClose }) {
   );
 }
 
+// Older messages are added when the user scrolls within this distance of the top (see src/messageWindow.js).
+const LOAD_OLDER_THRESHOLD_PX = 600;
+
 export default function ChatWindow({ chat, connection, client, onPair, onBack, onStartCall, onGroups }) {
   const chatId = chat?.id;
   const userId = useChatStore((state) => state.userId);
@@ -627,6 +709,11 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
   const [searchQuery, setSearchQuery] = useState('');
   const [searchIndex, setSearchIndex] = useState(0);
   const [emojiOpen, setEmojiOpen] = useState(false);
+  // Composer tray tab (emoji / stickers), the message being edited, and the caret (for quick-reply suggestions).
+  const [trayTab, setTrayTab] = useState('emoji');
+  const [editing, setEditing] = useState(null);
+  const [caret, setCaret] = useState(0);
+  const pickKindRef = useRef('media');
   const action = composerAction(text);
 
   const fileInputRef = useRef(null);
@@ -645,6 +732,61 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
   const openedAtRef = useRef(0);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   const [unseenCount, setUnseenCount] = useState(0);
+
+  // Long chats render only their newest messages (WhatsApp's list only has the rows on screen); older ones are
+  // added as the user scrolls up, and the view stays exactly where it was while they are added above it.
+  const [renderCount, setRenderCount] = useState(RENDER_WINDOW);
+  const olderAnchorRef = useRef(null);
+  const visibleMessages = useMemo(() => windowedMessages(messages, renderCount), [messages, renderCount]);
+  const hiddenOlder = messages.length - visibleMessages.length;
+
+  // Whether this contact can receive end-to-end encrypted messages (a device with keys): false shows a warning.
+  const [encryption, setEncryption] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    setEncryption(null);
+    if (chatId) contactEncrypted(chatId).then((value) => { if (!cancelled) setEncryption(value); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [chatId]);
+  const language = useLanguage((state) => state.language);
+  const olderOnDevice = useChatStore((state) => Boolean(chatId && state.olderOnDevice?.[chatId]));
+  const loadingFromDeviceRef = useRef(false);
+  const loadOlderIfNearTop = useCallback(() => {
+    const container = messageScrollRef.current;
+    if (!container || olderAnchorRef.current !== null) return;
+    if (container.scrollTop > LOAD_OLDER_THRESHOLD_PX) return;
+    // Everything in memory is on screen: read the next older page from this device's message store.
+    if (hiddenOlder <= 0) {
+      if (!olderOnDevice || loadingFromDeviceRef.current) return;
+      loadingFromDeviceRef.current = true;
+      olderAnchorRef.current = container.scrollHeight - container.scrollTop;
+      useChatStore.getState().loadOlderMessages(chatId)
+        .then((added) => {
+          if (added) setRenderCount((count) => count + Math.min(added, LOAD_OLDER_STEP));
+          else olderAnchorRef.current = null;
+        })
+        .catch(() => { olderAnchorRef.current = null; })
+        .finally(() => { loadingFromDeviceRef.current = false; });
+      return;
+    }
+    // Remember the distance from the bottom: after the older rows are added above, the same distance means the
+    // same messages are still on screen (the job of WhatsApp's pre-draw listener).
+    olderAnchorRef.current = container.scrollHeight - container.scrollTop;
+    setRenderCount((count) => count + LOAD_OLDER_STEP);
+  }, [hiddenOlder, olderOnDevice, chatId]);
+
+  useLayoutEffect(() => {
+    const container = messageScrollRef.current;
+    if (!container || olderAnchorRef.current === null) return;
+    container.scrollTop = container.scrollHeight - olderAnchorRef.current;
+    olderAnchorRef.current = null;
+  }, [renderCount]);
+
+  /** Makes sure a message is rendered (search, a tapped quote, "show in chat") before scrolling to it. */
+  const ensureRendered = useCallback((messageId) => {
+    const needed = renderCountFor(messages, messageId);
+    if (needed > 0) setRenderCount((count) => (needed > count ? needed : count));
+  }, [messages]);
 
   const lastMessage = messages.length > 0 ? messages[messages.length - 1] : null;
   const lastMessageId = lastMessage?.id ?? null;
@@ -783,7 +925,7 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
 
   useEffect(() => () => clearTimeout(typingTimerRef.current), []);
 
-  const mediaMessages = useMemo(() => messages.filter((message) => message?.id && typeof message.content === 'string' && message.content.startsWith('media:')), [messages]);
+  const mediaMessages = useMemo(() => messages.filter((message) => message?.id && isMediaContent(message.content)), [messages]);
   // A deleted message (by either side) closes its viewer because it is no longer found.
   const viewerMessage = viewerMessageId ? mediaMessages.find((message) => message.id === viewerMessageId) ?? null : null;
 
@@ -792,6 +934,13 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
   const selectionActive = selectedMessages.length > 0;
   const trayMessageId = selectedMessages.length === 1 && selectedMessages[0].id === reactionTrayId ? reactionTrayId : null;
   const actions = selectionActions(selectedMessages, userId);
+  // Pinned messages are shared by both people (server/parity.mjs); loaded when the chat opens, refreshed by events.
+  const pins = useAccountData((state) => (chatId ? state.pins[chatId] : null));
+  const pinnedIds = useMemo(() => new Set((pins ?? []).map((pin) => pin.messageId)), [pins]);
+  useEffect(() => {
+    if (chatId && sessionToken) loadPins(chatId).catch(() => {});
+  }, [chatId, sessionToken]);
+  useEffect(() => { setEditing(null); }, [chatId]);
 
   const clearSelection = useCallback(() => {
     setSelectedIds([]);
@@ -799,6 +948,8 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
   }, []);
 
   useEffect(() => {
+    setRenderCount(RENDER_WINDOW);
+    olderAnchorRef.current = null;
     setViewerMessageId(null);
     setHighlightId(null);
     setReplyingTo(null);
@@ -858,9 +1009,18 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
     };
     addMessage(message);
     queueMessage?.(message);
-    const accepted = client?.send?.({ type: 'message:send', message: { id: message.id, receiverId, content, ...extras } });
-    if (!accepted) updateMessage(message.id, { status: 'failed' });
-  }, [userId, client, addMessage, queueMessage, updateMessage]);
+    // A link gets its preview made here, on the sender's device, and sent inside the encryption (WhatsApp-style).
+    const href = !extras.forwarded && typeof content === 'string' && !STRUCTURED.test(content) ? firstLink(content) : null;
+    const preview = href ? buildLinkPreview(href, sessionToken).catch(() => null) : Promise.resolve(null);
+    preview.then((linkPreview) => {
+      if (linkPreview) {
+        updateMessage(message.id, { linkPreview });
+        queueMessage?.({ ...message, linkPreview });
+      }
+      // Sealed for every device of the contact and this account's other devices (src/e2e/messaging.js).
+      return transmitDirect(client, { id: message.id, receiverId, content, ...extras, ...(linkPreview ? { linkPreview } : {}) });
+    }).then((accepted) => { if (!accepted) updateMessage(message.id, { status: 'failed' }); });
+  }, [userId, client, addMessage, queueMessage, updateMessage, sessionToken]);
 
   const sendContent = useCallback((content, customReplyTo = null) => {
     if (!chatId || !content) return;
@@ -894,7 +1054,11 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
     setUploadProgress({ ...pending, sent: 0, total: blob.size });
     scrollToBottom('smooth');
     try {
-      const file = blob instanceof File ? blob : new File([blob], filename, { type: blob.type });
+      const plainFile = blob instanceof File ? blob : new File([blob], filename, { type: blob.type });
+      // Attachments and voice notes are encrypted on this device before upload (src/mediaCrypto.js); the key
+      // travels inside the end-to-end encrypted message, so the server stores only ciphertext under a neutral name.
+      const isVoiceNote = kind === 'voice' || kind === 'voice-once';
+      const { upload: file, descriptor } = await sealForUpload(plainFile);
       const data = await uploadFile(file, {
         receiverId: chatId,
         sessionToken,
@@ -902,7 +1066,11 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
         kind: kind === 'voice' || kind === 'voice-once' ? 'voice' : undefined,
         onProgress: (sent, total) => setUploadProgress({ ...pending, sent, total }),
       });
-      sendContent(kind === 'voice' ? `voice:${data.id}:${seconds}` : kind === 'voice-once' ? `voice:${data.id}:${seconds}:once` : `media:${data.id}:${data.filename || filename}`);
+      const attachment = attachmentContent(data.id, descriptor ? filename : data.filename || filename, descriptor);
+      // View once photos/videos, video notes and made stickers wrap the attachment (src/mediaExtras.js).
+      const wrapped = { viewonce: VIEW_ONCE_PREFIX, vnote: VIDEO_NOTE_PREFIX, csticker: CUSTOM_STICKER_PREFIX }[kind];
+      sendContent(isVoiceNote ? voiceContent(data.id, seconds, { viewOnce: kind === 'voice-once', descriptor })
+        : wrapped ? wrapped + attachment : attachment);
     } catch (caught) {
       if (caught?.name !== 'AbortError') setError(caught?.message || 'Upload failed.');
     } finally {
@@ -922,10 +1090,17 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
   async function handleFileChange(event) {
     const files = Array.from(event.target.files ?? []);
     event.target.value = '';
-    for (const file of files) await uploadAndSend(file, file.name, 'media');
+    // Photos follow the Standard / HD setting; documents are always sent exactly as they are.
+    const quality = pickKindRef.current === 'document' ? null : appSettings().get('media.uploadQuality');
+    const viewOnce = pickKindRef.current === 'viewonce';
+    for (const file of viewOnce ? files.slice(0, 1) : files) {
+      const prepared = quality ? await prepareForSend(file, file.name, quality) : { blob: file, filename: file.name };
+      await uploadAndSend(prepared.blob, prepared.filename, viewOnce ? 'viewonce' : 'media');
+    }
   }
 
-  function openFilePicker(accept, capture) {
+  function openFilePicker(accept, capture, kind = 'media') {
+    pickKindRef.current = kind;
     const input = fileInputRef.current;
     if (!input) return;
     // No accept filter lets every file format be chosen.
@@ -939,8 +1114,14 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
 
   function handleAttachmentSelect(option) {
     setError('');
-    if (option === 'document') openFilePicker('');
+    if (option === 'document') openFilePicker('', undefined, 'document');
+    else if (option === 'catalog') setPicker('catalog');
+    else if (option === 'sticker') { setTrayTab('stickers'); setEmojiOpen(true); }
     else if (option === 'gallery') openFilePicker('image/*,video/*');
+    else if (option === 'viewonce') openFilePicker('image/*,video/*', undefined, 'viewonce');
+    else if (option === 'videonote') setPicker('videonote');
+    else if (option === 'mysticker') setPicker('stickermaker');
+    else if (option === 'order') setPicker('order');
     else if (option === 'camera') openFilePicker('image/*,video/*', 'environment');
     else if (option === 'audio') openFilePicker('audio/*');
     else if (option === 'location') setPicker('location');
@@ -987,9 +1168,12 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
   useBackHandler(Boolean(mapView), () => setMapView(null));
   const liveSend = useCallback((payload) => client?.send?.(payload), [client]);
   const sharedHandlers = useMemo(() => ({
+    pinnedIds,
     peerName: chat?.name ?? 'Contact',
     userId,
     nameFor: (id) => (id === chat?.id ? presentName(chat) : null),
+    pollContext: { peerId: chat?.id },
+    sendText: (text) => sendContent(text),
     send: client ? liveSend : null,
     callBack: onStartCall,
     forward: (message) => setForwardSource([message]),
@@ -1000,7 +1184,7 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
       if (list.some((item) => item.id === contact.id)) setActiveChat(contact.id);
       else addContact({ id: contact.id, name: contact.name, username: contact.username, initials: contact.initials, color: contact.color, avatar: contact.avatar });
     },
-  }), [chat, userId, client, liveSend, onStartCall]);
+  }), [chat, userId, client, liveSend, onStartCall, pinnedIds]);
 
   function handleVoiceSend(blob, seconds, type, { viewOnce = false } = {}) {
     setRecording(false);
@@ -1042,6 +1226,10 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
       setError('Messages can be up to 4,000 characters.');
       return;
     }
+    if (editing) {
+      saveEdit(editing, content);
+      return;
+    }
     clearTimeout(typingTimerRef.current);
     client?.send?.({ type: 'presence:typing', peerId: chatId, active: false });
     sendContent(content);
@@ -1059,7 +1247,7 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
   const messageList = useMemo(() => {
     if (!chat) return null;
     let lastDay = '';
-    return messages.map((message) => {
+    return visibleMessages.map((message) => {
             if (!message?.id) return null;
             const day = localDateKey(message.timestamp);
             const showDay = day !== lastDay;
@@ -1093,7 +1281,7 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
               </div>
             );
           });
-  }, [messages, userId, sessionToken, user, chat, selectionActive, selectedIds, highlightId, trayMessageId, sharedHandlers, handleLongPress, handleToggleSelect, clearSelection, stableStartReply, stableShowInChat]);
+  }, [visibleMessages, userId, sessionToken, user, chat, selectionActive, selectedIds, highlightId, trayMessageId, sharedHandlers, handleLongPress, handleToggleSelect, clearSelection, stableStartReply, stableShowInChat]);
 
   if (!chat) {
     return (
@@ -1121,6 +1309,53 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
     if (targets.length === 1 && targets[0].id !== chatId) setActiveChat(targets[0].id);
   }
 
+  // Edit (WhatsApp: own text messages, for 15 minutes): the text goes back into the composer; saving shows it at once
+  // and reverts if the server refuses (e.g. the 15 minutes ran out meanwhile).
+  function startEdit(target) {
+    clearSelection();
+    setReplyingTo(null);
+    setEmojiOpen(false);
+    setEditing(target);
+    setText(target.content);
+    requestAnimationFrame(() => {
+      const input = composerInputRef.current;
+      input?.focus();
+      input?.setSelectionRange(target.content.length, target.content.length);
+    });
+  }
+
+  function cancelEdit() {
+    setEditing(null);
+    setText('');
+  }
+
+  function saveEdit(target, content) {
+    setEditing(null);
+    setText('');
+    setError('');
+    if (content === target.content) return;
+    updateMessage(target.id, { content, editedAt: new Date().toISOString() });
+    editDirectMessage(sessionToken, target.id, content, chatId).catch((caught) => {
+      updateMessage(target.id, { content: target.content, editedAt: target.editedAt });
+      setError(caught.message);
+    });
+  }
+
+  async function togglePin(target) {
+    clearSelection();
+    try {
+      await setMessagePinned(chatId, target.id, !pinnedIds.has(target.id));
+    } catch (caught) {
+      setError(caught.message);
+    }
+  }
+
+  function describePinned(messageId) {
+    const target = messages.find((item) => item.id === messageId);
+    if (!target) return 'Pinned message';
+    return target.deleted ? 'This message was deleted' : previewFor(target.content);
+  }
+
   function startReply(target) {
     setReplyingTo(replyQuoteFor(target));
     clearSelection();
@@ -1130,7 +1365,8 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
   function reactTo(target, emoji) {
     const next = toggleReaction(chatId, target.id, emoji);
     if (target.content?.startsWith('call:')) return;
-    client?.send?.({ type: 'message:reaction', messageId: target.id, emoji: next });
+    // Sealed end-to-end like a message (src/e2e/messaging.js).
+    transmitReaction(client, chatId, target.id, next).catch(() => {});
   }
 
   function replyFromViewer(target, text) {
@@ -1142,7 +1378,9 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
   function showInChat(messageId) {
     setViewerMessageId(null);
     setHighlightId(messageId);
-    requestAnimationFrame(() => {
+    ensureRendered(messageId);
+    // Two frames: the first commits the widened window, the second has the target laid out.
+    requestAnimationFrame(() => requestAnimationFrame(() => {
       const container = messageScrollRef.current;
       const line = container?.querySelector(`[data-message-id="${CSS.escape(messageId)}"]`);
       if (!container || !line) return;
@@ -1154,7 +1392,7 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
       const box = container.getBoundingClientRect();
       const target = line.getBoundingClientRect();
       container.scrollTo({ top: container.scrollTop + target.top - box.top - (box.height - target.height) / 2, behavior: 'smooth' });
-    });
+    }));
   }
 
   function sendEditedMedia(blob, filename) {
@@ -1253,6 +1491,17 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
                 aria-label="Reply"
               >
                 <CornerUpLeft size={18} />
+              </button>
+            )}
+            {actions.canEdit && (
+              <button type="button" className="icon-button" onClick={() => startEdit(selectedMessages[0])} title="Edit" aria-label="Edit">
+                <Pencil size={18} />
+              </button>
+            )}
+            {actions.canPin && (
+              <button type="button" className="icon-button" onClick={() => togglePin(selectedMessages[0])}
+                title={pinnedIds.has(selectedMessages[0].id) ? 'Unpin' : 'Pin'} aria-label={pinnedIds.has(selectedMessages[0].id) ? 'Unpin' : 'Pin'}>
+                {pinnedIds.has(selectedMessages[0].id) ? <PinOff size={18} /> : <Pin size={18} />}
               </button>
             )}
             {actions.canStar && (
@@ -1390,11 +1639,15 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
         )}
       </div>
 
+      {/* The pinned bar and the messages share the conversation's scrolling grid row. */}
+      <div className="conversation-body">
+      <PinnedBanner pins={pins} describe={describePinned} onJump={showInChat}
+        onUnpin={(messageId) => setMessagePinned(chatId, messageId, false).catch((caught) => setError(caught.message))} />
       <div
         className="message-scroll"
         data-chat-theme={chatTheme}
         ref={messageScrollRef}
-        onScroll={syncScrollState}
+        onScroll={() => { syncScrollState(); loadOlderIfNearTop(); }}
         onWheel={cancelAutoScroll}
         onTouchMove={cancelAutoScroll}
         onClick={(event) => {
@@ -1408,6 +1661,7 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
           {typing && <div className="typing-indicator"><span /><span /><span /></div>}
           <div ref={messagesEndRef} className="messages-end" aria-hidden="true" />
         </div>
+      </div>
       </div>
 
       {showJumpToLatest && (
@@ -1428,6 +1682,28 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
         </div>
       ) : (
       <form className="composer-wrap" onSubmit={handleSubmit}>
+        {encryption === false && (
+          <p className="e2e-warning" role="status">🔓 {chat?.name ?? 'This contact'} hasn’t opened an updated Hidden Messenger yet. Messages you send now are <strong>not end-to-end encrypted</strong>.</p>
+        )}
+        {editing && (
+          <div className="wa-composer-reply-banner hm-edit-banner">
+            <div className="wa-composer-reply-content">
+              <strong><Pencil size={13} aria-hidden="true" /> Edit message</strong>
+              <span>{editing.content}</span>
+            </div>
+            <button type="button" className="wa-composer-reply-close" onClick={cancelEdit} aria-label="Cancel edit"><X size={16} /></button>
+          </div>
+        )}
+        {!recording && !editing && (
+          <ComposerAssist text={text} caret={caret} onReplace={(next, nextCaret) => {
+            setText(next);
+            setCaret(nextCaret);
+            requestAnimationFrame(() => {
+              composerInputRef.current?.focus();
+              composerInputRef.current?.setSelectionRange(nextCaret, nextCaret);
+            });
+          }} />
+        )}
         {replyingTo && (() => {
           const quote = quoteView(replyingTo, userId, chat.name);
           return (
@@ -1453,13 +1729,17 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
           <div className="composer-row">
             <div className="composer">
               <button type="button" className={`composer-icon${emojiOpen ? ' toggled' : ''}`} onClick={() => setEmojiOpen((open) => !open)} aria-label="Emoji" aria-expanded={emojiOpen} disabled={busy}><Smile size={20} /></button>
-              <input ref={composerInputRef} value={text} onChange={handleTextChange} placeholder="Message" maxLength={COMPOSER_MAX_LENGTH} />
+              <input ref={composerInputRef} value={text} onChange={(event) => { setCaret(event.target.selectionStart ?? event.target.value.length); handleTextChange(event); }}
+                onSelect={(event) => setCaret(event.target.selectionStart ?? 0)} onKeyDown={(event) => { if (event.key === 'Escape' && editing) { event.preventDefault(); cancelEdit(); } }}
+                placeholder={translate(editing ? 'Edit message' : 'Message', language)} maxLength={COMPOSER_MAX_LENGTH} />
               <button type="button" className="composer-icon" onClick={() => setMenuOpen(true)} aria-label="Attach" disabled={busy}><Paperclip size={20} /></button>
               {action === 'voice' && (
                 <button type="button" className="composer-icon composer-camera" onClick={() => openFilePicker('image/*,video/*', 'environment')} aria-label="Camera" disabled={busy}><Camera size={20} /></button>
               )}
             </div>
-            {action === 'send' ? (
+            {editing ? (
+              <button type="submit" className="composer-fab" aria-label="Save edit" disabled={!text.trim()}><Check size={20} /></button>
+            ) : action === 'send' ? (
               <button type="submit" className="composer-fab" aria-label="Send"><Send size={20} /></button>
             ) : (
               <button type="button" className="composer-fab" onClick={() => { setError(''); setEmojiOpen(false); setRecording(true); }} aria-label="Record voice note" disabled={busy}><Mic size={20} /></button>
@@ -1467,10 +1747,22 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
           </div>
         )}
         {emojiOpen && !recording && (
-          <div className="composer-emoji-tray" role="listbox" aria-label="Emoji">
-            {COMPOSER_EMOJIS.map((emoji) => (
-              <button type="button" key={emoji} role="option" aria-selected="false" onClick={() => insertEmoji(emoji)} aria-label={`Insert ${emoji}`}>{emoji}</button>
-            ))}
+          <div className="composer-tray">
+            {!editing && (
+              <div className="composer-tray-tabs" role="tablist" aria-label="Emoji and stickers">
+                <button type="button" role="tab" aria-selected={trayTab === 'emoji'} onClick={() => setTrayTab('emoji')}>Emoji</button>
+                <button type="button" role="tab" aria-selected={trayTab === 'stickers'} onClick={() => setTrayTab('stickers')}>Stickers</button>
+              </div>
+            )}
+            {trayTab === 'stickers' && !editing ? (
+              <StickerPalette onPick={(key) => { sendContent(stickerContent(key)); setEmojiOpen(false); }} />
+            ) : (
+              <div className="composer-emoji-tray" role="listbox" aria-label="Emoji">
+                {COMPOSER_EMOJIS.map((emoji) => (
+                  <button type="button" key={emoji} role="option" aria-selected="false" onClick={() => insertEmoji(emoji)} aria-label={`Insert ${emoji}`}>{emoji}</button>
+                ))}
+              </div>
+            )}
           </div>
         )}
         {error && <span className="attachment-error">{error}</span>}
@@ -1505,6 +1797,17 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
       {picker === 'contact' && <ContactSharePicker contacts={shareable} onSelect={handleContact} onClose={() => setPicker(null)} />}
       {picker === 'poll' && <PollComposer onSend={(content) => { sendContent(content); setPicker(null); }} onClose={() => setPicker(null)} />}
       {picker === 'event' && <EventComposer onSend={(content) => { sendContent(content); setPicker(null); }} onClose={() => setPicker(null)} />}
+      {picker === 'videonote' && (
+        <VideoNoteRecorder onClose={() => setPicker(null)} onSend={(blob, seconds) => uploadAndSend(blob, `video-note.${blob.type.includes('mp4') ? 'mp4' : 'webm'}`, 'vnote', seconds)} />
+      )}
+      <ViewOnceViewerHost />
+      {picker === 'order' && (
+        <OrderComposer sessionToken={sessionToken} sellerId={chatId} sellerName={chat?.name ?? 'this business'} onClose={() => setPicker(null)} onSend={(content) => sendContent(content)} />
+      )}
+      {picker === 'stickermaker' && (
+        <StickerMaker userId={userId} onClose={() => setPicker(null)} onSend={(blob) => uploadAndSend(blob, `sticker.${blob.type === 'image/webp' ? 'webp' : 'png'}`, 'csticker')} />
+      )}
+      {picker === 'catalog' && <CatalogPicker sessionToken={sessionToken} userId={userId} onSend={(itemId) => { sendContent(productContent(itemId)); setPicker(null); }} onClose={() => setPicker(null)} />}
       {mapView && <MapView location={mapView.location} sessionId={mapView.sessionId} peer={chat} send={sharedHandlers.send} onClose={() => setMapView(null)} />}
       {viewerMessage && (
         <MediaViewer

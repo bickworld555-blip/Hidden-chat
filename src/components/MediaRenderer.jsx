@@ -8,6 +8,8 @@ import {
   fileTypeLabel,
   formatFileSize,
   mediaKind,
+  isEncryptedMedia,
+  loadMediaBlob,
   parseMediaRef,
   requestMediaLink,
 } from '../media.js';
@@ -99,7 +101,11 @@ export function FileCard({ id, filename, sessionToken, info, infoError }) {
     }
     const tab = window.open('', '_blank');
     if (tab) tab.opener = null;
-    requestMediaLink(id, sessionToken, { inline: true })
+    // End-to-end encrypted: the server link would serve ciphertext, so the tab gets the decrypted copy instead.
+    const target = isEncryptedMedia(id)
+      ? loadMediaBlob(id, sessionToken).then((blob) => ({ url: URL.createObjectURL(blob) }))
+      : requestMediaLink(id, sessionToken, { inline: true });
+    target
       .then((link) => {
         if (tab) tab.location.href = link.url;
         else download();
@@ -187,7 +193,8 @@ function usePlaybackSource(id, sessionToken, info, media) {
   const [streamUrl, setStreamUrl] = useState('');
   const [status, setStatus] = useState('idle');
   const [error, setError] = useState('');
-  const large = !canPreviewSize(info?.size ?? 0);
+  // An encrypted file cannot be streamed (ranges of ciphertext are not playable): it plays from the decrypted blob.
+  const large = !canPreviewSize(info?.size ?? 0) && !isEncryptedMedia(id);
   const prepare = useCallback(() => {
     if (!large) return media.load();
     if (streamUrl) return Promise.resolve(streamUrl);

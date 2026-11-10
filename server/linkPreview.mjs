@@ -6,14 +6,16 @@
 // checked, private, loopback and link-local addresses are refused, and the read is capped in time and size.
 import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
+import { CRAWLER_AGENT, MAX_HTML_BYTES, linkProvider, previewFromHtml, previewFromOembed, youtubeOembedUrl } from '../src/linkPreviewParse.js';
+
+// The parser is shared with the sender's phone, which builds previews itself (src/linkPreviewParse.js).
+export { decodeEntities, linkProvider, parseMetaTags } from '../src/linkPreviewParse.js';
 
 const TIMEOUT_MS = 6000;
-const MAX_HTML_BYTES = 768 * 1024;
 const MAX_REDIRECTS = 4;
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 const MISS_TTL_MS = 10 * 60 * 1000;
 const CACHE_LIMIT = 1000;
-const CRAWLER_AGENT = 'facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)';
 
 export function isPrivateAddress(address) {
   const version = isIP(address);
@@ -69,87 +71,19 @@ async function readCapped(response) {
   return Buffer.concat(chunks.map((chunk) => Buffer.from(chunk))).toString('utf8');
 }
 
-const ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' };
-export function decodeEntities(text) {
-  return String(text ?? '').replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (whole, code) => {
-    if (code[0] === '#') {
-      const value = code[1].toLowerCase() === 'x' ? Number.parseInt(code.slice(2), 16) : Number.parseInt(code.slice(1), 10);
-      return Number.isFinite(value) && value > 0 && value < 0x110000 ? String.fromCodePoint(value) : whole;
-    }
-    return ENTITIES[code.toLowerCase()] ?? whole;
-  });
-}
-
-// Open Graph / Twitter / plain meta tags of a page: { title, description, image, siteName, type, duration }.
-export function parseMetaTags(html) {
-  const head = String(html).slice(0, MAX_HTML_BYTES);
-  const meta = {};
-  for (const tag of head.match(/<meta\b[^>]*>/gi) ?? []) {
-    const key = /\b(?:property|name|itemprop)\s*=\s*["']([^"']+)["']/i.exec(tag)?.[1]?.toLowerCase();
-    const content = /\bcontent\s*=\s*"([^"]*)"|\bcontent\s*=\s*'([^']*)'/i.exec(tag);
-    if (key && content && !(key in meta)) meta[key] = decodeEntities(content[1] ?? content[2]).trim();
-  }
-  const titleTag = /<title[^>]*>([^<]*)<\/title>/i.exec(head)?.[1];
-  const duration = Number(meta['video:duration'] ?? meta['og:video:duration'] ?? NaN);
-  return {
-    title: meta['og:title'] || meta['twitter:title'] || decodeEntities(titleTag ?? '').trim() || '',
-    description: meta['og:description'] || meta['twitter:description'] || meta.description || '',
-    image: meta['og:image:secure_url'] || meta['og:image'] || meta['twitter:image'] || meta['twitter:image:src'] || '',
-    siteName: meta['og:site_name'] || '',
-    type: meta['og:type'] || '',
-    duration: Number.isFinite(duration) && duration > 0 ? Math.round(duration) : null,
-  };
-}
-
-// Which platform a link belongs to, for its icon and its "video" look.
-export function linkProvider(href) {
-  let host = '';
-  try { host = new URL(href).hostname.toLowerCase().replace(/^www\.|^m\.|^web\./, ''); } catch { return ''; }
-  if (/(^|\.)(facebook\.com|fb\.watch|fb\.com)$/.test(host)) return 'facebook';
-  if (/(^|\.)(youtube\.com|youtu\.be)$/.test(host)) return 'youtube';
-  if (/(^|\.)instagram\.com$/.test(host)) return 'instagram';
-  if (/(^|\.)tiktok\.com$/.test(host)) return 'tiktok';
-  if (/(^|\.)(x\.com|twitter\.com)$/.test(host)) return 'x';
-  return '';
-}
-
-function absolute(value, base) {
-  try {
-    const url = new URL(value, base);
-    return ['http:', 'https:'].includes(url.protocol) ? url.href : '';
-  } catch {
-    return '';
-  }
-}
-
-const clip = (text, limit) => (text.length > limit ? `${text.slice(0, limit - 1).trimEnd()}…` : text);
-
 export function createLinkPreviews({ fetchImpl = fetch, resolve = lookup, now = () => Date.now() } = {}) {
   const cache = new Map();
 
   async function load(href) {
     const provider = linkProvider(href);
     if (provider === 'youtube') {
-      const oembed = `https://www.youtube.com/oembed?format=json&url=${encodeURIComponent(href)}`;
-      const { response } = await fetchPublic(oembed, { resolve, fetchImpl });
+      const { response } = await fetchPublic(youtubeOembedUrl(href), { resolve, fetchImpl });
       if (!response.ok) return null;
-      const data = JSON.parse(await readCapped(response));
-      return { url: href, provider, title: clip(String(data.title ?? ''), 200), description: String(data.author_name ?? ''), image: absolute(data.thumbnail_url, href), siteName: 'YouTube', video: true, duration: null };
+      return previewFromOembed(href, JSON.parse(await readCapped(response)));
     }
     const { response, url } = await fetchPublic(href, { resolve, fetchImpl, headers: { 'User-Agent': CRAWLER_AGENT, Accept: 'text/html,application/xhtml+xml', 'Accept-Language': 'en' } });
     if (!response.ok || !/html/i.test(response.headers.get('content-type') ?? '')) return null;
-    const meta = parseMetaTags(await readCapped(response));
-    if (!meta.title && !meta.image) return null;
-    return {
-      url: href,
-      provider,
-      title: clip(meta.title, 200),
-      description: clip(meta.description, 300),
-      image: absolute(meta.image, url),
-      siteName: meta.siteName,
-      video: /video/i.test(meta.type) || /\/(reel|reels|videos?|watch|share\/v|share\/r)\b/i.test(new URL(href).pathname) || meta.duration !== null,
-      duration: meta.duration,
-    };
+    return previewFromHtml(href, url, await readCapped(response));
   }
 
   return async function preview(href) {

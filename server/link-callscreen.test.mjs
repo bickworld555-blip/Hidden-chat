@@ -1,5 +1,6 @@
 // Link preview cards (Facebook reels, YouTube…) and the WhatsApp-style ringing call screen: swipe up to accept,
 // "Turn off your video", quick-reply "Message", and handing back to the lock screen when the call ends.
+import { callUiSource } from './callUiSource.mjs';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
@@ -53,7 +54,7 @@ test('link previews never fetch private, loopback or link-local addresses (inclu
 
 test('chat bubbles show the preview card; a bare link shows the card alone once it loaded', async () => {
   const chat = await source('src/components/ChatWindow.jsx');
-  assert.ok(chat.includes('{href && <LinkPreview href={href} sessionToken={sessionToken} />}'));
+  assert.ok(chat.includes('<LinkPreview href={href} sessionToken={sessionToken} preview={message?.linkPreview ?? null} fetchAllowed={!message?.e2e} />'), 'the card comes with the message; encrypted ones never ask the server');
   const css = await source('src/styles.css');
   assert.ok(css.includes('.app-shell .message-bubble .link-preview + p.link-preview-url { display: none; }'), 'without a preview the link text stays');
   const server = await source('server/index.mjs');
@@ -67,7 +68,7 @@ test('ringing call screen: swipe up to accept, "Turn off your video", Message wi
   assert.ok(screen.includes('"I\'ll call you right back."') && screen.includes('.setAction(CallActionReceiver.ACTION_REPLY)'));
   const receiver = await java('CallActionReceiver.java');
   assert.match(receiver, /NativeRelay\.replyToPendingCall\(callId, text\) && NativeRelay\.declinePendingCall\(callId\)/, 'app closed: reply then decline through the service');
-  const overlay = await source('src/components/CallOverlay.jsx');
+  const overlay = await callUiSource();
   assert.ok(overlay.includes("useChatStore.getState().sendMessage(latest.current.call.peerId, text.trim());"), 'app running: the web app sends the reply');
   assert.ok(overlay.includes('if (off) allEngines().forEach((engine) => engine.setCameraOff(true));'));
 });
@@ -75,7 +76,8 @@ test('ringing call screen: swipe up to accept, "Turn off your video", Message wi
 test('a call answered from the lock screen or another app hands back there when it ends', async () => {
   const activity = await java('MainActivity.java');
   assert.match(activity, /static void callRinging\(Context context\) \{[\s\S]*?ringingWhileAway = !visible \|\| \(keyguard != null && keyguard\.isKeyguardLocked\(\)\);/);
-  assert.match(activity, /static void callEnded\(\) \{[\s\S]*?postDelayed\([\s\S]*?if \(!returnAfterCall \|\| MessagingService\.isCallActive\(\) \|\| Alerts\.isRinging\(\) \|\| activity == null\) return;[\s\S]*?activity\.moveTaskToBack\(true\);[\s\S]*?1500\);/);
+  assert.match(activity, /static void callEnded\(\) \{[\s\S]*?handler\.postDelayed\(handBack, 1500\);/);
+  assert.match(activity, /handBack = new Runnable\(\) \{[\s\S]*?if \(!returnAfterCall \|\| MessagingService\.isCallActive\(\) \|\| Alerts\.isRinging\(\) \|\| activity == null\) return;[\s\S]*?activity\.moveTaskToBack\(true\);/);
   const service = await java('MessagingService.java');
   assert.ok(service.includes('if (!active && callActive) MainActivity.callEnded();'));
 });

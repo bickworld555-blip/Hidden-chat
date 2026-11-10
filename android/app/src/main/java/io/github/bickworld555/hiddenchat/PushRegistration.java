@@ -70,12 +70,16 @@ final class PushRegistration {
     /** This phone's payload key (32 random bytes), made once and kept in the app's private storage. */
     static synchronized String deviceKey(Context context) {
         SharedPreferences prefs = prefs(context);
-        String key = prefs.getString("key", null);
+        String stored = prefs.getString("key", null);
+        String key = SecureStore.openOrNull(stored);
         if (key == null) {
             byte[] bytes = new byte[32];
             new SecureRandom().nextBytes(bytes);
             key = Base64.encodeToString(bytes, Base64.NO_WRAP);
-            prefs.edit().putString("key", key).apply();
+            // A new key must be registered again: the server would otherwise encrypt with the old one.
+            prefs.edit().putString("key", SecureStore.sealOrKeep(key)).putBoolean("active", false).apply();
+        } else if (!SecureStore.isSealed(stored)) {
+            prefs.edit().putString("key", SecureStore.sealOrKeep(key)).apply();
         }
         return key;
     }

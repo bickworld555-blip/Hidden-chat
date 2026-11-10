@@ -1,8 +1,10 @@
+import { DeviceSecuritySettings, TwoStepSettings } from './parity/SecurityViews.jsx';
 import { useBackHandler } from '../backStack.js';
 import { useCallback, useEffect, useState } from 'react';
 import { ArrowLeft, KeyRound, Laptop, Smartphone } from 'lucide-react';
 import { useChatStore } from '../store.js';
-import { LAST_SEEN_OPTIONS, changePassword, getPrivacy, lastSeenLabel, listDevices, setLastSeenPrivacy, signOutDevice } from '../accountApi.js';
+import { changePassword, listDevices, signOutDevice } from '../accountApi.js';
+import { SECTIONS, SETTINGS, appSettings, optionLabel, useAccountSettingsLoaded, useSetting } from '../settings.js';
 import { formatLastSeen } from '../presence.js';
 import { RadioList, Row, SubView } from './NotificationSettings.jsx';
 
@@ -90,12 +92,37 @@ function Devices({ devices, onSignOut, error }) {
   );
 }
 
+// A choice setting's own screen (Everyone / My contacts / Nobody …), read from the settings registry.
+function PrivacyChoice({ settingKey, onChange, onBack }) {
+  const value = useSetting(settingKey);
+  const definition = SETTINGS[settingKey];
+  return <RadioList title={definition.label} options={definition.options} value={value} onChange={onChange} onBack={onBack} />;
+}
+
+// The privacy section: one row per registered privacy setting (choices open their screen, switches toggle).
+function PrivacyRows({ onOpen, onToggle }) {
+  const loaded = useAccountSettingsLoaded();
+  return SECTIONS.privacy.keys.map((key) => <PrivacyRow key={key} settingKey={key} loaded={loaded} onOpen={onOpen} onToggle={onToggle} />);
+}
+
+function PrivacyRow({ settingKey, loaded, onOpen, onToggle }) {
+  const value = useSetting(settingKey);
+  const definition = SETTINGS[settingKey];
+  if (definition.type === 'switch') {
+    return (
+      <Row title={definition.label} subtitle={loaded ? (definition.hint ?? (value ? 'On' : 'Off')) : 'Loading…'} onClick={() => onToggle(settingKey, !value)} disabled={!loaded}>
+        <span className={`wa-switch${value ? ' on' : ''}`} aria-hidden="true"><span /></span>
+      </Row>
+    );
+  }
+  return <Row title={definition.label} subtitle={loaded ? optionLabel(settingKey, value) : 'Loading…'} onClick={() => onOpen(settingKey)} disabled={!loaded} />;
+}
+
 export default function AccountSettings({ onClose }) {
   const sessionToken = useChatStore((state) => state.sessionToken);
   const [view, setView] = useState(null);
   // Android Back leaves a sub-screen first; the screen itself is closed by its opener.
   useBackHandler(Boolean(view), () => setView(null));
-  const [privacy, setPrivacy] = useState(null);
   const [devices, setDevices] = useState(null);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -104,7 +131,7 @@ export default function AccountSettings({ onClose }) {
 
   useEffect(() => {
     if (!sessionToken) return;
-    getPrivacy(sessionToken).then((value) => setPrivacy(value.lastSeen)).catch((failure) => setError(failure.message));
+    appSettings().loadAccount().catch((failure) => setError(failure.message));
     loadDevices();
   }, [sessionToken, loadDevices]);
 
@@ -114,14 +141,12 @@ export default function AccountSettings({ onClose }) {
     return () => window.removeEventListener('keydown', onKey);
   }, [view, onClose]);
 
-  async function choosePrivacy(lastSeen) {
-    const previous = privacy;
-    setPrivacy(lastSeen);
+  // A privacy change shows at once; if the server refuses it, it goes back and the reason is shown.
+  async function changeSetting(key, value) {
     setError('');
     try {
-      await setLastSeenPrivacy(sessionToken, lastSeen);
+      await appSettings().set(key, value);
     } catch (failure) {
-      setPrivacy(previous);
       setError(failure.message);
     }
   }
@@ -138,16 +163,8 @@ export default function AccountSettings({ onClose }) {
   }
 
   let content;
-  if (view === 'lastSeen') {
-    content = (
-      <RadioList
-        title="Last seen and online"
-        options={LAST_SEEN_OPTIONS}
-        value={privacy ?? 'everyone'}
-        onChange={choosePrivacy}
-        onBack={() => setView(null)}
-      />
-    );
+  if (view && SETTINGS[view]?.type === 'choice') {
+    content = <PrivacyChoice settingKey={view} onChange={(value) => changeSetting(view, value)} onBack={() => setView(null)} />;
   } else if (view === 'password') {
     content = (
       <SubView title="Change password" onBack={() => setView(null)}>
@@ -171,13 +188,15 @@ export default function AccountSettings({ onClose }) {
         <div className="wa-info-scroll">
           {notice && <p className="account-notice" role="status"><KeyRound size={14} /> {notice}</p>}
           <section className="wa-info-section">
-            <h3>Privacy</h3>
-            <Row title="Last seen and online" subtitle={privacy ? lastSeenLabel(privacy) : 'Loading…'} onClick={() => setView('lastSeen')} disabled={!privacy} />
-            <p className="account-hint account-hint-padded">If you hide your last seen and online status, people you hide it from won&apos;t see when you&apos;re online or when you were last online.</p>
+            <h3>{SECTIONS.privacy.title}</h3>
+            <PrivacyRows onOpen={setView} onToggle={changeSetting} />
+            <p className="account-hint account-hint-padded">If you hide your last seen, people you hide it from won&apos;t see when you were last online. Online can stay visible to everyone or follow your last seen setting.</p>
           </section>
           <section className="wa-info-section">
             <h3>Security</h3>
             <Row title="Change password" subtitle="Signs you out everywhere else" onClick={() => setView('password')} />
+            <TwoStepSettings token={sessionToken} />
+            <DeviceSecuritySettings />
           </section>
           <section className="wa-info-section">
             <h3>Devices</h3>

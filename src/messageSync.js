@@ -36,14 +36,16 @@ export function planSync(rows, messagesByChat, userId) {
   return { added, updates, acknowledge };
 }
 
-export async function syncMissedMessages({ sessionToken, userId, acknowledge, store = useChatStore, fetchImpl = apiFetch }) {
+// `open` turns end-to-end encrypted rows into plaintext (src/e2e/messaging.js openRows) before they are planned.
+export async function syncMissedMessages({ sessionToken, userId, acknowledge, open = async (rows) => rows, store = useChatStore, fetchImpl = apiFetch }) {
   const state = store.getState();
   const newest = newestTimestamp(state.messages);
   if (!newest || !sessionToken) return { added: 0, updated: 0 };
   const after = new Date(newest - SYNC_OVERLAP_MS).toISOString();
   const response = await fetchImpl(`/api/v1/messages/sync?after=${encodeURIComponent(after)}`, { headers: { Authorization: `Bearer ${sessionToken}` } });
   if (!response.ok) throw new Error('Could not catch up on messages.');
-  const plan = planSync(await response.json(), store.getState().messages, userId);
+  const rows = await open(await response.json());
+  const plan = planSync(rows, store.getState().messages, userId);
   for (const message of plan.added) store.getState().addMessage(message);
   for (const [peerId, rows] of plan.updates) store.getState().mergeHistory(peerId, rows);
   if (plan.acknowledge.length) acknowledge?.(plan.acknowledge);

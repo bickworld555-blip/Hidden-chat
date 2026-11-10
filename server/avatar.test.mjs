@@ -1,5 +1,6 @@
 // Animation Video Call: face-scan calibration, expression mapping, the five characters, the persona store,
 // and the call engine's video-filter slot that sends the avatar instead of the camera.
+import { callUiSource } from './callUiSource.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
@@ -324,7 +325,7 @@ test('the UI wires the scan, the character choice, the Animation Video Call swit
   const read = async (path) => (await readFile(new URL(path, import.meta.url), 'utf8')).replace(/\r\n/g, '\n');
   const studio = await read('../src/components/AvatarStudio.jsx');
   const tools = await read('../src/components/ToolsView.jsx');
-  const overlay = await read('../src/components/CallOverlay.jsx');
+  const overlay = await callUiSource();
   const app = await read('../src/App.jsx');
   const stream = await read('../src/avatar/avatarStream.js');
   const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));

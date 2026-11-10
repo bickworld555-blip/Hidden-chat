@@ -1,7 +1,10 @@
 // Group-call room bookkeeping shared by the overlay, App routing and tests. A room is a set of
 // pairwise 1:1 engines (full mesh); the server only relays invites and pair signals.
 
-export const MAX_CALL_PARTICIPANTS = 4;
+// The mesh limit, and the SFU path that lifts it, are decided in src/callTopology.js.
+import { MESH_MAX_PARTICIPANTS } from './callTopology.js';
+
+export const MAX_CALL_PARTICIPANTS = MESH_MAX_PARTICIPANTS;
 
 export function canInvite(peerCount) {
   // Me plus the current peers must leave room for one more.

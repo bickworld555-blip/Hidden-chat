@@ -13,7 +13,12 @@ import { getViewingGroup, readMutedGroups, useMutedGroups } from './groupPrefs.j
 import { classifyIncoming, groupNotificationText, parseConversationOpenParam, shouldAlertGroup } from './notificationChannels.js';
 import { nativeClearSession, nativeSetSession, nativeShell, nativeStartBackground, nativeState, nativeStopBackground, nativeTakePendingCall, nativeMoveToBackground, nativeClearShare, nativeSetCallActive, onNative } from './native.js';
 import { parseShare } from './shareTarget.js';
-import { keyDirectory, publishIdentity } from './e2ee.js';
+import { onE2eEvent, startE2e, stopE2e } from './e2e/client.js';
+import { SECURITY_NOTICE } from './e2e/notices.js';
+import { LOCKED_NOTIFICATION } from './chatLock.js';
+import { handleReactionError, handleRejected, needsOpening, openEvent, openHistory, openRows, transmitDirect } from './e2e/messaging.js';
+import { connectAccountSettings } from './settings.js';
+import { getPrivacy, setPrivacy } from './accountApi.js';
 import ShareSheet from './components/ShareSheet.jsx';
 import CallAccessSheet from './components/CallAccessSheet.jsx';
 import { publishShareShortcuts } from './shareShortcuts.js';
@@ -41,6 +46,38 @@ const CallsView = lazyComponent(() => import('./components/CallsView.jsx'));
 const UpdatesView = lazyComponent(() => import('./components/UpdatesView.jsx'));
 const ToolsView = lazyComponent(() => import('./components/ToolsView.jsx'));
 const GroupsView = lazyComponent(() => import('./components/GroupsView.jsx'));
+// WhatsApp (Business) parity screens.
+const CommunitiesView = lazyComponent(() => import('./components/parity/CommunitiesView.jsx'));
+const BusinessTools = lazyComponent(() => import('./components/parity/BusinessTools.jsx'));
+const StarredMessages = lazyComponent(() => import('./components/parity/StarredMessages.jsx'));
+const extrasPanels = () => import('./components/extras/ExtrasPanels.jsx');
+const BroadcastLists = lazyComponent(extrasPanels, (module) => module.BroadcastLists);
+const Channels = lazyComponent(extrasPanels, (module) => module.Channels);
+const ScheduledMessages = lazyComponent(extrasPanels, (module) => module.ScheduledMessages);
+const CallLinks = lazyComponent(extrasPanels, (module) => module.CallLinks);
+const JoinCallLink = lazyComponent(extrasPanels, (module) => module.JoinCallLink);
+const StatusPrivacy = lazyComponent(extrasPanels, (module) => module.StatusPrivacy);
+const LanguageSettings = lazyComponent(() => import('./components/extras/LanguageSettings.jsx'));
+const BackupView = lazyComponent(() => import('./components/parity/BackupView.jsx'));
+const StorageView = lazyComponent(() => import('./components/parity/StorageView.jsx'));
+const JoinGroupSheet = lazyComponent(() => import('./components/parity/GroupAdmin.jsx'), (module) => module.JoinGroupSheet);
+const TwoStepReminder = lazyComponent(() => import('./components/parity/SecurityViews.jsx'), (module) => module.TwoStepReminder);
+import { AppLockGate } from './components/parity/SecurityViews.jsx';
+import { connectAccountData, handleAccountEvent } from './accountData.js';
+import { applyScreenSecurity, startAppLock } from './appLock.js';
+import { mentionsUser } from './mentions.js';
+
+// A call link opened in the app: /call/<code>.
+function callLinkFromLocation(location = globalThis.location) {
+  const match = /^\/call\/([A-Za-z0-9_-]{16})\/?$/.exec(location?.pathname ?? '');
+  return match ? match[1] : '';
+}
+
+// A group invite link opened in the app: /join/<code>.
+function inviteCodeFromLocation(location = globalThis.location) {
+  const match = /^\/join\/([A-Za-z0-9_-]{16,64})\/?$/.exec(location?.pathname ?? '');
+  return match ? match[1] : '';
+}
 import { playNotificationTone, stopAllTones } from './sounds.js';
 import { applyAppBadge, maybeRemind, showSystemNotification, vibrateFor } from './notify.js';
 import { badgeCount, useNotificationSettings } from './notificationSettings.js';
@@ -107,6 +144,13 @@ export default function App() {
   const [groupsCreate, setGroupsCreate] = useState(false);
   const [groupRevision, setGroupRevision] = useState(0);
   const [groupsInitialId, setGroupsInitialId] = useState('');
+  // Business tools, communities, starred messages, backup and storage open as full-screen panels.
+  const [paritySheet, setParitySheet] = useState(null);
+  const [inviteCode, setInviteCode] = useState(() => inviteCodeFromLocation());
+  const [callLinkCode, setCallLinkCode] = useState(() => callLinkFromLocation());
+  useEffect(() => {
+    if (callLinkCode && globalThis.history?.replaceState) globalThis.history.replaceState(null, '', '/');
+  }, [callLinkCode]);
   const [groupSummaries, setGroupSummaries] = useState([]);
   const [permissionsOpen, setPermissionsOpen] = useState(false);
   // Something shared to Hidden Messenger from another app's share sheet, waiting for the user to pick chats.
@@ -128,10 +172,43 @@ export default function App() {
   const [authReady, setAuthReady] = useState(false);
   const [mobileActiveTab, setMobileActiveTab] = useState(initialTabFromUrl);
   const [call, setCall] = useState(null);
-  // End-to-end encryption foundation: this device's public identity key is published once signed in.
+  // End-to-end encryption (src/e2e/): this device's keys are created and published once signed in; every message
+  // to and from it is sealed per device. A contact's security code change shows as a notice.
+  const deviceId = useChatStore((state) => state.device?.id ?? null);
   useEffect(() => {
-    if (!sessionToken || !userId) return;
-    publishIdentity(sessionToken).catch(() => {});
+    if (!sessionToken || !userId || !deviceId) {
+      stopE2e();
+      return;
+    }
+    startE2e({ token: sessionToken, userId, deviceId }).catch(() => { /* retried on the next refresh */ });
+  }, [sessionToken, userId, deviceId]);
+  useEffect(() => onE2eEvent((event) => {
+    if (event.type !== 'identity-changed') return;
+    const state = useChatStore.getState();
+    if (!state.userId || !state.chats.some((chat) => chat.id === event.userId)) return;
+    // A notice in the conversation, kept on this device only (never sent).
+    state.addMessage({ id: crypto.randomUUID(), senderId: state.userId, receiverId: event.userId, timestamp: new Date().toISOString(), content: SECURITY_NOTICE, status: 'read' });
+  }), []);
+  // Starred messages, archived chats, labels, quick replies and two-step status follow the account (accountData.js).
+  useEffect(() => {
+    connectAccountData(sessionToken && userId ? sessionToken : null).catch(() => {});
+  }, [sessionToken, userId]);
+  // App lock (after the chosen time away) and screen security apply to this device whoever is signed in.
+  useEffect(() => {
+    applyScreenSecurity();
+    return startAppLock();
+  }, []);
+  // An invite link was opened: forget the path once the sheet is shown, so a reload doesn't reopen it.
+  useEffect(() => {
+    if (inviteCode && globalThis.history?.replaceState) globalThis.history.replaceState(null, '', '/');
+  }, [inviteCode]);
+  // Account settings (privacy) live on the server and follow the signed-in account (src/settings.js).
+  useEffect(() => {
+    if (!sessionToken || !userId) {
+      connectAccountSettings(null);
+      return;
+    }
+    connectAccountSettings({ load: () => getPrivacy(sessionToken), save: (patch) => setPrivacy(sessionToken, patch) });
   }, [sessionToken, userId]);
   // No call on screen means no call: if Android still shows one (its timer on the lock screen), end it there too.
   useEffect(() => {
@@ -194,8 +271,10 @@ export default function App() {
         if (cancelled) return;
         if (cancelled) return;
         let connectedBefore = false;
-        realtime = new RealtimeClient(sessionToken, (event) => {
-          if (event.type === 'connection:ready' || (typeof event.type === 'string' && event.type.startsWith('group:'))) setGroupRevision((current) => current + 1);
+        const handleEvent = (event) => {
+          if (event.type === 'connection:ready' || event.type === 'community:changed' || (typeof event.type === 'string' && event.type.startsWith('group:'))) setGroupRevision((current) => current + 1);
+          handleAccountEvent(event);
+          if (event.type === 'message:edited') updateMessage(event.messageId, { content: event.content, editedAt: event.editedAt, ...(event.e2eError ? { e2eError: event.e2eError } : {}) });
           // Reconnected after a drop: catch up on anything that changed meanwhile (the first connect already loaded history).
           if (event.type === 'connection:ready') {
             if (!connectedBefore) {
@@ -208,7 +287,7 @@ export default function App() {
               }).catch(() => {});
             }
             if (connectedBefore) {
-              syncMissedMessages({ sessionToken, userId, acknowledge: (ids) => realtime?.send({ type: 'message:delivered', messageIds: ids }) })
+              syncMissedMessages({ sessionToken, userId, open: openRows, acknowledge: (ids) => realtime?.send({ type: 'message:delivered', messageIds: ids }) })
                 .catch(() => { /* the next reconnect retries */ });
             }
             connectedBefore = true;
@@ -217,7 +296,9 @@ export default function App() {
           if (event.type === 'group:message') {
             const alert = classifyIncoming(event, userId);
             if (event.message?.senderId !== userId) autoSaveIncoming(event.message?.content, sessionToken);
-            if (alert && shouldAlertGroup({ groupId: alert.conversation.id, mutedGroupIds: readMutedGroups(userId), viewingGroupId: getViewingGroup(), pageVisible: document.visibilityState === 'visible' })) {
+            const mentioned = mentionsUser(event.message?.content, useChatStore.getState().user?.username);
+            const mutedGroupIds = readMutedGroups(userId).filter((id) => !(mentioned && id === alert?.conversation.id));
+            if (alert && shouldAlertGroup({ groupId: alert.conversation.id, mutedGroupIds, viewingGroupId: getViewingGroup(), pageVisible: document.visibilityState === 'visible' })) {
               playNotificationTone('group');
               vibrateFor('group');
               showSystemNotification('group', { ...groupNotificationText(event), messageId: event.message?.id, conversation: alert.conversation, onClick: () => openGroupRef.current?.(alert.conversation.id) });
@@ -242,9 +323,11 @@ export default function App() {
               playNotificationTone('message');
               vibrateFor('message');
               const sender = useChatStore.getState().chats.find((chat) => chat.id === event.message.senderId);
+              // A locked chat's notification names no one and shows no text (src/chatLock.js).
+              const locked = (useChatStore.getState().lockedChatIds ?? []).includes(event.message.senderId);
               showSystemNotification('message', {
-                title: sender?.name ?? 'New message',
-                body: notificationPreview(event.message.content),
+                title: locked ? LOCKED_NOTIFICATION.title : sender?.name ?? 'New message',
+                body: locked ? LOCKED_NOTIFICATION.body : notificationPreview(event.message.content),
                 messageId: event.message.id,
                 tag: `relay-message-${event.message.senderId}`,
                 conversation: { kind: 'chat', id: event.message.senderId },
@@ -256,8 +339,6 @@ export default function App() {
           if (event.type === 'chat:disappearing') useChatStore.getState().setDisappearing(event.peerId, event.seconds);
           if (event.type === 'chat:cleared') useChatStore.getState().clearChat(event.peerId, event.keepIds);
           if (event.type === 'chat:deleted') useChatStore.getState().deleteChat(event.peerId, { kept: event.kept });
-          // A contact's identity key changed (new phone / reinstall): their safety number is different now.
-          if (event.type === 'identity:changed') keyDirectory.invalidate(event.userId);
           if (event.type === 'user:updated') {
             useChatStore.getState().updateUserProfile(event.user);
             updateAccountUser(event.user).catch(() => {});
@@ -267,13 +348,15 @@ export default function App() {
           if (event.type === 'message:played') updateMessage(event.messageId, { played: true });
           if (event.type === 'status:changed' || event.type === 'status:viewed') useChatStore.getState().bumpStatusRevision();
           if (event.type === 'message:updated') updateMessage(event.messageId, { content: event.content });
-          if (event.type === 'poll:votes') useChatStore.getState().setPollVotes(event.messageId, event.votes);
+          if (event.type === 'poll:votes') useChatStore.getState().setPollVotes(event.messageId, { votes: event.votes ?? {}, sealedVotes: event.sealedVotes ?? [] });
           if (event.type === 'message:deleted') {
             // Deleted for everyone leaves WhatsApp's placeholder; deleted for me, or disappeared on a timer, goes away.
             if (event.scope === 'everyone' && event.reason !== 'expired') useChatStore.getState().markMessageDeleted(event.messageId);
             else useChatStore.getState().removeMessageById(event.messageId);
           }
           if (event.type === 'message:reaction') {
+            // An encrypted reaction this device could not open changes nothing.
+            if (event.emoji === null && event.sealed) return;
             const state = useChatStore.getState();
             state.applyReaction(event.messageId, event.userId, event.emoji);
             // A reaction to something I sent, from someone else, is a "like" worth a sound and a notice.
@@ -349,11 +432,25 @@ export default function App() {
             setFatalError(event.message);
             playNotificationTone('alert');
           }
+        };
+        // Events that may carry ciphertext are opened in arrival order before they are handled (src/e2e/messaging.js).
+        let openChain = Promise.resolve();
+        realtime = new RealtimeClient(sessionToken, (event) => {
+          if (event?.type === 'message:reaction:error' && handleReactionError(event, realtime)) return;
+          if (event?.type === 'message:rejected') {
+            handleRejected(event, realtime).catch(() => {});
+            return;
+          }
+          if (!needsOpening(event)) {
+            handleEvent(event);
+            return;
+          }
+          openChain = openChain.then(() => openEvent(event)).then(handleEvent).catch((error) => console.error('Could not handle a message:', error));
         }, setConnection);
         realtime.onRevoked = () => revokedRef.current?.();
         realtime.onReady = async () => {
           const outbox = await getOutbox(userId);
-          for (const message of outbox) realtime.send({ type: 'message:send', message });
+          for (const message of outbox) await transmitDirect(realtime, message);
         };
         setClient(realtime);
         useChatStore.getState().setClient(realtime);
@@ -373,7 +470,7 @@ export default function App() {
         const ordered = [...contacts].sort((a, b) => Number(b.id === active) - Number(a.id === active));
         await forEachLimited(ordered, HISTORY_CONCURRENCY, async (contact) => {
           const response = await apiFetch(`/api/v1/messages?peerId=${contact.id}`, { headers: { Authorization: `Bearer ${sessionToken}` } });
-          if (!cancelled && response.ok) mergeHistory(contact.id, await response.json());
+          if (!cancelled && response.ok) mergeHistory(contact.id, await openHistory(contact.id, await response.json()));
         });
       } catch (error) {
         if (!cancelled) { setFatalError(error.message); setConnection('offline'); }
@@ -391,7 +488,7 @@ export default function App() {
       headers: { Authorization: `Bearer ${sessionToken}` },
       signal: controller.signal,
     }).then(async (response) => {
-      if (response.ok) mergeHistory(activeChatId, await response.json());
+      if (response.ok) mergeHistory(activeChatId, await openHistory(activeChatId, await response.json()));
     }).catch((error) => {
       if (error.name !== 'AbortError') setFatalError('Could not load this conversation.');
     });
@@ -729,7 +826,9 @@ export default function App() {
         ) : activeTab === 'updates' ? (
           <UpdatesView />
         ) : activeTab === 'tools' ? (
-          <ToolsView darkMode={darkMode} onToggleTheme={toggleTheme} onLogout={() => { logout(); }} onNotifications={() => setNotificationsOpen(true)} onAccountSettings={() => setAccountSettingsOpen(true)} onAccounts={() => setAccountsOpen(true)} onAvatarStudio={() => setAvatarStudioOpen(true)} onGroups={() => openGroups()} />
+          <ToolsView darkMode={darkMode} onToggleTheme={toggleTheme} onLogout={() => { logout(); }} onNotifications={() => setNotificationsOpen(true)} onAccountSettings={() => setAccountSettingsOpen(true)} onAccounts={() => setAccountsOpen(true)} onAvatarStudio={() => setAvatarStudioOpen(true)} onGroups={() => openGroups()}
+            onCommunities={() => setParitySheet('communities')} onBusinessTools={() => setParitySheet('business')} onStarred={() => setParitySheet('starred')}
+            onBackup={() => setParitySheet('backup')} onStorage={() => setParitySheet('storage')} onSheet={setParitySheet} />
         ) : null}
         {activeTab === 'chats' && !isMobile && <footer className="workspace-footer"><span /><span className="workspace-footer-right"><button onClick={toggleTheme} title={`Switch to ${darkMode ? 'light' : 'dark'} theme`}>{darkMode ? <Sun size={14} /> : <Moon size={14} />}{darkMode ? 'Light' : 'Dark'}</button><ChevronRight size={13} /></span></footer>}
       </div>
@@ -740,6 +839,23 @@ export default function App() {
       {accountSettingsOpen && <AccountSettings onClose={() => setAccountSettingsOpen(false)} />}
       {accountsOpen && <AccountSwitcher busyId={switchingId} onSwitch={switchAccount} onRemove={removeAccountFromDevice} onAdd={() => { setAccountsOpen(false); setAuthOpen(true); }} onClose={() => setAccountsOpen(false)} />}
       {avatarStudioOpen && <AvatarStudio onClose={() => setAvatarStudioOpen(false)} />}
+      {sessionToken && paritySheet === 'communities' && <CommunitiesView token={sessionToken} revision={groupRevision} onClose={() => setParitySheet(null)} onOpenGroup={(id) => { setParitySheet(null); openGroups(false, id); }} />}
+      {sessionToken && paritySheet === 'business' && <BusinessTools token={sessionToken} userId={userId} onClose={() => setParitySheet(null)} />}
+      {sessionToken && paritySheet === 'starred' && <StarredMessages token={sessionToken} userId={userId} onClose={() => setParitySheet(null)}
+        onOpenChat={(id) => { setParitySheet(null); openChat({ id }); }} onOpenGroup={(id) => { setParitySheet(null); openGroups(false, id); }} />}
+      {sessionToken && paritySheet === 'backup' && <BackupView token={sessionToken} onClose={() => setParitySheet(null)} />}
+      {sessionToken && paritySheet === 'storage' && <StorageView onClose={() => setParitySheet(null)} />}
+      {sessionToken && paritySheet === 'broadcasts' && <BroadcastLists token={sessionToken} onClose={() => setParitySheet(null)} />}
+      {sessionToken && paritySheet === 'channels' && <Channels token={sessionToken} onClose={() => setParitySheet(null)} />}
+      {sessionToken && paritySheet === 'scheduled' && <ScheduledMessages token={sessionToken} userId={userId} onClose={() => setParitySheet(null)} />}
+      {sessionToken && paritySheet === 'calllinks' && <CallLinks token={sessionToken} onClose={() => setParitySheet(null)} />}
+      {sessionToken && paritySheet === 'statusprivacy' && <StatusPrivacy token={sessionToken} onClose={() => setParitySheet(null)} />}
+      {paritySheet === 'language' && <LanguageSettings onClose={() => setParitySheet(null)} />}
+      {sessionToken && callLinkCode && <JoinCallLink token={sessionToken} code={callLinkCode} onClose={() => setCallLinkCode('')}
+        onCall={(owner, mode) => { setCallLinkCode(''); initiateCall(owner.id, mode === 'video' ? 'video' : 'audio'); }} />}
+      {sessionToken && inviteCode && <JoinGroupSheet code={inviteCode} token={sessionToken} onClose={() => setInviteCode('')} onJoined={(groupId) => { setInviteCode(''); openGroups(false, groupId); }} />}
+      {sessionToken && <TwoStepReminder token={sessionToken} />}
+      <AppLockGate />
       {groupsOpen && sessionToken && <GroupsView key={userId} token={sessionToken} userId={userId} revision={groupRevision} initialCreate={groupsCreate} initialGroupId={groupsInitialId} onStartGroupCall={initiateGroupCall} onClose={() => setGroupsOpen(false)} />}
       {incomingShare && userId && sessionToken && (
         <ShareSheet

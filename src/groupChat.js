@@ -66,8 +66,8 @@ export function exportGroupChat(group, messages, userId) {
   const lines = messages.map((message) => {
     const when = new Date(message.createdAt).toISOString().replace('T', ' ').slice(0, 16);
     const who = names.get(message.senderId) ?? 'Former member';
-    const content = message.content.startsWith('media:')
-      ? `<attachment: ${message.content.split(':').slice(2).join(':') || 'file'}>`
+    const content = message.content.startsWith('media:') || message.content.startsWith('emedia:')
+      ? `<attachment: ${message.content.split(':').slice(message.content.startsWith('emedia:') ? 3 : 2).join(':') || 'file'}>`
       : scheduledCallPreview(message.content) ?? message.content;
     return `[${when} UTC] ${who}: ${content}`;
   });

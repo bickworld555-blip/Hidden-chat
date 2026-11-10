@@ -1,5 +1,6 @@
 // WhatsApp-style cards in the chat: "You deleted this message" placeholders for messages deleted for everyone,
 // call cards with duration and time, and the Android floating video window filling its whole window.
+import { callUiSource } from './callUiSource.mjs';
 import test, { after, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -149,7 +150,7 @@ test('Android floating video window: the call fills the whole window, and Back o
 });
 
 test('video call: your camera off shows your profile picture, and both cameras off moves audio to the earpiece', async () => {
-  const overlay = await source('src/components/CallOverlay.jsx');
+  const overlay = await callUiSource();
   assert.ok(overlay.includes("visibility: cameraOff && !screenSharing ? 'hidden' : 'visible'"), 'the black camera surface is hidden');
   assert.ok(overlay.includes('<Avatar name={myName} initials={me?.initials ?? myName.slice(0, 2).toUpperCase()} color={me?.color} image={me?.avatar}'));
   assert.ok(overlay.includes('const bothCamerasOff = isVideo && status === \'connected\' && cameraOff && !peerVideoShown && extrasCount === 0;'));

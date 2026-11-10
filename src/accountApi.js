@@ -24,6 +24,8 @@ export const lastSeenLabel = (id) => LAST_SEEN_OPTIONS.find((option) => option.i
 
 export const getPrivacy = (sessionToken) => request(sessionToken, '/api/v1/me/privacy');
 export const setLastSeenPrivacy = (sessionToken, lastSeen) => request(sessionToken, '/api/v1/me/privacy', { method: 'PUT', body: { lastSeen } });
+// Any privacy settings at once ({ lastSeen?, online?, profilePhoto?, readReceipts? }); answers with all of them.
+export const setPrivacy = (sessionToken, patch) => request(sessionToken, '/api/v1/me/privacy', { method: 'PUT', body: patch });
 export const changePassword = (sessionToken, currentPassword, newPassword) =>
   request(sessionToken, '/api/v1/me/password', { method: 'PUT', body: { currentPassword, newPassword } });
 export const listDevices = (sessionToken) => request(sessionToken, '/api/v1/me/sessions');

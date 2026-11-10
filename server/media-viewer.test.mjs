@@ -1,3 +1,4 @@
+import { connectAccountData } from '../src/accountData.js';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -72,17 +73,19 @@ test('viewer subtitle names the day like WhatsApp', () => {
   assert.equal(formatViewerTimestamp('not a date', now), '');
 });
 
-test('starring is a local flag that survives server history merges', () => {
+test('stars follow the account list and survive server history merges', async () => {
   const store = useChatStore;
   const message = { id: 'm1', senderId: 'peer', receiverId: '', timestamp: '2026-11-06T02:05:00Z', content: 'media:abc:photo.png', status: 'delivered' };
   store.setState({ userId: '', messages: { peer: [message] } });
-  store.getState().toggleStar('peer', 'm1');
+  store.getState().applyCloudStars({ m1: 'peer' });
   assert.equal(store.getState().messages.peer[0].starred, true);
   store.getState().mergeHistory('peer', [{ ...message, status: 'read' }]);
-  assert.equal(store.getState().messages.peer[0].starred, true);
+  assert.equal(store.getState().messages.peer[0].starred, true, 'history from the server keeps the account star');
   assert.equal(store.getState().messages.peer[0].status, 'read');
-  store.getState().toggleStar('peer', 'm1');
-  assert.equal(store.getState().messages.peer[0].starred, false);
+  store.getState().applyCloudStars({});
+  assert.equal(store.getState().messages.peer[0].starred, false, 'unstarred on another device');
+  // Signing out forgets the account list (src/accountData.js).
+  await connectAccountData(null);
 });
 
 test('media viewer exposes the WhatsApp header, menu, and reply/reaction bar', () => {

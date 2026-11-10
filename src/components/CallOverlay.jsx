@@ -1,7 +1,7 @@
 import { apiFetch } from '../api.js';
 import { endCallOverHttp, ownedCallIds } from '../callEnd.js';
 import { nativeCallHeartbeat, nativeCancelIncomingCall, nativeEndCall, nativeEndCallWindow, nativeSetCallActive, nativeSetCallRinging, nativeSetCallVideoShown, nativeSetSpeaker, nativeShell, nativeShowIncomingCall, onNative } from '../native.js';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import {
   ArrowLeft,
   AudioLines,
@@ -34,7 +34,6 @@ import { useChatStore } from '../store.js';
 import { playStoredTone, stopTone } from '../sounds.js';
 import { stopVibration, vibrateFor } from '../notify.js';
 import { CALL_REACTIONS, createCallEngine, TERMINAL_STATUSES } from '../callEngine.js';
-import { getStatusLabel } from '../callStatus.js';
 import { MAX_CALL_PARTICIPANTS, PeerRegistry, canInvite, matchesContact, peersToConnect, rankCallContacts } from '../callRoom.js';
 import { DEFAULT_ICE_SERVERS, normalizeIceServers } from '../rtc.js';
 import { setAvatarCallsEnabled, useAvatarCallsEnabled } from '../appearance.js';
@@ -44,7 +43,22 @@ import { loadFaceTracker } from '../avatar/faceTracker.js';
 import { lazyComponent } from '../lazy.js';
 import { useBackHandler } from '../backStack.js';
 import { usesPhoneSound } from '../phoneSounds.js';
+import { useCallStore } from '../callStore.js';
+import { appSettings, useSetting } from '../settings.js';
+import { NOTICE_PRIORITY } from '../noticeQueue.js';
+import CallHeader from './call/CallHeader.jsx';
+import ControlCard from './call/ControlCard.jsx';
+import IncomingCallSheet from './call/IncomingCallSheet.jsx';
+import CallNotices from './call/CallNotices.jsx';
+import CallGrid from './call/CallGrid.jsx';
+import ParticipantTile from './call/ParticipantTile.jsx';
+import SpeakingIndicator from './call/SpeakingIndicator.jsx';
+import { CallStatusLabel } from './call/CallTimer.jsx';
+import { useMediaElement } from './call/useMediaElement.js';
 const AvatarStudio = lazyComponent(() => import('./AvatarStudio.jsx'));
+// Rare panels load on first use, so the call screen opens without them (WhatsApp's ViewStub pattern).
+const AddParticipantPicker = lazyComponent(() => import('./call/AddParticipantPicker.jsx'));
+const CallMoreSheet = lazyComponent(() => import('./call/CallMoreSheet.jsx'));
 
 // Android WebView draws a grey "play" poster on a <video> until its first frame; calls show nothing instead.
 const NO_POSTER = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
@@ -69,122 +83,11 @@ async function loadIceServers(sessionToken) {
   return normalizeIceServers(DEFAULT_ICE_SERVERS);
 }
 
-function useMediaElement(ref, stream, enabled = true) {
-  const tracksKey = stream?.getTracks().map((track) => track.id).join('|') ?? '';
-  useEffect(() => {
-    const element = ref.current;
-    if (!element || !enabled) return undefined;
-    let boundStream = null;
-    const bind = () => {
-      boundStream = stream ? new MediaStream(stream.getTracks()) : null;
-      element.srcObject = boundStream;
-      if (boundStream) element.play?.().catch((error) => console.warn('Call media playback failed:', error));
-    };
-    bind();
-    stream?.addEventListener('addtrack', bind);
-    stream?.addEventListener('removetrack', bind);
-    return () => {
-      stream?.removeEventListener('addtrack', bind);
-      stream?.removeEventListener('removetrack', bind);
-      if (element.srcObject === boundStream) element.srcObject = null;
-    };
-  }, [ref, stream, enabled, tracksKey]);
-}
 
 // One extra participant of a group call: their video (or avatar) plus a hidden audio element.
-function ParticipantTile({ info, snapshot, video, speakerOn }) {
-  const videoRef = useRef(null);
-  const audioRef = useRef(null);
-  const live = video && Boolean(snapshot.remoteStream) && snapshot.remoteHasVideo && !snapshot.remoteVideoOff;
-  useMediaElement(videoRef, snapshot.remoteStream, video);
-  useMediaElement(audioRef, snapshot.remoteStream);
-  useEffect(() => { if (audioRef.current) audioRef.current.muted = !speakerOn; }, [speakerOn, snapshot.remoteStream]);
-  const state = snapshot.status === 'connected' ? (snapshot.remoteMuted ? 'Muted' : '') : snapshot.status === 'reconnecting' ? 'Reconnecting…' : TERMINAL_STATUSES.includes(snapshot.status) ? 'Left' : 'Connecting…';
-  return (
-    <div className={`wa-participant ${live ? 'has-video' : ''}`}>
-      {video && <video ref={videoRef} className="wa-video-element" autoPlay playsInline muted style={{ visibility: live ? 'visible' : 'hidden' }} />}
-      {!live && <Avatar name={info.name} initials={info.initials ?? info.name?.slice(0, 2).toUpperCase()} color={info.color} image={info.avatar} size={video ? 'normal' : 'large'} />}
-      <audio ref={audioRef} autoPlay playsInline />
-      <span className="wa-participant-name">{info.name}{state ? ` · ${state}` : ''}</span>
-    </div>
-  );
-}
 
-const NOISE_KEY = 'hm:noise-cancellation';
 const SCREEN_SHARE_TIMEOUT_MS = 60_000;
 const isVideoMode = (mode) => mode === 'video';
-
-function ContactRow({ contact, onSelect }) {
-  return (
-    <li>
-      <button type="button" onClick={() => onSelect(contact)}>
-        <Avatar name={contact.name} initials={contact.initials ?? contact.name?.slice(0, 2).toUpperCase()} color={contact.color} image={contact.avatar} />
-        <span>{contact.name}{contact.username && contact.name !== `@${contact.username}` ? <small>@{contact.username}</small> : null}</span>
-      </button>
-    </li>
-  );
-}
-
-// "Add people" during a call: frequently contacted first, then everyone else, with search.
-function AddParticipantPicker({ contacts, onSelect, onClose }) {
-  const messages = useChatStore((state) => state.messages);
-  const callLogs = useChatStore((state) => state.callLogs);
-  const [searching, setSearching] = useState(false);
-  const [query, setQuery] = useState('');
-  const visible = contacts.filter((person) => matchesContact(person, query));
-  const { frequent, others } = rankCallContacts(visible, { messages, callLogs });
-  return (
-    <div className="wa-add-participant" role="dialog" aria-modal="true" aria-label="Add people">
-      <header>
-        <button type="button" className="wa-call-circle-btn" onClick={onClose} aria-label="Close"><ArrowLeft size={18} /></button>
-        {searching ? (
-          <input autoFocus className="wa-add-search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search name or @handle" aria-label="Search contacts" />
-        ) : (
-          <span className="wa-add-title"><strong>Add people</strong><small>{contacts.length} contact{contacts.length === 1 ? '' : 's'}</small></span>
-        )}
-        <button type="button" className="wa-call-circle-btn" onClick={() => { setSearching((open) => !open); setQuery(''); }} aria-label={searching ? 'Close search' : 'Search'}>{searching ? <X size={18} /> : <Search size={18} />}</button>
-      </header>
-      {contacts.length === 0 && <p>Everyone you chat with is already in this call.</p>}
-      {contacts.length > 0 && visible.length === 0 && <p>No contacts match “{query}”.</p>}
-      <div className="wa-add-scroll">
-        {frequent.length > 0 && <h3>Frequently contacted</h3>}
-        <ul>{frequent.map((contact) => <ContactRow key={contact.id} contact={contact} onSelect={onSelect} />)}</ul>
-        {others.length > 0 && <h3>{frequent.length ? 'Other contacts' : 'Contacts'}</h3>}
-        <ul>{others.map((contact) => <ContactRow key={contact.id} contact={contact} onSelect={onSelect} />)}</ul>
-      </div>
-    </div>
-  );
-}
-
-// The ⋯ sheet: quick reactions, then Share screen, Send message and Noise cancellation.
-function CallMoreSheet({ onReact, canShareScreen, screenSharing, onShareScreen, onSendMessage, noiseSuppression, onNoiseSuppression, onClose }) {
-  return (
-    <div className="wa-call-more-layer" onClick={onClose} role="presentation">
-      <div className="wa-call-more" onClick={(event) => event.stopPropagation()} role="dialog" aria-label="More call options">
-        <div className="wa-call-reactions" role="toolbar" aria-label="Send a reaction">
-          {CALL_REACTIONS.map((emoji) => <button type="button" key={emoji} onClick={() => onReact(emoji)} aria-label={`React ${emoji}`}>{emoji}</button>)}
-        </div>
-        <div className="wa-call-more-menu">
-          {canShareScreen && (
-            <button type="button" onClick={onShareScreen}>
-              <span className="wa-call-more-icon"><MonitorUp size={20} /></span>
-              <span>{screenSharing ? 'Stop sharing screen' : 'Share screen'}</span>
-            </button>
-          )}
-          <button type="button" onClick={onSendMessage}>
-            <span className="wa-call-more-icon"><MessageSquareText size={20} /></span>
-            <span>Send message</span>
-          </button>
-          <button type="button" role="switch" aria-checked={noiseSuppression} onClick={() => onNoiseSuppression(!noiseSuppression)}>
-            <span className="wa-call-more-icon"><AudioLines size={20} /></span>
-            <span>Noise cancellation</span>
-            <span className={`wa-switch${noiseSuppression ? ' on' : ''}`} aria-hidden="true"><span /></span>
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 // Reactions float up from the bottom and fade; mine and everyone else's.
 function FloatingReactions({ items }) {
@@ -229,8 +132,11 @@ export default function CallOverlay({
   const [canFlip, setCanFlip] = useState(false);
   const [filterEffect, setFilterEffect] = useState(0);
   const [remoteRinging, setRemoteRinging] = useState(false);
-  const [elapsed, setElapsed] = useState(0);
 
+  useLayoutEffect(() => {
+    useCallStore.getState().reset();
+    return () => useCallStore.getState().reset();
+  }, []);
   const peerPresence = useChatStore((state) => state.presence?.[call.peerId]);
   const isOnline = remoteRinging || peerPresence === 'online';
 
@@ -313,7 +219,8 @@ export default function CallOverlay({
   // Room peers beyond the primary one: engines in a registry, their snapshots in state for rendering.
   const extrasRef = useRef(new PeerRegistry());
   const [extraSnapshots, setExtraSnapshots] = useState({});
-  const [notice, setNotice] = useState('');
+  // In-call notices are queued by priority and shown one at a time (CallNotices).
+  const setNotice = (text, priority = NOTICE_PRIORITY.NORMAL) => { if (text) useCallStore.getState().notify(text, { priority }); };
   const [addOpen, setAddOpen] = useState(false);
   const chats = useChatStore((state) => state.chats);
   const userId = useChatStore((state) => state.userId);
@@ -436,7 +343,7 @@ export default function CallOverlay({
     queue.current = next;
     const participants = [...new Set([userId, call.peerId, ...extrasRef.current.peerIds, ...queue.accepted])];
     const sent = latest.current.client?.send({ type: 'call:invite', roomId: call.roomId ?? call.id, targetId: next, mode: callMode, participants });
-    setNotice(sent === false ? 'You are offline.' : `Inviting ${nameOf(next)}…`);
+    setNotice(sent === false ? 'You are offline.' : `Inviting ${nameOf(next)}…`, sent === false ? NOTICE_PRIORITY.HIGH : NOTICE_PRIORITY.NORMAL);
   }
   useEffect(() => {
     if (status !== 'connected' || inviteQueueRef.current || !call.pendingInvites?.length) return;
@@ -486,12 +393,6 @@ export default function CallOverlay({
     const timer = setTimeout(() => finished.forEach(dropRoomPeer), 2000);
     return () => clearTimeout(timer);
   }, [extraSnapshots]);
-
-  useEffect(() => {
-    if (!notice) return undefined;
-    const timer = setTimeout(() => setNotice(''), 4000);
-    return () => clearTimeout(timer);
-  }, [notice]);
 
   useEffect(() => {
     if (!isVideo || !navigator.mediaDevices?.enumerateDevices) return;
@@ -579,15 +480,6 @@ export default function CallOverlay({
   }, [call.direction, status, answered, pageHidden]);
 
   useEffect(() => {
-    if (status !== 'connected' && status !== 'reconnecting') return undefined;
-    const startedAt = snapshot.connectedAt || Date.now();
-    const tick = () => setElapsed((Date.now() - startedAt) / 1000);
-    tick();
-    const timer = setInterval(tick, 1000);
-    return () => clearInterval(timer);
-  }, [status, snapshot.connectedAt]);
-
-  useEffect(() => {
     if (!terminal) return undefined;
     const timer = setTimeout(() => latest.current.onClose(), CLOSE_DELAY_MS[status] ?? CLOSE_DELAY_MS.default);
     return () => clearTimeout(timer);
@@ -650,7 +542,7 @@ export default function CallOverlay({
     setAddOpen(false);
     const participants = [userId, call.peerId, ...extrasRef.current.peerIds];
     const sent = latest.current.client?.send({ type: 'call:invite', roomId: call.roomId ?? call.id, targetId: contact.id, mode: callMode, participants });
-    setNotice(sent === false ? 'You are offline.' : `Inviting ${contact.name}…`);
+    setNotice(sent === false ? 'You are offline.' : `Inviting ${contact.name}…`, sent === false ? NOTICE_PRIORITY.HIGH : NOTICE_PRIORITY.NORMAL);
   }
 
   const toggleMute = () => allEngines().forEach((engine) => engine.setMuted(!muted));
@@ -687,12 +579,10 @@ export default function CallOverlay({
     if (sent) showReaction(emoji, { mine: true, label: `You reacted ${emoji}` });
     setMoreOpen(false);
   };
-  const [noisePreference, setNoisePreference] = useState(() => {
-    try { return localStorage.getItem(NOISE_KEY) !== 'off'; } catch { return true; }
-  });
+  // A device setting in the settings registry (src/settings.js), migrated from its old key.
+  const noisePreference = useSetting('calls.noiseCancellation');
   const setNoiseCancellation = (enabled) => {
-    setNoisePreference(enabled);
-    try { localStorage.setItem(NOISE_KEY, enabled ? 'on' : 'off'); } catch { /* private mode */ }
+    appSettings().set('calls.noiseCancellation', enabled).catch(() => {});
     allEngines().forEach((engine) => engine.setNoiseSuppression(enabled));
   };
   // Capture starts with suppression on; a saved "off" is applied once each leg is up.
@@ -844,7 +734,6 @@ export default function CallOverlay({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [reactionSignature]);
   const canSwapTile = !groupGrid || minimized;
-  const label = getStatusLabel({ status, direction: call.direction, mode: callMode, isOnline, answered, elapsed, group: Boolean(call.invite) || extraPeers.length > 0 });
   const incomingRinging = call.direction === 'incoming' && status === 'idle';
   // The remote tile shows the peer's avatar until their video is live, and again whenever they cover their camera.
   const remoteVideoLive = Boolean(remoteStream) && remoteHasVideo && !remoteVideoOff;
@@ -853,6 +742,34 @@ export default function CallOverlay({
   const remoteJoined = Boolean(remoteStream) && (remoteVideoLive || status === 'connected' || status === 'reconnecting');
   const selfFull = swapped || !remoteJoined;
   const filterStyles = ['', 'sepia(0.35) contrast(1.05)', 'hue-rotate(180deg)', 'grayscale(1)'];
+
+  // --- Call store: each part of the screen reads only its slice (see src/callStore.js). ---
+  const canAddPeople = canInvite(1 + extrasRef.current.size);
+  useLayoutEffect(() => {
+    const store = useCallStore.getState();
+    store.publish('header', {
+      title: call.groupName ? call.groupName : extraPeers.length ? `${peerName} +${extraPeers.length}` : peerName,
+      status, direction: call.direction, mode: callMode, isOnline, answered,
+      group: Boolean(call.invite) || extraPeers.length > 0,
+      connectedAt: snapshot.connectedAt || 0,
+      terminal, incomingRinging,
+      canAdd: canAddPeople && status === 'connected',
+      addTitle: canAddPeople ? 'Add participant' : `Up to ${MAX_CALL_PARTICIPANTS} people`,
+    });
+    store.publish('controls', {
+      mode: callMode, status, terminal, incomingRinging, muted, cameraOff, speakerOn, nativeRouting, speakerLabel,
+      moreOpen, videoRequest, screenSharing, canShareScreen,
+    });
+  });
+  // Buttons in the parts call back into the latest handlers of this render.
+  useLayoutEffect(() => {
+    useCallStore.getState().setActions({
+      minimize: minimizeCall,
+      openAddParticipant: () => setAddOpen(true),
+      toggleMore: () => setMoreOpen((open) => !open),
+      toggleCamera, toggleSpeaker, toggleMute, endCall, acceptCall, requestVideo, cancelVideoRequest, toggleScreenShare,
+    });
+  });
 
   return (
     <div
@@ -867,7 +784,7 @@ export default function CallOverlay({
     >
       {minimized && (
         <div className="wa-pip-bar" role="toolbar" aria-label="Call controls">
-          <span className="wa-pip-text"><strong>{peerName}</strong><small>{label}</small></span>
+          <span className="wa-pip-text"><strong>{peerName}</strong><small><CallStatusLabel /></small></span>
           <button type="button" className="wa-pip-btn" onClick={toggleMute} aria-label={muted ? 'Unmute microphone' : 'Mute microphone'}>{muted ? <MicOff size={16} /> : <Mic size={16} />}</button>
           <button type="button" className="wa-pip-btn" onClick={restoreCall} aria-label="Return to call"><Maximize2 size={16} /></button>
           <button type="button" className="wa-pip-btn end" onClick={endCall} aria-label="End call"><PhoneOff size={16} /></button>
@@ -875,122 +792,19 @@ export default function CallOverlay({
       )}
 
       <div className={`wa-call-screen ${isVideo ? 'is-video' : 'is-audio'}`} role="dialog" aria-modal={!minimized} aria-label={`${callMode} call with ${peerName}`}>
-        {/* VIDEO CALL VIEWPORT */}
+        {/* VIDEO CALL VIEWPORT (CallGrid: the remote tile, your own floating tile, other participants) */}
         {isVideo && (
-          <div className={`wa-video-stage ${groupGrid ? 'is-group' : ''}`} ref={stageRef}>
-            {/* Remote video tile (Full by default, or PiP when swapped) */}
-            <div
-              className={`wa-video-tile ${swapped ? 'is-pip' : 'is-full'} ${!remoteVideoLive ? 'waiting-remote' : ''}`}
-              {...(canSwapTile && swapped && remoteStream ? tileProps : {})}
-              aria-label={canSwapTile && swapped ? 'Swap remote video to full screen' : undefined}
-              title={canSwapTile && swapped ? 'Tap to enlarge' : undefined}
-            >
-              <video
-                ref={remoteVideoRef}
-                poster={NO_POSTER}
-                className={`wa-video-element remote-video ${remoteScreen ? 'is-screen' : ''}`}
-                autoPlay
-                playsInline
-                muted
-                style={{ filter: filterStyles[filterEffect], visibility: remoteVideoLive ? 'visible' : 'hidden' }}
-              />
-              {remoteScreen && remoteVideoLive && <span className="wa-share-badge"><MonitorUp size={13} /> {peerName} is sharing their screen</span>}
-              {remoteAvatar && !remoteScreen && remoteVideoLive && <span className="wa-share-badge"><ScanFace size={13} /> {peerName} is using a cartoon avatar</span>}
-              {!remoteVideoLive && (
-                <div className="wa-video-waiting-placeholder">
-                  <div className="wa-waiting-avatar">
-                    <Avatar name={peerName} initials={peer?.initials ?? peerName.slice(0, 2).toUpperCase()} color={peer?.color} image={peer?.avatar} size="large" />
-                  </div>
-                  <strong className="wa-waiting-name">{peerName}</strong>
-                  <span className="wa-waiting-status">{remoteStream && status === 'connected' ? (remoteVideoOff ? 'Camera off' : 'Voice only') : label}</span>
-                </div>
-              )}
-              {remoteMuted && status === 'connected' && (
-                <span className="wa-remote-muted-badge" title={`${peerName} is muted`}><MicOff size={14} /></span>
-              )}
-              {canSwapTile && swapped && remoteStream && (
-                <div className="wa-pip-label-overlay">Tap to swap</div>
-              )}
-              {groupGrid && <span className="wa-grid-participant-name">{peerName}</span>}
-            </div>
-
-            {/* Local video tile (PiP by default when remote is connected, or Full while waiting/swapped) */}
-            <div
-              className={`wa-video-tile ${selfFull ? 'is-full' : 'is-pip'} ${cameraOff ? 'camera-off' : ''}`}
-              {...(canSwapTile && !selfFull ? tileProps : {})}
-              aria-label={canSwapTile && !selfFull ? 'Swap self view to full screen' : undefined}
-              title={canSwapTile && !selfFull ? 'Tap to enlarge' : undefined}
-            >
-              <video
-                ref={localVideoRef}
-                poster={NO_POSTER}
-                className={`wa-video-element local-video ${facing === 'user' && !screenSharing && !videoFilter ? 'mirror' : ''} ${screenSharing ? 'is-screen' : ''}`}
-                autoPlay
-                playsInline
-                muted
-                // Android draws video on its own surface above the page, so a camera that is off must be hidden or
-                // it shows as a black box over the profile picture.
-                style={{ filter: filterStyles[filterEffect], visibility: cameraOff && !screenSharing ? 'hidden' : 'visible' }}
-              />
-              {screenSharing && <span className="wa-share-badge mine"><MonitorUp size={13} /> You're sharing your screen</span>}
-              {!screenSharing && avatarStatus === 'loading' && <span className="wa-share-badge mine"><ScanFace size={13} /> Loading face tracker…</span>}
-              {!screenSharing && videoFilter && (
-                <span className="wa-share-badge mine wa-avatar-badge" title="Avatar rendering: frames per second and tracking time per frame on this device">
-                  <ScanFace size={13} /> {personaCharacter(persona).name} · {avatarStats.fps} fps · {avatarStats.latencyMs} ms{avatarStats.tracking ? '' : ' · looking for your face'}
-                </span>
-              )}
-              {cameraOff && !screenSharing && (
-                <div className="wa-video-off-notice">
-                  <Avatar name={myName} initials={me?.initials ?? myName.slice(0, 2).toUpperCase()} color={me?.color} image={me?.avatar} size={selfFull ? 'large' : 'normal'} />
-                  <strong className="wa-video-off-name">{selfFull ? myName : 'You'}</strong>
-                  <span className="wa-video-off-status"><VideoOff size={13} aria-hidden="true" /> Camera off</span>
-                </div>
-              )}
-              {canSwapTile && !selfFull && (
-                <div className="wa-pip-label-overlay">Tap to swap</div>
-              )}
-              {groupGrid && <span className="wa-grid-participant-name">You{muted ? ' · Muted' : ''}</span>}
-            </div>
-            {extraPeers.map(({ peerId, info, snapshot: item }) => (
-              <ParticipantTile key={peerId} info={info} snapshot={item} video speakerOn={!audioMuted} />
-            ))}
-          </div>
+          <CallGrid
+            stageRef={stageRef} groupGrid={groupGrid} swapped={swapped} remoteVideoLive={remoteVideoLive} canSwapTile={canSwapTile}
+            remoteStream={remoteStream} tileProps={tileProps} remoteVideoRef={remoteVideoRef} remoteScreen={remoteScreen}
+            filter={filterStyles[filterEffect]} peerName={peerName} remoteAvatar={remoteAvatar} peer={peer} status={status}
+            remoteVideoOff={remoteVideoOff} remoteMuted={remoteMuted} extraPeers={extraPeers} audioMuted={audioMuted}
+            self={{ selfFull, cameraOff, localVideoRef, facing, screenSharing, videoFilter, avatarStatus, avatarStats, persona, myName, me, muted }}
+          />
         )}
 
         {/* TOP HEADER BAR */}
-        <header className="wa-call-header">
-          {incomingRinging || terminal ? (
-            <span className="wa-call-header-spacer" />
-          ) : (
-            <button
-              type="button"
-              className="wa-call-circle-btn"
-              onClick={minimizeCall}
-              aria-label="Minimize call"
-              title="Minimize call"
-            >
-              <Minimize2 size={20} />
-            </button>
-          )}
-
-          <div className="wa-call-header-info">
-            <h1 className="wa-call-peer-title">{call.groupName ? call.groupName : extraPeers.length ? `${peerName} +${extraPeers.length}` : peerName}</h1>
-            <span className="wa-call-status-badge">{!terminal && <Lock size={11} className="wa-call-lock" aria-label="End-to-end encrypted" />}{label}</span>
-          </div>
-
-          {!incomingRinging && !terminal ? (
-            <button
-              type="button"
-              className="wa-call-circle-btn"
-              onClick={() => setAddOpen(true)}
-              disabled={!canInvite(1 + extrasRef.current.size) || status !== 'connected'}
-              title={canInvite(1 + extrasRef.current.size) ? 'Add participant' : `Up to ${MAX_CALL_PARTICIPANTS} people`}
-              aria-label="Add participant"
-            >
-              <UserPlus size={20} />
-            </button>
-          ) : <span className="wa-call-header-spacer" />}
-        </header>
+        <CallHeader />
 
         {/* FLOATING SIDE TOOLBAR (VIDEO ONLY) */}
         {isVideo && !incomingRinging && (
@@ -1075,6 +889,8 @@ export default function CallOverlay({
                 image={peer?.avatar}
                 size="large"
               />
+              {/* Grows with the other person's voice, drawn on a canvas (no re-renders). */}
+              {status === 'connected' && <SpeakingIndicator stream={remoteStream} />}
             </div>
           </div>
         )}
@@ -1106,8 +922,7 @@ export default function CallOverlay({
         )}
 
         {/* ERROR / ROOM NOTICE */}
-        {error && <div className="wa-call-error-toast" role="alert">{error}</div>}
-        {!error && notice && <div className="wa-call-error-toast is-notice" role="status">{notice}</div>}
+        <CallNotices error={error} />
 
         {addOpen && (
           <AddParticipantPicker
@@ -1145,170 +960,9 @@ export default function CallOverlay({
           </div>
         )}
 
-        {/* INCOMING CALL ACTIONS */}
-        {incomingRinging ? (
-          <div className="wa-incoming-call-actions">
-            <button type="button" className="wa-incoming-btn decline" onClick={endCall}>
-              <span className="wa-incoming-icon"><PhoneOff size={28} /></span>
-              <span className="wa-incoming-label">Decline</span>
-            </button>
-            <button type="button" className="wa-incoming-btn accept" onClick={acceptCall}>
-              <span className="wa-incoming-icon"><Phone size={28} /></span>
-              <span className="wa-incoming-label">Accept</span>
-            </button>
-          </div>
-        ) : isVideo ? (
-          /* VIDEO CALL BOTTOM FLOATING DOCK */
-          <footer className="wa-video-bottom-dock">
-            <button
-              type="button"
-              className={`wa-dock-btn ${moreOpen ? 'active' : ''}`}
-              onClick={() => setMoreOpen((open) => !open)}
-              title="More options"
-              aria-label="More options"
-              aria-expanded={moreOpen}
-            >
-              <MoreHorizontal size={22} />
-            </button>
-
-            <button
-              type="button"
-              className={`wa-dock-btn ${cameraOff ? 'active' : ''}`}
-              onClick={toggleCamera}
-              title={cameraOff ? 'Turn camera on' : 'Turn camera off'}
-              aria-label={cameraOff ? 'Turn camera on' : 'Turn camera off'}
-            >
-              {cameraOff ? <VideoOff size={22} /> : <Video size={22} />}
-            </button>
-
-            <button
-              type="button"
-              className={`wa-dock-btn ${nativeRouting ? (speakerOn ? 'active' : '') : (!speakerOn ? 'active' : '')}`}
-              onClick={toggleSpeaker}
-              title={speakerLabel}
-              aria-label={speakerLabel}
-              aria-pressed={speakerOn}
-            >
-              {speakerOn || nativeRouting ? <Volume2 size={22} /> : <VolumeX size={22} />}
-            </button>
-
-            <button
-              type="button"
-              className={`wa-dock-btn ${muted ? 'active' : ''}`}
-              onClick={toggleMute}
-              title={muted ? 'Unmute microphone' : 'Mute microphone'}
-              aria-label={muted ? 'Unmute microphone' : 'Mute microphone'}
-            >
-              {muted ? <MicOff size={22} /> : <Mic size={22} />}
-            </button>
-
-            <button
-              type="button"
-              className="wa-dock-btn end-call"
-              onClick={endCall}
-              title={terminal ? 'Close' : 'End call'}
-              aria-label={terminal ? 'Close' : 'End call'}
-            >
-              <PhoneOff size={22} />
-            </button>
-          </footer>
-        ) : (
-          /* AUDIO CALL BOTTOM SHEET CARD (WHATSAPP 2-ROW GRID) */
-          <footer className="wa-audio-bottom-sheet">
-            <div className="wa-audio-actions-grid">
-              {/* Row 1 */}
-              <button
-                type="button"
-                className={`wa-action-cell ${speakerOn ? 'selected' : ''}`}
-                onClick={toggleSpeaker}
-                aria-label={speakerLabel}
-                aria-pressed={speakerOn}
-              >
-                <span className="wa-action-bubble">
-                  {speakerOn || nativeRouting ? <Volume2 size={24} /> : <VolumeX size={24} />}
-                </span>
-                <span className="wa-action-name">Speaker</span>
-              </button>
-
-              <button
-                type="button"
-                className={`wa-action-cell ${videoRequest === 'outgoing' ? 'selected' : ''}`}
-                onClick={videoRequest === 'outgoing' ? cancelVideoRequest : requestVideo}
-                disabled={status !== 'connected' && status !== 'reconnecting'}
-                title={status === 'connected' ? 'Ask to switch to video' : 'Available once connected'}
-              >
-                <span className="wa-action-bubble">
-                  <Video size={24} />
-                </span>
-                <span className="wa-action-name">Video</span>
-              </button>
-
-              <button
-                type="button"
-                className={`wa-action-cell ${muted ? 'selected' : ''}`}
-                onClick={toggleMute}
-              >
-                <span className="wa-action-bubble">
-                  {muted ? <MicOff size={24} /> : <Mic size={24} />}
-                </span>
-                <span className="wa-action-name">Mute</span>
-              </button>
-
-              {/* Row 2 */}
-              <button
-                type="button"
-                className={`wa-action-cell ${moreOpen ? 'selected' : ''}`}
-                onClick={() => setMoreOpen((open) => !open)}
-                title="More options"
-                aria-expanded={moreOpen}
-              >
-                <span className="wa-action-bubble">
-                  <MoreHorizontal size={24} />
-                </span>
-                <span className="wa-action-name">More</span>
-              </button>
-
-              <button
-                type="button"
-                className={`wa-action-cell ${screenSharing ? 'selected' : ''}`}
-                title={canShareScreen ? (screenSharing ? 'Stop sharing screen' : 'Share your screen') : 'Screen sharing is not available in this browser'}
-                onClick={toggleScreenShare}
-                disabled={!canShareScreen || status !== 'connected'}
-              >
-                <span className="wa-action-bubble">
-                  <MonitorUp size={22} />
-                </span>
-                <span className="wa-action-name">{screenSharing ? 'Stop share' : 'Share screen'}</span>
-              </button>
-
-              {isVideo && (
-                <button
-                  type="button"
-                  className={`wa-action-cell ${avatarOn ? 'selected' : ''}`}
-                  title={avatarOn ? 'Send my camera instead of the avatar' : persona ? 'Animation Video Call: send my cartoon avatar' : 'Set up your cartoon avatar'}
-                  onClick={toggleAvatar}
-                  aria-pressed={avatarOn}
-                >
-                  <span className="wa-action-bubble">
-                    <ScanFace size={22} />
-                  </span>
-                  <span className="wa-action-name">{avatarOn ? 'Avatar on' : 'Avatar'}</span>
-                </button>
-              )}
-
-              <button
-                type="button"
-                className="wa-action-cell danger"
-                onClick={endCall}
-              >
-                <span className="wa-action-bubble end-btn">
-                  <PhoneOff size={24} />
-                </span>
-                <span className="wa-action-name">End</span>
-              </button>
-            </div>
-          </footer>
-        )}
+        {/* INCOMING CALL ACTIONS, then the controls (each reads its own store slice) */}
+        <IncomingCallSheet />
+        <ControlCard />
       </div>
     </div>
   );

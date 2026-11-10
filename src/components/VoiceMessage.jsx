@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Mic, Pause, Play } from 'lucide-react';
+import { AudioLines, Mic, Pause, Play } from 'lucide-react';
+import { checkTranscription, transcribe, useTranscripts } from '../transcripts.js';
 import { formatClock, voiceMimeFromDisposition, waveformPeaks } from '../voice.js';
 import { loadMediaBlob, loadMediaInfo } from '../media.js';
 import { playExclusiveAudio, stopExclusiveAudio } from '../audioManager.js';
@@ -11,6 +12,12 @@ const SPEEDS = [1, 1.5, 2];
 // given to the recipient only, and runs the first time they play it.
 export default function VoiceMessage({ id, seconds, sessionToken, sender, played = false, onPlayed, children }) {
   const audioRef = useRef(null);
+  // Transcript (Android 13+, made on the phone): shown under the voice note once requested.
+  const transcript = useTranscripts((state) => state.texts[id]);
+  const transcribing = useTranscripts((state) => Boolean(state.pending[id]));
+  const transcriptError = useTranscripts((state) => state.errors[id]);
+  const canTranscribe = useTranscripts((state) => state.available);
+  useEffect(() => { checkTranscription(); }, []);
   const urlRef = useRef('');
   const speedRef = useRef(1);
   const [playing, setPlaying] = useState(false);
@@ -124,8 +131,15 @@ export default function VoiceMessage({ id, seconds, sessionToken, sender, played
           {(playing || current > 0) && (
             <button type="button" className="voice-speed" onClick={cycleSpeed} aria-label="Change playback speed">{SPEEDS[speedIndex]}×</button>
           )}
+          {canTranscribe && !transcript && (
+            <button type="button" className="voice-transcribe" onClick={() => transcribe(id, sessionToken)} disabled={transcribing} aria-label="Transcribe voice message">
+              <AudioLines size={14} aria-hidden="true" /> {transcribing ? 'Transcribing…' : 'Transcribe'}
+            </button>
+          )}
           {children}
         </div>
+        {transcript && <p className="voice-transcript">{transcript}</p>}
+        {transcriptError && !transcript && <span className="attachment-error">{transcriptError}</span>}
         {error && <span className="attachment-error">{error}</span>}
       </div>
     </div>

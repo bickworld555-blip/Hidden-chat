@@ -1,11 +1,26 @@
 import { apiFetch } from '../api.js';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ArrowLeft, BarChart3, Bell, BellOff, CalendarClock, CalendarDays, ChevronDown, Download, Flag, LockKeyhole, LogOut, MinusCircle, Paperclip,
-  Phone, Search, SendHorizontal, Timer, Trash2, UserPlus, Users, Video, X,
+  ArrowLeft, BarChart3, Bell, BellOff, CalendarClock, CalendarDays, Check, ChevronDown, Copy, Download, Flag, Link2, LockKeyhole, LogOut, Megaphone, MinusCircle, Paperclip,
+  Pencil, Phone, Pin, PinOff, Search, SendHorizontal, Star, Sticker, Timer, Trash2, UserPlus, Users, Video, X,
 } from 'lucide-react';
+import { editGroupMessage } from '../parityApi.js';
+import { groupChatKey, loadPins, setMessagePinned, toggleStar, useAccountData } from '../accountData.js';
+import { canEditMessage } from '../selection.js';
+import { appSettings } from '../settings.js';
+import { prepareForSend } from '../mediaQuality.js';
+import { isStickerContent, stickerContent } from '../stickers.js';
+import { previewFor } from '../store.js';
+import { StickerMessage, StickerPalette } from './parity/Stickers.jsx';
+import { ComposerAssist, MentionText } from './parity/ComposerAssist.jsx';
+import PinnedBanner from './parity/PinnedBanner.jsx';
+import { ProductCard, parseProductContent } from './parity/ProductCard.jsx';
+import { GroupAdminSettings, JoinGroupSheet, MemberAdminActions, inviteCodeFrom } from './parity/GroupAdmin.jsx';
 import { searchPeople } from '../contactsApi.js';
 import { uploadFile } from '../upload.js';
+import { attachmentContent, sealForUpload } from '../mediaCrypto.js';
+import { groupEncryption, openGroupMessages, sendGroupContent } from '../e2e/client.js';
+import { isMediaContent } from '../media.js';
 import { MAX_CALL_PARTICIPANTS } from '../callRoom.js';
 import { groupPreviewText, unreadBadge } from '../groupRows.js';
 import { exportGroupChat, parseScheduledCall, scheduledCallContent, senderColor, withDaySeparators } from '../groupChat.js';
@@ -17,11 +32,25 @@ import { nativeClearMessageNotifications, nativeShell } from '../native.js';
 import { EventBubble, EventComposer, PollBubble, PollComposer } from './RichMessages.jsx';
 import { parsePollContent } from '../polls.js';
 import { parseEventContent } from '../calendarEvents.js';
-import LinkText from './LinkText.jsx';
 
 const DELETE_WINDOW_MS = 24 * 60 * 60 * 1000;
 
-async function groupRequest(token, path, { method = 'GET', body, signal } = {}) {
+// Group messages are end-to-end encrypted on the way out (Sender Keys, src/e2e/client.js) and opened on the way in.
+const GROUP_MESSAGES = /^\/([^/]+)\/messages$/;
+async function groupRequest(token, path, options = {}) {
+  const groupId = GROUP_MESSAGES.exec(path)?.[1];
+  if (groupId && options.method === 'POST' && typeof options.body?.content === 'string') {
+    const id = decodeURIComponent(groupId);
+    const plain = options.body.content;
+    const row = await sendGroupContent(id, plain, (content) => rawGroupRequest(token, path, { ...options, body: { ...options.body, content } }));
+    return row ? { ...row, content: plain } : row;
+  }
+  const result = await rawGroupRequest(token, path, options);
+  if (groupId && (options.method ?? 'GET') === 'GET' && Array.isArray(result)) return openGroupMessages(decodeURIComponent(groupId), result);
+  return result;
+}
+
+async function rawGroupRequest(token, path, { method = 'GET', body, signal } = {}) {
   const response = await apiFetch(`/api/v1/groups${path}`, {
     method,
     headers: { Authorization: `Bearer ${token}`, ...(body ? { 'Content-Type': 'application/json' } : {}) },
@@ -30,7 +59,10 @@ async function groupRequest(token, path, { method = 'GET', body, signal } = {}) 
   });
   if (!response.ok) {
     const data = await response.json().catch(() => ({}));
-    throw new Error(data.error || `Request failed (${response.status}).`);
+    const error = new Error(data.error || `Request failed (${response.status}).`);
+    error.status = response.status;
+    error.data = data;
+    throw error;
   }
   return response.status === 204 ? null : response.json();
 }
@@ -139,6 +171,8 @@ export default function GroupsView({ token, userId, revision, onClose, onStartGr
   const [selected, setSelected] = useState(initialCreate ? '' : initialGroupId);
   const [group, setGroup] = useState(null);
   const [messages, setMessages] = useState([]);
+  // Whether every member can receive end-to-end encrypted messages; otherwise the group shows a warning.
+  const [groupSecurity, setGroupSecurity] = useState(null);
   const [creating, setCreating] = useState(initialCreate);
   const [settings, setSettings] = useState(false);
   const [infoTab, setInfoTab] = useState('members');
@@ -154,6 +188,13 @@ export default function GroupsView({ token, userId, revision, onClose, onStartGr
   const [results, setResults] = useState([]);
   const [picked, setPicked] = useState([]);
   const [draft, setDraft] = useState('');
+  const [caret, setCaret] = useState(0);
+  const [activeMessageId, setActiveMessageId] = useState('');
+  const [editing, setEditing] = useState(null);
+  const [stickersOpen, setStickersOpen] = useState(false);
+  const [joinInput, setJoinInput] = useState(null);
+  const [joinCode, setJoinCode] = useState('');
+  const draftRef = useRef(null);
   const [uploading, setUploading] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -165,6 +206,14 @@ export default function GroupsView({ token, userId, revision, onClose, onStartGr
   const mutedGroupIds = useMutedGroups(userId);
   const groupPath = selected ? `/${encodeURIComponent(selected)}` : '';
   const muted = Boolean(selected && mutedGroupIds.includes(selected));
+  const chatKey = selected ? groupChatKey(selected) : '';
+  const pins = useAccountData((state) => (chatKey ? state.pins[chatKey] : null));
+  const starred = useAccountData((state) => state.starred);
+  const pinnedIds = useMemo(() => new Set((pins ?? []).map((pin) => pin.messageId)), [pins]);
+  useEffect(() => {
+    if (chatKey && token) loadPins(chatKey).catch(() => {});
+  }, [chatKey, token, revision]);
+  useEffect(() => { setActiveMessageId(''); setEditing(null); setStickersOpen(false); }, [selected]);
 
   const refresh = useCallback(async (signal) => {
     const list = await groupRequest(token, '', { signal });
@@ -185,6 +234,7 @@ export default function GroupsView({ token, userId, revision, onClose, onStartGr
     setGroups(list);
     setGroup(details);
     setMessages(history);
+    setGroupSecurity(selected ? await groupEncryption(selected) : null);
   }, [token, selected, groupPath]);
 
   useEffect(() => {
@@ -253,8 +303,12 @@ export default function GroupsView({ token, userId, revision, onClose, onStartGr
     setError('');
     setUploading(1);
     try {
-      const data = await uploadFile(file, { groupId: selected, sessionToken: token, onProgress: (done, total) => setUploading(Math.max(1, Math.round((done / total) * 100))) });
-      await groupRequest(token, `${groupPath}/messages`, { method: 'POST', body: { content: `media:${data.id}:${data.filename || file.name || 'attachment'}` } });
+      const prepared = await prepareForSend(file, file.name || 'attachment', appSettings().get('media.uploadQuality'));
+      const plain = prepared.blob instanceof File ? prepared.blob : new File([prepared.blob], prepared.filename, { type: prepared.blob.type });
+      // Encrypted on this device before upload; the key travels in the end-to-end encrypted group message.
+      const { upload, descriptor } = await sealForUpload(plain);
+      const data = await uploadFile(upload, { groupId: selected, sessionToken: token, onProgress: (done, total) => setUploading(Math.max(1, Math.round((done / total) * 100))) });
+      await groupRequest(token, `${groupPath}/messages`, { method: 'POST', body: { content: attachmentContent(data.id, descriptor ? prepared.filename || 'attachment' : data.filename || prepared.filename || 'attachment', descriptor) } });
       await refresh(new AbortController().signal);
     } catch (caught) {
       setError(caught.message);
@@ -326,6 +380,49 @@ export default function GroupsView({ token, userId, revision, onClose, onStartGr
     setNotice('Chat exported.');
   };
 
+  const sendText = (content) => perform(async () => {
+    await groupRequest(token, `${groupPath}/messages`, { method: 'POST', body: { content } });
+  });
+
+  function submitDraft() {
+    const content = draft.trim();
+    if (!content) return;
+    if (editing) {
+      const target = editing;
+      setEditing(null);
+      setDraft('');
+      if (content !== target.content) perform(() => editGroupMessage(token, selected, target.id, content));
+      return;
+    }
+    perform(async () => {
+      await groupRequest(token, `${groupPath}/messages`, { method: 'POST', body: { content } });
+      setDraft('');
+    });
+  }
+
+  function startEdit(message) {
+    setActiveMessageId('');
+    setStickersOpen(false);
+    setEditing(message);
+    setDraft(message.content);
+    requestAnimationFrame(() => draftRef.current?.focus());
+  }
+
+  const describePinned = (messageId) => {
+    const found = messages.find((item) => item.id === messageId);
+    return found ? previewFor(found.content) : 'Pinned message';
+  };
+  const showMessage = (messageId) => {
+    const node = listRef.current?.querySelector(`[data-group-message-id="${CSS.escape(messageId)}"]`);
+    node?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    node?.classList.add('flash-highlight');
+    setTimeout(() => node?.classList.remove('flash-highlight'), 1600);
+  };
+  const canPin = group && (group.role === 'admin' || !group.onlyAdminsEdit);
+  const canSend = group && (group.role === 'admin' || !(group.onlyAdminsSend || group.isAnnouncement));
+  const usernames = useMemo(() => new Set((group?.members ?? []).map((member) => member.username.toLowerCase())), [group?.members]);
+  const ownUsername = group?.members.find((member) => member.id === userId)?.username;
+
   const openMemberSearch = () => {
     setInfoTab('members');
     setTimeout(() => memberSearchRef.current?.focus(), 0);
@@ -335,7 +432,7 @@ export default function GroupsView({ token, userId, revision, onClose, onStartGr
   const creator = group?.members.find((member) => member.id === group.createdBy);
   const sortedMembers = group ? [...group.members].sort((left, right) => (left.id === userId ? -1 : right.id === userId ? 1 : 0)) : [];
   const visibleMembers = sortedMembers.filter((member) => `${member.name} ${member.username}`.toLowerCase().includes(memberFilter.trim().toLowerCase()));
-  const mediaMessages = messages.filter((message) => message.content.startsWith('media:'));
+  const mediaMessages = messages.filter((message) => isMediaContent(message.content));
 
   return (
     <div className="groups-overlay" role="dialog" aria-modal="true" aria-label="Groups">
@@ -377,6 +474,23 @@ export default function GroupsView({ token, userId, revision, onClose, onStartGr
             <button type="button" className="groups-new" onClick={() => { setCreating(true); setName(''); setPicked([]); }}>
               <span className="groups-new-icon"><UserPlus size={22} /></span><strong>New group</strong>
             </button>
+            {joinInput === null ? (
+              <button type="button" className="groups-new" onClick={() => setJoinInput('')}>
+                <span className="groups-new-icon"><Link2 size={22} /></span><strong>Join with an invite link</strong>
+              </button>
+            ) : (
+              <form className="hm-join-form" onSubmit={(event) => {
+                event.preventDefault();
+                const code = inviteCodeFrom(joinInput);
+                if (!code) { setError('Paste a Hidden Messenger group invite link.'); return; }
+                setJoinCode(code);
+                setJoinInput(null);
+              }}>
+                <input autoFocus value={joinInput} onChange={(event) => setJoinInput(event.target.value)} placeholder="Paste invite link" aria-label="Invite link" />
+                <button type="submit" className="groups-primary">Open</button>
+                <button type="button" onClick={() => setJoinInput(null)} aria-label="Cancel"><X size={16} /></button>
+              </form>
+            )}
             {groups.length === 0 && <p className="groups-empty">No groups yet.</p>}
             {groups.map((item) => {
               const isMuted = mutedGroupIds.includes(item.id);
@@ -460,6 +574,8 @@ export default function GroupsView({ token, userId, revision, onClose, onStartGr
                   <Avatar {...member} />
                   <span><strong>{member.id === userId ? 'You' : member.name}</strong><small>@{member.username}</small></span>
                   {member.role === 'admin' && <span className="groups-admin-tag">Group Admin</span>}
+                  <MemberAdminActions group={group} member={member} userId={userId} token={token}
+                    onChanged={() => refresh(new AbortController().signal)} onNotice={setNotice} onError={setError} />
                 </div>
               ))}
               {visibleMembers.length === 0 && <p className="groups-empty">No members match “{memberFilter}”.</p>}
@@ -475,10 +591,11 @@ export default function GroupsView({ token, userId, revision, onClose, onStartGr
             )}
 
             {infoTab === 'settings' && <div className="groups-tab-body">
+              <GroupAdminSettings key={group.id} group={group} token={token} onChanged={() => refresh(new AbortController().signal)} onNotice={setNotice} onError={setError} />
               <SettingsRow icon={muted ? BellOff : Bell} title="Notifications" detail={muted ? 'Muted · unread count stays grey and out of the app badge' : 'All'} onClick={() => setGroupMuted(userId, selected, !muted)}>
                 <span className={`groups-switch ${muted ? '' : 'is-on'}`} role="switch" aria-checked={!muted} aria-label="Group notifications" />
               </SettingsRow>
-              <SettingsRow icon={LockKeyhole} title="Encryption" detail="Messages and calls are protected in transit (HTTPS/WSS, DTLS-SRTP) and stored on the Hidden Messenger server. They are not end-to-end encrypted." />
+              <SettingsRow icon={LockKeyhole} title="Encryption" detail="Messages and attachments are end-to-end encrypted with group sender keys; the server stores only ciphertext. Calls use DTLS-SRTP between members." />
               <label className="groups-setting">
                 <Timer size={22} className="groups-setting-icon" />
                 <span className="groups-setting-copy"><strong>Disappearing messages</strong><small>{group.autoDelete ? '24 hours · applies to your new messages in this group' : 'Off'}</small></span>
@@ -497,15 +614,15 @@ export default function GroupsView({ token, userId, revision, onClose, onStartGr
                   {group.role === 'admin' && <button type="button" className="groups-danger" disabled={busy} onClick={() => perform(async () => { await groupRequest(token, `${groupPath}/clear`, { method: 'POST', body: { everyone: true } }); setConfirming(''); setNotice('Chat cleared for everyone.'); })}>Clear for everyone</button>}
                 </div>
               ) : <SettingsRow icon={MinusCircle} title="Clear chat" danger onClick={() => setConfirming('clear')} />}
-              {group.role === 'member' ? (
-                confirming === 'leave' ? (
-                  <div className="groups-confirm" role="group" aria-label="Confirm leaving group">
-                    <p>Leave this group? You will lose access to its messages.</p>
-                    <button type="button" disabled={busy} onClick={() => setConfirming('')}>Cancel</button>
-                    <button type="button" className="groups-danger" disabled={busy} onClick={() => perform(() => groupRequest(token, `${groupPath}/membership`, { method: 'DELETE' }))}>Confirm leave group</button>
-                  </div>
-                ) : <SettingsRow icon={LogOut} title="Leave group" danger onClick={() => setConfirming('leave')} />
-              ) : <SettingsRow icon={LogOut} title="Leave group" detail="Admins cannot leave until admin transfer is supported." danger />}
+              {confirming === 'leave' ? (
+                <div className="groups-confirm" role="group" aria-label="Confirm leaving group">
+                  <p>{group.role === 'admin' && !group.members.some((member) => member.role === 'admin' && member.id !== userId)
+                    ? 'Leave this group? You are its only admin, so the longest-standing member becomes admin.'
+                    : 'Leave this group? You will lose access to its messages.'}</p>
+                  <button type="button" disabled={busy} onClick={() => setConfirming('')}>Cancel</button>
+                  <button type="button" className="groups-danger" disabled={busy} onClick={() => perform(() => groupRequest(token, `${groupPath}/membership`, { method: 'DELETE' }))}>Confirm leave group</button>
+                </div>
+              ) : <SettingsRow icon={LogOut} title="Leave group" danger onClick={() => setConfirming('leave')} />}
               {confirming === 'report' ? (
                 <form className="groups-confirm" aria-label="Report group" onSubmit={(event) => { event.preventDefault(); perform(async () => { await groupRequest(token, `${groupPath}/report`, { method: 'POST', body: { reason: reportReason } }); setConfirming(''); setReportReason(''); setNotice('Report sent. Thank you.'); }); }}>
                   <label>Why are you reporting this group?<textarea value={reportReason} maxLength={500} rows={3} onChange={(event) => setReportReason(event.target.value)} /></label>
@@ -520,6 +637,9 @@ export default function GroupsView({ token, userId, revision, onClose, onStartGr
 
         {inConversation && (
           <>
+            {group.isAnnouncement && <p className="hm-announcement-note"><Megaphone size={14} aria-hidden="true" /> Community announcements: only admins send messages.</p>}
+            <PinnedBanner pins={pins} describe={describePinned} onJump={showMessage} canUnpin={canPin}
+              onUnpin={(messageId) => setMessagePinned(chatKey, messageId, false).catch((caught) => setError(caught.message))} />
             <div className="groups-messages" aria-label="Group messages" ref={listRef}>
               {messages.length === 0 && <p className="groups-day">No messages yet. Say hi 👋</p>}
               {withDaySeparators(messages).map((item) => {
@@ -528,14 +648,19 @@ export default function GroupsView({ token, userId, revision, onClose, onStartGr
                 const mine = message.senderId === userId;
                 const sender = group.members.find((member) => member.id === message.senderId);
                 const canDelete = group.role === 'admin' || (mine && Date.now() - message.createdAt < DELETE_WINDOW_MS);
-                const isMedia = message.content.startsWith('media:');
+                const isMedia = isMediaContent(message.content);
                 const scheduled = parseScheduledCall(message.content);
                 const poll = parsePollContent(message.content);
                 const event = parseEventContent(message.content);
+                const productId = parseProductContent(message.content);
+                const sticker = isStickerContent(message.content);
+                const active = activeMessageId === message.id;
                 return (
-                  <div className={`groups-message-row ${mine ? 'mine' : 'theirs'}`} key={item.key}>
+                  <div className={`groups-message-row ${mine ? 'mine' : 'theirs'}${active ? ' is-active' : ''}`} key={item.key} data-group-message-id={message.id}>
                     {!mine && (sender ? <Avatar {...sender} size="small" /> : <span className="groups-avatar groups-avatar-small" aria-hidden="true" />)}
-                    <article tabIndex={0} className={`groups-message ${mine ? 'mine' : 'theirs'} ${isMedia ? 'has-media' : ''} ${scheduled ? 'is-scheduled' : ''}`}>
+                    <article tabIndex={0} className={`groups-message ${mine ? 'mine' : 'theirs'} ${isMedia ? 'has-media' : ''} ${scheduled ? 'is-scheduled' : ''} ${sticker ? 'is-sticker' : ''}`}
+                      onClick={(clickEvent) => { if (!clickEvent.target.closest('button, a, input, audio, video')) setActiveMessageId(active ? '' : message.id); }}
+                      onKeyDown={(keyEvent) => { if (keyEvent.key === 'Enter' && keyEvent.target === keyEvent.currentTarget) setActiveMessageId(active ? '' : message.id); }}>
                       {!mine && <strong className="groups-sender" style={{ color: senderColor(message.senderId) }}>{sender?.name || 'Former member'}</strong>}
                       {scheduled ? (
                         <div className="groups-scheduled-card">
@@ -543,34 +668,80 @@ export default function GroupsView({ token, userId, revision, onClose, onStartGr
                           <span><strong>{scheduled.title}</strong><small>{scheduled.mode === 'video' ? 'Video call' : 'Voice call'} · {formatSchedule(scheduled.at)}</small></span>
                           {onStartGroupCall && <button type="button" onClick={() => setCallPicker(scheduled.mode)}>{scheduled.at > Date.now() ? 'Start early' : 'Start call'}</button>}
                         </div>
-                      ) : isMedia ? <MediaRenderer mediaRef={message.content} sessionToken={token} />
-                        : poll ? <PollBubble messageId={message.id} poll={poll} sessionToken={token} userId={userId} nameFor={(id) => group.members.find((member) => member.id === id)?.name} />
+                      ) : message.e2eError ? <p className="deleted-text"><span aria-hidden="true">🔒</span> Waiting for this message. It is end-to-end encrypted.</p>
+                        : isMedia ? <MediaRenderer mediaRef={message.content} sessionToken={token} />
+                        : poll ? <PollBubble messageId={message.id} poll={poll} sessionToken={token} userId={userId} nameFor={(id) => group.members.find((member) => member.id === id)?.name} context={{ groupId: selected }} />
                         : event ? <EventBubble messageId={message.id} event={event} />
-                        : <p><LinkText text={message.content} /></p>}
+                        : sticker ? <StickerMessage content={message.content} />
+                        : productId ? <ProductCard itemId={productId} sessionToken={token} />
+                        : <p><MentionText text={message.content} usernames={usernames} ownUsername={ownUsername} /></p>}
                       <span className="groups-message-meta">
                         {canDelete && <button type="button" disabled={busy} aria-label="Delete message" title="Delete message" onClick={() => perform(() => groupRequest(token, `${groupPath}/messages/${encodeURIComponent(message.id)}`, { method: 'DELETE' }))}><Trash2 size={13} /></button>}
                         {message.expiresAt && <Timer size={12} aria-label="Disappears after 24 hours" />}
+                        {pinnedIds.has(message.id) && <Pin size={12} aria-label="Pinned" />}
+                        {starred[message.id] && <Star size={12} fill="currentColor" aria-label="Starred" />}
+                        {message.editedAt && <span className="message-edited">Edited</span>}
                         <time dateTime={new Date(message.createdAt).toISOString()}>{formatTime(message.createdAt)}</time>
                       </span>
+                      {active && (
+                        <span className="hm-message-actions" role="toolbar" aria-label="Message actions">
+                          <button type="button" aria-label={starred[message.id] ? 'Unstar' : 'Star'} onClick={() => { setActiveMessageId(''); toggleStar(message.id, chatKey, !starred[message.id]).catch((caught) => setError(caught.message)); }}>
+                            <Star size={16} fill={starred[message.id] ? 'currentColor' : 'none'} />
+                          </button>
+                          {canPin && (
+                            <button type="button" aria-label={pinnedIds.has(message.id) ? 'Unpin' : 'Pin'} onClick={() => { setActiveMessageId(''); setMessagePinned(chatKey, message.id, !pinnedIds.has(message.id)).catch((caught) => setError(caught.message)); }}>
+                              {pinnedIds.has(message.id) ? <PinOff size={16} /> : <Pin size={16} />}
+                            </button>
+                          )}
+                          {canEditMessage(message, userId) && <button type="button" aria-label="Edit" onClick={() => startEdit(message)}><Pencil size={16} /></button>}
+                          {!isMedia && !sticker && !poll && !event && !scheduled && !productId && (
+                            <button type="button" aria-label="Copy" onClick={() => { setActiveMessageId(''); navigator.clipboard?.writeText(message.content).then(() => setNotice('Message copied.')).catch(() => {}); }}><Copy size={16} /></button>
+                          )}
+                        </span>
+                      )}
                     </article>
                   </div>
                 );
               })}
             </div>
-            <form className="groups-compose" onSubmit={(event) => { event.preventDefault(); if (draft.trim()) perform(async () => { await groupRequest(token, `${groupPath}/messages`, { method: 'POST', body: { content: draft } }); setDraft(''); }); }}>
+            {!canSend ? (
+              <p className="hm-admins-only" role="status"><LockKeyhole size={16} aria-hidden="true" /> Only admins can send messages</p>
+            ) : (<>
+            {editing && (
+              <div className="hm-edit-strip">
+                <Pencil size={14} aria-hidden="true" /><span>Editing message</span>
+                <button type="button" onClick={() => { setEditing(null); setDraft(''); }} aria-label="Cancel edit"><X size={16} /></button>
+              </div>
+            )}
+            {!editing && <ComposerAssist text={draft} caret={caret} members={group.members} userId={userId} onReplace={(next, nextCaret) => {
+              setDraft(next);
+              setCaret(nextCaret);
+              requestAnimationFrame(() => { draftRef.current?.focus(); draftRef.current?.setSelectionRange(nextCaret, nextCaret); });
+            }} />}
+            {stickersOpen && !editing && <StickerPalette onPick={(key) => { setStickersOpen(false); sendText(stickerContent(key)); }} />}
+            {groupSecurity && !groupSecurity.encrypted && (
+              <p className="e2e-warning" role="status">🔓 {groupSecurity.missing.length === 1 ? '1 member hasn’t' : `${groupSecurity.missing.length} members haven’t`} opened an updated Hidden Messenger yet, so this group is <strong>not end-to-end encrypted</strong> until they do.</p>
+            )}
+            <form className="groups-compose" onSubmit={(event) => { event.preventDefault(); submitDraft(); }}>
               <input ref={fileInputRef} type="file" hidden onChange={(event) => { const [file] = event.target.files ?? []; event.target.value = ''; sendAttachment(file); }} />
               <span className="groups-compose-field">
-                <input aria-label="Group message" value={draft} maxLength={10000} onChange={(event) => setDraft(event.target.value)} placeholder={uploading ? `Uploading… ${uploading}%` : 'Message'} disabled={uploading > 0} />
+                <input ref={draftRef} aria-label="Group message" value={draft} maxLength={10000}
+                  onChange={(event) => { setDraft(event.target.value); setCaret(event.target.selectionStart ?? event.target.value.length); }}
+                  onSelect={(event) => setCaret(event.target.selectionStart ?? 0)}
+                  placeholder={uploading ? `Uploading… ${uploading}%` : editing ? 'Edit message' : 'Message'} disabled={uploading > 0} />
+                {!editing && <button type="button" className="groups-attach" onClick={() => setStickersOpen((open) => !open)} disabled={busy} aria-label="Stickers" aria-expanded={stickersOpen} title="Stickers"><Sticker size={20} /></button>}
                 <button type="button" className="groups-attach" onClick={() => fileInputRef.current?.click()} disabled={busy || uploading > 0} aria-label="Attach a file" title="Attach a photo, video or file">
                   <Paperclip size={20} />
                 </button>
                 <button type="button" className="groups-attach" onClick={() => setRichComposer('poll')} disabled={busy} aria-label="Create poll" title="Poll"><BarChart3 size={20} /></button>
                 <button type="button" className="groups-attach" onClick={() => setRichComposer('event')} disabled={busy} aria-label="Create event" title="Event"><CalendarDays size={20} /></button>
               </span>
-              <button type="submit" className="groups-send" disabled={busy || uploading > 0 || !draft.trim()} aria-label="Send"><SendHorizontal size={20} /></button>
+              <button type="submit" className="groups-send" disabled={busy || uploading > 0 || !draft.trim()} aria-label={editing ? 'Save edit' : 'Send'}>{editing ? <Check size={20} /> : <SendHorizontal size={20} />}</button>
             </form>
+            </>)}
           </>
         )}
+        {joinCode && <JoinGroupSheet code={joinCode} token={token} onClose={() => setJoinCode('')} onJoined={(groupId) => { setJoinCode(''); setSelected(groupId); }} />}
         {group && callPicker && <CallPeoplePicker members={group.members} userId={userId} mode={callPicker} busy={busy} onStart={startCall} onClose={() => setCallPicker('')} />}
         {group && scheduling && <ScheduleCallSheet busy={busy} onSchedule={scheduleCall} onClose={() => setScheduling(false)} />}
         {group && richComposer && (() => {

@@ -1,5 +1,6 @@
 // Calls as Android phone calls (self-managed Telecom ConnectionService): Android knows when a call rings, is live
 // and ends, so headsets, cars and watches can answer, decline, mute and hang up, and SIM calls wait or hold.
+import { callUiSource } from './callUiSource.mjs';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
@@ -38,6 +39,6 @@ test('what Android does reaches the call: answer, decline, hang up, mute', async
   const calls = await java('TelecomCalls.java');
   assert.ok(calls.includes('CallActionReceiver.decline(app, declined.callId);') && calls.includes('CallActionReceiver.hangUp(app);'));
   assert.ok(calls.includes('HiddenNativePlugin.emitCallAction("mute", muted.callId, extra);'));
-  const overlay = await source('src/components/CallOverlay.jsx');
+  const overlay = await callUiSource();
   assert.ok(overlay.includes("else if (action === 'mute' && typeof mutedBySystem === 'boolean') callActionsRef.current?.setMuted(mutedBySystem);"));
 });

@@ -1,6 +1,7 @@
 // Client-side media helpers. The server owns each file's content type (reported by HEAD /api/v1/media/:id);
 // the extension is used only where no server facts are available, such as chat-list previews.
 import { MAX_TRANSFER_BYTES, PREVIEW_LIMIT_BYTES } from './transfer.js';
+import { decryptMedia, parseEncryptedMediaRef } from './mediaCrypto.js';
 import { apiFetch, apiUrl } from './api.js';
 
 export const MAX_UPLOAD_BYTES = MAX_TRANSFER_BYTES;
@@ -27,7 +28,31 @@ const FILE_TONES = [
   [['apk', 'aab', 'xapk', 'ipa', 'exe', 'msi', 'dmg', 'deb', 'appimage'], 'app'],
 ];
 
+// End-to-end encrypted attachments ("emedia:", src/mediaCrypto.js) parse like ordinary ones; their descriptor
+// is remembered by media id so every viewer path (thumbnails, viewer, download) decrypts transparently.
+const encryptedDescriptors = new Map();
+
+/** Remembers how to decrypt an upload (an encrypted voice note's key travels in its own format, src/voice.js). */
+export function registerMediaDescriptor(id, descriptor) {
+  if (id && descriptor) encryptedDescriptors.set(id, descriptor);
+}
+
+/** True when this upload is stored encrypted: it must be downloaded whole and decrypted, never streamed or linked. */
+export function isEncryptedMedia(id) {
+  return encryptedDescriptors.has(id);
+}
+
+/** An attachment message: "media:…" or an end-to-end encrypted "emedia:…". */
+export function isMediaContent(content) {
+  return typeof content === 'string' && (content.startsWith('media:') || content.startsWith('emedia:'));
+}
+
 export function parseMediaRef(content) {
+  const encrypted = parseEncryptedMediaRef(content);
+  if (encrypted) {
+    encryptedDescriptors.set(encrypted.mediaId, encrypted.descriptor);
+    return { id: encrypted.mediaId, filename: encrypted.filename || 'attachment', encrypted: true };
+  }
   if (typeof content !== 'string' || !content.startsWith('media:')) return null;
   const [, id = '', ...rest] = content.split(':');
   return { id, filename: rest.join(':') || 'attachment' };
@@ -163,7 +188,10 @@ export function peekMediaBlob(id, sessionToken) {
 export async function loadMediaInfo(id, sessionToken, signal) {
   const cached = peekMediaInfo(id, sessionToken);
   if (cached) return cached;
-  const info = await fetchMediaInfo(id, sessionToken, signal);
+  const fetched = await fetchMediaInfo(id, sessionToken, signal);
+  // The server only knows the ciphertext: an encrypted attachment's real type and size come from its descriptor.
+  const descriptor = encryptedDescriptors.get(id);
+  const info = descriptor ? { ...fetched, contentType: descriptor.type || fetched.contentType, size: descriptor.size } : fetched;
   infoCache.set(cacheKey(id, sessionToken), info);
   while (infoCache.size > INFO_CACHE_LIMIT) infoCache.delete(infoCache.keys().next().value);
   return info;
@@ -175,7 +203,9 @@ export async function loadMediaBlob(id, sessionToken, options = {}) {
     options.onProgress?.(1);
     return cached;
   }
-  const blob = await fetchMediaBlob(id, sessionToken, options);
+  const fetched = await fetchMediaBlob(id, sessionToken, options);
+  const descriptor = encryptedDescriptors.get(id);
+  const blob = descriptor ? await decryptMedia(fetched, descriptor) : fetched;
   const key = cacheKey(id, sessionToken);
   if (blob.size <= BLOB_CACHE_LIMIT_BYTES / 4 && !blobCache.has(key)) {
     blobCache.set(key, blob);
@@ -187,6 +217,11 @@ export async function loadMediaBlob(id, sessionToken, options = {}) {
     }
   }
   return blob;
+}
+
+/** What the in-memory media cache holds (Storage and data). */
+export function mediaCacheStats() {
+  return { files: blobCache.size, bytes: blobCacheBytes };
 }
 
 export function clearMediaCache() {
@@ -207,6 +242,10 @@ export async function requestMediaLink(id, sessionToken, { inline = false, signa
 
 // Saves the exact stored bytes under the original filename without reading them into memory.
 export async function downloadMedia(id, filename, sessionToken) {
+  if (isEncryptedMedia(id)) {
+    saveBlob(await loadMediaBlob(id, sessionToken), filename || 'attachment');
+    return;
+  }
   const link = await requestMediaLink(id, sessionToken);
   const anchor = document.createElement('a');
   anchor.href = link.url;

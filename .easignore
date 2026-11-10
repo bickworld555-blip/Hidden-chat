@@ -40,3 +40,6 @@ android/build/
 android/app/build/
 android/.gradle/
 android/app/src/main/assets/public/
+
+# The bundled app is built on EAS itself (scripts/build-android-web.mjs).
+dist-android/

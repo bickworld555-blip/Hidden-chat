@@ -46,6 +46,9 @@ export function nativeSetSession({ origin, token, userId, mutedChats = [], muted
 export const nativeClearSession = () => invoke('clearSession');
 // Uploads in progress: { count, label, progress (0-100) }; count 0 ends the "Sending…" foreground service.
 export const nativeSetUploads = (state) => invoke('setUploads', state);
+// Android Keystore sealing for the local data key (src/secureStorage.js): { sealed } / { value }, null outside the app.
+export const nativeSealSecret = (value) => invoke('sealSecret', { value });
+export const nativeOpenSecret = (sealed) => invoke('openSecret', { sealed });
 // While a call is live the service also holds the microphone/camera, so the call keeps working in the background,
 // and shows "<name> · Ongoing call" with a Hang up button (which arrives as callAction "hangup").
 // The call is over: the native side clears the call state, Android's call, audio and notifications at once.
@@ -72,11 +75,15 @@ export async function nativeSaveMedia({ id, url, filename, mimeType = '' }) {
   return native.saveMedia({ id, url, filename, mimeType });
 }
 export const nativeMoveToBackground = () => invoke('moveToBackground');
+// Link previews made on the phone (LinkFetcher.java): { html, url, contentType } and { data (base64), contentType }.
+export const nativeFetchPage = (url) => invoke('fetchPage', { url });
+export const nativeFetchImage = (url) => invoke('fetchImage', { url });
 // A document opened with Android's "Open with" chooser; rejects with the reason (e.g. no app opens this type).
-export async function nativeOpenMedia({ url, filename, mimeType = '' }) {
+// `data` (base64) opens bytes the app already has, e.g. an end-to-end encrypted file decrypted on the phone.
+export async function nativeOpenMedia({ url, data, filename, mimeType = '' }) {
   const native = (await plugin())?.native;
   if (!native) return null;
-  return native.openMedia({ url, filename, mimeType });
+  return native.openMedia(data ? { data, filename, mimeType } : { url, filename, mimeType });
 }
 // A call the background service rang while the app was closed: { event, ice[] } or null.
 export const nativeTakePendingCall = async () => (await invoke('takePendingCall'))?.pending ?? null;
@@ -159,3 +166,16 @@ export function resetNativeStateForTests() {
   sessionSaved = Promise.resolve(null);
   notificationsEnabled = false;
 }
+// App lock and screen security (AppSecurity.java): { biometric: 'available'|'none'|'unsupported', secureScreen, transcription }.
+export const nativeSecurityStatus = () => invoke('securityStatus');
+// The phone's own unlock (fingerprint / face / screen-lock PIN): resolves { ok, error? } (null outside the app).
+export const nativeAuthenticate = (title, subtitle = '') => invoke('authenticate', { title, subtitle });
+export const nativeSetSecureScreen = (enabled) => invoke('setSecureScreen', { enabled: Boolean(enabled) });
+// Saves bytes made on the phone into Download/Hidden Messenger: resolves { saved, path }; rejects with the reason.
+export async function nativeSaveBytes({ data, filename, mimeType = '' }) {
+  const native = (await plugin())?.native;
+  if (!native) return null;
+  return native.saveBytes({ data, filename, mimeType });
+}
+// A voice message transcript made on the phone (Android 13+, VoiceTranscriber.java): { text } or { error }.
+export const nativeTranscribeAudio = (data, language = '') => invoke('transcribeAudio', { data, language });

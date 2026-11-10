@@ -1,5 +1,6 @@
 // Status wording and kinds, the WhatsApp-style "Send to…" sections, the lock-screen ringing loop fix, and
 // reaction notifications from the background service.
+import { callUiSource } from './callUiSource.mjs';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
@@ -44,7 +45,7 @@ test('Android: a ringing call stays over the lock screen while the app shows it 
   assert.match(alerts, /static boolean isRinging\(\) \{\s*return ringing \|\| appRinging;/);
   const plugin = await java('HiddenNativePlugin.java');
   assert.ok(plugin.includes('Alerts.setAppRinging('));
-  const overlay = await source('src/components/CallOverlay.jsx');
+  const overlay = await callUiSource();
   assert.match(overlay, /if \(!nativeShell\(\) \|\| !ringingIncoming\) return undefined;\s*nativeSetCallRinging\(true\);\s*return \(\) => \{ nativeSetCallRinging\(false\); \};/);
   assert.ok(overlay.includes("onNative('pictureInPicture', () => { resume();"), 'paused call video restarts in the floating window');
 });

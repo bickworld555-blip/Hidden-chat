@@ -7,13 +7,16 @@ import { formatClock } from '../voice.js';
 import { MAX_POLL_OPTIONS, encodePoll, tallyPoll } from '../polls.js';
 import { encodeEvent, eventCalendarFile, formatEventTime } from '../calendarEvents.js';
 import { saveBlob } from '../media.js';
+import { castVote, combineVotes } from '../e2e/polls.js';
+import { decryptMedia } from '../mediaCrypto.js';
 
 function OnceMark({ opened }) {
   return <span className={`view-once-mark${opened ? ' is-opened' : ''}`} aria-hidden="true">1</span>;
 }
 
 // Recipient: tap to fetch and play the audio once (it is never cached or downloadable). Sender: a status card.
-export function ViewOnceVoice({ messageId, seconds, opened, mine, sessionToken, children }) {
+// An end-to-end encrypted note arrives as ciphertext and is decrypted here with the key from its message.
+export function ViewOnceVoice({ messageId, seconds, opened, mine, sessionToken, descriptor = null, children }) {
   const [state, setState] = useState('idle'); // idle | loading | playing | paused | done | error
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState('');
@@ -40,7 +43,8 @@ export function ViewOnceVoice({ messageId, seconds, opened, mine, sessionToken, 
         setState(response.status === 410 ? 'done' : 'error');
         return;
       }
-      urlRef.current = URL.createObjectURL(await response.blob());
+      const received = await response.blob();
+      urlRef.current = URL.createObjectURL(descriptor ? await decryptMedia(received, descriptor) : received);
       const audio = new Audio(urlRef.current);
       audioRef.current = audio;
       audio.ontimeupdate = () => setProgress(audio.duration ? audio.currentTime / audio.duration : 0);
@@ -99,30 +103,33 @@ export function ViewOnceVoice({ messageId, seconds, opened, mine, sessionToken, 
 async function fetchVotes(sessionToken, messageId) {
   const response = await apiFetch(`/api/v1/polls/${encodeURIComponent(messageId)}`, { headers: { Authorization: `Bearer ${sessionToken}` } });
   if (!response.ok) throw new Error('Could not load votes.');
-  return (await response.json()).votes;
+  const body = await response.json();
+  return { votes: body.votes ?? {}, sealedVotes: body.sealedVotes ?? [] };
 }
 
-async function putVote(sessionToken, messageId, options) {
-  const response = await apiFetch(`/api/v1/polls/${encodeURIComponent(messageId)}/vote`, {
-    method: 'PUT',
-    headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ options }),
-  });
-  const body = await response.json().catch(() => null);
-  if (!response.ok) throw new Error(body?.error ?? 'Your vote was not saved.');
-  return body.votes;
-}
-
-export function PollBubble({ messageId, poll, sessionToken, userId, nameFor, children }) {
-  const votes = useChatStore((state) => state.pollVotes?.[messageId]);
+// Votes are end-to-end encrypted (src/e2e/polls.js): the store keeps what the server sent ({ votes, sealedVotes })
+// and this bubble opens and counts them. `context` is { peerId } in a direct chat or { groupId } in a group.
+export function PollBubble({ messageId, poll, sessionToken, userId, nameFor, context = {}, children }) {
+  const raw = useChatStore((state) => state.pollVotes?.[messageId]);
   const setPollVotes = useChatStore((state) => state.setPollVotes);
+  const [votes, setVotes] = useState(null);
   const [error, setError] = useState('');
   const [showVoters, setShowVoters] = useState(false);
+  const groupId = context.groupId ?? null;
 
   useEffect(() => {
-    if (votes || !sessionToken) return;
+    if (raw || !sessionToken) return;
     fetchVotes(sessionToken, messageId).then((loaded) => setPollVotes(messageId, loaded)).catch(() => {});
-  }, [messageId, sessionToken, votes, setPollVotes]);
+  }, [messageId, sessionToken, raw, setPollVotes]);
+
+  useEffect(() => {
+    if (!raw) return undefined;
+    let cancelled = false;
+    // Older stores held a plain { [option]: [userId] } map.
+    const source = raw.votes || raw.sealedVotes ? raw : { votes: raw, sealedVotes: [] };
+    combineVotes(source, poll, groupId ? { groupId } : {}).then((combined) => { if (!cancelled) setVotes(combined); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [raw, poll, groupId]);
 
   const tally = tallyPoll(votes ?? {}, poll.options.length, userId);
 
@@ -131,19 +138,20 @@ export function PollBubble({ messageId, poll, sessionToken, userId, nameFor, chi
       ? tally.mine.filter((option) => option !== index)
       : poll.multiple ? [...tally.mine, index] : [index];
     const previous = votes ?? {};
-    // Optimistic: move this user's vote right away; the server's tally replaces it.
+    // Optimistic: move this user's vote right away; the server's answer replaces it.
     const optimistic = {};
     poll.options.forEach((_, option) => {
       const others = (previous[option] ?? []).filter((id) => id !== userId);
       const next = chosen.includes(option) ? [...others, userId] : others;
       if (next.length) optimistic[option] = next;
     });
-    setPollVotes(messageId, optimistic);
+    setVotes(optimistic);
     setError('');
     try {
-      setPollVotes(messageId, await putVote(sessionToken, messageId, chosen));
+      const saved = await castVote(sessionToken, messageId, chosen, context);
+      setPollVotes(messageId, { votes: saved.votes ?? {}, sealedVotes: saved.sealedVotes ?? [] });
     } catch (failure) {
-      setPollVotes(messageId, previous);
+      setVotes(previous);
       setError(failure.message);
     }
   }

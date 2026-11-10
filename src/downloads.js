@@ -4,7 +4,7 @@ import { apiFetch } from './api.js';
 // otherwise fetch into memory with progress for files small enough; otherwise hand the browser a link.
 import { useSyncExternalStore } from 'react';
 import { PREVIEW_LIMIT_BYTES } from './transfer.js';
-import { downloadMedia, loadMediaBlob, loadMediaInfo, saveBlob } from './media.js';
+import { downloadMedia, isEncryptedMedia, loadMediaBlob, loadMediaInfo, saveBlob } from './media.js';
 import { nativeShell, onNative } from './native.js';
 import { saveMediaToPhone } from './mediaSave.js';
 
@@ -99,7 +99,7 @@ async function streamToFile(id, handle, sessionToken, total, controller) {
   }
 }
 
-async function fetchThenSave(id, filename, sessionToken, total, controller) {
+async function fetchThenSave(id, filename, sessionToken, total, controller, handle = null) {
   const startedAt = Date.now();
   let rate = 0;
   const blob = await loadMediaBlob(id, sessionToken, {
@@ -111,7 +111,13 @@ async function fetchThenSave(id, filename, sessionToken, total, controller) {
       update(id, { received, total, fraction, rate, etaSeconds: stats.etaSeconds });
     },
   });
-  saveBlob(blob, filename);
+  if (!handle) {
+    saveBlob(blob, filename);
+    return;
+  }
+  const writable = await handle.createWritable();
+  await writable.write(blob);
+  await writable.close();
 }
 
 // Starts (or ignores, if already running) a download and reports progress through the store.
@@ -153,9 +159,12 @@ export async function downloadWithProgress(id, filename, sessionToken) {
     const info = await loadMediaInfo(id, sessionToken, controller.signal).catch(() => null);
     const total = info?.size ?? 0;
     update(id, { total });
-    if (handle) {
+    if (handle && isEncryptedMedia(id)) {
+      // End-to-end encrypted: download and decrypt here, then write the plain file where the user chose.
+      await fetchThenSave(id, filename, sessionToken, total, controller, handle);
+    } else if (handle) {
       await streamToFile(id, handle, sessionToken, total, controller);
-    } else if (total > 0 && total <= PREVIEW_LIMIT_BYTES) {
+    } else if (isEncryptedMedia(id) || (total > 0 && total <= PREVIEW_LIMIT_BYTES)) {
       await fetchThenSave(id, filename, sessionToken, total, controller);
     } else {
       // Too big to hold in memory and no streaming API: the browser's own download UI shows progress.

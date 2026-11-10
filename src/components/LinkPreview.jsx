@@ -35,16 +35,19 @@ function ProviderIcon({ provider }) {
 
 // WhatsApp's card for a shared link: thumbnail (with a video badge for reels and videos), title, description and
 // the site with its logo. Tapping opens the link in its app (YouTube, Facebook) or the browser.
-export default function LinkPreview({ href, sessionToken }) {
-  const [preview, setPreview] = useState(null);
+// `preview` is the card the sender made (it came inside the encrypted message, thumbnail included): nothing is
+// fetched. Without one, only messages that were not end-to-end encrypted (`fetchAllowed`) ask the server.
+export default function LinkPreview({ href, sessionToken, preview: given = null, fetchAllowed = true }) {
+  const [fetched, setFetched] = useState(null);
   const [imageFailed, setImageFailed] = useState(false);
 
   useEffect(() => {
     let alive = true;
-    if (!href || !sessionToken) return undefined;
-    loadLinkPreview(href, sessionToken).then((value) => { if (alive) setPreview(value); });
+    if (given || !fetchAllowed || !href || !sessionToken) return undefined;
+    loadLinkPreview(href, sessionToken).then((value) => { if (alive) setFetched(value); });
     return () => { alive = false; };
-  }, [href, sessionToken]);
+  }, [href, sessionToken, given, fetchAllowed]);
+  const preview = given ? { ...given, image: given.thumbnail || '' } : fetched;
 
   if (!preview) return null;
   const open = (event) => {

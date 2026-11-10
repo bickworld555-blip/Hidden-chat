@@ -8,20 +8,20 @@ import { DATABASE_SCHEMA_VERSION, postgresOptions } from '../server/database.mjs
 import { DEMO_USERS } from '../server/demo.mjs';
 
 export const IMPORT_TABLES = Object.freeze([
-  { name: 'users', columns: ['id', 'username', 'name', 'initials', 'color', 'dob', 'password_hash', 'created_at', 'avatar_disk_name', 'avatar_type', 'avatar_updated_at', 'last_seen_at', 'last_seen_privacy'], users: ['id'] },
+  { name: 'users', columns: ['id', 'username', 'name', 'initials', 'color', 'dob', 'password_hash', 'created_at', 'avatar_disk_name', 'avatar_type', 'avatar_updated_at', 'last_seen_at', 'last_seen_privacy', 'online_privacy', 'photo_privacy', 'read_receipts', 'two_step_hash', 'two_step_set_at', 'status_audience'], users: ['id'] },
   { name: 'sessions', columns: ['token_hash', 'user_id', 'device_id', 'device_name', 'expires_at', 'created_at', 'last_active_at'], users: ['user_id'] },
   { name: 'contacts', columns: ['owner_id', 'contact_id', 'created_at', 'saved', 'hidden'], users: ['owner_id', 'contact_id'], key: ['owner_id', 'contact_id'] },
   // Groups precede media and uploads, whose group_id references them.
-  { name: 'groups', columns: ['id', 'name', 'created_by', 'created_at'], users: ['created_by'] },
+  { name: 'groups', columns: ['id', 'name', 'created_by', 'created_at', 'description', 'only_admins_send', 'only_admins_edit', 'approve_joins', 'invite_code', 'community_id', 'is_announcement'], users: ['created_by'] },
   { name: 'group_members', columns: ['group_id', 'user_id', 'role', 'auto_delete', 'joined_at', 'last_read_at', 'cleared_at'], users: ['user_id'], key: ['group_id', 'user_id'] },
-  { name: 'messages', columns: ['id', 'sender_id', 'receiver_id', 'created_at', 'content', 'status', 'deleted_at', 'reply_to_id', 'forwarded', 'expires_at', 'played_at'], users: ['sender_id', 'receiver_id'] },
+  { name: 'messages', columns: ['id', 'sender_id', 'receiver_id', 'created_at', 'content', 'status', 'deleted_at', 'reply_to_id', 'forwarded', 'expires_at', 'played_at', 'edited_at'], users: ['sender_id', 'receiver_id'] },
   { name: 'media', columns: ['id', 'sender_id', 'receiver_id', 'group_id', 'filename', 'content_type', 'byte_size', 'disk_name', 'created_at'], users: ['sender_id', 'receiver_id'] },
   { name: 'pairing_codes', columns: ['code_hash', 'user_id', 'expires_at'], users: ['user_id'] },
   { name: 'chat_settings', columns: ['user_a', 'user_b', 'disappear_seconds', 'updated_by', 'updated_at'], users: ['user_a', 'user_b', 'updated_by'], key: ['user_a', 'user_b'] },
   { name: 'uploads', columns: ['id', 'owner_id', 'receiver_id', 'group_id', 'filename', 'content_type', 'byte_size', 'received', 'disk_name', 'created_at', 'updated_at'], users: ['owner_id', 'receiver_id'] },
   { name: 'message_reactions', columns: ['message_id', 'user_id', 'emoji'], users: ['user_id'], key: ['message_id', 'user_id'] },
   { name: 'message_hidden', columns: ['user_id', 'message_id'], users: ['user_id'], key: ['user_id', 'message_id'] },
-  { name: 'group_messages', columns: ['id', 'group_id', 'sender_id', 'created_at', 'content', 'expires_at'], users: ['sender_id'] },
+  { name: 'group_messages', columns: ['id', 'group_id', 'sender_id', 'created_at', 'content', 'expires_at', 'edited_at'], users: ['sender_id'] },
   { name: 'poll_votes', columns: ['message_id', 'user_id', 'option_index', 'voted_at'], users: ['user_id'], key: ['message_id', 'user_id', 'option_index'], numeric: ['option_index'] },
   { name: 'group_reports', columns: ['id', 'group_id', 'reporter_id', 'reason', 'created_at'], users: ['reporter_id'] },
   { name: 'statuses', columns: ['id', 'user_id', 'content', 'background', 'created_at', 'expires_at'], users: ['user_id'] },
@@ -29,6 +29,32 @@ export const IMPORT_TABLES = Object.freeze([
   // Phones registered for Firebase push (kept with their sessions, so push keeps working after the move).
   { name: 'identity_keys', columns: ['user_id', 'public_key', 'algorithm', 'updated_at'], users: ['user_id'] },
   { name: 'push_devices', columns: ['token', 'user_id', 'session_hash', 'device_key', 'platform', 'updated_at'], users: ['user_id'], key: ['token'] },
+  // WhatsApp (Business) parity data (server/parity.mjs, migration 010).
+  { name: 'group_join_requests', columns: ['group_id', 'user_id', 'requested_at'], users: ['user_id'], key: ['group_id', 'user_id'] },
+  { name: 'communities', columns: ['id', 'name', 'description', 'created_by', 'created_at', 'announcement_group_id'], users: ['created_by'] },
+  { name: 'message_stars', columns: ['user_id', 'message_id', 'chat_key', 'starred_at'], users: ['user_id'], key: ['user_id', 'message_id'] },
+  { name: 'chat_prefs', columns: ['user_id', 'chat_key', 'archived', 'updated_at'], users: ['user_id'], key: ['user_id', 'chat_key'] },
+  { name: 'pinned_messages', columns: ['chat_key', 'message_id', 'pinned_by', 'pinned_at'], users: ['pinned_by'], key: ['chat_key', 'message_id'] },
+  { name: 'business_profiles', columns: ['user_id', 'away_enabled', 'away_text', 'away_schedule', 'away_hours', 'greeting_enabled', 'greeting_text', 'updated_at'], users: ['user_id'] },
+  { name: 'business_auto_replies', columns: ['user_id', 'peer_id', 'kind', 'sent_at'], users: ['user_id', 'peer_id'], key: ['user_id', 'peer_id', 'kind'] },
+  { name: 'catalog_items', columns: ['id', 'user_id', 'name', 'description', 'price', 'currency', 'link', 'hidden', 'image_disk_name', 'image_type', 'created_at', 'updated_at'], users: ['user_id'] },
+  { name: 'labels', columns: ['id', 'user_id', 'name', 'color', 'created_at'], users: ['user_id'] },
+  { name: 'label_chats', columns: ['label_id', 'chat_key'], users: [], key: ['label_id', 'chat_key'] },
+  { name: 'quick_replies', columns: ['id', 'user_id', 'shortcut', 'text', 'created_at'], users: ['user_id'] },
+  // End-to-end key directory (server/e2e.mjs, migration 011), kept with the sessions (devices) they belong to.
+  { name: 'e2e_devices', columns: ['user_id', 'device_id', 'identity_dh', 'identity_sig', 'signed_prekey_id', 'signed_prekey', 'signed_prekey_signature', 'created_at', 'updated_at'], users: ['user_id'], key: ['user_id', 'device_id'] },
+  { name: 'e2e_prekeys', columns: ['user_id', 'device_id', 'key_id', 'public_key'], users: ['user_id'], key: ['user_id', 'device_id', 'key_id'], numeric: ['key_id'] },
+  // Stage A (migration 012).
+  { name: 'poll_sealed_votes', columns: ['message_id', 'user_id', 'sealed', 'voted_at'], users: ['user_id'], key: ['message_id', 'user_id'] },
+  { name: 'broadcast_lists', columns: ['id', 'owner_id', 'name', 'created_at'], users: ['owner_id'] },
+  { name: 'broadcast_members', columns: ['list_id', 'user_id'], users: ['user_id'], key: ['list_id', 'user_id'] },
+  { name: 'channels', columns: ['id', 'owner_id', 'name', 'description', 'created_at'], users: ['owner_id'] },
+  { name: 'channel_followers', columns: ['channel_id', 'user_id', 'followed_at'], users: ['user_id'], key: ['channel_id', 'user_id'] },
+  { name: 'channel_posts', columns: ['id', 'channel_id', 'author_id', 'content', 'created_at'], users: ['author_id'] },
+  { name: 'channel_reactions', columns: ['post_id', 'user_id', 'emoji'], users: ['user_id'], key: ['post_id', 'user_id'] },
+  { name: 'scheduled_messages', columns: ['id', 'owner_id', 'receiver_id', 'content', 'send_at', 'created_at'], users: ['owner_id', 'receiver_id'] },
+  { name: 'status_audience_members', columns: ['owner_id', 'user_id'], users: ['owner_id', 'user_id'], key: ['owner_id', 'user_id'] },
+  { name: 'call_links', columns: ['code', 'owner_id', 'mode', 'created_at', 'revoked_at'], users: ['owner_id'], key: ['code'] },
 ]);
 const demoIds = Object.keys(DEMO_USERS);
 const excluded = demoIds.map(() => '?').join(', ');
@@ -49,7 +75,11 @@ function sourceQuery(table) {
     filters.push(`(group_id IS NULL OR group_id IN (SELECT id FROM groups WHERE created_by NOT IN (${excluded})))`);
     parameters.push(...demoIds);
   }
-  if (['group_members', 'group_messages', 'group_reports'].includes(table.name)) {
+  if (table.name === 'label_chats') {
+    filters.push(`label_id IN (SELECT id FROM labels WHERE user_id NOT IN (${excluded}))`);
+    parameters.push(...demoIds);
+  }
+  if (['group_members', 'group_messages', 'group_reports', 'group_join_requests'].includes(table.name)) {
     filters.push(`group_id IN (SELECT id FROM groups WHERE created_by NOT IN (${excluded}))`);
     parameters.push(...demoIds);
   }
