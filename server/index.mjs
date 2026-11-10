@@ -26,6 +26,7 @@ import { createLoginThrottle, ensureParitySchema, registerParity } from './parit
 import { ensureE2eSchema, registerE2e } from './e2e.mjs';
 import { registerSfu } from './sfu.mjs';
 import { ensureExtrasSchema, registerExtras, statusAudienceSql } from './extras.mjs';
+import { ensureAdminSchema, registerAdmin } from './admin.mjs';
 import { BUNDLED_APP_ORIGIN } from '../scripts/configure-android.mjs';
 import { effectiveRouting, isEnvelope, MAX_DIRECT_ENVELOPE, parseRouting, routingFor } from '../src/e2e/envelope.js';
 import { audienceAllows, canSeePresence, deviceNameFromUserAgent, isLastSeenPrivacy, parsePrivacyPatch, presenceFor, visibleStatus } from './presence.mjs';
@@ -391,6 +392,7 @@ export function createChatServer({
   ensureParitySchema(db);
   ensureE2eSchema(db);
   ensureExtrasSchema(db);
+  ensureAdminSchema(db);
   }
   const upsertLink = db.prepare(`INSERT INTO contacts(owner_id, contact_id, created_at, saved, hidden) VALUES (?, ?, ?, ?, 0)
     ON CONFLICT(owner_id, contact_id) DO UPDATE SET saved = CASE WHEN contacts.saved > excluded.saved THEN contacts.saved ELSE excluded.saved END, hidden = 0`);
@@ -1030,6 +1032,16 @@ export function createChatServer({
 
   // End-to-end encryption: key directory and fan-out checks (server/e2e.mjs).
   const e2e = registerE2e({ app, db, requireSession });
+  // Help Center, reports about people, and the admin console (server/admin.mjs).
+  const admin = registerAdmin({
+    app, db, requireSession, publicUser, userColumns: USER_COLUMNS, pushEnabled: () => Boolean(push),
+    closeUserSessions: async (userId, reason) => {
+      const removed = await db.prepare('DELETE FROM sessions WHERE user_id = ? RETURNING token_hash AS "hash"').all(userId);
+      closeSessionSockets(new Set(removed.map((row) => row.hash)), reason);
+      await forgetPushDevicesOf(removed.map((row) => row.hash));
+    },
+  });
+
   // Broadcast lists, channels, scheduled messages, status privacy and call links (server/extras.mjs).
   const extras = registerExtras({
     app, db, requireSession, broadcastUser, publicUser, userColumns: USER_COLUMNS, linkUsers: (a, b) => linkUsers(a, b),
@@ -1244,6 +1256,7 @@ export function createChatServer({
       return response.status(401).json(twoStep);
     }
     loginThrottle.succeed(throttleKeys);
+    if (await admin.suspended(user.id)) return response.status(403).json({ error: 'This account is suspended. Contact Hidden Messenger support if you think this is a mistake.' });
     response.json((await issueSession(user.id, deviceNameFromUserAgent(request.get('user-agent')))));
   });
 
@@ -2015,6 +2028,7 @@ export function createChatServer({
     const row = (await db.prepare("DELETE FROM pairing_codes WHERE code_hash = ? AND expires_at > ? RETURNING user_id")
       .get(digest(code), Date.now()));
     if (!row) return response.status(410).json({ error: 'This pairing code has expired or was already used.' });
+    if (await admin.suspended(row.user_id)) return response.status(403).json({ error: 'This account is suspended.' });
     response.json((await issueSession(row.user_id, deviceNameFromUserAgent(request.get('user-agent'), 'Linked device'))));
   });
 

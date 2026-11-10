@@ -3,7 +3,7 @@
   "name": "Hidden Messenger",
   "short_name": "Hidden",
   "description": "Private messaging, groups and calls.",
-  "start_url": "/?source=pwa",
+  "start_url": "/app?source=pwa",
   "scope": "/",
   "display": "standalone",
   "orientation": "portrait",
@@ -17,7 +17,7 @@
     { "src": "/icons/maskable-512.png?v=2", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
   ],
   "shortcuts": [
-    { "name": "Chats", "short_name": "Chats", "url": "/?source=pwa-shortcut&tab=chats", "icons": [{ "src": "/icons/icon-192.png?v=2", "sizes": "192x192", "type": "image/png" }] },
-    { "name": "Calls", "short_name": "Calls", "url": "/?source=pwa-shortcut&tab=calls", "icons": [{ "src": "/icons/icon-192.png?v=2", "sizes": "192x192", "type": "image/png" }] }
+    { "name": "Chats", "short_name": "Chats", "url": "/app?source=pwa-shortcut&tab=chats", "icons": [{ "src": "/icons/icon-192.png?v=2", "sizes": "192x192", "type": "image/png" }] },
+    { "name": "Calls", "short_name": "Calls", "url": "/app?source=pwa-shortcut&tab=calls", "icons": [{ "src": "/icons/icon-192.png?v=2", "sizes": "192x192", "type": "image/png" }] }
   ]
 }

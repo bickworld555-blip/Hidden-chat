@@ -4650,3 +4650,34 @@ canvas.recording-wave { color: #5d6662; }
 /* Phone header: title on one line; Groups lives in the ⋮ menu there. */
 .app-shell.is-mobile .wa-list-header h1 { white-space: nowrap; font-size: 22px; }
 .app-shell.is-mobile .wa-list-header-actions > button[aria-label="Groups"] { display: none; }
+
+/* Admin console (src/components/admin/AdminConsole.jsx). */
+.admin-tabs, .admin-segment { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
+.admin-tabs button, .admin-segment button { display: inline-flex; gap: 6px; align-items: center; border: 1px solid var(--wa-line); border-radius: 18px; padding: 6px 12px; background: none; color: var(--wa-text); font-weight: 600; cursor: pointer; }
+.admin-tabs button.is-on, .admin-segment button.is-on { background: var(--wa-chip-active); color: var(--wa-chip-active-text); border-color: transparent; }
+.admin-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
+.admin-tile { padding: 12px 14px; border-radius: 12px; background: var(--wa-panel); display: flex; flex-direction: column; gap: 2px; }
+.admin-tile span { font-size: 12px; color: var(--wa-sub); text-transform: uppercase; letter-spacing: .05em; }
+.admin-tile strong { font-size: 24px; font-variant-numeric: tabular-nums; }
+.admin-status { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 14px 0; }
+.admin-pill { display: inline-block; padding: 3px 10px; border-radius: 999px; background: var(--wa-chip); color: var(--wa-sub); font-size: 12px; font-weight: 600; }
+.admin-pill.is-ok { background: color-mix(in srgb, #1e9e5a 16%, transparent); color: #1e8a50; }
+.admin-pill.is-warn { background: color-mix(in srgb, #d9822b 18%, transparent); color: #b5651d; }
+.admin-bars { margin: 18px 0 0; }
+.admin-bars figcaption { font-size: 13px; color: var(--wa-sub); margin-bottom: 6px; }
+.admin-bars-row { display: grid; grid-template-columns: repeat(14, 1fr); gap: 4px; height: 90px; align-items: end; }
+.admin-bar { height: 100%; display: flex; align-items: flex-end; background: var(--wa-panel); border-radius: 4px; }
+.admin-bar i { display: block; width: 100%; background: var(--wa-green); border-radius: 4px; }
+.admin-bars-axis { display: flex; justify-content: space-between; font-size: 11px; color: var(--wa-sub); margin-top: 4px; }
+.admin-table { overflow-x: auto; margin-top: 10px; }
+.admin-table table { width: 100%; min-width: 620px; border-collapse: collapse; font-size: 13.5px; }
+.admin-table th, .admin-table td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--wa-line); vertical-align: top; }
+.admin-table td small { display: block; color: var(--wa-sub); }
+.admin-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.admin-actions button { border: 1px solid var(--wa-line); border-radius: 14px; padding: 4px 10px; background: none; color: var(--wa-text); font-size: 12.5px; font-weight: 600; cursor: pointer; }
+.admin-actions button.is-danger { color: #c62828; border-color: color-mix(in srgb, #c62828 40%, transparent); }
+.admin-actions button.is-primary { background: var(--wa-green); color: #fff; border-color: transparent; }
+.admin-report { padding: 12px 0; border-bottom: 1px solid var(--wa-line); }
+.admin-report header { display: flex; justify-content: space-between; gap: 8px; }
+.admin-report p { margin: 4px 0 8px; color: var(--wa-sub); font-size: 13px; }
+.admin-editor .admin-body { min-height: 220px; }

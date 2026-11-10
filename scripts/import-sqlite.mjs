@@ -8,7 +8,7 @@ import { DATABASE_SCHEMA_VERSION, postgresOptions } from '../server/database.mjs
 import { DEMO_USERS } from '../server/demo.mjs';
 
 export const IMPORT_TABLES = Object.freeze([
-  { name: 'users', columns: ['id', 'username', 'name', 'initials', 'color', 'dob', 'password_hash', 'created_at', 'avatar_disk_name', 'avatar_type', 'avatar_updated_at', 'last_seen_at', 'last_seen_privacy', 'online_privacy', 'photo_privacy', 'read_receipts', 'two_step_hash', 'two_step_set_at', 'status_audience'], users: ['id'] },
+  { name: 'users', columns: ['id', 'username', 'name', 'initials', 'color', 'dob', 'password_hash', 'created_at', 'avatar_disk_name', 'avatar_type', 'avatar_updated_at', 'last_seen_at', 'last_seen_privacy', 'online_privacy', 'photo_privacy', 'read_receipts', 'two_step_hash', 'two_step_set_at', 'status_audience', 'is_admin', 'suspended_at'], users: ['id'] },
   { name: 'sessions', columns: ['token_hash', 'user_id', 'device_id', 'device_name', 'expires_at', 'created_at', 'last_active_at'], users: ['user_id'] },
   { name: 'contacts', columns: ['owner_id', 'contact_id', 'created_at', 'saved', 'hidden'], users: ['owner_id', 'contact_id'], key: ['owner_id', 'contact_id'] },
   // Groups precede media and uploads, whose group_id references them.
@@ -23,7 +23,7 @@ export const IMPORT_TABLES = Object.freeze([
   { name: 'message_hidden', columns: ['user_id', 'message_id'], users: ['user_id'], key: ['user_id', 'message_id'] },
   { name: 'group_messages', columns: ['id', 'group_id', 'sender_id', 'created_at', 'content', 'expires_at', 'edited_at'], users: ['sender_id'] },
   { name: 'poll_votes', columns: ['message_id', 'user_id', 'option_index', 'voted_at'], users: ['user_id'], key: ['message_id', 'user_id', 'option_index'], numeric: ['option_index'] },
-  { name: 'group_reports', columns: ['id', 'group_id', 'reporter_id', 'reason', 'created_at'], users: ['reporter_id'] },
+  { name: 'group_reports', columns: ['id', 'group_id', 'reporter_id', 'reason', 'created_at', 'status'], users: ['reporter_id'] },
   { name: 'statuses', columns: ['id', 'user_id', 'content', 'background', 'created_at', 'expires_at'], users: ['user_id'] },
   { name: 'status_views', columns: ['status_id', 'viewer_id', 'viewed_at'], users: ['viewer_id'], key: ['status_id', 'viewer_id'] },
   // Phones registered for Firebase push (kept with their sessions, so push keeps working after the move).
@@ -55,6 +55,9 @@ export const IMPORT_TABLES = Object.freeze([
   { name: 'scheduled_messages', columns: ['id', 'owner_id', 'receiver_id', 'content', 'send_at', 'created_at'], users: ['owner_id', 'receiver_id'] },
   { name: 'status_audience_members', columns: ['owner_id', 'user_id'], users: ['owner_id', 'user_id'], key: ['owner_id', 'user_id'] },
   { name: 'call_links', columns: ['code', 'owner_id', 'mode', 'created_at', 'revoked_at'], users: ['owner_id'], key: ['code'] },
+  // Help Center and moderation (migration 013).
+  { name: 'help_articles', columns: ['id', 'slug', 'category', 'title', 'body', 'published', 'updated_at', 'updated_by'], users: [] },
+  { name: 'user_reports', columns: ['id', 'reporter_id', 'reported_id', 'reason', 'details', 'status', 'created_at', 'resolved_at', 'resolved_by'], users: ['reporter_id', 'reported_id'] },
 ]);
 const demoIds = Object.keys(DEMO_USERS);
 const excluded = demoIds.map(() => '?').join(', ');
@@ -84,7 +87,7 @@ function sourceQuery(table) {
     parameters.push(...demoIds);
   }
   return {
-    sql: `SELECT ${table.columns.join(', ')} FROM ${table.name} WHERE ${filters.join(' AND ')} ORDER BY ${orderBy(table, 'BINARY')}`,
+    sql: `SELECT ${table.columns.join(', ')} FROM ${table.name} WHERE ${filters.length ? filters.join(' AND ') : '1 = 1'} ORDER BY ${orderBy(table, 'BINARY')}`,
     parameters,
   };
 }

@@ -316,7 +316,7 @@ test('SQLite import verifies every row across batches, excludes demo and rejects
   addMember.run('group-a', 'real-b', 'member', 1, 2);
   source.db.prepare('INSERT INTO group_messages(id, group_id, sender_id, created_at, content, expires_at) VALUES (?, ?, ?, ?, ?, ?)').run('group-message', 'group-a', 'real-b', 3, 'Group text', 86400003);
   source.db.prepare('INSERT INTO media(id, sender_id, group_id, filename, content_type, byte_size, disk_name, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run('group-file', 'real-a', 'group-a', 'g.png', 'image/png', 4, 'group-file.blob', 1700000000001);
-  source.db.prepare('INSERT INTO group_reports VALUES (?, ?, ?, ?, ?)').run('report-1', 'group-a', 'real-b', 'Spam', 5);
+  source.db.prepare('INSERT INTO group_reports(id, group_id, reporter_id, reason, created_at) VALUES (?, ?, ?, ?, ?)').run('report-1', 'group-a', 'real-b', 'Spam', 5);
   source.db.prepare('INSERT INTO groups(id, name, created_by, created_at) VALUES (?, ?, ?, ?)').run('demo-group', 'Demo', 'ava', 1);
   addMember.run('demo-group', 'real-a', 'member', 0, 1);
   source.db.prepare('INSERT INTO group_messages(id, group_id, sender_id, created_at, content, expires_at) VALUES (?, ?, ?, ?, ?, ?)').run('demo-group-message', 'demo-group', 'real-a', 3, 'Excluded', null);

@@ -32,6 +32,8 @@ import { syncMissedMessages } from './messageSync.js';
 import { HISTORY_CONCURRENCY, forEachLimited } from './concurrency.js';
 import MobileBottomNav from './components/MobileBottomNav.jsx';
 import DesktopRail from './components/DesktopRail.jsx';
+import { canAdminister } from './adminAccess.js';
+import { SIGNED_IN_HINT } from './site/links.js';
 import ChatsList from './components/ChatsList.jsx';
 import { lazyComponent, preloadLazyScreens } from './lazy.js';
 import { handleBack, useBackHandler } from './backStack.js';
@@ -52,6 +54,7 @@ const CommunitiesView = lazyComponent(() => import('./components/parity/Communit
 const BusinessTools = lazyComponent(() => import('./components/parity/BusinessTools.jsx'));
 const StarredMessages = lazyComponent(() => import('./components/parity/StarredMessages.jsx'));
 const extrasPanels = () => import('./components/extras/ExtrasPanels.jsx');
+const AdminConsole = lazyComponent(() => import('./components/admin/AdminConsole.jsx'));
 const BroadcastLists = lazyComponent(extrasPanels, (module) => module.BroadcastLists);
 const Channels = lazyComponent(extrasPanels, (module) => module.Channels);
 const ScheduledMessages = lazyComponent(extrasPanels, (module) => module.ScheduledMessages);
@@ -642,6 +645,25 @@ export default function App() {
 
   // The web app's left rail picks a section too (Chats, Updates, Communities, Calls, Settings).
   const [desktopTab, setDesktopTab] = useState('chats');
+  // The public site sends signed-in visitors straight here (src/main.jsx reads this hint).
+  useEffect(() => {
+    try {
+      if (sessionToken) localStorage.setItem(SIGNED_IN_HINT, '1');
+      else localStorage.removeItem(SIGNED_IN_HINT);
+    } catch { /* the hint is a convenience only */ }
+  }, [sessionToken]);
+  // Admin console: offered in Settings to admins, and opened directly at /admin.
+  const [isAdmin, setIsAdmin] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    if (!sessionToken) { setIsAdmin(false); return undefined; }
+    canAdminister(sessionToken).then((allowed) => {
+      if (cancelled) return;
+      setIsAdmin(allowed);
+      if (allowed && location.pathname === '/admin') setParitySheet('admin');
+    });
+    return () => { cancelled = true; };
+  }, [sessionToken]);
   const activeTab = isMobile ? mobileActiveTab : desktopTab;
   const setActiveTab = isMobile ? setMobileActiveTab : setDesktopTab;
   const [channelToOpen, setChannelToOpen] = useState('');
@@ -836,7 +858,7 @@ export default function App() {
         ) : activeTab === 'tools' ? (
           <ToolsView darkMode={darkMode} onToggleTheme={toggleTheme} onLogout={() => { logout(); }} onNotifications={() => setNotificationsOpen(true)} onAccountSettings={() => setAccountSettingsOpen(true)} onAccounts={() => setAccountsOpen(true)} onAvatarStudio={() => setAvatarStudioOpen(true)} onGroups={() => openGroups()}
             onCommunities={() => setParitySheet('communities')} onBusinessTools={() => setParitySheet('business')} onStarred={() => setParitySheet('starred')}
-            onBackup={() => setParitySheet('backup')} onStorage={() => setParitySheet('storage')} onSheet={setParitySheet} />
+            onBackup={() => setParitySheet('backup')} onStorage={() => setParitySheet('storage')} onSheet={setParitySheet} isAdmin={isAdmin} />
         ) : null}
         {activeTab === 'chats' && !isMobile && <footer className="workspace-footer"><span /><span className="workspace-footer-right"><button onClick={toggleTheme} title={`Switch to ${darkMode ? 'light' : 'dark'} theme`}>{darkMode ? <Sun size={14} /> : <Moon size={14} />}{darkMode ? 'Light' : 'Dark'}</button><ChevronRight size={13} /></span></footer>}
       </div>
@@ -853,6 +875,7 @@ export default function App() {
         onOpenChat={(id) => { setParitySheet(null); openChat({ id }); }} onOpenGroup={(id) => { setParitySheet(null); openGroups(false, id); }} />}
       {sessionToken && paritySheet === 'backup' && <BackupView token={sessionToken} onClose={() => setParitySheet(null)} />}
       {sessionToken && paritySheet === 'storage' && <StorageView onClose={() => setParitySheet(null)} />}
+      {sessionToken && isAdmin && paritySheet === 'admin' && <AdminConsole token={sessionToken} onClose={() => { setParitySheet(null); if (location.pathname === '/admin') history.replaceState(null, '', '/app'); }} />}
       {sessionToken && paritySheet === 'broadcasts' && <BroadcastLists token={sessionToken} onClose={() => setParitySheet(null)} />}
       {sessionToken && paritySheet === 'channels' && <Channels token={sessionToken} initialChannelId={channelToOpen} onClose={() => { setParitySheet(null); setChannelToOpen(''); }} />}
       {sessionToken && paritySheet === 'scheduled' && <ScheduledMessages token={sessionToken} userId={userId} onClose={() => setParitySheet(null)} />}

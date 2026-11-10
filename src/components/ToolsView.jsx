@@ -1,6 +1,6 @@
 import { setMediaSaveEnabled, useMediaSave } from '../mediaSave.js';
 import { nativeShell } from '../native.js';
-import { Settings, Users, Plus, ChevronRight, LogOut, Bell, Moon, Sun, Pencil, Check, X, Sparkles, Video, ScanFace, Download, Store, Star, DatabaseBackup, HardDrive, Radio, Megaphone, Clock, Link2, EyeOff, Languages } from 'lucide-react';
+import { Settings, Users, Plus, ChevronRight, LogOut, Bell, Moon, Sun, Pencil, Check, X, Sparkles, Video, ScanFace, Download, Store, Star, DatabaseBackup, HardDrive, Radio, Megaphone, Clock, Link2, EyeOff, Languages, ShieldCheck } from 'lucide-react';
 import { useChatStore } from '../store.js';
 import ProfilePhoto from './ProfilePhoto.jsx';
 import Avatar from './Avatar.jsx';
@@ -99,7 +99,7 @@ function DisplayNameEditor({ user, userId }) {
   );
 }
 
-export default function ToolsView({ darkMode, onToggleTheme, onLogout, onNotifications, onAccountSettings, onAccounts, onAvatarStudio, onGroups, onCommunities, onBusinessTools, onStarred, onBackup, onStorage, onSheet }) {
+export default function ToolsView({ darkMode, onToggleTheme, onLogout, onNotifications, onAccountSettings, onAccounts, onAvatarStudio, onGroups, onCommunities, onBusinessTools, onStarred, onBackup, onStorage, onSheet, isAdmin = false }) {
   const user = useChatStore((state) => state.user);
   const userId = useChatStore((state) => state.userId);
   const { accounts } = useAccounts();
@@ -174,6 +174,16 @@ export default function ToolsView({ darkMode, onToggleTheme, onLogout, onNotific
             </div>
             <ChevronRight size={16} />
           </button>
+          {isAdmin && (
+            <button className="tool-item" onClick={() => onSheet?.('admin')}>
+              <ShieldCheck size={20} />
+              <div className="tool-item-info">
+                <strong>Admin console</strong>
+                <small>Statistics, users, reports, Help Center</small>
+              </div>
+              <ChevronRight size={16} />
+            </button>
+          )}
           {[
             ['channels', Radio, 'Channels', 'Follow channels or start your own'],
             ['broadcasts', Megaphone, 'Broadcast lists', 'One message, sent privately to many'],

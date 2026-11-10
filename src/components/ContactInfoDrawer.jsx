@@ -30,6 +30,7 @@ import { formatViewerTimestamp } from '../time.js';
 import { hasCustomDisplayName, presentName } from '../profile.js';
 import Avatar from './Avatar.jsx';
 import { safetyNumberWith } from '../e2e/client.js';
+import { apiFetch } from '../api.js';
 import { GalleryTile } from './MediaViewer.jsx';
 
 const CLOSE_ANIMATION_MS = 200;
@@ -136,6 +137,7 @@ export default function ContactInfoDrawer({
   const [mediaTab, setMediaTab] = useState('media');
   const [dialog, setDialog] = useState(null);
   const [keepStarred, setKeepStarred] = useState(true);
+  const [reportReason, setReportReason] = useState('spam');
   const [deleteAfterReport, setDeleteAfterReport] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -226,7 +228,14 @@ export default function ContactInfoDrawer({
     onChatDeleted?.();
   });
 
+  // The report goes to the Hidden Messenger admins (server/admin.mjs) with the reason; then the contact is blocked.
   const reportAndBlock = () => runDialogAction(async () => {
+    const response = await apiFetch(`/api/v1/users/${encodeURIComponent(chatId)}/report`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason: reportReason }),
+    });
+    if (!response.ok) throw new Error((await response.json().catch(() => null))?.error ?? 'The report could not be sent. Try again.');
     if (!blocked) store().blockChat(chatId);
     if (deleteAfterReport) {
       const { kept } = await deleteChatOnServer(sessionToken, chatId);
@@ -235,7 +244,7 @@ export default function ContactInfoDrawer({
       onChatDeleted?.();
       return;
     }
-    setToast(blocked ? 'Contact is blocked' : `${name} blocked`);
+    setToast(blocked ? 'Report sent' : `Report sent · ${name} blocked`);
   });
 
   function toggleBlock() {
@@ -458,15 +467,26 @@ export default function ContactInfoDrawer({
       {dialog === 'report' && (
         <ConfirmDialog
           title={`Report ${name}?`}
-          confirmLabel={blocked ? (deleteAfterReport ? 'Delete chat' : 'OK') : 'Block'}
+          confirmLabel={blocked ? 'Report' : 'Report and block'}
           danger={!blocked || deleteAfterReport}
           busy={busy}
           onConfirm={reportAndBlock}
           onCancel={() => setDialog(null)}
         >
           <p>
-            Hidden Messenger has no moderation team, so reports are not sent anywhere. {blocked ? `${name} is already blocked on this device.` : `You can block ${name} so their messages and calls stop reaching this device.`}
+            The Hidden Messenger team gets this report with the reason you choose. They can’t read your messages; they can suspend accounts that break the rules. {blocked ? `${name} is already blocked.` : `${name} will also be blocked on this device.`}
           </p>
+          <label className="wa-info-check">
+            <span>Reason</span>
+            <select value={reportReason} onChange={(event) => setReportReason(event.target.value)}>
+              <option value="spam">Spam</option>
+              <option value="scam">Scam or fraud</option>
+              <option value="harassment">Harassment or threats</option>
+              <option value="impersonation">Pretending to be someone</option>
+              <option value="inappropriate">Inappropriate content</option>
+              <option value="other">Something else</option>
+            </select>
+          </label>
           <label className="wa-info-check">
             <input type="checkbox" checked={deleteAfterReport} onChange={(event) => setDeleteAfterReport(event.target.checked)} />
             <span>Also delete this chat</span>
