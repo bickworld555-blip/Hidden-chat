@@ -62,7 +62,7 @@
         <service
             android:name=".MessagingService"
             android:exported="false"
-            android:foregroundServiceType="specialUse|microphone|camera|phoneCall">
+            android:foregroundServiceType="specialUse|microphone|camera|phoneCall|dataSync">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Keeps the Hidden Messenger connection open so messages and calls arrive while the app is in the background." />
@@ -76,6 +76,15 @@
             android:exported="true">
             <intent-filter>
                 <action android:name="android.telecom.ConnectionService" />
+            </intent-filter>
+        </service>
+
+        <!-- Firebase push (like WhatsApp's GcmListenerService): wakes the idle app for messages and calls. -->
+        <service
+            android:name=".PushService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
             </intent-filter>
         </service>
 
@@ -120,6 +129,8 @@
     <!-- Calls registered with Android (Telecom) as a self-managed calling app, and kept going as phone calls. -->
     <uses-permission android:name="android.permission.MANAGE_OWN_CALLS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_PHONE_CALL" />
+    <!-- After a call push: a short foreground sync to collect the call (like WhatsApp's GcmFGService). -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <!-- Voice calls on the earpiece: the proximity sensor turns the screen off against the ear. -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <!-- Saving received files on Android 9 and older (newer versions need no permission). -->

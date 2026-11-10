@@ -13,7 +13,7 @@ test('the manifest declares a self-managed calling service and its permissions',
   assert.match(manifest, /android:name="\.CallConnectionService"\s+android:permission="android\.permission\.BIND_TELECOM_CONNECTION_SERVICE"[\s\S]*?<action android:name="android\.telecom\.ConnectionService" \/>/);
   assert.ok(manifest.includes('android.permission.MANAGE_OWN_CALLS'));
   assert.ok(manifest.includes('android.permission.FOREGROUND_SERVICE_PHONE_CALL'));
-  assert.ok(manifest.includes('android:foregroundServiceType="specialUse|microphone|camera|phoneCall"'));
+  assert.ok(manifest.includes('android:foregroundServiceType="specialUse|microphone|camera|phoneCall|dataSync"'));
   const calls = await java('TelecomCalls.java');
   assert.ok(calls.includes('PhoneAccount.CAPABILITY_SELF_MANAGED'), 'self-managed: our own screens, no calling-account switch to turn on');
 });

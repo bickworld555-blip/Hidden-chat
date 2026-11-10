@@ -30,7 +30,8 @@ export async function requestNotificationPermission() {
 // vibration are handled by the app itself (each channel has its own tone), so the notification is silent.
 // Android Chrome only allows notifications from the service worker (the Notification constructor throws
 // there), so the registration is used whenever one is active; clicks then arrive via postMessage.
-export async function showSystemNotification(category, { title, body, tag, conversation, onClick, count = 0 } = {}) {
+// `messageId` lets Android show a message once even when a push and the app both deliver it.
+export async function showSystemNotification(category, { title, body, tag, conversation, onClick, count = 0, messageId } = {}) {
   if (typeof document !== 'undefined' && document.visibilityState === 'visible' && document.hasFocus?.()) return null;
   if (!systemNotificationAllowed(category, getNotificationSettings())) return null;
   const channel = channelForCategory(category);
@@ -47,6 +48,7 @@ export async function showSystemNotification(category, { title, body, tag, conve
       tag: category === 'reaction' ? `${channel.id}:${tag ?? open}` : (open || tag),
       open,
       count,
+      ...(messageId ? { messageId } : {}),
     });
     return result?.shown ? 'native' : null;
   }

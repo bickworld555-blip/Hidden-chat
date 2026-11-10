@@ -43,6 +43,8 @@ public class MainActivity extends BridgeActivity {
         // Local plugins must be registered before the bridge starts.
         registerPlugin(HiddenNativePlugin.class);
         TelecomCalls.register(this);
+        // Firebase push: (re)register this phone's token; the result picks push mode or the always-on fallback.
+        PushRegistration.ensure(this);
         alive = true;
         current = this;
         // The WebView takes over the connection; the service's own one would only duplicate notifications.
@@ -190,7 +192,7 @@ public class MainActivity extends BridgeActivity {
         alive = false;
         if (current == this) current = null;
         // Screen gone (swiped away) but the service still runs: keep the phone reachable.
-        if (!isChangingConfigurations() && MessagingService.isRunning()) NativeRelay.start(this);
+        if (!isChangingConfigurations() && MessagingService.isRunning() && MessagingService.isLegacy(this)) NativeRelay.start(this);
         // The call lived in this screen's WebView: without it there is no call any more.
         if (!isChangingConfigurations()) MessagingService.endOrphanedCall(this, "screen closed");
         super.onDestroy();

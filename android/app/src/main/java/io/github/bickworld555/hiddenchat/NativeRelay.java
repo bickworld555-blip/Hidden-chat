@@ -60,6 +60,11 @@ final class NativeRelay extends WebSocketListener {
         current = null;
     }
 
+    /** End a push sync's connection; the always-on mode keeps its own. */
+    static synchronized void stopUnlessLegacy() {
+        if (current != null && !MessagingService.isLegacy(current.context)) stop();
+    }
+
     static synchronized boolean isRunning() {
         return current != null && current.running;
     }
@@ -260,7 +265,7 @@ final class NativeRelay extends WebSocketListener {
             String title = name.isEmpty() ? "@" + message.optString("senderUsername", "someone") : name;
             String tag = "chat:" + sender;
             Alerts.showMessage(context, session.phoneMessageSound ? NotificationChannels.DIRECT_MESSAGES_PHONE : NotificationChannels.DIRECT_MESSAGES,
-                title, MessagePreview.of(message.optString("content")), tag, tag, Alerts.nextCount(tag));
+                title, MessagePreview.of(message.optString("content")), tag, tag, Alerts.nextCount(tag), message.optString("id"));
         } else if ("group:message".equals(type)) {
             JSONObject message = event.optJSONObject("message");
             if (message == null || session.userId.equals(message.optString("senderId"))) return;
@@ -270,7 +275,7 @@ final class NativeRelay extends WebSocketListener {
             String body = MessagePreview.of(message.optString("content"));
             String tag = "group:" + groupId;
             Alerts.showMessage(context, session.phoneGroupSound ? NotificationChannels.GROUP_MESSAGES_PHONE : NotificationChannels.GROUP_MESSAGES,
-                event.optString("groupName", "Group"), senderName.isEmpty() ? body : senderName + ": " + body, tag, tag, Alerts.nextCount(tag));
+                event.optString("groupName", "Group"), senderName.isEmpty() ? body : senderName + ": " + body, tag, tag, Alerts.nextCount(tag), message.optString("id"));
         } else if ("message:reaction".equals(type)) {
             // Someone reacted to a message I sent: a notification like WhatsApp's "Reacted ❤️ to: …".
             String reactor = event.optString("userId");
@@ -280,7 +285,8 @@ final class NativeRelay extends WebSocketListener {
             String preview = MessagePreview.of(event.optString("messageContent"));
             String body = "Reacted " + emoji + (preview.isEmpty() ? " to your message" : " to: \u201C" + preview + "\u201D");
             Alerts.showMessage(context, session.phoneMessageSound ? NotificationChannels.DIRECT_MESSAGES_PHONE : NotificationChannels.DIRECT_MESSAGES,
-                event.optString("reactorName", "Reaction"), body, "reaction:" + event.optString("messageId"), "chat:" + reactor);
+                event.optString("reactorName", "Reaction"), body, "reaction:" + event.optString("messageId"), "chat:" + reactor, 0,
+                "react:" + event.optString("messageId") + ":" + emoji);
         } else if ("call:signal".equals(type)) {
             handleCallSignal(event);
         } else if ("call:invite".equals(type)) {

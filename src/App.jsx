@@ -214,7 +214,7 @@ export default function App() {
             if (alert && shouldAlertGroup({ groupId: alert.conversation.id, mutedGroupIds: readMutedGroups(userId), viewingGroupId: getViewingGroup(), pageVisible: document.visibilityState === 'visible' })) {
               playNotificationTone('group');
               vibrateFor('group');
-              showSystemNotification('group', { ...groupNotificationText(event), conversation: alert.conversation, onClick: () => openGroupRef.current?.(alert.conversation.id) });
+              showSystemNotification('group', { ...groupNotificationText(event), messageId: event.message?.id, conversation: alert.conversation, onClick: () => openGroupRef.current?.(alert.conversation.id) });
             }
           }
           if (event.type === 'connection:ready') event.presence.forEach((item) => setPresence(item.userId, item.status, item.lastSeenAt));
@@ -239,6 +239,7 @@ export default function App() {
               showSystemNotification('message', {
                 title: sender?.name ?? 'New message',
                 body: notificationPreview(event.message.content),
+                messageId: event.message.id,
                 tag: `relay-message-${event.message.senderId}`,
                 conversation: { kind: 'chat', id: event.message.senderId },
                 onClick: () => openChatRef.current?.(event.message.senderId),
@@ -279,6 +280,7 @@ export default function App() {
                 title: reactor?.name ?? event.reactorName ?? 'Reaction',
                 body: event.messageContent ? `Reacted ${event.emoji} to: “${notificationPreview(event.messageContent)}”` : `Reacted ${event.emoji} to your message`,
                 tag: `relay-reaction-${event.messageId}`,
+                messageId: `react:${event.messageId}:${event.emoji}`,
                 conversation: { kind: 'chat', id: event.userId },
                 onClick: () => openChatRef.current?.(event.userId),
               });

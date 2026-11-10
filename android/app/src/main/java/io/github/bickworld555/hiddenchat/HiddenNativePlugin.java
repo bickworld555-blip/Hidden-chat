@@ -157,6 +157,8 @@ public class HiddenNativePlugin extends Plugin {
         NotificationManager notifications = context.getSystemService(NotificationManager.class);
         result.put("fullScreenCalls", Build.VERSION.SDK_INT < 34 || (notifications != null && notifications.canUseFullScreenIntent()));
         result.put("pictureInPicture", pictureInPictureAllowed(context));
+        // Firebase push carries messages and calls (no always-on "Connected" service needed).
+        result.put("push", PushRegistration.isActive(context));
         return result;
     }
 
@@ -206,7 +208,9 @@ public class HiddenNativePlugin extends Plugin {
 
     @PluginMethod
     public void startBackground(PluginCall call) {
-        MessagingService.start(getContext());
+        // With push the phone needs no always-on service; without it (yet) the "Connected" service keeps it reachable.
+        MessagingService.applyMode(getContext());
+        PushRegistration.ensure(getContext());
         call.resolve();
     }
 
@@ -228,6 +232,7 @@ public class HiddenNativePlugin extends Plugin {
         boolean saved = RelaySession.save(getContext(), call.getString("origin"), call.getString("token"), call.getString("userId"), mutedChats, mutedGroups,
             Boolean.TRUE.equals(call.getBoolean("phoneMessageSound", false)), Boolean.TRUE.equals(call.getBoolean("phoneGroupSound", false)),
             Boolean.TRUE.equals(call.getBoolean("phoneRingtone", false)));
+        if (saved) PushRegistration.ensure(getContext());
         JSObject result = new JSObject();
         result.put("saved", saved);
         call.resolve(result);
@@ -434,6 +439,8 @@ public class HiddenNativePlugin extends Plugin {
     /** Signing out: forget the account and stop the background connection. */
     @PluginMethod
     public void clearSession(PluginCall call) {
+        // The server forgets this phone's push token (needs the session, so before it is cleared).
+        PushRegistration.unregister(getContext());
         RelaySession.clear(getContext());
         // Signed out: this account's chats must not stay in the share sheet or on the app icon.
         ShareShortcuts.clear(getContext());
@@ -471,7 +478,7 @@ public class HiddenNativePlugin extends Plugin {
     public void notify(PluginCall call) {
         String channel = call.getString("channel");
         boolean shown = Alerts.showMessage(getContext(), channel, call.getString("title", "Hidden Messenger"), call.getString("body", ""),
-            call.getString("tag", channel), call.getString("open", ""), call.getInt("count", 0));
+            call.getString("tag", channel), call.getString("open", ""), call.getInt("count", 0), call.getString("messageId"));
         JSObject result = new JSObject();
         result.put("shown", shown);
         call.resolve(result);

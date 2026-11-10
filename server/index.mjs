@@ -21,6 +21,7 @@ import { DEMO_USERS } from './demo.mjs';
 import { createEventPilot } from './eventPilot.mjs';
 import { pdfPageCountOfFile } from './pdfPages.mjs';
 import { createLinkPreviews } from './linkPreview.mjs';
+import { createPushSender, encryptForDevice, loadServiceAccount, validDeviceKey } from './push.mjs';
 import { canSeePresence, deviceNameFromUserAgent, isLastSeenPrivacy, presenceFor } from './presence.mjs';
 
 const directory = dirname(fileURLToPath(import.meta.url));
@@ -110,6 +111,8 @@ export function createChatServer({
   webDirectory = join(directory, '..', 'dist'),
   migrate = false,
   linkPreviews = null,
+  // Firebase push sender ({ send }); by default from FCM_SERVICE_ACCOUNT / FCM_SERVICE_ACCOUNT_FILE, else off.
+  pushSender = undefined,
 } = {}) {
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('PORT must be an integer from 0 to 65535.');
   if (process.env.NODE_ENV === 'production' && port === 0) throw new Error('Production requires a fixed nonzero PORT.');
@@ -235,6 +238,17 @@ export function createChatServer({
     PRIMARY KEY (status_id, viewer_id)
   )`);
   db.exec(`CREATE INDEX IF NOT EXISTS messages_expiry ON messages(expires_at) WHERE expires_at IS NOT NULL AND deleted_at IS NULL`);
+  // Phones registered for Firebase push (see server/push.mjs).
+  db.exec(`CREATE TABLE IF NOT EXISTS push_devices (
+    token TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    session_hash TEXT NOT NULL,
+    device_key TEXT NOT NULL,
+    platform TEXT NOT NULL,
+    updated_at INTEGER NOT NULL
+  )`);
+  db.exec('CREATE INDEX IF NOT EXISTS push_devices_user ON push_devices(user_id)');
+  db.exec('CREATE INDEX IF NOT EXISTS push_devices_session ON push_devices(session_hash)');
   // One disappearing-messages timer per conversation, shared by both people (user_a < user_b).
   db.exec(`CREATE TABLE IF NOT EXISTS chat_settings (
     user_a TEXT NOT NULL,
@@ -504,6 +518,8 @@ export function createChatServer({
     if (!activeCall) return;
     clearTimeout(activeCall.timer);
     activeCalls.delete(callId);
+    // A phone that was rung by push stops ringing even if its socket never connected.
+    if (activeCall.pushed && !activeCall.calleeSocket) pushInBackground(activeCall.calleeId, { t: 'call_end', callId }, { ttlSeconds: 30, collapseKey: `call:${callId}` });
     const event = {
       type: 'call:signal',
       from: reason === 'no-answer' ? activeCall.calleeId : activeCall.callerId,
@@ -595,6 +611,62 @@ export function createChatServer({
       delivered += 1;
     }
     return delivered;
+  }
+
+  // --- Firebase push: wakes phones that have no app on screen (WhatsApp-style; no always-on socket needed). ---
+  let push = pushSender;
+  if (push === undefined) {
+    try {
+      push = createPushSender({ serviceAccount: loadServiceAccount() });
+    } catch (error) {
+      console.error('Firebase push is off:', error.message);
+      push = null;
+    }
+  }
+
+  /** A person needs a push when no device of theirs has the app on screen (a backgrounded app may be frozen). */
+  function needsPush(userId) {
+    return Boolean(push) && !isOnline(userId);
+  }
+
+  /** Sends one encrypted push to every phone the person registered; forgets phones the app is gone from. */
+  async function pushToUser(userId, body, options = {}) {
+    if (!push) return 0;
+    const devices = await db.prepare('SELECT token, device_key AS "deviceKey" FROM push_devices WHERE user_id = ?').all(userId);
+    let sent = 0;
+    await Promise.all(devices.map(async (device) => {
+      const { enc, iv } = encryptForDevice(device.deviceKey, body);
+      const result = await push.send(device.token, { t: body.t, enc, iv }, options);
+      if (result.ok) sent += 1;
+      else if (result.invalidToken) await db.prepare('DELETE FROM push_devices WHERE token = ?').run(device.token);
+      else console.error('Push not sent:', result.error);
+    }));
+    return sent;
+  }
+
+  /** Fire-and-forget push for an event that already went out over the sockets. */
+  function pushInBackground(userId, body, options) {
+    trackSocketTask(pushToUser(userId, body, options).catch((error) => console.error('Push failed:', error.message)));
+  }
+
+  async function forgetPushDevicesOf(sessionHashes) {
+    for (const hash of sessionHashes) await db.prepare('DELETE FROM push_devices WHERE session_hash = ?').run(hash);
+  }
+
+  /** One tick becomes two: the receiver's device has these messages. Returns how many changed. */
+  async function markDelivered(userId, messageIds, exceptSocket) {
+    const ids = Array.isArray(messageIds) ? messageIds.filter((id) => typeof id === 'string' && id.length < 80).slice(0, 200) : [];
+    let changed = 0;
+    for (const messageId of ids) {
+      const updated = await db.prepare(`UPDATE messages SET status = 'delivered'
+        WHERE id = ? AND receiver_id = ? AND status = 'sent' RETURNING sender_id AS "senderId"`).get(messageId, userId);
+      if (!updated) continue;
+      changed += 1;
+      const statusEvent = { type: 'message:status', messageId, status: 'delivered' };
+      broadcastUser(updated.senderId, statusEvent);
+      broadcastUser(userId, statusEvent, exceptSocket);
+    }
+    return changed;
   }
 
   async function runGroupBatch(statements) {
@@ -861,6 +933,13 @@ export function createChatServer({
     const names = await db.prepare(`SELECT g.name AS "groupName", u.name AS "senderName" FROM groups g JOIN users u ON u.id = ?
       WHERE g.id = ?`).get(userId, groupId);
     await notifyGroup(groupId, { type: 'group:message', message: row, groupName: names?.groupName ?? null, senderName: names?.senderName ?? null });
+    if (push) {
+      const members = await db.prepare('SELECT user_id AS "userId" FROM group_members WHERE group_id = ? AND user_id <> ?').all(groupId, userId);
+      for (const member of members) {
+        if (!needsPush(member.userId)) continue;
+        pushInBackground(member.userId, { t: 'gmsg', id: row.id, groupId, groupName: names?.groupName ?? 'Group', senderName: names?.senderName ?? '', content: row.content }, { collapseKey: `group:${groupId}` });
+      }
+    }
     response.status(201).json(row);
   });
 
@@ -980,7 +1059,7 @@ export function createChatServer({
     response.set('Cache-Control', 'no-store');
     await db.ready?.();
     const recent = await missingRecentMedia().catch(() => null);
-    response.json({ status: 'ok', storage: storageInRelease ? 'release' : 'persistent', ...(recent ? { recentMedia: recent } : {}) });
+    response.json({ status: 'ok', storage: storageInRelease ? 'release' : 'persistent', push: Boolean(push), ...(recent ? { recentMedia: recent } : {}) });
   });
 
   // WhatsApp-style card for a link in a message: thumbnail, title, description and site (Facebook, YouTube…).
@@ -1116,6 +1195,7 @@ export function createChatServer({
     const others = await db.prepare('DELETE FROM sessions WHERE user_id = ? AND token_hash <> ? RETURNING token_hash AS "hash"')
       .all(userId, request.session.token_hash);
     closeSessionSockets(new Set(others.map((other) => other.hash)), 'Password changed');
+    await forgetPushDevicesOf(others.map((other) => other.hash));
     response.json({ signedOutDevices: others.length });
   });
 
@@ -1138,6 +1218,7 @@ export function createChatServer({
       .get(request.params.deviceId, request.session.user_id);
     if (!removed) return response.status(404).json({ error: 'That device is no longer signed in.' });
     closeSessionSockets(new Set([removed.hash]), 'Signed out from another device');
+    await forgetPushDevicesOf([removed.hash]);
     response.status(204).end();
   });
 
@@ -1493,7 +1574,43 @@ export function createChatServer({
     const tokenHash = request.session.token_hash;
     (await db.prepare("DELETE FROM sessions WHERE token_hash = ?").run(tokenHash));
     closeSessionSockets(new Set([tokenHash]), 'Session logged out');
+    await forgetPushDevicesOf([tokenHash]);
     response.status(204).end();
+  });
+
+  // --- Push devices: the Android app registers its FCM token and payload key for this session. ---
+  // { push: true } means this server sends pushes, so the phone can drop its always-on connection.
+  app.post('/api/v1/push/devices', requireSession, async (request, response) => {
+    const { token, key, platform } = request.body ?? {};
+    if (typeof token !== 'string' || token.length < 20 || token.length > 4096 || !validDeviceKey(key) || platform !== 'android') {
+      return response.status(400).json({ error: 'Give the FCM token, a 32-byte base64 key and platform "android".' });
+    }
+    await db.prepare(`INSERT INTO push_devices(token, user_id, session_hash, device_key, platform, updated_at) VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(token) DO UPDATE SET user_id = excluded.user_id, session_hash = excluded.session_hash,
+      device_key = excluded.device_key, platform = excluded.platform, updated_at = excluded.updated_at`)
+      .run(token, request.session.user_id, request.session.token_hash, key, platform, Date.now());
+    response.json({ push: Boolean(push) });
+  });
+
+  app.delete('/api/v1/push/devices', requireSession, async (request, response) => {
+    const token = request.body?.token;
+    if (typeof token !== 'string') return response.status(400).json({ error: 'Give the FCM token.' });
+    await db.prepare('DELETE FROM push_devices WHERE token = ? AND user_id = ?').run(token, request.session.user_id);
+    response.status(204).end();
+  });
+
+  // "Decline" on a call that rang by push, before the phone's socket connected: the caller hears it at once.
+  app.post('/api/v1/calls/:callId/decline', requireSession, async (request, response) => {
+    const activeCall = activeCalls.get(request.params.callId);
+    if (!activeCall || activeCall.calleeId !== request.session.user_id || activeCall.calleeSocket) return response.status(404).json({ error: 'No call is ringing.' });
+    finishCall(request.params.callId, 'ended');
+    response.status(204).end();
+  });
+
+  // The phone confirms messages it showed from a push (two ticks) without opening a socket.
+  app.post('/api/v1/messages/delivered', requireSession, async (request, response) => {
+    const count = await markDelivered(request.session.user_id, request.body?.messageIds);
+    response.json({ delivered: count });
   });
 
   // --- Status: text, photo or video updates that disappear after 24 hours, seen by people in your contacts. ---
@@ -1822,6 +1939,12 @@ export function createChatServer({
       await presenceChanged(userId, wasOnline);
     });
     enqueue(deliverPendingMessages);
+    enqueue(async () => {
+      for (const [, activeCall] of activeCalls) {
+        if (activeCall.calleeId !== userId || activeCall.calleeSocket || !Array.isArray(activeCall.held)) continue;
+        for (const held of activeCall.held) json(socket, held);
+      }
+    });
     async function deliverPendingMessages() {
     (await expireMessages());
     const pendingMessages = (await db.prepare(`SELECT messages.id, messages.sender_id AS "senderId",
@@ -1924,7 +2047,7 @@ export function createChatServer({
         // A pair inside a group call carries the room id, so devices already in that room join without ringing.
         const roomId = typeof event.roomId === 'string' && event.roomId.length <= 80 ? event.roomId : (activeCall?.roomId ?? null);
         if (initialOffer) {
-          const call = { callerId: userId, calleeId: targetId, callerSocket: socket, calleeSocket: null, mode, timer: null, roomId };
+          const call = { callerId: userId, calleeId: targetId, callerSocket: socket, calleeSocket: null, mode, timer: null, roomId, held: [], pushed: false };
           if (callTimeoutMs > 0) {
             call.timer = setTimeout(() => finishCall(callId, 'no-answer'), callTimeoutMs);
             call.timer.unref?.();
@@ -1935,6 +2058,7 @@ export function createChatServer({
           clearTimeout(activeCall.timer);
           activeCall.timer = null;
           activeCall.calleeSocket = socket;
+          activeCall.held = null;
           const elsewhere = { type: 'call:signal', from: activeCall.callerId, callId, mode: activeCall.mode, signalId: randomUUID(), signal: { type: 'end', reason: 'answered-elsewhere' } };
           broadcastUser(userId, elsewhere, socket);
         }
@@ -1948,10 +2072,26 @@ export function createChatServer({
           const callerRecord = (await db.prepare(`SELECT ${USER_COLUMNS} FROM users WHERE id = ?`).get(userId));
           fromUser = callerRecord ? publicUser(callerRecord) : null;
         }
-        const delivered = deliverCallSignal(activeCalls.get(callId), targetId, { type: 'call:signal', from: userId, fromUser, callId, mode, signal, signalId, ...(roomId ? { roomId } : {}) });
+        const signalEvent = { type: 'call:signal', from: userId, fromUser, callId, mode, signal, signalId, ...(roomId ? { roomId } : {}) };
+        const current = activeCalls.get(callId);
+        const delivered = deliverCallSignal(current, targetId, signalEvent);
+        // Until a callee device answers, the caller's offer and candidates are kept (bounded) for a phone that
+        // connects after a push woke it.
+        if (current && !current.calleeSocket && userId === current.callerId && Array.isArray(current.held) && current.held.length < 64) {
+          current.held.push(signalEvent);
+        }
+        const ringing = () => json(socket, { type: 'call:signal', from: targetId, callId, mode, signal: { type: 'ringing' }, signalId: randomUUID() });
         // Only the caller's own socket learns that a callee device is ringing; an offline callee yields no signal.
-        if (initialOffer && delivered > 0) {
-          json(socket, { type: 'call:signal', from: targetId, callId, mode, signal: { type: 'ringing' }, signalId: randomUUID() });
+        if (initialOffer && delivered > 0) ringing();
+        if (initialOffer && current && needsPush(targetId)) {
+          // Not awaited: the caller's candidates keep flowing while Firebase is asked to ring the phone.
+          current.pushed = true;
+          trackSocketTask(pushToUser(targetId, { t: 'call', callId, from: userId, callerName: fromUser?.name || `@${fromUser?.username ?? 'someone'}`, avatar: fromUser?.avatar ?? null, mode }, { ttlSeconds: 45, collapseKey: `call:${callId}` })
+            .then((sent) => {
+              if (sent === 0) current.pushed = false;
+              else if (delivered === 0 && activeCalls.get(callId) === current && socket.readyState === WebSocket.OPEN) ringing();
+            })
+            .catch((error) => console.error('Call push failed:', error.message)));
         }
         return;
       }
@@ -2054,6 +2194,9 @@ export function createChatServer({
           const reactor = await db.prepare('SELECT name, username FROM users WHERE id = ?').get(userId);
           const reacted = await db.prepare('SELECT content FROM messages WHERE id = ?').get(messageId);
           broadcastUser(peerId, { ...reactionEvent, messageSenderId: row.sender_id, reactorName: reactor?.name || `@${reactor?.username ?? 'someone'}`, messageContent: String(reacted?.content ?? '').slice(0, 200) });
+          if (needsPush(peerId)) {
+            pushInBackground(peerId, { t: 'react', id: messageId, from: userId, emoji, reactorName: reactor?.name || `@${reactor?.username ?? 'someone'}`, content: String(reacted?.content ?? '').slice(0, 200) });
+          }
         } else broadcastUser(peerId, reactionEvent);
         broadcastUser(userId, reactionEvent);
         return;
@@ -2115,15 +2258,7 @@ export function createChatServer({
 
       // The recipient's device confirms it has these messages: one tick becomes two for the sender.
       if (event.type === 'message:delivered') {
-        const ids = Array.isArray(event.messageIds) ? event.messageIds.filter((id) => typeof id === 'string' && id.length < 80).slice(0, 200) : [];
-        for (const messageId of ids) {
-          const updated = await db.prepare(`UPDATE messages SET status = 'delivered'
-            WHERE id = ? AND receiver_id = ? AND status = 'sent' RETURNING sender_id AS "senderId"`).get(messageId, userId);
-          if (!updated) continue;
-          const statusEvent = { type: 'message:status', messageId, status: 'delivered' };
-          broadcastUser(updated.senderId, statusEvent);
-          broadcastUser(userId, statusEvent, socket);
-        }
+        await markDelivered(userId, event.messageIds, socket);
         return;
       }
 
@@ -2250,6 +2385,9 @@ export function createChatServer({
       (await linkUsers(receiverId, userId));
       const delivered = (await presentMessage(message));
       broadcastUser(receiverId, { type: 'message:new', message: delivered });
+      if (needsPush(receiverId)) {
+        pushInBackground(receiverId, { t: 'msg', id: message.id, from: userId, senderName: message.senderName || `@${message.senderUsername}`, content: message.content }, { collapseKey: `chat:${userId}` });
+      }
       broadcastUser(userId, { type: 'message:new', message: delivered }, socket);
       json(socket, { type: 'message:ack', message: delivered });
     }

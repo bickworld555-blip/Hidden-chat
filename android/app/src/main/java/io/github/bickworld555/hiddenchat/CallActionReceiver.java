@@ -55,6 +55,15 @@ public class CallActionReceiver extends BroadcastReceiver {
         // App closed: the service's connection tells the caller. App open (or in the background): the web app does.
         boolean byService = NativeRelay.declinePendingCall(callId);
         boolean byApp = !byService && HiddenNativePlugin.emitCallAction("reject", callId);
-        android.util.Log.i("CallAction", "decline " + callId + " via " + (byService ? "service" : byApp ? "app" : "nobody"));
+        if (!byService && !byApp) {
+            // Rung by push, connection not up yet: the server ends the call for the caller (network off the main thread).
+            final Context app = context.getApplicationContext();
+            new Thread(() -> {
+                boolean byServer = PushRegistration.declineCall(app, callId);
+                android.util.Log.i("CallAction", "decline " + callId + " via " + (byServer ? "server" : "nobody"));
+            }).start();
+            return;
+        }
+        android.util.Log.i("CallAction", "decline " + callId + " via " + (byService ? "service" : "app"));
     }
 }

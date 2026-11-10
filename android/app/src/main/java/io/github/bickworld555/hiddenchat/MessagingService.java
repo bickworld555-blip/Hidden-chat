@@ -18,10 +18,13 @@ import androidx.core.app.ServiceCompat;
 import androidx.core.content.ContextCompat;
 
 /**
- * Foreground service that keeps Hidden Messenger reachable in the background. While the app's screen exists its
- * WebView holds the live connection and this service only keeps the process alive; once the screen is gone
- * (swiped away from recents, or the process restarted by Android) the service's own connection (NativeRelay)
- * takes over, so messages still reach two ticks with a notification and calls still ring.
+ * Hidden Messenger's foreground service. With Firebase push (the normal mode, like WhatsApp) it runs only when there
+ * is work: during a call (microphone / camera / phone call), and for a short "sync" after a call push while the
+ * phone connects to collect the caller's offer. Between those the app is idle: no service, no open socket.
+ *
+ * Until push is confirmed for this phone (no google-services.json in the build, no Google Play services, or a
+ * server without push) it falls back to the always-on mode: a quiet "Connected" notification and the service's
+ * own connection (NativeRelay) once the app's screen is gone, so messages and calls are never missed.
  */
 public class MessagingService extends Service {
     private static final int NOTIFICATION_ID = 1001;
@@ -41,8 +44,68 @@ public class MessagingService extends Service {
     private static volatile String callName;
     private static volatile long callStartedAt;
 
+    private static final String ACTION_SYNC = "io.github.bickworld555.hiddenchat.SYNC";
+    // While a push asks for it (elapsed-realtime deadline): connected long enough to collect a call's offer.
+    private static volatile long syncUntil;
+    private static final Handler timers = new Handler(Looper.getMainLooper());
+
     static void start(Context context) {
         ContextCompat.startForegroundService(context, new Intent(context, MessagingService.class));
+    }
+
+    /** Push mode is off for the signed-in account: the always-on connection keeps the phone reachable. */
+    static boolean isLegacy(Context context) {
+        return RelaySession.read(context) != null && !PushRegistration.isActive(context);
+    }
+
+    private static boolean syncing() {
+        long now = android.os.SystemClock.elapsedRealtime();
+        // A call that is still ringing keeps the connection a little longer, so Accept / Decline still work.
+        return now < syncUntil || (Alerts.isRinging() && now < syncUntil + 60_000);
+    }
+
+    /** Whether the service has anything to do now. */
+    private static boolean needed(Context context) {
+        return callActive || syncing() || isLegacy(context);
+    }
+
+    /**
+     * A push asked the phone to connect for a while (an incoming call): a short dataSync foreground service, the way
+     * WhatsApp's GcmFGService does it. High-priority pushes may start one from the background.
+     */
+    static void startSync(Context context, long durationMs) {
+        Context app = context.getApplicationContext();
+        syncUntil = Math.max(syncUntil, android.os.SystemClock.elapsedRealtime() + durationMs);
+        try {
+            ContextCompat.startForegroundService(app, new Intent(app, MessagingService.class).setAction(ACTION_SYNC));
+        } catch (RuntimeException notAllowed) {
+            // Android refused a foreground service: connect anyway while the push keeps the process awake.
+            NativeRelay.start(app);
+        }
+        timers.removeCallbacks(syncCheck);
+        timers.postDelayed(syncCheck, durationMs + 500);
+    }
+
+    private static final Runnable syncCheck = new Runnable() {
+        @Override
+        public void run() {
+            MessagingService service = instance;
+            if (service != null) service.settle();
+            else if (!syncing() && !MainActivity.isAlive()) NativeRelay.stopUnlessLegacy();
+            if (syncing()) timers.postDelayed(this, 5_000);
+        }
+    };
+
+    /** Sign-in, push registration or sign-out changed what the phone needs: start or stop the always-on mode. */
+    static void applyMode(Context context) {
+        Context app = context.getApplicationContext();
+        MessagingService service = instance;
+        if (isLegacy(app)) {
+            if (service == null) start(app);
+            else service.promote();
+        } else if (service != null) {
+            service.settle();
+        }
     }
 
     static void stop(Context context) {
@@ -73,7 +136,7 @@ public class MessagingService extends Service {
         MainActivity.videoCallChanged(callVideo);
         MainActivity.callWindowChanged();
         MessagingService service = instance;
-        if (service != null) new Handler(Looper.getMainLooper()).post(service::promote);
+        if (service != null) new Handler(Looper.getMainLooper()).post(service::settle);
         else if (active) start(context);
         else androidx.core.app.NotificationManagerCompat.from(context).cancel(NOTIFICATION_ID);
         if (!active) androidx.core.app.NotificationManagerCompat.from(context).cancel(CALL_NOTIFICATION_ID);
@@ -150,9 +213,17 @@ public class MessagingService extends Service {
         return ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED;
     }
 
+    /** The type for the service's own work: the always-on connection (specialUse) or a push sync (dataSync). */
+    private int baseType() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return 0;
+        if (isLegacy(this)) return Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE ? ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE : 0;
+        return ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC;
+    }
+
     private int serviceTypes() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return 0;
-        int types = Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE ? ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE : 0;
+        // During a call in push mode the call types say it all; otherwise the service's own work type.
+        int types = callActive && !isLegacy(this) ? 0 : baseType();
         if (callActive && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             if (granted(Manifest.permission.RECORD_AUDIO)) types |= ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE;
             if (callVideo && granted(Manifest.permission.CAMERA)) types |= ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA;
@@ -169,7 +240,7 @@ public class MessagingService extends Service {
         Notification notification = callActive ? callNotification(content) : new NotificationCompat.Builder(this, NotificationChannels.CONNECTION)
             .setSmallIcon(R.drawable.ic_stat_hidden)
             .setContentTitle("Hidden Messenger")
-            .setContentText("Connected · receiving messages and calls")
+            .setContentText(isLegacy(this) ? "Connected · receiving messages and calls" : "Connecting to the call…")
             .setContentIntent(content)
             .setOngoing(true)
             .setShowWhen(false)
@@ -178,7 +249,8 @@ public class MessagingService extends Service {
             .build();
         int id = callActive ? CALL_NOTIFICATION_ID : NOTIFICATION_ID;
         int types = serviceTypes();
-        int fallback = Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE ? ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE : 0;
+        int fallback = baseType();
+        if (types == 0) types = fallback;
         // Most to least: with the phone-call type, without it, then the connection type alone (Android only grants
         // the microphone and camera while the app is in front, unless Android has the call as a phone call).
         int withoutPhoneCall = Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q ? types & ~ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL : types;
@@ -222,27 +294,47 @@ public class MessagingService extends Service {
             .build();
     }
 
+    /** Keeps running (and re-posts the notification) while there is work; otherwise stops and disconnects. */
+    void settle() {
+        if (needed(this)) {
+            promote();
+            return;
+        }
+        if (!isLegacy(this) && !MainActivity.isAlive()) NativeRelay.stop();
+        ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE);
+        stopSelf();
+    }
+
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
         NotificationChannels.ensure(this);
         instance = this;
+        // Android requires the notification first for a service started with startForegroundService.
         promote();
         running = true;
         if (RelaySession.read(this) == null && !callActive) {
             // Nobody is signed in on this phone: nothing to keep reachable.
-            stopSelf();
+            settle();
             return START_NOT_STICKY;
         }
-        // Restarted by Android after the process was killed (no screen yet): reconnect on our own.
-        if (!MainActivity.isAlive()) NativeRelay.start(this);
-        return START_STICKY;
+        boolean sync = intent != null && ACTION_SYNC.equals(intent.getAction());
+        boolean legacy = isLegacy(this);
+        // A push sync, or the always-on mode restarted by Android after the process was killed: connect ourselves.
+        if (!MainActivity.isAlive() && (sync || legacy)) NativeRelay.start(this);
+        if (!needed(this)) {
+            settle();
+            return START_NOT_STICKY;
+        }
+        // Push mode is not restarted by Android after a kill: the next push wakes the app instead.
+        return legacy ? START_STICKY : START_NOT_STICKY;
     }
 
     @Override
     public void onTaskRemoved(Intent rootIntent) {
-        // Swiped away: the WebView is gone, so this service's own connection keeps messages and calls coming.
-        if (RelaySession.read(this) != null) NativeRelay.start(this);
-        else stopSelf();
+        // Swiped away: in the always-on mode this service's own connection keeps messages and calls coming;
+        // with push the phone just sleeps until the next push.
+        if (isLegacy(this)) NativeRelay.start(this);
+        else settle();
         super.onTaskRemoved(rootIntent);
     }
 

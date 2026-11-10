@@ -51,7 +51,7 @@ test('Android: ringing calls show over the lock screen at once and stay there wh
   assert.ok(plugin.includes('Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT'));
   const alerts = await java('Alerts.java');
   assert.ok(alerts.includes('.setFullScreenIntent(showIntent, true)'));
-  assert.match(alerts, /ringing = true;\s*\/\/[^\n]*\n\s*TelecomCalls\.incoming\(context, id, name, video\);\s*MainActivity\.callRinging\(context\);\s*wakeScreen\(context\);\s*\/\/[^\n]*\n\s*MainActivity\.callWindowChanged\(\);/);
+  assert.match(alerts, /ringing = true;\s*ringingCallId = id;\s*\/\/[^\n]*\n\s*TelecomCalls\.incoming\(context, id, name, video\);\s*MainActivity\.callRinging\(context\);\s*wakeScreen\(context\);\s*\/\/[^\n]*\n\s*MainActivity\.callWindowChanged\(\);/);
   // The full-screen call is native (no black screen while the web app loads) and the screen lights even where
   // full-screen notifications are switched off; both end when the call stops ringing.
   assert.ok(alerts.includes('Intent show = IncomingCallActivity.intent(context, id, name, video, avatar);'));
@@ -60,7 +60,7 @@ test('Android: ringing calls show over the lock screen at once and stay there wh
   assert.ok(!permissions.includes('SYSTEM_ALERT_WINDOW') && !permissions.includes('REQUEST_IGNORE_BATTERY_OPTIMIZATIONS'), 'only standard permissions, like WhatsApp');
   assert.ok((await java('IncomingCallActivity.java')).includes('connection.setRequestProperty("Authorization", "Bearer " + token);'), "the caller's photo is loaded");
   assert.match(alerts, /SCREEN_BRIGHT_WAKE_LOCK\s*\|\s*android\.os\.PowerManager\.ACQUIRE_CAUSES_WAKEUP/);
-  assert.match(alerts, /ringing = false;\s*lastCallScreen = null;\s*releaseScreen\(\);\s*IncomingCallActivity\.dismiss\(\);/);
+  assert.match(alerts, /ringing = false;\s*ringingCallId = null;\s*lastCallScreen = null;\s*releaseScreen\(\);\s*IncomingCallActivity\.dismiss\(\);/);
   const incoming = await java('IncomingCallActivity.java');
   assert.ok(incoming.includes('setShowWhenLocked(true);') && incoming.includes('setTurnScreenOn(true);') && incoming.includes('FLAG_KEEP_SCREEN_ON'));
   assert.ok(incoming.includes('.setAction(Alerts.ACTION_ACCEPT)'), 'Accept opens the app straight into the call');

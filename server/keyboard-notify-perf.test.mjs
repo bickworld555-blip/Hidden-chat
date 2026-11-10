@@ -131,6 +131,6 @@ test('Telecom asking for the ringing screen opens it on a locked or dark phone',
   assert.match(connection, /public void onShowIncomingCallUi\(\) \{[\s\S]*?TelecomCalls\.showCallScreen\(\);/);
   const alerts = await java('Alerts.java');
   assert.match(alerts, /static void showCallScreenIfAway\(Context context\) \{[\s\S]*?if \(!locked && !dark\) return;[\s\S]*?context\.startActivity\(new Intent\(show\)\);/);
-  assert.match(alerts, /ringing = false;\s*lastCallScreen = null;/, 'never reopened after the call stopped ringing');
+  assert.match(alerts, /ringing = false;\s*ringingCallId = null;\s*lastCallScreen = null;/, 'never reopened after the call stopped ringing');
   assert.ok(alerts.includes('.setFullScreenIntent(showIntent, true)'), 'the full-screen notification stays the main route');
 });

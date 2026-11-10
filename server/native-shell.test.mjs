@@ -43,7 +43,7 @@ test('the Android shell declares the channels, service, call receiver and runtim
   for (const permission of ['POST_NOTIFICATIONS', 'RECORD_AUDIO', 'CAMERA', 'MODIFY_AUDIO_SETTINGS', 'FOREGROUND_SERVICE_SPECIAL_USE', 'USE_FULL_SCREEN_INTENT']) {
     assert.ok(manifest.includes(`android.permission.${permission}`), permission);
   }
-  assert.match(manifest, /android:name="\.MessagingService"[\s\S]*foregroundServiceType="specialUse\|microphone\|camera\|phoneCall"/);
+  assert.match(manifest, /android:name="\.MessagingService"[\s\S]*foregroundServiceType="specialUse\|microphone\|camera\|phoneCall\|dataSync"/);
   for (const permission of ['FOREGROUND_SERVICE_MICROPHONE', 'FOREGROUND_SERVICE_CAMERA']) assert.ok(manifest.includes(`android.permission.${permission}`), permission);
   assert.match(manifest, /android:name="\.CallActionReceiver"\s+android:exported="false"/);
   const channels = await readFile(new URL('android/app/src/main/java/io/github/bickworld555/hiddenchat/NotificationChannels.java', root), 'utf8');
@@ -68,13 +68,13 @@ test('native calls reach the real Capacitor plugin proxy (which answers `then`, 
   assert.deepEqual(calls, ['HiddenNative.notify', 'HiddenNative.getState']);
 });
 
-test('after a swipe-away the service keeps its own background-only connection', async () => {
+test('without push (fallback), a swipe-away hands over to the service\'s own background-only connection', async () => {
   const read = (file) => readFile(new URL(`android/app/src/main/java/io/github/bickworld555/hiddenchat/${file}`, root), 'utf8');
   const service = await read('MessagingService.java');
   const relay = await read('NativeRelay.java');
   const activity = await read('MainActivity.java');
-  assert.match(service, /public void onTaskRemoved[\s\S]*NativeRelay\.start\(this\)/, 'swiping away hands over to the native connection');
-  assert.match(service, /return START_STICKY;/, 'Android restarts the service if it kills the process');
+  assert.match(service, /public void onTaskRemoved[\s\S]*?if \(isLegacy\(this\)\) NativeRelay\.start\(this\);/, 'swiping away hands over to the native connection');
+  assert.ok(service.includes('return legacy ? START_STICKY : START_NOT_STICKY;'), 'Android restarts the always-on service if it kills the process');
   assert.ok(relay.includes('relay.background'), 'the native connection never makes the user "online"');
   assert.ok(relay.includes('"message:delivered"'), 'it confirms delivery (two ticks)');
   assert.match(activity, /onCreate[\s\S]*NativeRelay\.stop\(\)/, 'the open app takes the connection back');

@@ -43,6 +43,27 @@ final class Alerts {
         return showMessage(context, channel, title, body, tag, open, 0);
     }
 
+    // Messages already notified (by id): the push and a connection may both deliver the same message.
+    private static final java.util.LinkedHashSet<String> notifiedIds = new java.util.LinkedHashSet<>();
+
+    /** True the first time a message id is seen; later copies (from another delivery path) are dropped. */
+    static synchronized boolean firstNotice(String messageId) {
+        if (messageId == null || messageId.isEmpty()) return true;
+        if (!notifiedIds.add(messageId)) return false;
+        if (notifiedIds.size() > 300) {
+            java.util.Iterator<String> oldest = notifiedIds.iterator();
+            oldest.next();
+            oldest.remove();
+        }
+        return true;
+    }
+
+    /** As showMessage, once per message id however many ways the message arrives (push, connection, the app). */
+    static boolean showMessage(Context context, String channel, String title, String body, String tag, String open, int count, String messageId) {
+        if (!firstNotice(messageId)) return true;
+        return showMessage(context, channel, title, body, tag, open, count);
+    }
+
     /** `count` is this chat's unread total: shown on the notification and, on most launchers, the app icon badge. */
     static boolean showMessage(Context context, String channel, String title, String body, String tag, String open, int count) {
         String channelId = NotificationChannels.isMessageChannel(channel) ? channel : NotificationChannels.DIRECT_MESSAGES;
@@ -91,6 +112,8 @@ final class Alerts {
      */
     static boolean showIncomingCall(Context context, String callId, String caller, boolean video, boolean phoneRingtone, String avatar) {
         String id = callId == null ? "" : callId;
+        // Already ringing for this call (the push rang first, then the connection brought the offer): keep ringing.
+        if (ringing && !id.isEmpty() && id.equals(ringingCallId)) return true;
         String name = caller == null || caller.isEmpty() ? "Hidden Messenger" : caller;
         // The full-screen call is a native screen: it shows the moment the phone lights up, without waiting for the
         // app's web screen to load (which left a black screen over the lock screen while the ringtone played).
@@ -131,6 +154,7 @@ final class Alerts {
         try {
             NotificationManagerCompat.from(context).notify(CALL_TAG, CALL_NOTIFICATION_ID, notification);
             ringing = true;
+            ringingCallId = id;
             // Android hears about it too (headset / car / watch can answer; call waiting with SIM calls).
             TelecomCalls.incoming(context, id, name, video);
             MainActivity.callRinging(context);
@@ -159,9 +183,16 @@ final class Alerts {
         }
     }
 
+    /** The caller gave up (a push says so): stop ringing if it is still this call. */
+    static void cancelIncomingCall(Context context, String callId) {
+        if (!ringing || callId == null || !(callId.equals(ringingCallId) || ringingCallId == null || ringingCallId.isEmpty())) return;
+        cancelIncomingCall(context);
+    }
+
     static void cancelIncomingCall(Context context) {
         NotificationManagerCompat.from(context).cancel(CALL_TAG, CALL_NOTIFICATION_ID);
         ringing = false;
+        ringingCallId = null;
         lastCallScreen = null;
         releaseScreen();
         IncomingCallActivity.dismiss();
@@ -234,6 +265,7 @@ final class Alerts {
     }
 
     private static volatile boolean ringing;
+    private static volatile String ringingCallId;
     private static volatile boolean appRinging;
 
     /**
