@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Pause, Play, Send, Square, Trash2 } from 'lucide-react';
 import { formatClock } from '../voice.js';
+import { createRecordingClock, voiceAudioConstraints, voiceRecorderOptions } from '../voiceRecording.js';
 
 const SAMPLE_MS = 90;
 const MAX_BARS = 36;
@@ -21,11 +22,12 @@ export default function VoiceRecorderBar({ onSend, onCancel, onError, allowViewO
     let disposed = false;
     const session = {
       recorder: null, stream: null, chunks: [], mode: 'cancel',
-      elapsed: 0, resumedAt: 0, ctx: null, analyser: null, timer: 0, preview: null, previewUrl: '',
+      clock: createRecordingClock(), ctx: null, analyser: null, timer: 0, preview: null, previewUrl: '',
     };
     sessionRef.current = session;
 
-    session.elapsedNow = () => session.elapsed + (session.recorder?.state === 'recording' ? (Date.now() - session.resumedAt) / 1000 : 0);
+    // Recorded length in seconds; paused stretches never count.
+    session.elapsedNow = () => session.clock.elapsed();
     session.stopPreview = () => {
       session.preview?.pause();
       session.preview = null;
@@ -50,7 +52,8 @@ export default function VoiceRecorderBar({ onSend, onCancel, onError, allowViewO
       }
       let stream;
       try {
-        stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        // Noise suppression, echo cancellation and automatic gain (the phone's own audio effects where it has them).
+        stream = await navigator.mediaDevices.getUserMedia(voiceAudioConstraints(navigator.mediaDevices.getSupportedConstraints?.() ?? {}));
       } catch {
         if (!disposed) {
           callbacksRef.current.onError('Microphone access was denied.');
@@ -63,13 +66,19 @@ export default function VoiceRecorderBar({ onSend, onCancel, onError, allowViewO
         return;
       }
       session.stream = stream;
-      const recorder = new MediaRecorder(stream);
+      // Opus at a voice bitrate (small, clear notes); falls back to the browser's default format if it must.
+      let recorder;
+      try {
+        recorder = new MediaRecorder(stream, voiceRecorderOptions(MediaRecorder));
+      } catch {
+        recorder = new MediaRecorder(stream);
+      }
       session.recorder = recorder;
       recorder.ondataavailable = (event) => { if (event.data?.size) session.chunks.push(event.data); };
       recorder.onstop = () => {
         const send = session.mode === 'send' && session.chunks.length > 0;
         const type = recorder.mimeType || 'audio/webm';
-        const duration = Math.max(1, Math.round(session.elapsed));
+        const duration = Math.max(1, Math.round(session.clock.elapsed()));
         const blob = send ? new Blob(session.chunks, { type }) : null;
         session.release();
         if (blob) callbacksRef.current.onSend(blob, duration, type, { viewOnce: viewOnceRef.current });
@@ -99,8 +108,9 @@ export default function VoiceRecorderBar({ onSend, onCancel, onError, allowViewO
         setLevels((current) => [...current.slice(-(MAX_BARS - 1)), level]);
       }, SAMPLE_MS);
 
-      session.resumedAt = Date.now();
-      recorder.start();
+      // Slices every second, so a pause can preview everything recorded so far.
+      recorder.start(1000);
+      session.clock.start();
     })();
 
     return () => {
@@ -126,7 +136,7 @@ export default function VoiceRecorderBar({ onSend, onCancel, onError, allowViewO
     const session = sessionRef.current;
     const recorder = session?.recorder;
     if (!recorder || recorder.state === 'inactive') return;
-    session.elapsed = session.elapsedNow();
+    session.clock.pause();
     session.mode = 'send';
     recorder.stop();
   }
@@ -136,14 +146,16 @@ export default function VoiceRecorderBar({ onSend, onCancel, onError, allowViewO
     const recorder = session?.recorder;
     if (!recorder) return;
     if (recorder.state === 'recording') {
-      session.elapsed = session.elapsedNow();
       recorder.pause();
+      session.clock.pause();
+      // Flush what was recorded so far, so the preview plays all of it.
       recorder.requestData();
+      setSeconds(Math.floor(session.clock.elapsed()));
       setPaused(true);
     } else if (recorder.state === 'paused') {
       session.stopPreview();
-      session.resumedAt = Date.now();
       recorder.resume();
+      session.clock.resume();
       setPaused(false);
     }
   }

@@ -20,6 +20,8 @@ final class NotificationChannels {
     static final String CONNECTION = "connection";
     // The ongoing call (timer and Hang up): visible in the shade but silent.
     static final String ONGOING_CALL = "ongoing_call";
+    // Files being sent ("Sending 2 files · 45%"): quiet, with a progress bar.
+    static final String UPLOADS = "uploads";
     // The same three with the phone's own default sounds, for the in-app "Default" tone choice.
     static final String DIRECT_MESSAGES_PHONE = "direct_messages_phone";
     static final String GROUP_MESSAGES_PHONE = "group_messages_phone";
@@ -105,6 +107,11 @@ final class NotificationChannels {
         callsPhone.setVibrationPattern(new long[] { 0, 800, 600, 800, 600 });
         callsPhone.setLockscreenVisibility(android.app.Notification.VISIBILITY_PUBLIC);
 
-        manager.createNotificationChannels(Arrays.asList(direct, group, calls, connection, ongoingCall, directPhone, groupPhone, callsPhone));
+        NotificationChannel uploads = new NotificationChannel(UPLOADS, "Sending files", NotificationManager.IMPORTANCE_LOW);
+        uploads.setDescription("Shown while photos, videos and files are being sent");
+        uploads.setSound(null, null);
+        uploads.setShowBadge(false);
+
+        manager.createNotificationChannels(Arrays.asList(direct, group, calls, connection, ongoingCall, directPhone, groupPhone, callsPhone, uploads));
     }
 }

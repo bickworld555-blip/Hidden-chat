@@ -899,6 +899,7 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
         receiverId: chatId,
         sessionToken,
         signal: controller.signal,
+        kind: kind === 'voice' || kind === 'voice-once' ? 'voice' : undefined,
         onProgress: (sent, total) => setUploadProgress({ ...pending, sent, total }),
       });
       sendContent(kind === 'voice' ? `voice:${data.id}:${seconds}` : kind === 'voice-once' ? `voice:${data.id}:${seconds}:once` : `media:${data.id}:${data.filename || filename}`);

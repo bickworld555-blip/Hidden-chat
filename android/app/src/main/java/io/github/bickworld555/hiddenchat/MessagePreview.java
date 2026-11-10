@@ -15,6 +15,12 @@ final class MessagePreview {
         if (content.startsWith("voice-opened:")) return "① Opened";
         if (content.startsWith("voice:")) return content.endsWith(":once") ? "① Voice message" : voice(content);
         if (content.startsWith("media:")) return media(content);
+        // End-to-end encrypted envelopes (src/e2ee.js, src/mediaCrypto.js): never show ciphertext.
+        if (content.startsWith("e2e1:")) return "🔒 Message";
+        if (content.startsWith("emedia:")) {
+            String[] parts = content.split(":", 4);
+            return media("media:x:" + (parts.length == 4 ? parts[3] : ""));
+        }
         if (content.startsWith("file:")) return "📎 Attachment";
         if (content.startsWith("location:")) return "📍 Location";
         if (content.startsWith("live:")) return "📍 Live location";

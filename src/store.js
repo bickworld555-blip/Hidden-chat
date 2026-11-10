@@ -47,6 +47,9 @@ export function previewFor(content) {
   if (typeof content !== 'string') return '';
   if (content.startsWith('voice-opened:')) return '① Opened';
   if (content.startsWith('voice:')) return content.endsWith(':once') ? '① Voice message' : '🎤 Voice message';
+  // End-to-end encrypted envelopes (see e2ee.js / mediaCrypto.js): never show ciphertext.
+  if (content.startsWith('e2e1:')) return '🔒 Message';
+  if (content.startsWith('emedia:')) return mediaPreviewLabel(`media:x:${content.split(':').slice(3).join(':')}`);
   if (content.startsWith('poll:')) return pollSummary(content) ?? '📊 Poll';
   if (content.startsWith('event:')) return eventSummary(content) ?? '📅 Event';
   if (content.startsWith('media:')) return mediaPreviewLabel(content);

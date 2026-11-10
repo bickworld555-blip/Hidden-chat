@@ -252,6 +252,13 @@ public class HiddenNativePlugin extends Plugin {
         call.resolve(result);
     }
 
+    /** The web app's upload queue: { count, label, progress } — keeps a "Sending…" foreground service while count > 0. */
+    @PluginMethod
+    public void setUploads(PluginCall call) {
+        UploadService.update(getContext(), call.getInt("count", 0), call.getString("label", ""), call.getInt("progress", 0));
+        call.resolve();
+    }
+
     /** The call ended in the app: clear every trace of it at once (see MessagingService.hardReset). */
     @PluginMethod
     public void endCall(PluginCall call) {

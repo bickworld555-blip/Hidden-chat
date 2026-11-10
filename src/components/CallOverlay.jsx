@@ -1,4 +1,5 @@
 import { apiFetch } from '../api.js';
+import { endCallOverHttp, ownedCallIds } from '../callEnd.js';
 import { nativeCallHeartbeat, nativeCancelIncomingCall, nativeEndCall, nativeEndCallWindow, nativeSetCallActive, nativeSetCallRinging, nativeSetCallVideoShown, nativeSetSpeaker, nativeShell, nativeShowIncomingCall, onNative } from '../native.js';
 import { useEffect, useRef, useState } from 'react';
 import {
@@ -616,6 +617,10 @@ export default function CallOverlay({
 
   function endCall() {
     const engine = engineRef.current;
+    // Also over HTTP, so the hang-up or decline reaches the server even if the socket just dropped.
+    if (!call.invite && !terminal) {
+      for (const callId of ownedCallIds(call.id, extrasRef.current.entries())) endCallOverHttp(callId, latest.current.sessionToken);
+    }
     for (const entry of extrasRef.current.entries()) entry.engine.hangUp();
     if (call.invite && !engine) {
       latest.current.client?.send({ type: 'call:invite-reply', roomId: call.roomId, targetId: call.peerId, accepted: false, reason: 'declined' });

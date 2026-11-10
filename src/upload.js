@@ -2,6 +2,8 @@ import { apiFetch, apiUrl } from './api.js';
 // Browser upload client. Small files go in one request; larger ones are sliced from the File on disk
 // (never read into memory as a whole) and sent as resumable chunks with retry.
 import { MAX_TRANSFER_BYTES, UPLOAD_CHUNK_BYTES, uploadPlan } from './transfer.js';
+import { createUploadQueue, uploadPriority } from './uploadQueue.js';
+import { nativeSetUploads } from './native.js';
 
 const MAX_CHUNK_ATTEMPTS = 6;
 const RETRY_BASE_MS = 800;
@@ -143,8 +145,35 @@ async function chunkedUpload(file, filename, { receiverId, groupId, sessionToken
   }
 }
 
-// Resolves to { id, filename, contentType, byteSize } once the server has the whole file.
-export async function uploadFile(file, { receiverId, groupId, sessionToken, signal, onProgress } = {}) {
+// Android: while anything uploads, a foreground "Sending…" notification keeps the app alive in the background.
+// Reported at most once a second while running, and at once when the queue empties.
+const NATIVE_REPORT_MS = 1000;
+let lastNativeReport = 0;
+let pendingNativeReport = null;
+function reportUploads(state) {
+  clearTimeout(pendingNativeReport);
+  const send = () => {
+    lastNativeReport = Date.now();
+    nativeSetUploads({ count: state.count, label: state.label, progress: Math.round(state.progress * 100) });
+  };
+  if (state.count === 0 || Date.now() - lastNativeReport >= NATIVE_REPORT_MS) send();
+  else pendingNativeReport = setTimeout(send, NATIVE_REPORT_MS);
+}
+const uploadQueue = createUploadQueue({ concurrency: 2, onChange: reportUploads });
+
+/**
+ * Resolves to { id, filename, contentType, byteSize } once the server has the whole file. Uploads wait in a
+ * priority queue (voice notes and small files first; `priority` or `kind: 'voice'` override the size rule).
+ */
+export function uploadFile(file, options = {}) {
+  const { priority, kind, signal, onProgress } = options;
+  return uploadQueue.enqueue((report) => {
+    if (signal?.aborted) throw signal.reason ?? new DOMException('Aborted', 'AbortError');
+    return uploadFileNow(file, { ...options, onProgress: (done, total) => { report(done); onProgress?.(done, total); } });
+  }, { priority: priority ?? uploadPriority({ size: file?.size ?? 0, kind }), label: file?.name || 'attachment', size: file?.size ?? 0 });
+}
+
+async function uploadFileNow(file, { receiverId, groupId, sessionToken, signal, onProgress } = {}) {
   const filename = file.name || 'attachment';
   const sizeError = uploadSizeError(filename, file.size);
   if (sizeError) throw new Error(sizeError);

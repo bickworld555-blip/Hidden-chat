@@ -27,6 +27,7 @@ export const IMPORT_TABLES = Object.freeze([
   { name: 'statuses', columns: ['id', 'user_id', 'content', 'background', 'created_at', 'expires_at'], users: ['user_id'] },
   { name: 'status_views', columns: ['status_id', 'viewer_id', 'viewed_at'], users: ['viewer_id'], key: ['status_id', 'viewer_id'] },
   // Phones registered for Firebase push (kept with their sessions, so push keeps working after the move).
+  { name: 'identity_keys', columns: ['user_id', 'public_key', 'algorithm', 'updated_at'], users: ['user_id'] },
   { name: 'push_devices', columns: ['token', 'user_id', 'session_hash', 'device_key', 'platform', 'updated_at'], users: ['user_id'], key: ['token'] },
 ]);
 const demoIds = Object.keys(DEMO_USERS);

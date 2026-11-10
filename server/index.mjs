@@ -106,7 +106,8 @@ export function createChatServer({
   database = null,
   dataDirectory = defaultDataDirectory(),
   seedDemo = process.env.NODE_ENV !== 'production' && process.env.RELAY_SEED_DEMO === 'true',
-  callTimeoutMs = Number(process.env.CALL_RING_TIMEOUT_MS) || 0,
+  // An unanswered call stops ringing everywhere after this long (both sides, and phones rung by push).
+  callTimeoutMs = process.env.CALL_RING_TIMEOUT_MS === undefined ? 60_000 : Number(process.env.CALL_RING_TIMEOUT_MS) || 0,
   allowedOrigins = process.env.RELAY_ALLOWED_ORIGINS ?? '',
   webDirectory = join(directory, '..', 'dist'),
   migrate = false,
@@ -249,6 +250,13 @@ export function createChatServer({
   )`);
   db.exec('CREATE INDEX IF NOT EXISTS push_devices_user ON push_devices(user_id)');
   db.exec('CREATE INDEX IF NOT EXISTS push_devices_session ON push_devices(session_hash)');
+  // Public identity keys for end-to-end encryption (Postgres: migration 008).
+  db.exec(`CREATE TABLE IF NOT EXISTS identity_keys (
+    user_id TEXT PRIMARY KEY,
+    public_key TEXT NOT NULL,
+    algorithm TEXT NOT NULL,
+    updated_at INTEGER NOT NULL
+  )`);
   // One disappearing-messages timer per conversation, shared by both people (user_a < user_b).
   db.exec(`CREATE TABLE IF NOT EXISTS chat_settings (
     user_a TEXT NOT NULL,
@@ -1578,6 +1586,33 @@ export function createChatServer({
     response.status(204).end();
   });
 
+  // --- Identity keys (end-to-end encryption foundation): each account publishes one public key; the private key
+  // stays on the device. Clients fetch a peer's key to encrypt to them and to show a safety number.
+  const IDENTITY_ALGORITHMS = new Set(['ECDH-P256', 'X25519']);
+  app.put('/api/v1/me/identity-key', requireSession, async (request, response) => {
+    const { publicKey, algorithm } = request.body ?? {};
+    if (typeof publicKey !== 'string' || !/^[A-Za-z0-9+/]+={0,2}$/.test(publicKey) || publicKey.length < 40 || publicKey.length > 256 || !IDENTITY_ALGORITHMS.has(algorithm)) {
+      return response.status(400).json({ error: 'Give a base64 public key and an algorithm (ECDH-P256 or X25519).' });
+    }
+    const userId = request.session.user_id;
+    const previous = await db.prepare('SELECT public_key AS "publicKey" FROM identity_keys WHERE user_id = ?').get(userId);
+    const now = Date.now();
+    await db.prepare(`INSERT INTO identity_keys(user_id, public_key, algorithm, updated_at) VALUES (?, ?, ?, ?)
+      ON CONFLICT(user_id) DO UPDATE SET public_key = excluded.public_key, algorithm = excluded.algorithm, updated_at = excluded.updated_at`)
+      .run(userId, publicKey, algorithm, now);
+    // A new key changes the safety number: people chatting with this account are told (WhatsApp's "security code changed").
+    if (previous && previous.publicKey !== publicKey) {
+      const peers = await db.prepare('SELECT owner_id AS "ownerId" FROM contacts WHERE contact_id = ?').all(userId);
+      for (const peer of peers) broadcastUser(peer.ownerId, { type: 'identity:changed', userId, updatedAt: now });
+    }
+    response.json({ publicKey, algorithm, updatedAt: now });
+  });
+  app.get('/api/v1/users/:userId/identity-key', requireSession, async (request, response) => {
+    const row = await db.prepare('SELECT public_key AS "publicKey", algorithm, updated_at AS "updatedAt" FROM identity_keys WHERE user_id = ?').get(request.params.userId);
+    if (!row) return response.status(404).json({ error: 'This person has no identity key yet.' });
+    response.json({ ...row, updatedAt: Number(row.updatedAt) });
+  });
+
   // --- Push devices: the Android app registers its FCM token and payload key for this session. ---
   // { push: true } means this server sends pushes, so the phone can drop its always-on connection.
   app.post('/api/v1/push/devices', requireSession, async (request, response) => {
@@ -1599,7 +1634,18 @@ export function createChatServer({
     response.status(204).end();
   });
 
-  // "Decline" on a call that rang by push, before the phone's socket connected: the caller hears it at once.
+  // Ending a call over HTTP, as well as over the socket: a hang-up or decline is never lost to a dropped or
+  // not-yet-connected socket (a phone rung by push, an app going to the background mid-hang-up). Idempotent:
+  // a call that already ended answers 404.
+  //   /end      — either participant, at any time (hang up, cancel, decline).
+  //   /decline  — the callee before answering (kept for older apps).
+  app.post('/api/v1/calls/:callId/end', requireSession, async (request, response) => {
+    const activeCall = activeCalls.get(request.params.callId);
+    const userId = request.session.user_id;
+    if (!activeCall || (activeCall.callerId !== userId && activeCall.calleeId !== userId)) return response.status(404).json({ error: 'No such call.' });
+    finishCall(request.params.callId, 'ended');
+    response.status(204).end();
+  });
   app.post('/api/v1/calls/:callId/decline', requireSession, async (request, response) => {
     const activeCall = activeCalls.get(request.params.callId);
     if (!activeCall || activeCall.calleeId !== request.session.user_id || activeCall.calleeSocket) return response.status(404).json({ error: 'No call is ringing.' });

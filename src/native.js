@@ -44,6 +44,8 @@ export function nativeSetSession({ origin, token, userId, mutedChats = [], muted
   return sessionSaved;
 }
 export const nativeClearSession = () => invoke('clearSession');
+// Uploads in progress: { count, label, progress (0-100) }; count 0 ends the "Sending…" foreground service.
+export const nativeSetUploads = (state) => invoke('setUploads', state);
 // While a call is live the service also holds the microphone/camera, so the call keeps working in the background,
 // and shows "<name> · Ongoing call" with a Hang up button (which arrives as callAction "hangup").
 // The call is over: the native side clears the call state, Android's call, audio and notifications at once.

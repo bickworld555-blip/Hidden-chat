@@ -79,6 +79,12 @@
             </intent-filter>
         </service>
 
+        <!-- "Sending 3 files · 45%": keeps long uploads alive in the background (like WhatsApp's MediaTranscodeService). -->
+        <service
+            android:name=".UploadService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
         <!-- Firebase push (like WhatsApp's GcmListenerService): wakes the idle app for messages and calls. -->
         <service
             android:name=".PushService"

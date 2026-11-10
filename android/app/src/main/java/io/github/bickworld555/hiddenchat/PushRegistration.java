@@ -180,10 +180,10 @@ final class PushRegistration {
         post(context, "/api/v1/messages/delivered", new JSONObjectBuilder().put("messageIds", new JSONArray().put(messageId)).build());
     }
 
-    /** "Decline" before the background connection is up: the server ends the call for the caller. */
+    /** Decline or hang up over HTTP (no connection needed): the server ends the call for both sides. */
     static boolean declineCall(Context context, String callId) {
         if (callId == null || callId.isEmpty()) return false;
-        return post(context, "/api/v1/calls/" + android.net.Uri.encode(callId) + "/decline", new JSONObject());
+        return post(context, "/api/v1/calls/" + android.net.Uri.encode(callId) + "/end", new JSONObject());
     }
 
     private static boolean post(Context context, String path, JSONObject body) {

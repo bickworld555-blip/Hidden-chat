@@ -13,6 +13,7 @@ import { getViewingGroup, readMutedGroups, useMutedGroups } from './groupPrefs.j
 import { classifyIncoming, groupNotificationText, parseConversationOpenParam, shouldAlertGroup } from './notificationChannels.js';
 import { nativeClearSession, nativeSetSession, nativeShell, nativeStartBackground, nativeState, nativeStopBackground, nativeTakePendingCall, nativeMoveToBackground, nativeClearShare, nativeSetCallActive, onNative } from './native.js';
 import { parseShare } from './shareTarget.js';
+import { keyDirectory, publishIdentity } from './e2ee.js';
 import ShareSheet from './components/ShareSheet.jsx';
 import CallAccessSheet from './components/CallAccessSheet.jsx';
 import { publishShareShortcuts } from './shareShortcuts.js';
@@ -127,6 +128,11 @@ export default function App() {
   const [authReady, setAuthReady] = useState(false);
   const [mobileActiveTab, setMobileActiveTab] = useState(initialTabFromUrl);
   const [call, setCall] = useState(null);
+  // End-to-end encryption foundation: this device's public identity key is published once signed in.
+  useEffect(() => {
+    if (!sessionToken || !userId) return;
+    publishIdentity(sessionToken).catch(() => {});
+  }, [sessionToken, userId]);
   // No call on screen means no call: if Android still shows one (its timer on the lock screen), end it there too.
   useEffect(() => {
     if (!nativeShell() || call) return undefined;
@@ -250,6 +256,8 @@ export default function App() {
           if (event.type === 'chat:disappearing') useChatStore.getState().setDisappearing(event.peerId, event.seconds);
           if (event.type === 'chat:cleared') useChatStore.getState().clearChat(event.peerId, event.keepIds);
           if (event.type === 'chat:deleted') useChatStore.getState().deleteChat(event.peerId, { kept: event.kept });
+          // A contact's identity key changed (new phone / reinstall): their safety number is different now.
+          if (event.type === 'identity:changed') keyDirectory.invalidate(event.userId);
           if (event.type === 'user:updated') {
             useChatStore.getState().updateUserProfile(event.user);
             updateAccountUser(event.user).catch(() => {});
