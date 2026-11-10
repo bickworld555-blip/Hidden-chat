@@ -45,7 +45,7 @@ export function MapView({ location, sessionId, peer, send, onClose }) {
       const line = [[points.me.lat, points.me.lon], [points.peer.lat, points.peer.lon]];
       if (layers.line) layers.line.setLatLngs(line);
       else {
-        layers.line = L.polyline(line, { color: '#00a884', weight: 3, dashArray: '6 6' }).addTo(map);
+        layers.line = L.polyline(line, { color: '#005ad1', weight: 3, dashArray: '6 6' }).addTo(map);
         map.fitBounds(L.latLngBounds(line), { padding: [60, 60], maxZoom: 17 });
       }
     } else if (points.peer && !layers.line && !location) {

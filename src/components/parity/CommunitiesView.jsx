@@ -12,7 +12,7 @@ async function adminGroups(token) {
   return (await response.json()).filter((group) => group.role === 'admin');
 }
 
-export default function CommunitiesView({ token, revision, onClose, onOpenGroup }) {
+export default function CommunitiesView({ token, revision, onClose, onOpenGroup, inline = false }) {
   const [communities, setCommunities] = useState(null);
   const [view, setView] = useState({ name: 'list' });
   const [error, setError] = useState('');
@@ -49,7 +49,7 @@ export default function CommunitiesView({ token, revision, onClose, onOpenGroup 
   const back = view.name === 'list' ? null : () => setView({ name: 'list' });
 
   return (
-    <Panel title={view.name === 'create' ? 'New community' : current ? current.name : 'Communities'} subtitle={current ? `Community · ${current.groups.length} groups` : undefined} onClose={onClose} onBack={back ?? undefined}>
+    <Panel title={view.name === 'create' ? 'New community' : current ? current.name : 'Communities'} subtitle={current ? `Community · ${current.groups.length} groups` : undefined} onClose={onClose} onBack={back ?? undefined} inline={inline}>
       <Notice error={error} notice={notice} />
       {view.name === 'list' && (
         <>

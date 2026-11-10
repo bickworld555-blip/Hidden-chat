@@ -28,7 +28,7 @@ const SWIPE_THRESHOLD_PX = 60;
 const TOAST_MS = 1800;
 // Large photos are scaled down for editing so the canvas stays within mobile memory limits.
 const MAX_EDIT_EDGE_PX = 4096;
-const PEN_COLORS = ['#ffffff', '#000000', '#ff3b30', '#ffcc00', '#34c759', '#0a84ff', '#af52de'];
+const PEN_COLORS = ['#ffffff', '#000000', '#ff3b30', '#ffcc00', '#3474c7', '#0a84ff', '#af52de'];
 const EDIT_OUTPUT_TYPES = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp' };
 
 function isTypingTarget(target) {

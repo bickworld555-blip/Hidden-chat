@@ -52,7 +52,7 @@ test('status rings: green for a status I have not seen, grey once seen, none wit
   const list = await source('src/components/ChatsList.jsx');
   assert.ok(list.includes("statusRings?.[chat.id] ? `has-status status-${statusRings[chat.id]}` : ''"));
   const css = await source('src/styles.css');
-  assert.ok(css.includes('.wa-row-avatar-wrap.has-status > .avatar { box-shadow: 0 0 0 2px var(--wa-bg, #fff), 0 0 0 4px #25d366; }'));
+  assert.ok(css.includes('.wa-row-avatar-wrap.has-status > .avatar { box-shadow: 0 0 0 2px var(--wa-bg, #fff), 0 0 0 4px var(--wa-green, #1a73e8); }'), 'an unseen status has the accent ring');
 });
 
 test('status viewer header: the photo stays round (only the name column stretches)', async () => {

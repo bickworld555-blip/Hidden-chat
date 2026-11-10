@@ -9,7 +9,7 @@ import { recentShareTargets } from './shareTarget.js';
 // The chat list's avatar colours (styles.css .avatar-<color>): background and letters.
 export const AVATAR_COLORS = {
   blue: ['#dfe6f3', '#4b5c82'],
-  green: ['#deebe2', '#436b51'],
+  green: ['#dee4eb', '#43546b'],
   coral: ['#f4e3dd', '#995d4c'],
   yellow: ['#f0ead8', '#7d6938'],
   violet: ['#e9e3ed', '#6a587b'],

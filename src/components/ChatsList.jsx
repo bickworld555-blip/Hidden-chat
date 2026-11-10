@@ -40,7 +40,8 @@ function GroupListRow({ row, onOpen, pressHandlers, labels = [], consumeLongPres
   );
 }
 
-export default function ChatsList({ onOpenChat, onStartCall, onGroups, groups = [], onOpenGroup }) {
+export default function ChatsList({ onOpenChat, onStartCall, onGroups, groups = [], onOpenGroup, onSettings, onSheet }) {
+  const [headerMenu, setHeaderMenu] = useState(false);
   const rawChats = useChatStore((state) => state.chats);
   const presence = useChatStore((state) => state.presence);
   const statusRings = useChatStore((state) => state.statusRings);
@@ -402,6 +403,19 @@ export default function ChatsList({ onOpenChat, onStartCall, onGroups, groups = 
             <button type="button" className="wa-icon-btn" onClick={() => onGroups?.()} disabled={!sessionToken} aria-label="Groups"><Users size={20} /></button>
             <button type="button" className="wa-icon-btn" onClick={() => { setCameraError(''); cameraInputRef.current?.click(); }} aria-label="Camera" title="Take a photo and send it"><Camera size={20} /></button>
             <button type="button" className="wa-icon-btn" onClick={() => searchRef.current?.focus()} aria-label="Search"><Search size={20} /></button>
+            <span className="wa-header-menu-wrap">
+              <button type="button" className="wa-icon-btn" onClick={() => setHeaderMenu((open) => !open)} aria-label="Menu" aria-expanded={headerMenu}><MoreVertical size={20} /></button>
+              {headerMenu && (
+                <div className="wa-sel-dropdown wa-header-dropdown" role="menu" onClick={() => setHeaderMenu(false)}>
+                  <button type="button" role="menuitem" onClick={() => onGroups?.(true)}>New group</button>
+                  <button type="button" role="menuitem" onClick={() => onGroups?.()}>Groups</button>
+                  <button type="button" role="menuitem" onClick={() => onSheet?.('broadcasts')}>{t('Broadcast lists')}</button>
+                  <button type="button" role="menuitem" onClick={() => onSheet?.('channels')}>{t('Channels')}</button>
+                  <button type="button" role="menuitem" onClick={() => onSheet?.('starred')}>Starred messages</button>
+                  <button type="button" role="menuitem" onClick={() => onSettings?.()}>Settings</button>
+                </div>
+              )}
+            </span>
           </span>
           <input
             ref={cameraInputRef}

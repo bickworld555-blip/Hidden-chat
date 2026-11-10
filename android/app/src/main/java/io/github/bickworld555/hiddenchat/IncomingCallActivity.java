@@ -64,8 +64,8 @@ public class IncomingCallActivity extends Activity {
             getWindow().addFlags(WindowManager.LayoutParams.FLAG_SHOW_WHEN_LOCKED | WindowManager.LayoutParams.FLAG_TURN_SCREEN_ON);
         }
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
-        getWindow().setStatusBarColor(Color.parseColor("#0b141a"));
-        getWindow().setNavigationBarColor(Color.parseColor("#0b141a"));
+        getWindow().setStatusBarColor(Color.parseColor("#0b1628"));
+        getWindow().setNavigationBarColor(Color.parseColor("#0b1628"));
         if (!Alerts.isRinging()) {
             // Opened late (the call already ended or was answered): nothing to show.
             finish();
@@ -102,7 +102,7 @@ public class IncomingCallActivity extends Activity {
         LinearLayout root = new LinearLayout(this);
         root.setOrientation(LinearLayout.VERTICAL);
         root.setGravity(Gravity.CENTER_HORIZONTAL);
-        root.setBackgroundColor(Color.parseColor("#0b141a"));
+        root.setBackgroundColor(Color.parseColor("#0b1628"));
         root.setPadding(dp(24), dp(56), dp(24), dp(48));
 
         TextView encrypted = text("🔒 End-to-end encrypted", 13, "#8696a0", false);
@@ -116,7 +116,7 @@ public class IncomingCallActivity extends Activity {
         avatar.setGravity(Gravity.CENTER);
         GradientDrawable circle = new GradientDrawable();
         circle.setShape(GradientDrawable.OVAL);
-        circle.setColor(Color.parseColor("#00a884"));
+        circle.setColor(Color.parseColor("#1a73e8"));
         avatar.setBackground(circle);
         android.widget.FrameLayout photoFrame = new android.widget.FrameLayout(this);
         photoFrame.addView(avatar, new android.widget.FrameLayout.LayoutParams(dp(132), dp(132)));
@@ -142,7 +142,7 @@ public class IncomingCallActivity extends Activity {
             camera.setPadding(dp(20), dp(10), dp(20), dp(10));
             GradientDrawable pill = new GradientDrawable();
             pill.setCornerRadius(dp(24));
-            pill.setColor(Color.parseColor("#3b4a54"));
+            pill.setColor(Color.parseColor("#2c3e57"));
             camera.setBackground(pill);
             camera.setClickable(true);
             Runnable label = () -> {
@@ -163,7 +163,7 @@ public class IncomingCallActivity extends Activity {
         LinearLayout acceptColumn = action("Swipe up to accept", "#1fa855", android.R.drawable.ic_menu_call, 0f, video ? "Accept video call" : "Accept call", (v) -> accept(callId));
         swipeUpToAccept(acceptColumn.getChildAt(0), () -> accept(callId));
         buttons.addView(acceptColumn, new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.4f));
-        buttons.addView(action("Message", "#2a3942", android.R.drawable.sym_action_chat, 0f, "Decline with a message", (v) -> chooseReply(callId)), new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
+        buttons.addView(action("Message", "#22324a", android.R.drawable.sym_action_chat, 0f, "Decline with a message", (v) -> chooseReply(callId)), new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
         root.addView(buttons, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
 
         setContentView(root);

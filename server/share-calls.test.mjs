@@ -76,7 +76,8 @@ test('voice notes are green until played, then blue for both people', async () =
   const chat = await source('src/components/ChatWindow.jsx');
   assert.match(chat, /onPlayed=\{mine \? undefined : \(\) => \{\s*shared\.send\?\.\(\{ type: 'message:played'/, 'only the recipient reports playing');
   const css = await source('src/styles.css');
-  assert.ok(css.includes('.voice-row.is-played .voice-badge, .voice-row.is-played .voice-thumb { background: #53bdeb; }'));
+  assert.ok(css.includes('.voice-row.is-played .voice-badge, .voice-row.is-played .voice-thumb { background: #38bdf8; }'), 'played notes turn sky blue');
+  assert.ok(css.includes('.voice-row.is-unplayed .voice-thumb { background: var(--wa-green, #1a73e8); }'), '…distinct from the accent blue of an unplayed note');
 });
 
 test('voice calls ring back on the earpiece; Speaker keeps its icon; the PiP window has Hang up', async () => {

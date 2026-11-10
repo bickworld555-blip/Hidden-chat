@@ -1,13 +1,13 @@
-import { MessageCircle, Phone, Eye, Settings } from 'lucide-react';
+import { MessageCircle, Phone, CircleDashed, UsersRound } from 'lucide-react';
 import { useT } from '../i18n.js';
 
 export default function MobileBottomNav({ activeTab, onTabChange, unreadCount = 0 }) {
   const t = useT();
   const tabs = [
     { id: 'chats', label: 'Chats', icon: MessageCircle, unread: unreadCount },
+    { id: 'updates', label: 'Updates', icon: CircleDashed, unread: 0 },
+    { id: 'communities', label: 'Communities', icon: UsersRound, unread: 0 },
     { id: 'calls', label: 'Calls', icon: Phone, unread: 0 },
-    { id: 'updates', label: 'Updates', icon: Eye, unread: 0 },
-    { id: 'tools', label: 'Tools', icon: Settings, unread: 0 },
   ];
 
   return (

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Camera, ChevronLeft, Eye, Pencil, Plus, Send, Trash2, Type, X } from 'lucide-react';
 import { useChatStore } from '../store.js';
+import { apiFetch } from '../api.js';
 import Avatar from './Avatar.jsx';
 import { loadMediaBlob } from '../media.js';
 import { presentName } from '../profile.js';
@@ -15,7 +16,7 @@ const IMAGE_SECONDS = 5;
 
 // The Updates tab: your status ("Add status · Disappears after 24 hours"), then your contacts' statuses
 // ("Recent updates" with a green ring until you have seen them all, then "Viewed updates").
-export default function UpdatesView() {
+export default function UpdatesView({ onOpenChannels }) {
   const token = useChatStore((state) => state.sessionToken);
   const userId = useChatStore((state) => state.userId);
   const me = useChatStore((state) => state.user);
@@ -64,6 +65,13 @@ export default function UpdatesView() {
   const viewed = unmuted.filter((entry) => entry.allSeen);
   const mine = feed.mine;
   const myLast = mine.at(-1);
+  // Channels I follow or own, below the statuses.
+  const [channels, setChannels] = useState([]);
+  useEffect(() => {
+    if (!token) return;
+    apiFetch('/api/v1/channels', { headers: { Authorization: `Bearer ${token}` } })
+      .then((response) => (response.ok ? response.json() : [])).then(setChannels).catch(() => {});
+  }, [token, revision]);
 
   return (
     <div className="updates-view-container">
@@ -95,6 +103,16 @@ export default function UpdatesView() {
         {viewed.map((entry) => <StatusPerson key={entry.user.id} entry={entry} seen onOpen={() => setViewing({ owner: entry.user.id, index: 0 })} />)}
         {mutedEntries.length > 0 && <h4 className="status-section">Muted updates</h4>}
         {mutedEntries.map((entry) => <StatusPerson key={entry.user.id} entry={entry} seen onOpen={() => setViewing({ owner: entry.user.id, index: 0 })} />)}
+        <section className="updates-channels" aria-label="Channels">
+          <header><h3 className="status-title">Channels</h3><button type="button" className="updates-channels-find" onClick={() => onOpenChannels?.()}>Explore</button></header>
+          {channels.map((channel) => (
+            <button key={channel.id} type="button" className="status-row-main updates-channel" onClick={() => onOpenChannels?.(channel.id)}>
+              <span className="updates-channel-icon" aria-hidden="true">{channel.name.slice(0, 1).toUpperCase()}</span>
+              <span className="status-row-text"><strong>{channel.name}</strong><small>{channel.mine ? 'Your channel' : `${channel.followers} followers`}</small></span>
+            </button>
+          ))}
+          {!channels.length && <p className="updates-channels-empty">Stay up to date on topics that matter to you. Find channels to follow below.</p>}
+        </section>
         {feed.others.length === 0 && !error && (
           <div className="status-empty">
             <Eye size={40} strokeWidth={1.5} />
@@ -217,7 +235,7 @@ function StatusMedia({ status, token, onReady, videoRef }) {
     return () => { cancelled = true; if (objectUrl) URL.revokeObjectURL(objectUrl); };
   }, [mediaId, token]); // eslint-disable-line react-hooks/exhaustive-deps
   if (kind === 'text') {
-    return <div className="status-text-slide" style={{ background: status.background ?? '#00a884' }}><p>{statusKind(status.content).text}</p></div>;
+    return <div className="status-text-slide" style={{ background: status.background ?? '#005ad1' }}><p>{statusKind(status.content).text}</p></div>;
   }
   if (failed) return <div className="status-text-slide"><p>This status is no longer available.</p></div>;
   if (!url) return <div className="status-loading" />;

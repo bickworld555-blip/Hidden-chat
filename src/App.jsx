@@ -31,6 +31,7 @@ import CallOverlay from './components/CallOverlay.jsx';
 import { syncMissedMessages } from './messageSync.js';
 import { HISTORY_CONCURRENCY, forEachLimited } from './concurrency.js';
 import MobileBottomNav from './components/MobileBottomNav.jsx';
+import DesktopRail from './components/DesktopRail.jsx';
 import ChatsList from './components/ChatsList.jsx';
 import { lazyComponent, preloadLazyScreens } from './lazy.js';
 import { handleBack, useBackHandler } from './backStack.js';
@@ -639,7 +640,11 @@ export default function App() {
   // Signed out from another device: drop this account here too (its token no longer works).
   revokedRef.current = () => removeAccountFromDevice(userId);
 
-  const activeTab = isMobile ? mobileActiveTab : 'chats';
+  // The web app's left rail picks a section too (Chats, Updates, Communities, Calls, Settings).
+  const [desktopTab, setDesktopTab] = useState('chats');
+  const activeTab = isMobile ? mobileActiveTab : desktopTab;
+  const setActiveTab = isMobile ? setMobileActiveTab : setDesktopTab;
+  const [channelToOpen, setChannelToOpen] = useState('');
   const showMobileList = isMobile && activeTab === 'chats' && (mobileListOpen || !chat);
   const chatOpenOnMobile = isMobile && activeTab === 'chats' && !showMobileList;
   // Android Back: close the top screen (newest registered first); a chat goes back to the list, another tab to
@@ -815,16 +820,19 @@ export default function App() {
 
   return (
     <main className={`app-shell ${darkMode ? 'dark-theme' : ''} ${isMobile ? 'is-mobile' : ''} ${chatOpenOnMobile ? 'chat-open' : ''}`} data-animations={animationsAttribute(appearance)} data-call-animations={callAnimationsAttribute(appearance)}>
+      {!isMobile && <DesktopRail activeTab={desktopTab} onTab={setDesktopTab} onSheet={setParitySheet} unreadCount={unreadChats} darkMode={darkMode} onToggleTheme={toggleTheme} />}
       <Sidebar onPair={() => setPairingOpen(true)} onSounds={() => setNotificationsOpen(true)} onNotifications={() => setNotificationsOpen(true)} onAccountSettings={() => setAccountSettingsOpen(true)} onSelectChat={() => setMobileListOpen(false)} onOpenAuth={() => setAuthOpen(true)} onAuthenticated={acceptSession} onLogout={logout} onAccounts={() => setAccountsOpen(true)} onGroups={() => openGroups()} groups={groupRows} onOpenGroup={(id) => openGroups(false, id)} />
       <div className="workspace">
         {activeTab === 'chats' ? (
           showMobileList || !chat
-            ? <ChatsList onOpenChat={openChat} onStartCall={initiateCall} onGroups={openGroups} groups={groupRows} onOpenGroup={(id) => openGroups(false, id)} />
+            ? <ChatsList onOpenChat={openChat} onStartCall={initiateCall} onGroups={openGroups} groups={groupRows} onOpenGroup={(id) => openGroups(false, id)} onSettings={() => setActiveTab('tools')} onSheet={setParitySheet} />
             : <ChatWindow key={chat.id} chat={chat} connection={connection} client={client} onPair={() => setPairingOpen(true)} onBack={() => setMobileListOpen(true)} onStartCall={(mode) => initiateCall(chat.id, mode)} onGroups={openGroups} />
         ) : activeTab === 'calls' ? (
           <CallsView onCall={initiateCall} />
         ) : activeTab === 'updates' ? (
-          <UpdatesView />
+          <UpdatesView onOpenChannels={(id) => { setChannelToOpen(id ?? ''); setParitySheet('channels'); }} />
+        ) : activeTab === 'communities' && sessionToken ? (
+          <CommunitiesView inline token={sessionToken} revision={groupRevision} onClose={() => setActiveTab('chats')} onOpenGroup={(id) => openGroups(false, id)} />
         ) : activeTab === 'tools' ? (
           <ToolsView darkMode={darkMode} onToggleTheme={toggleTheme} onLogout={() => { logout(); }} onNotifications={() => setNotificationsOpen(true)} onAccountSettings={() => setAccountSettingsOpen(true)} onAccounts={() => setAccountsOpen(true)} onAvatarStudio={() => setAvatarStudioOpen(true)} onGroups={() => openGroups()}
             onCommunities={() => setParitySheet('communities')} onBusinessTools={() => setParitySheet('business')} onStarred={() => setParitySheet('starred')}
@@ -846,7 +854,7 @@ export default function App() {
       {sessionToken && paritySheet === 'backup' && <BackupView token={sessionToken} onClose={() => setParitySheet(null)} />}
       {sessionToken && paritySheet === 'storage' && <StorageView onClose={() => setParitySheet(null)} />}
       {sessionToken && paritySheet === 'broadcasts' && <BroadcastLists token={sessionToken} onClose={() => setParitySheet(null)} />}
-      {sessionToken && paritySheet === 'channels' && <Channels token={sessionToken} onClose={() => setParitySheet(null)} />}
+      {sessionToken && paritySheet === 'channels' && <Channels token={sessionToken} initialChannelId={channelToOpen} onClose={() => { setParitySheet(null); setChannelToOpen(''); }} />}
       {sessionToken && paritySheet === 'scheduled' && <ScheduledMessages token={sessionToken} userId={userId} onClose={() => setParitySheet(null)} />}
       {sessionToken && paritySheet === 'calllinks' && <CallLinks token={sessionToken} onClose={() => setParitySheet(null)} />}
       {sessionToken && paritySheet === 'statusprivacy' && <StatusPrivacy token={sessionToken} onClose={() => setParitySheet(null)} />}
