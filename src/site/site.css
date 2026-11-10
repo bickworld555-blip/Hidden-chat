@@ -127,3 +127,9 @@
 }
 @media (prefers-reduced-motion: reduce) { .site-button { transition: none; } }
 .site-help { padding-bottom: 72px; }
+
+.site-steps { list-style: none; counter-reset: step; padding: 0; display: grid; gap: 12px; margin: 16px 0 24px; }
+.site-steps li { counter-increment: step; display: grid; grid-template-columns: 36px 1fr; column-gap: 12px; align-items: baseline; }
+.site-steps li::before { content: counter(step); grid-row: span 2; width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; background: var(--s-chip); color: var(--s-accent); font-weight: 700; }
+.site-steps span { color: var(--s-muted); }
+.site-page h2 { margin-top: 32px; }

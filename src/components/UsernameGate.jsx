@@ -2,6 +2,7 @@ import { apiFetch } from '../api.js';
 import { useEffect, useState } from 'react';
 import { ArrowRight, AtSign, Copy, Eye, EyeOff, Facebook, Instagram, ShieldCheck } from 'lucide-react';
 import ShieldMark from './ShieldMark.jsx';
+import { LinkWithPhone } from './LinkDevice.jsx';
 import './UsernameGate.css';
 
 // The X (formerly Twitter) mark; lucide only ships the old bird.
@@ -41,6 +42,8 @@ function IdentityBrand() {
 }
 
 export default function UsernameGate({ onAuthenticated, onClose }) {
+  // On a computer, linking with the phone is the first choice (like WhatsApp Web).
+  const [linkMode, setLinkMode] = useState(() => !globalThis.Capacitor?.isNativePlatform?.() && (globalThis.innerWidth ?? 0) >= 900);
   const [username, setUsername] = useState('');
   const [mode, setMode] = useState('register');
   const [identity, setIdentity] = useState('');
@@ -141,6 +144,12 @@ export default function UsernameGate({ onAuthenticated, onClose }) {
         {onClose && <button className="identity-close" aria-label="Close account window" onClick={onClose}>×</button>}
         <h1 className="identity-title" id="identity-title">{mode === 'register' ? 'Create your account' : 'Welcome back'}</h1>
         {mode === 'login' && <p className="identity-copy">Sign in with your username or unique ID.</p>}
+        {mode === 'login' && (
+          <button type="button" className="identity-link-toggle" onClick={() => setLinkMode(!linkMode)}>
+            {linkMode ? 'Sign in with a password instead' : 'Link with your phone (scan a QR code)'}
+          </button>
+        )}
+        {mode === 'login' && linkMode ? <LinkWithPhone onAuthenticated={onAuthenticated} /> : (
         <form onSubmit={submit}>
           {mode === 'register' ? <>
             <label className="identity-label" htmlFor="relay-username">Your username</label>
@@ -180,6 +189,7 @@ export default function UsernameGate({ onAuthenticated, onClose }) {
           </button>
           {error && <div className="auth-error" role="alert">{error}</div>}
         </form>
+        )}
         <div className="identity-switch">
           {mode === 'register' ? <>Already have an account? <button onClick={() => { setMode('login'); setAvailability(null); setError(''); setShowPassword(false); }}>Sign in</button></> : <>New to Hidden Messenger? <button onClick={() => { setMode('register'); setAvailability(null); setError(''); setShowPassword(false); }}>Create an account</button></>}
         </div>

@@ -3,7 +3,7 @@
 export const ANDROID_APK_URL = 'https://expo.dev/artifacts/eas/4H6TEp7cVyGTqlw9QjE62KkBqDWS_IhbdzhuERgv9RI.apk';
 
 // Public pages (src/site/PublicSite.jsx); every other path opens the messenger.
-export const PUBLIC_PATH = /^\/(?:features|privacy|business|download|help(?:\/[a-z0-9-]+)?)?\/?$/;
+export const PUBLIC_PATH = /^\/(?:features|calling|messaging|privacy|business|download|help(?:\/[a-z0-9-]+)?)?\/?$/;
 export const SIGNED_IN_HINT = 'hm:signed-in';
 
 /** Which experience a page load shows: the public site, or the messenger (always in the Android app). */

@@ -27,6 +27,7 @@ import { ensureE2eSchema, registerE2e } from './e2e.mjs';
 import { registerSfu } from './sfu.mjs';
 import { ensureExtrasSchema, registerExtras, statusAudienceSql } from './extras.mjs';
 import { ensureAdminSchema, registerAdmin } from './admin.mjs';
+import { registerLinking } from './linking.mjs';
 import { BUNDLED_APP_ORIGIN } from '../scripts/configure-android.mjs';
 import { effectiveRouting, isEnvelope, MAX_DIRECT_ENVELOPE, parseRouting, routingFor } from '../src/e2e/envelope.js';
 import { audienceAllows, canSeePresence, deviceNameFromUserAgent, isLastSeenPrivacy, parsePrivacyPatch, presenceFor, visibleStatus } from './presence.mjs';
@@ -559,7 +560,9 @@ export function createChatServer({
   const smallJson = express.json({ limit: '16kb' });
   const largeJson = express.json({ limit: '1mb' });
   const LARGE_JSON_ROUTES = /^\/api\/v1\/(?:groups\/[^/]+\/messages(?:\/[^/]+)?|messages\/[^/]+|e2e\/keys|polls\/[^/]+\/sealed-vote|statuses)$/;
-  app.use((request, response, next) => (LARGE_JSON_ROUTES.test(request.path) ? largeJson : smallJson)(request, response, next));
+  // A linked device's encrypted history has its own, larger limit (server/linking.mjs).
+  const OWN_PARSER_ROUTES = /^\/api\/v1\/link\/requests\/[^/]+\/history$/;
+  app.use((request, response, next) => (OWN_PARSER_ROUTES.test(request.path) ? next() : (LARGE_JSON_ROUTES.test(request.path) ? largeJson : smallJson)(request, response, next)));
   const server = createServer(app);
   const websocketServer = new WebSocketServer({
     noServer: true,
@@ -1041,6 +1044,9 @@ export function createChatServer({
       await forgetPushDevicesOf(removed.map((row) => row.hash));
     },
   });
+
+  // Linking a browser by scanning a QR code with the phone (server/linking.mjs).
+  const linking = registerLinking({ app, requireSession, issueSession: (userId, name) => issueSession(userId, name), suspended: (userId) => admin.suspended(userId) });
 
   // Broadcast lists, channels, scheduled messages, status privacy and call links (server/extras.mjs).
   const extras = registerExtras({
@@ -2737,6 +2743,7 @@ export function createChatServer({
         closing = true;
         clearInterval(expiryTimer);
         clearInterval(uploadSweep);
+        linking.close();
         // Each socket's close handler queues work (e.g. recording last seen); wait for those handlers to run
         // so the tasks are tracked before the database closes.
         const socketsClosed = [];

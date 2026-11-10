@@ -6,6 +6,7 @@ import { useChatStore } from '../store.js';
 import { changePassword, listDevices, signOutDevice } from '../accountApi.js';
 import { SECTIONS, SETTINGS, appSettings, optionLabel, useAccountSettingsLoaded, useSetting } from '../settings.js';
 import { formatLastSeen } from '../presence.js';
+import { LinkScanner } from './LinkDevice.jsx';
 import { RadioList, Row, SubView } from './NotificationSettings.jsx';
 
 const isPhone = (name = '') => /Android|iOS/.test(name);
@@ -119,6 +120,7 @@ function PrivacyRow({ settingKey, loaded, onOpen, onToggle }) {
 }
 
 export default function AccountSettings({ onClose }) {
+  const [scanning, setScanning] = useState(false);
   const sessionToken = useChatStore((state) => state.sessionToken);
   const [view, setView] = useState(null);
   // Android Back leaves a sub-screen first; the screen itself is closed by its opener.
@@ -173,8 +175,17 @@ export default function AccountSettings({ onClose }) {
     );
   } else if (view === 'devices') {
     content = (
-      <SubView title="Linked devices" onBack={() => setView(null)}>
-        <Devices devices={devices} onSignOut={removeDevice} error={error} />
+      <SubView title="Linked devices" onBack={() => { setScanning(false); setView(null); }}>
+        {scanning ? (
+          <LinkScanner token={sessionToken} onCancel={() => setScanning(false)}
+            onDone={(name) => { setScanning(false); setNotice(`${name} is linked. Your recent chats were sent to it end-to-end encrypted.`); loadDevices(); }} />
+        ) : (
+          <>
+            <button type="button" className="link-device-button" onClick={() => setScanning(true)}>Link a device</button>
+            {notice && <p className="account-notice" role="status">{notice}</p>}
+            <Devices devices={devices} onSignOut={removeDevice} error={error} />
+          </>
+        )}
       </SubView>
     );
   } else {

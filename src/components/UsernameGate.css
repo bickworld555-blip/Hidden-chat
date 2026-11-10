@@ -8,10 +8,10 @@
   padding: 32px 16px;
   overflow: auto;
   background:
-    radial-gradient(circle at 50% 12%, #93d6af44, transparent 38%),
-    radial-gradient(circle at 50% 75%, #153e2e33, #061e17bb 78%),
-    radial-gradient(circle, #092b20 1px, #599073 1.5px, #1d6045 2.5px, transparent 3px),
-    linear-gradient(135deg, #123f30, #387e5d 48%, #09251b);
+    radial-gradient(circle at 50% 12%, #93b0d644, transparent 38%),
+    radial-gradient(circle at 50% 75%, #15273e33, #06101ebb 78%),
+    radial-gradient(circle, #09182b 1px, #597190 1.5px, #1d3a60 2.5px, transparent 3px),
+    linear-gradient(135deg, #12253f, #38567e 48%, #091525);
   background-size: auto, auto, 7px 7px, auto;
 }
 
@@ -32,26 +32,26 @@
 .identity-mark {
   width: 84px;
   height: 94px;
-  filter: drop-shadow(0 5px 3px #00150e) drop-shadow(0 0 12px #a5f8ca55);
+  filter: drop-shadow(0 5px 3px #000915) drop-shadow(0 0 12px #a5c9f855);
 }
 
 .identity-wordmark {
-  color: #e6f4ea;
+  color: #e6ecf4;
   font-family: Georgia, "Times New Roman", serif;
   font-size: clamp(18px, 5vw, 29px);
   font-weight: 700;
   letter-spacing: .035em;
   line-height: 1.2;
   white-space: nowrap;
-  text-shadow: 0 2px 0 #536e60, 0 4px 3px #00170f, 0 0 18px #b7f4cd55;
+  text-shadow: 0 2px 0 #535f6e, 0 4px 3px #000a17, 0 0 18px #b7d1f455;
 }
 
 .identity-brand p {
   margin: 3px 0 0;
-  color: #e0eee4;
+  color: #e0e6ee;
   font-size: clamp(13px, 3.8vw, 17px);
   line-height: 1.4;
-  text-shadow: 0 2px 4px #001a10;
+  text-shadow: 0 2px 4px #000b1a;
 }
 
 .identity-backdrop .identity-card {
@@ -61,9 +61,9 @@
   border: 1px solid #ffffffb8;
   border-radius: 20px;
   background:
-    radial-gradient(circle, #6380781c .7px, transparent 1px) 0 0 / 4px 4px,
-    linear-gradient(145deg, #f8fbf8ed, #e1e9e3f2);
-  box-shadow: inset 0 1px 3px #fff, inset 0 0 0 4px #ffffff45, 0 16px 35px #001b12a6, 0 2px 5px #071f19;
+    radial-gradient(circle, #6370801c .7px, transparent 1px) 0 0 / 4px 4px,
+    linear-gradient(145deg, #f8f9fbed, #e1e4e9f2);
+  box-shadow: inset 0 1px 3px #fff, inset 0 0 0 4px #ffffff45, 0 16px 35px #000c1ba6, 0 2px 5px #07111f;
   backdrop-filter: blur(14px);
 }
 
@@ -76,15 +76,15 @@
   border: 0;
   border-radius: 50%;
   background: transparent;
-  color: #34554a;
+  color: #344255;
   font-size: 23px;
   cursor: pointer;
 }
-.identity-backdrop .identity-close:hover { background: #dce9df; }
+.identity-backdrop .identity-close:hover { background: #dce2e9; }
 
 .identity-backdrop .identity-title {
   margin: 0 30px 21px;
-  color: #233b31;
+  color: #232d3b;
   font-family: inherit;
   font-size: 19px;
   font-weight: 650;
@@ -94,7 +94,7 @@
 
 .identity-backdrop .identity-kicker {
   margin: 0 0 8px;
-  color: #377052;
+  color: #375070;
   font-size: 11px;
   font-weight: 700;
   letter-spacing: .12em;
@@ -102,14 +102,14 @@
 
 .identity-backdrop .identity-success h1 {
   margin: 0 0 10px;
-  color: #203d31;
+  color: #202d3d;
   font-size: 25px;
   line-height: 1.2;
 }
 
 .identity-backdrop .identity-copy {
   margin: 0 0 20px;
-  color: #52665a;
+  color: #525b66;
   font-size: 14px;
   line-height: 1.5;
 }
@@ -117,7 +117,7 @@
 .identity-backdrop .identity-label {
   display: block;
   margin: 0 0 7px;
-  color: #263a30;
+  color: #262f3a;
   font-size: 14px;
   font-weight: 650;
 }
@@ -125,11 +125,11 @@
 .identity-backdrop .handle-input,
 .identity-backdrop .identity-text-input {
   height: 51px;
-  border: 1px solid #789389;
+  border: 1px solid #788493;
   border-radius: 11px;
-  background: linear-gradient(180deg, #f7faf7, #e5ece6);
-  box-shadow: inset 0 2px 4px #355d4d40, 0 1px 0 #fff, 0 0 0 2px #c5dfd02e;
-  color: #243c30;
+  background: linear-gradient(180deg, #f7f8fa, #e5e8ec);
+  box-shadow: inset 0 2px 4px #35465d40, 0 1px 0 #fff, 0 0 0 2px #c5d0df2e;
+  color: #242e3c;
   font-size: 16px;
 }
 
@@ -148,36 +148,36 @@
   outline: 0;
   background: transparent;
   font-size: 16px;
-  color: #1d342a;
+  color: #1d2734;
 }
 
 .identity-backdrop .handle-input input::placeholder,
 .identity-backdrop .identity-text-input::placeholder {
-  color: #66776d;
+  color: #666d77;
   opacity: 1;
 }
 
 .identity-backdrop .handle-input:focus-within,
 .identity-backdrop .identity-text-input:focus {
-  border-color: #3a9069;
+  border-color: #3a5f90;
   outline: 0;
-  box-shadow: inset 0 2px 4px #355d4d40, 0 0 0 3px #49a37866;
+  box-shadow: inset 0 2px 4px #35465d40, 0 0 0 3px #4970a366;
 }
 
 .identity-backdrop .handle-input.invalid {
   border-color: #ba554d;
 }
 
-.handle-shield { flex: none; color: #5d8a73; }
+.handle-shield { flex: none; color: #5d708a; }
 
 .identity-backdrop .handle-domain {
   flex: none;
   padding: 9px 10px;
-  border: 1px solid #7ba58e;
+  border: 1px solid #7b8da5;
   border-radius: 7px;
-  background: linear-gradient(#3a795d, #174b37);
-  box-shadow: inset 0 1px 1px #d5f9e899, 0 2px 3px #152e2155;
-  color: #f0fff4;
+  background: linear-gradient(#3a5579, #172e4b);
+  box-shadow: inset 0 1px 1px #d5e5f999, 0 2px 3px #15202e55;
+  color: #f0f7ff;
   font-size: 12px;
   white-space: nowrap;
 }
@@ -185,7 +185,7 @@
 .identity-backdrop .availability {
   min-height: 32px;
   padding: 7px 1px;
-  color: #52675b;
+  color: #525b67;
   font-size: 12px;
   line-height: 1.4;
 }
@@ -214,10 +214,10 @@
   border: 0;
   border-radius: 8px;
   background: transparent;
-  color: #50665a;
+  color: #505a66;
   cursor: pointer;
 }
-.password-toggle:hover { background: #d3e2d7; }
+.password-toggle:hover { background: #d3dae2; }
 
 .identity-backdrop .identity-submit {
   width: 100%;
@@ -229,28 +229,28 @@
   height: auto;
   margin-top: 24px;
   padding: 8px 14px;
-  border: 1px solid #79a891;
+  border: 1px solid #798da8;
   border-radius: 10px;
-  background: linear-gradient(180deg, #4a9b73 0%, #21684a 12%, #0b3728 100%);
-  box-shadow: inset 0 2px 1px #c5f6d88c, inset 0 -2px 2px #031b13, 0 5px 9px #0e312555, 0 0 20px #43bc8255;
-  color: #f0fff5;
+  background: linear-gradient(180deg, #4a6d9b 0%, #214068 12%, #0b1e37 100%);
+  box-shadow: inset 0 2px 1px #c5daf68c, inset 0 -2px 2px #030d1b, 0 5px 9px #0e1d3155, 0 0 20px #4377bc55;
+  color: #f0f7ff;
   font-size: 16px;
   font-weight: 650;
-  text-shadow: 0 1px 2px #001a0e;
+  text-shadow: 0 1px 2px #000b1a;
   cursor: pointer;
 }
-.identity-backdrop .identity-submit:hover:not(:disabled) { background: linear-gradient(#58ae82, #16583b); }
+.identity-backdrop .identity-submit:hover:not(:disabled) { background: linear-gradient(#587dae, #163358); }
 .identity-backdrop .identity-submit:disabled {
-  background: linear-gradient(180deg, #49866a, #174a35);
-  color: #e8f5eb;
+  background: linear-gradient(180deg, #496386, #172d4a);
+  color: #e8eef5;
   opacity: .75;
   cursor: not-allowed;
 }
-.button-mark { width: 27px; height: 30px; filter: drop-shadow(0 2px 2px #00170e); }
+.button-mark { width: 27px; height: 30px; filter: drop-shadow(0 2px 2px #000a17); }
 
 .identity-backdrop .identity-switch {
   margin-top: 21px;
-  color: #3c5145;
+  color: #3c4551;
   font-size: 14px;
   line-height: 1.5;
   text-align: center;
@@ -259,7 +259,7 @@
   padding: 2px;
   border: 0;
   background: transparent;
-  color: #185b3d;
+  color: #18355b;
   font-size: inherit;
   font-weight: 700;
   cursor: pointer;

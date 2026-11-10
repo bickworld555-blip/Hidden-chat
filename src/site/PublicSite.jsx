@@ -9,6 +9,8 @@ import { ANDROID_APK_URL } from './links.js';
 import './site.css';
 
 const PAGES = [
+  ['/messaging', 'Messaging'],
+  ['/calling', 'Calling'],
   ['/features', 'Features'],
   ['/privacy', 'Privacy'],
   ['/business', 'Business'],
@@ -57,7 +59,7 @@ function Header({ path, go }) {
 
 function Footer({ go }) {
   const groups = [
-    ['Product', [['/features', 'Features'], ['/business', 'For business'], ['/download', 'Download'], ['/app', 'Open web app']]],
+    ['Product', [['/messaging', 'Messaging'], ['/calling', 'Calling'], ['/features', 'All features'], ['/business', 'For business'], ['/download', 'Download'], ['/app', 'Open web app']]],
     ['Trust', [['/privacy', 'Privacy & encryption'], ['/help/end-to-end-encryption', 'How encryption works'], ['/help/report-and-block', 'Report abuse']]],
     ['Help', [['/help', 'Help Center'], ['/help/create-account', 'Create an account'], ['/help/install-android', 'Install on Android']]],
   ];
@@ -194,7 +196,57 @@ function Privacy({ go }) {
         <section className="site-card"><h2><BadgeCheck size={20} /> Verify a chat</h2><p>Open a contact’s info › Encryption. If your 60-digit code matches theirs, the chat reaches the right devices.</p></section>
         <section className="site-card"><h2><Smartphone size={20} /> Code you can trust</h2><p>The Android app carries its own code and never loads it from a website, so nobody can change it from a server.</p></section>
       </div>
+      <h2>Your account and your devices</h2>
+      <div className="site-grid">
+        <section className="site-card"><h2><KeyRound size={20} /> No phone number</h2><p>An account is a username, a date of birth and a password. Add a two-step PIN so a new device also needs it.</p></section>
+        <section className="site-card"><h2><Smartphone size={20} /> Linked devices</h2><p>Every phone and browser you link has its own keys. See and sign out any device under Settings › Linked devices.</p></section>
+        <section className="site-card"><h2><BadgeCheck size={20} /> Reports and safety</h2><p>Report or block someone from their contact info. Reports go to the Hidden Messenger team with the reason you choose; they never include your messages.</p></section>
+      </div>
       <p><Link to="/help/end-to-end-encryption" go={go} className="site-more">Read how encryption works <ChevronRight size={16} /></Link></p>
+    </div>
+  );
+}
+
+function Steps({ items }) {
+  return <ol className="site-steps">{items.map(([title, text]) => <li key={title}><strong>{title}</strong><span>{text}</span></li>)}</ol>;
+}
+
+function Messaging({ go }) {
+  return (
+    <div className="site-wrap site-page">
+      <span className="site-eyebrow"><MessageCircle size={15} /> Messaging</span>
+      <h1>Say it any way you like, privately</h1>
+      <p className="site-lede">Text, voice notes, photos, videos, documents, stickers and polls, on your phone and in your browser, all end-to-end encrypted.</p>
+      <div className="site-grid">
+        {[[MessageCircle, 'Messages that keep up', 'Edit for 15 minutes, delete for everyone, reply, react, pin, star and forward. Schedule a message to go out later.'],
+          [Smartphone, 'Voice notes and video notes', 'Record a voice note with a live waveform, or a round video note up to a minute. Send either as view once.'],
+          [UsersRound, 'Groups that stay organised', 'Mentions, polls, events, admins and invite links. Communities bring related groups together with announcements.'],
+          [Lock, 'Locked chats', 'Move your most private chats into a folder that opens only with your fingerprint, screen lock or passcode.']].map(([Icon, title, text]) => (
+          <section key={title} className="site-card"><h2><Icon size={20} /> {title}</h2><p>{text}</p></section>
+        ))}
+      </div>
+      <h2>Use it on your computer</h2>
+      <Steps items={[['Open hiddenmessenger.com/app', 'on your computer and choose “Link with your phone”.'], ['On your phone', 'go to Settings › Account & privacy › Linked devices › Link a device.'], ['Scan the QR code', 'Your recent chats arrive end-to-end encrypted, and new messages show on both.']]} />
+      <p><a className="site-button" href="/app">Open the web app</a></p>
+    </div>
+  );
+}
+
+function Calling({ go }) {
+  return (
+    <div className="site-wrap site-page">
+      <span className="site-eyebrow"><Phone size={15} /> Calling</span>
+      <h1>Call anyone, in a voice they can trust</h1>
+      <p className="site-lede">Voice and video calls go straight between devices and are encrypted end to end, on mobile data or Wi-Fi.</p>
+      <div className="site-grid">
+        {[[Phone, 'Voice and video', 'Switch between voice and video during a call, share your screen from a computer, and react without interrupting.'],
+          [UsersRound, 'Group calls', 'Bring your group together in one call and add people while it is running.'],
+          [Smartphone, 'Rings like a phone call', 'On Android, incoming calls ring on the lock screen and through your phone’s own call screen, even when the app is closed.'],
+          [KeyRound, 'Call links', 'Share a link so people can call you without your username, and revoke it at any time.']].map(([Icon, title, text]) => (
+          <section key={title} className="site-card"><h2><Icon size={20} /> {title}</h2><p>{text}</p></section>
+        ))}
+      </div>
+      <p><Link to="/help/end-to-end-encryption" go={go} className="site-more">How calls stay private <ChevronRight size={16} /></Link></p>
     </div>
   );
 }
@@ -302,6 +354,8 @@ export default function PublicSite() {
   const helpSlug = /^\/help\/([a-z0-9-]+)\/?$/.exec(path)?.[1];
   const page = helpSlug ? <HelpArticle slug={helpSlug} go={go} />
     : path.startsWith('/help') ? <HelpCenter go={go} />
+      : path.startsWith('/messaging') ? <Messaging go={go} />
+        : path.startsWith('/calling') ? <Calling go={go} />
       : path.startsWith('/features') ? <Features />
         : path.startsWith('/privacy') ? <Privacy go={go} />
           : path.startsWith('/business') ? <Business go={go} />

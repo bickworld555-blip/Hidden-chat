@@ -33,6 +33,8 @@ import { HISTORY_CONCURRENCY, forEachLimited } from './concurrency.js';
 import MobileBottomNav from './components/MobileBottomNav.jsx';
 import DesktopRail from './components/DesktopRail.jsx';
 import { canAdminister } from './adminAccess.js';
+import { takePendingHistory } from './linking.js';
+import { validateBackupData } from './backup.js';
 import { SIGNED_IN_HINT } from './site/links.js';
 import ChatsList from './components/ChatsList.jsx';
 import { lazyComponent, preloadLazyScreens } from './lazy.js';
@@ -652,6 +654,20 @@ export default function App() {
       else localStorage.removeItem(SIGNED_IN_HINT);
     } catch { /* the hint is a convenience only */ }
   }, [sessionToken]);
+  // A browser linked by QR code: the phone sent recent chats end to end; merge them once (src/linking.js).
+  useEffect(() => {
+    if (!sessionToken || !userId) return undefined;
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      takePendingHistory().then((data) => {
+        if (cancelled || !data) return;
+        // Throws when the snapshot is damaged or belongs to another account (then nothing is merged).
+        validateBackupData(data, userId);
+        useChatStore.getState().restoreBackup(data);
+      }).catch(() => { /* the chats still arrive as new messages come in */ });
+    }, 1500);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [sessionToken, userId]);
   // Admin console: offered in Settings to admins, and opened directly at /admin.
   const [isAdmin, setIsAdmin] = useState(false);
   useEffect(() => {
