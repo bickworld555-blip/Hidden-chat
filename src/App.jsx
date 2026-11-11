@@ -670,13 +670,18 @@ export default function App() {
   }, [sessionToken, userId]);
   // Admin console: offered in Settings to admins, and opened directly at /admin.
   const [isAdmin, setIsAdmin] = useState(false);
+  // /admin opened by an account that isn't an admin: say so instead of quietly showing the chats.
+  const [adminDenied, setAdminDenied] = useState(false);
   useEffect(() => {
     let cancelled = false;
     if (!sessionToken) { setIsAdmin(false); return undefined; }
     canAdminister(sessionToken).then((allowed) => {
       if (cancelled) return;
       setIsAdmin(allowed);
-      if (allowed && location.pathname === '/admin') setParitySheet('admin');
+      if (location.pathname === '/admin') {
+        if (allowed) setParitySheet('admin');
+        else setAdminDenied(true);
+      }
     });
     return () => { cancelled = true; };
   }, [sessionToken]);
@@ -891,6 +896,15 @@ export default function App() {
         onOpenChat={(id) => { setParitySheet(null); openChat({ id }); }} onOpenGroup={(id) => { setParitySheet(null); openGroups(false, id); }} />}
       {sessionToken && paritySheet === 'backup' && <BackupView token={sessionToken} onClose={() => setParitySheet(null)} />}
       {sessionToken && paritySheet === 'storage' && <StorageView onClose={() => setParitySheet(null)} />}
+      {sessionToken && adminDenied && (
+        <div className="admin-denied" role="alertdialog" aria-modal="true" aria-labelledby="admin-denied-title">
+          <div className="admin-denied-card">
+            <h2 id="admin-denied-title">Admin console unavailable</h2>
+            <p>This page is only for Hidden Messenger admins, and this account isn't one.</p>
+            <button type="button" onClick={() => { setAdminDenied(false); history.replaceState(null, '', '/app'); }}>Go to your chats</button>
+          </div>
+        </div>
+      )}
       {sessionToken && isAdmin && paritySheet === 'admin' && <AdminConsole token={sessionToken} onClose={() => { setParitySheet(null); if (location.pathname === '/admin') history.replaceState(null, '', '/app'); }} />}
       {sessionToken && paritySheet === 'broadcasts' && <BroadcastLists token={sessionToken} onClose={() => setParitySheet(null)} />}
       {sessionToken && paritySheet === 'channels' && <Channels token={sessionToken} initialChannelId={channelToOpen} onClose={() => { setParitySheet(null); setChannelToOpen(''); }} />}

@@ -61,24 +61,29 @@ function Overview({ token }) {
 
 function UsersTab({ token }) {
   const [query, setQuery] = useState('');
+  const [adminsOnly, setAdminsOnly] = useState(false);
   const [rows, setRows] = useState([]);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
-  const load = () => request(token, `/api/v1/admin/users?q=${encodeURIComponent(query)}`).then(setRows).catch((caught) => setError(caught.message));
-  useEffect(() => { const timer = setTimeout(load, 250); return () => clearTimeout(timer); }, [token, query]);
+  const load = () => request(token, `/api/v1/admin/users?q=${encodeURIComponent(query)}${adminsOnly ? '&role=admin' : ''}`).then(setRows).catch((caught) => setError(caught.message));
+  useEffect(() => { const timer = setTimeout(load, 250); return () => clearTimeout(timer); }, [token, query, adminsOnly]);
   const act = (user, action, done) => request(token, `/api/v1/admin/users/${user.id}/${action}`, { method: 'POST' })
-    .then(() => { setNotice(done); return load(); }).catch((caught) => setError(caught.message));
+    .then(() => { setError(''); setNotice(done); return load(); }).catch((caught) => setError(caught.message));
   return (
     <div>
       <Notice error={error} notice={notice} />
       <input className="hm-input" placeholder="Search by username or name" value={query} onChange={(event) => setQuery(event.target.value)} />
+      <div className="admin-segment" role="tablist" aria-label="Which accounts">
+        {[[false, 'Everyone'], [true, 'Admins']].map(([value, label]) => <button key={label} type="button" role="tab" aria-selected={adminsOnly === value} className={adminsOnly === value ? 'is-on' : ''} onClick={() => setAdminsOnly(value)}>{label}</button>)}
+      </div>
+      <p className="admin-hint">Make any account an admin here. Accounts listed in the ADMIN_USERNAMES setting on the server are admins at every deployment and are managed there.</p>
       <div className="admin-table">
         <table>
           <thead><tr><th>Account</th><th>Joined</th><th>Last seen</th><th>Reports</th><th>Status</th><th /></tr></thead>
           <tbody>
             {rows.map((user) => (
               <tr key={user.id}>
-                <td><strong>{user.name}</strong><small>@{user.username}{user.isAdmin ? ' · admin' : ''}</small></td>
+                <td><strong>{user.name}</strong><small>@{user.username}{user.isAdmin ? (user.configuredAdmin ? ' · admin (server setting)' : ' · admin') : ''}</small></td>
                 <td>{when(user.createdAt)}</td>
                 <td>{when(user.lastSeenAt)}</td>
                 <td>{user.openReports || ''}</td>
@@ -87,7 +92,7 @@ function UsersTab({ token }) {
                   {user.suspendedAt
                     ? <button type="button" onClick={() => act(user, 'restore', `@${user.username} restored`)}>Restore</button>
                     : <button type="button" className="is-danger" onClick={() => act(user, 'suspend', `@${user.username} suspended and signed out`)}>Suspend</button>}
-                  <button type="button" onClick={() => act(user, user.isAdmin ? 'unadmin' : 'admin', user.isAdmin ? `@${user.username} is no longer an admin` : `@${user.username} is now an admin`)}>{user.isAdmin ? 'Remove admin' : 'Make admin'}</button>
+                  <button type="button" disabled={user.isAdmin && user.configuredAdmin} title={user.isAdmin && user.configuredAdmin ? 'Listed in ADMIN_USERNAMES on the server' : undefined} onClick={() => act(user, user.isAdmin ? 'unadmin' : 'admin', user.isAdmin ? `@${user.username} is no longer an admin` : `@${user.username} is now an admin`)}>{user.isAdmin ? 'Remove admin' : 'Make admin'}</button>
                 </td>
               </tr>
             ))}

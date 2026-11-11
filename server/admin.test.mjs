@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, test } from 'node:test';
 import { createChatServer } from './index.mjs';
+import { adminUsernamesFrom } from './admin.mjs';
 import { entryFor } from '../src/site/links.js';
 
 const PASSWORD = 'correct horse battery staple';
@@ -12,10 +13,17 @@ let directory;
 let service;
 let base;
 
+// Like a deployment: the listed admins already have accounts when the server starts.
+async function start(adminUsernames) {
+  await service?.close();
+  service = createChatServer({ port: 0, host: '127.0.0.1', databasePath: join(directory, 'db.sqlite'), pushSender: null, adminUsernames });
+  base = `http://127.0.0.1:${(await service.listen()).port}`;
+}
 before(async () => {
   directory = mkdtempSync(join(tmpdir(), 'relay-admin-'));
-  service = createChatServer({ port: 0, host: '127.0.0.1', databasePath: join(directory, 'db.sqlite'), pushSender: null });
-  base = `http://127.0.0.1:${(await service.listen()).port}`;
+  await start(['shakil']);
+  await register('shakil');
+  await start(['shakil']);
 });
 after(async () => {
   await service?.close();
@@ -28,6 +36,7 @@ async function api(path, { token, method = 'GET', body } = {}) {
   return { status: response.status, body: text ? JSON.parse(text) : null };
 }
 const register = async (username) => (await api('/api/v1/auth/register', { method: 'POST', body: { username, dob: '1990-04-12', password: PASSWORD } })).body;
+const login = async (identity) => (await api('/api/v1/auth/login', { method: 'POST', body: { identity, password: PASSWORD } })).body;
 
 test('the Help Center is public, starts with articles, and only admins edit it', async () => {
   const list = await api('/api/v1/help');
@@ -36,7 +45,7 @@ test('the Help Center is public, starts with articles, and only admins edit it',
   const found = await api('/api/v1/help?q=security%20code');
   assert.ok(found.body.articles.some((article) => article.slug === 'end-to-end-encryption'));
   assert.equal((await api('/api/v1/help/end-to-end-encryption')).body.title, 'How end-to-end encryption works');
-  const admin = await register('shakil');
+  const admin = await login('shakil');
   const member = await register('helpreader');
   assert.equal((await api('/api/v1/admin/help', { token: member.token })).status, 404, 'non-admins do not even learn the route exists');
   const created = await api('/api/v1/admin/help', { token: admin.token, method: 'POST', body: { slug: 'change-username', category: 'account', title: 'Change your username', body: 'Open Settings › Profile.', published: false } });
@@ -82,4 +91,38 @@ test('page routing: public pages on the website, the messenger everywhere else a
   assert.equal(entryFor('/', { signedIn: true }), 'redirect-app');
   assert.equal(entryFor('/features', { signedIn: true }), 'site', 'signed-in people can still read the site');
   assert.equal(entryFor('/', { native: true }), 'app', 'the Android app never shows the website');
+});
+
+test('ADMIN_USERNAMES lists admins: parsed leniently, granted at deployment to existing accounts only', () => {
+  assert.deepEqual(adminUsernamesFrom(' Shakil, @ops_lead ,,bad name!,ops_lead'), ['shakil', 'ops_lead']);
+  assert.deepEqual(adminUsernamesFrom(undefined), ['shakil']);
+  assert.deepEqual(adminUsernamesFrom('  '), ['shakil']);
+});
+
+test('admins grant and revoke the role in the console; listed admins arrive with each deployment', async () => {
+  const lead = await register('ops_lead');
+  // Listed, but the account was created after this start-up: no role until the next deployment.
+  await start(['shakil', 'ops_lead', 'not_yet_taken']);
+  const squatter = await register('not_yet_taken');
+  assert.equal((await api('/api/v1/admin/me', { token: squatter.token })).status, 404, 'registering a listed name later does not make you an admin');
+  const leadSession = await login('ops_lead');
+  assert.equal((await api('/api/v1/admin/me', { token: leadSession.token })).status, 200, 'an existing listed account is an admin after deployment');
+
+  const admin = await login('shakil');
+  const helper = await register('helper_one');
+  const users = (q, role = '') => api(`/api/v1/admin/users?q=${q}${role}`, { token: admin.token });
+  assert.equal((await api('/api/v1/admin/me', { token: helper.token })).status, 404);
+  assert.equal((await api(`/api/v1/admin/users/${helper.user.id}/admin`, { token: admin.token, method: 'POST' })).status, 200);
+  assert.equal((await api('/api/v1/admin/me', { token: helper.token })).status, 200, 'granted from the console');
+  const admins = (await users('', '&role=admin')).body.map((user) => user.username).sort();
+  assert.deepEqual(admins, ['helper_one', 'ops_lead', 'shakil']);
+  assert.equal((await users('ops_lead')).body[0].configuredAdmin, true);
+  assert.equal((await users('helper_one')).body[0].configuredAdmin, false);
+
+  const refused = await api(`/api/v1/admin/users/${lead.user.id}/unadmin`, { token: admin.token, method: 'POST' });
+  assert.equal(refused.status, 409, 'a listed admin is managed in ADMIN_USERNAMES');
+  assert.match(refused.body.error, /ADMIN_USERNAMES/);
+  assert.equal((await api(`/api/v1/admin/users/${helper.user.id}/unadmin`, { token: admin.token, method: 'POST' })).status, 200);
+  assert.equal((await api('/api/v1/admin/me', { token: helper.token })).status, 404, 'revoked from the console');
+  assert.equal((await api(`/api/v1/admin/users/${admin.user.id}/unadmin`, { token: admin.token, method: 'POST' })).status, 400, 'nobody removes their own role');
 });

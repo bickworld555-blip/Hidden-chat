@@ -22,6 +22,7 @@ credentials in chat, command history or workflow logs.
 | `HOST=127.0.0.1` | VPS loopback binding behind Nginx |
 | `PORT=4174` | Fixed nonzero port; must match both Nginx upstreams |
 | `RELAY_ALLOWED_ORIGINS` | Required: comma-separated exact HTTPS origins, no paths/wildcards |
+| `ADMIN_USERNAMES` | Optional: comma-separated usernames (e.g. `shakil,ops_lead`) made admins at each deployment. Only accounts that exist when the server starts are granted; an account registered later under a listed name gets the role at the next deployment. Default `shakil`. Other admins are added and removed in the console at `/admin` › Users |
 | `RELAY_SEED_DEMO=false` | Never seed production demo users |
 | `RELAY_DATA_DIRECTORY=/var/lib/relay` | Persistent directory for uploads and avatars |
 | `RELAY_TURN_URL` | TURN URLs separated by commas/spaces; required for reliable restrictive-network calls |

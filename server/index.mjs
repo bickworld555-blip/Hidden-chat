@@ -26,7 +26,7 @@ import { createLoginThrottle, ensureParitySchema, registerParity } from './parit
 import { ensureE2eSchema, registerE2e } from './e2e.mjs';
 import { registerSfu } from './sfu.mjs';
 import { ensureExtrasSchema, registerExtras, statusAudienceSql } from './extras.mjs';
-import { ensureAdminSchema, registerAdmin } from './admin.mjs';
+import { adminUsernamesFrom, ensureAdminSchema, registerAdmin } from './admin.mjs';
 import { registerLinking } from './linking.mjs';
 import { BUNDLED_APP_ORIGIN } from '../scripts/configure-android.mjs';
 import { effectiveRouting, isEnvelope, MAX_DIRECT_ENVELOPE, parseRouting, routingFor } from '../src/e2e/envelope.js';
@@ -124,6 +124,8 @@ export function createChatServer({
   linkPreviews = null,
   // Firebase push sender ({ send }); by default from FCM_SERVICE_ACCOUNT / FCM_SERVICE_ACCOUNT_FILE, else off.
   pushSender = undefined,
+  // Accounts that are made admins at every start-up (comma-separated ADMIN_USERNAMES; default: shakil).
+  adminUsernames = adminUsernamesFrom(process.env.ADMIN_USERNAMES),
 } = {}) {
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('PORT must be an integer from 0 to 65535.');
   if (process.env.NODE_ENV === 'production' && port === 0) throw new Error('Production requires a fixed nonzero PORT.');
@@ -1037,7 +1039,7 @@ export function createChatServer({
   const e2e = registerE2e({ app, db, requireSession });
   // Help Center, reports about people, and the admin console (server/admin.mjs).
   const admin = registerAdmin({
-    app, db, requireSession, publicUser, userColumns: USER_COLUMNS, pushEnabled: () => Boolean(push),
+    app, db, requireSession, publicUser, userColumns: USER_COLUMNS, pushEnabled: () => Boolean(push), initialAdmins: adminUsernames,
     closeUserSessions: async (userId, reason) => {
       const removed = await db.prepare('DELETE FROM sessions WHERE user_id = ? RETURNING token_hash AS "hash"').all(userId);
       closeSessionSockets(new Set(removed.map((row) => row.hash)), reason);

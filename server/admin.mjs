@@ -37,6 +37,15 @@ export function ensureAdminSchema(db) {
 const clean = (value, limit) => (typeof value === 'string' ? value.trim().slice(0, limit) : '');
 const day = 24 * 60 * 60 * 1000;
 
+/**
+ * Admin usernames from the environment: ADMIN_USERNAMES="shakil, @ops_lead". Unset or blank keeps the
+ * original single admin. Entries that aren't valid usernames are ignored.
+ */
+export function adminUsernamesFrom(value) {
+  const names = String(value ?? '').split(',').map((name) => name.trim().replace(/^@/, '').toLowerCase()).filter((name) => /^[a-z0-9_]{3,24}$/.test(name));
+  return names.length ? [...new Set(names)] : ['shakil'];
+}
+
 export function registerAdmin({ app, db, requireSession, publicUser, userColumns, closeUserSessions, pushEnabled = () => false, dataDirectoryBytes = async () => null, initialAdmins = ['shakil'] }) {
   const fail = (response, status, error) => response.status(status).json({ error });
 
@@ -52,11 +61,14 @@ export function registerAdmin({ app, db, requireSession, publicUser, userColumns
     }
   })().catch((error) => console.error('Admin setup failed:', error.message));
 
+  // Configured admins are granted at start-up, and only to accounts that already exist then. An account
+  // registered later under a listed name gets the role at the next deployment, so a typo or unclaimed name in
+  // the list can't hand admin to whoever registers it first.
+  const configured = new Set(initialAdmins.map((name) => name.toLowerCase()));
+  const isConfigured = (username) => configured.has(String(username).toLowerCase());
   async function isAdmin(userId) {
     await seeded;
-    const row = await db.prepare('SELECT is_admin AS "admin", username FROM users WHERE id = ?').get(userId);
-    // The configured first admins count even if their account was created after start-up.
-    return Boolean(row && (Number(row.admin) || initialAdmins.some((name) => name.toLowerCase() === String(row.username).toLowerCase())));
+    return Boolean(Number((await db.prepare('SELECT is_admin AS "admin" FROM users WHERE id = ?').get(userId))?.admin));
   }
   async function requireAdmin(request, response, next) {
     if (!await isAdmin(request.session.user_id)) return fail(response, 404, 'Not found.');
@@ -144,14 +156,17 @@ export function registerAdmin({ app, db, requireSession, publicUser, userColumns
   // --- Admin: users ---
   app.get('/api/v1/admin/users', requireSession, requireAdmin, async (request, response) => {
     const query = clean(String(request.query.q ?? ''), 60).toLowerCase().replace(/^@/, '');
+    const adminsOnly = request.query.role === 'admin' ? ' AND is_admin = 1' : '';
     const rows = await db.prepare(`SELECT ${userColumns}, created_at AS "createdAt", last_seen_at AS "lastSeenAt", is_admin AS "isAdmin", suspended_at AS "suspendedAt",
         (SELECT count(*) FROM user_reports r WHERE r.reported_id = users.id AND r.status = 'open') AS "openReports"
-      FROM users WHERE lower(username) LIKE ? OR lower(name) LIKE ? ORDER BY created_at DESC LIMIT 50`).all(`%${query}%`, `%${query}%`);
+      FROM users WHERE (lower(username) LIKE ? OR lower(name) LIKE ?)${adminsOnly} ORDER BY created_at DESC LIMIT 50`).all(`%${query}%`, `%${query}%`);
     response.json(rows.map((row) => ({
       ...publicUser(row),
       createdAt: row.createdAt,
       lastSeenAt: row.lastSeenAt ? Number(row.lastSeenAt) : null,
       isAdmin: Boolean(Number(row.isAdmin)),
+      // Listed in ADMIN_USERNAMES: the role comes back at every deployment, so it is managed there.
+      configuredAdmin: isConfigured(row.username),
       suspendedAt: row.suspendedAt ? Number(row.suspendedAt) : null,
       openReports: Number(row.openReports),
     })));
@@ -160,7 +175,11 @@ export function registerAdmin({ app, db, requireSession, publicUser, userColumns
   app.post('/api/v1/admin/users/:userId/:action', requireSession, requireAdmin, async (request, response) => {
     const { userId, action } = request.params;
     if (userId === request.session.user_id) return fail(response, 400, 'You can’t change your own account here.');
-    if (!await db.prepare('SELECT 1 FROM users WHERE id = ?').get(userId)) return fail(response, 404, 'User not found.');
+    const target = await db.prepare('SELECT username FROM users WHERE id = ?').get(userId);
+    if (!target) return fail(response, 404, 'User not found.');
+    if (action === 'unadmin' && isConfigured(target.username)) {
+      return fail(response, 409, `@${target.username} is listed in ADMIN_USERNAMES. Remove them there and redeploy, then remove admin here.`);
+    }
     if (action === 'suspend') {
       await db.prepare('UPDATE users SET suspended_at = ? WHERE id = ?').run(Date.now(), userId);
       await closeUserSessions(userId, 'This account was suspended');
