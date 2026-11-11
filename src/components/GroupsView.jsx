@@ -23,6 +23,9 @@ import { groupEncryption, sendGroupContent } from '../e2e/client.js';
 import { fetchGroupMessages } from '../groupHistory.js';
 import { isMediaContent } from '../media.js';
 import { MAX_CALL_PARTICIPANTS } from '../callRoom.js';
+import { fetchCallTopology, newCallKey, parseRelayCall, relayCallContent, relayCallJoinable } from '../groupRelayCall.js';
+import { lazyComponent } from '../lazy.js';
+const GroupRelayCall = lazyComponent(() => import('./call/GroupRelayCall.jsx'));
 import { groupPreviewText, unreadBadge } from '../groupRows.js';
 import { exportGroupChat, parseScheduledCall, scheduledCallContent, senderColor, withDaySeparators } from '../groupChat.js';
 import { setGroupMuted, setViewingGroup, useMutedGroups } from '../groupPrefs.js';
@@ -181,6 +184,10 @@ export default function GroupsView({ token, userId, revision, onClose, onStartGr
   const [reportReason, setReportReason] = useState('');
   const [callMenu, setCallMenu] = useState(false);
   const [callPicker, setCallPicker] = useState('');
+  // Large groups: a call for everyone through the media relay, when this server has one (src/groupRelayCall.js).
+  const [relay, setRelay] = useState(null);
+  const [relayCall, setRelayCall] = useState(null);
+  useEffect(() => { fetchCallTopology(token).then((value) => setRelay(value.sfu)).catch(() => setRelay(null)); }, [token]);
   const [scheduling, setScheduling] = useState(false);
   const [richComposer, setRichComposer] = useState('');
   const [name, setName] = useState('');
@@ -350,6 +357,20 @@ export default function GroupsView({ token, userId, revision, onClose, onStartGr
     onClose();
   };
 
+  const relayFits = Boolean(relay && group && group.members.length > MAX_CALL_PARTICIPANTS && group.members.length <= relay.maxParticipants);
+  const startRelayCall = (mode) => perform(async () => {
+    setCallMenu(false);
+    // The call card carries the media key, so it may only travel end-to-end encrypted: no encrypted group, no call.
+    const security = await groupEncryption(group.id, { fresh: true });
+    setGroupSecurity(security);
+    if (!security.encrypted) {
+      throw new Error(`An encrypted group call needs everyone on the updated app. ${security.missing.length === 1 ? '1 member hasn’t' : `${security.missing.length} members haven’t`} opened it yet.`);
+    }
+    const content = relayCallContent({ mode, key: newCallKey() });
+    await groupRequest(token, `${groupPath}/messages`, { method: 'POST', body: { content } });
+    setRelayCall(parseRelayCall(content));
+  });
+
   const scheduleCall = (details) => perform(async () => {
     await groupRequest(token, `${groupPath}/messages`, { method: 'POST', body: { content: scheduledCallContent(details) } });
     setScheduling(false);
@@ -455,8 +476,13 @@ export default function GroupsView({ token, userId, revision, onClose, onStartGr
               </button>
               {callMenu && (
                 <ul className="groups-call-menu" role="menu" aria-label="Call options">
-                  <li><button type="button" role="menuitem" onClick={() => { setCallMenu(false); setCallPicker('audio'); }}><Phone size={18} /> Voice call</button></li>
-                  <li><button type="button" role="menuitem" onClick={() => { setCallMenu(false); setCallPicker('video'); }}><Video size={18} /> Video call</button></li>
+                  {relayFits ? <>
+                    <li><button type="button" role="menuitem" onClick={() => startRelayCall('audio')}><Phone size={18} /> Voice call (everyone)</button></li>
+                    <li><button type="button" role="menuitem" onClick={() => startRelayCall('video')}><Video size={18} /> Video call (everyone)</button></li>
+                  </> : <>
+                    <li><button type="button" role="menuitem" onClick={() => { setCallMenu(false); setCallPicker('audio'); }}><Phone size={18} /> Voice call</button></li>
+                    <li><button type="button" role="menuitem" onClick={() => { setCallMenu(false); setCallPicker('video'); }}><Video size={18} /> Video call</button></li>
+                  </>}
                   <li className="groups-menu-divider" role="separator" />
                   <li><button type="button" role="menuitem" onClick={() => { setCallMenu(false); setCallPicker('video'); }}><Users size={18} /> Select people</button></li>
                   <li><button type="button" role="menuitem" onClick={() => { setCallMenu(false); setScheduling(true); }}><CalendarClock size={18} /> Schedule call</button></li>
@@ -650,6 +676,9 @@ export default function GroupsView({ token, userId, revision, onClose, onStartGr
                 const canDelete = group.role === 'admin' || (mine && Date.now() - message.createdAt < DELETE_WINDOW_MS);
                 const isMedia = isMediaContent(message.content);
                 const scheduled = parseScheduledCall(message.content);
+                // Only a card that arrived end-to-end encrypted is joinable: its key must never have been readable on the way.
+                const relayCard = parseRelayCall(message.content);
+                const relaySafe = Boolean(relayCard && message.e2e);
                 const poll = parsePollContent(message.content);
                 const event = parseEventContent(message.content);
                 const productId = parseProductContent(message.content);
@@ -662,7 +691,13 @@ export default function GroupsView({ token, userId, revision, onClose, onStartGr
                       onClick={(clickEvent) => { if (!clickEvent.target.closest('button, a, input, audio, video')) setActiveMessageId(active ? '' : message.id); }}
                       onKeyDown={(keyEvent) => { if (keyEvent.key === 'Enter' && keyEvent.target === keyEvent.currentTarget) setActiveMessageId(active ? '' : message.id); }}>
                       {!mine && <strong className="groups-sender" style={{ color: senderColor(message.senderId) }}>{sender?.name || 'Former member'}</strong>}
-                      {scheduled ? (
+                      {relayCard ? (
+                        <div className="groups-scheduled-card groups-relay-card">
+                          <span className="groups-scheduled-icon">{relayCard.mode === 'video' ? <Video size={22} /> : <Phone size={22} />}</span>
+                          <span><strong>Group {relayCard.mode === 'video' ? 'video' : 'voice'} call</strong><small>{!relaySafe ? 'Not encrypted, so it can’t be joined' : relayCallJoinable(relayCard) ? `Started ${formatSchedule(relayCard.startedAt)} · end-to-end encrypted` : 'Ended'}</small></span>
+                          {relaySafe && relayCallJoinable(relayCard) && relay && <button type="button" onClick={() => setRelayCall(relayCard)}>Join</button>}
+                        </div>
+                      ) : scheduled ? (
                         <div className="groups-scheduled-card">
                           <span className="groups-scheduled-icon"><CalendarClock size={22} /></span>
                           <span><strong>{scheduled.title}</strong><small>{scheduled.mode === 'video' ? 'Video call' : 'Voice call'} · {formatSchedule(scheduled.at)}</small></span>
@@ -749,6 +784,7 @@ export default function GroupsView({ token, userId, revision, onClose, onStartGr
           const send = (content) => { setRichComposer(''); perform(() => groupRequest(token, `${groupPath}/messages`, { method: 'POST', body: { content } })); };
           return <Composer onSend={send} onClose={() => setRichComposer('')} />;
         })()}
+        {relayCall && group && <GroupRelayCall token={token} groupId={group.id} groupName={group.name} call={relayCall} onClose={() => setRelayCall(null)} />}
       </div>
     </div>
   );

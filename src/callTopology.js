@@ -3,10 +3,10 @@
 // MESH_MAX_PARTICIPANTS. SFU: everyone sends once to a media server that forwards to the rest (server/sfu.mjs
 // issues the room tokens), which lifts the cap.
 //
-// The SFU path needs a media client in the app (an SFU SDK such as LiveKit's) and a hosted SFU; until both exist,
-// SFU_MEDIA_CLIENT is false and every call stays on mesh even if the server advertises an SFU.
+// The app's media client for the SFU is LiveKit's (src/components/call/GroupRelayCall.jsx, end-to-end encrypted
+// with a key shared in the group's encrypted call card). The SFU itself is used only when the server advertises one.
 export const MESH_MAX_PARTICIPANTS = 4;
-export const SFU_MEDIA_CLIENT = false;
+export const SFU_MEDIA_CLIENT = true;
 
 /** The server's answer from GET /api/v1/calls/topology, defaulting to mesh-only. */
 export function parseTopology(value) {

@@ -12,13 +12,16 @@ import { MESH_MAX_PARTICIPANTS } from '../src/callTopology.js';
 export const SFU_TOKEN_TTL_SECONDS = 10 * 60;
 export const DEFAULT_SFU_MAX_PARTICIPANTS = 32;
 
-/** { url, apiKey, apiSecret, maxParticipants } from the environment, or null when no SFU is configured. */
+/**
+ * { url, apiKey, apiSecret, maxParticipants } from the environment, or null when no SFU is configured. The
+ * LiveKit names (LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET, as LiveKit Cloud shows them) work too.
+ */
 export function sfuConfigFromEnv(env = process.env) {
-  const url = env.SFU_URL?.trim();
-  const apiKey = env.SFU_API_KEY?.trim();
-  const apiSecret = env.SFU_API_SECRET?.trim();
+  const url = (env.SFU_URL ?? env.LIVEKIT_URL)?.trim();
+  const apiKey = (env.SFU_API_KEY ?? env.LIVEKIT_API_KEY)?.trim();
+  const apiSecret = (env.SFU_API_SECRET ?? env.LIVEKIT_API_SECRET)?.trim();
   if (!url && !apiKey && !apiSecret) return null;
-  if (!url || !apiKey || !apiSecret) throw new Error('SFU_URL, SFU_API_KEY and SFU_API_SECRET are all required to enable SFU group calls.');
+  if (!url || !apiKey || !apiSecret) throw new Error('SFU_URL, SFU_API_KEY and SFU_API_SECRET (or LIVEKIT_URL, LIVEKIT_API_KEY and LIVEKIT_API_SECRET) are all required to enable SFU group calls.');
   const parsed = new URL(url);
   if (parsed.protocol !== 'wss:' || parsed.username || parsed.password) throw new Error('SFU_URL must be a wss:// URL without credentials.');
   if (apiSecret.length < 32) throw new Error('SFU_API_SECRET must be at least 32 characters.');

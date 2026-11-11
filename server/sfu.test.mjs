@@ -21,6 +21,7 @@ test('SFU config: off unless fully configured, refuses partial or insecure setti
   assert.throws(() => sfuConfigFromEnv({ SFU_URL: 'wss://sfu.example.com', SFU_API_KEY: 'k', SFU_API_SECRET: 'short' }), /32 characters/);
   assert.throws(() => sfuConfigFromEnv({ SFU_URL: 'wss://sfu.example.com', SFU_API_KEY: 'k', SFU_API_SECRET: SECRET, SFU_MAX_PARTICIPANTS: '2' }), /SFU_MAX_PARTICIPANTS/);
   assert.deepEqual(sfuConfigFromEnv({ SFU_URL: 'wss://sfu.example.com/', SFU_API_KEY: 'key1', SFU_API_SECRET: SECRET }), { url: 'wss://sfu.example.com', apiKey: 'key1', apiSecret: SECRET, maxParticipants: 32 });
+  assert.deepEqual(sfuConfigFromEnv({ LIVEKIT_URL: 'wss://demo.livekit.cloud', LIVEKIT_API_KEY: 'key2', LIVEKIT_API_SECRET: SECRET }), { url: 'wss://demo.livekit.cloud', apiKey: 'key2', apiSecret: SECRET, maxParticipants: 32 }, 'LiveKit Cloud names work as they are');
 });
 
 test('room tokens are HS256 JWTs with a video grant for one room, signed with the API secret', () => {
@@ -38,15 +39,16 @@ test('room tokens are HS256 JWTs with a video grant for one room, signed with th
 
 test('topology: mesh up to its limit; the SFU only when advertised and the app has an SFU media client', () => {
   assert.equal(MAX_CALL_PARTICIPANTS, MESH_MAX_PARTICIPANTS, 'one owner for the mesh limit');
-  assert.equal(SFU_MEDIA_CLIENT, false, 'prepared: no SFU media client in the app yet');
+  assert.equal(SFU_MEDIA_CLIENT, true, 'the app has an SFU media client (LiveKit, src/components/call/GroupRelayCall.jsx)');
   const none = parseTopology({ sfu: null, meshMaxParticipants: 4 });
   const advertised = parseTopology({ sfu: { url: 'wss://sfu.example.com' }, meshMaxParticipants: 4, sfuMaxParticipants: 32 });
   assert.deepEqual(planCall(none, 8), { topology: 'mesh', capacity: 4 });
-  assert.deepEqual(planCall(advertised, 8), { topology: 'mesh', capacity: 4 }, 'without the media client calls stay on mesh');
+  assert.deepEqual(planCall(advertised, 8, { mediaClient: false }), { topology: 'mesh', capacity: 4 }, 'without a media client calls stay on mesh');
   assert.deepEqual(planCall(advertised, 3, { mediaClient: true }), { topology: 'mesh', capacity: 4 }, 'small calls stay on mesh');
   assert.deepEqual(planCall(advertised, 8, { mediaClient: true }), { topology: 'sfu', capacity: 32 });
   assert.equal(callCapacity(advertised, { mediaClient: true }), 32);
-  assert.equal(callCapacity(advertised), 4);
+  assert.equal(callCapacity(advertised, { mediaClient: false }), 4);
+  assert.equal(callCapacity(advertised), 32, 'the app has the media client, so an advertised SFU raises the cap');
   assert.equal(parseTopology({ sfu: { url: 'http://x' }, sfuMaxParticipants: 9 }).sfu, null, 'only wss SFUs');
 });
 

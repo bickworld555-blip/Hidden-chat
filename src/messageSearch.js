@@ -10,7 +10,7 @@ export const SEARCH_FILTERS = [
   ['photos', 'Photos'], ['videos', 'Videos'], ['links', 'Links'], ['docs', 'Documents'], ['audio', 'Audio'], ['polls', 'Polls'],
 ];
 const LINK = /\b(?:https?:\/\/|www\.)[^\s<>"']+/i;
-const SPECIAL = /^(media|emedia|voice|call|file|location|live|contact|poll|event|order|sticker|vonce|vnote|e2e2):/;
+const SPECIAL = /^(media|emedia|voice|call|file|location|live|contact|poll|event|order|sticker|vonce|vnote|e2e2|relaycall|scheduledcall):/;
 
 /** The kind of a message for filtering: photos | videos | audio | docs | links | polls | text | other. */
 export function messageKind(message) {

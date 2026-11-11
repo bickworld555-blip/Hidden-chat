@@ -4937,3 +4937,22 @@ canvas.recording-wave { color: #5d6662; }
 
 .composer-mirror.is-multiline { display: block; box-sizing: border-box; }
 .composer-mirror-text { white-space: inherit; }
+/* ===== Large group call through the relay (call/GroupRelayCall.jsx) ===== */
+.relay-call { position: fixed; inset: 0; z-index: 1200; display: flex; flex-direction: column; padding: env(safe-area-inset-top, 0px) 0 env(safe-area-inset-bottom, 0px); background: #071226; color: #fff; }
+.relay-call-head { display: grid; gap: 2px; padding: 16px 18px 10px; text-align: center; }
+.relay-call-head strong { font-size: 18px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.relay-call-head small { display: inline-flex; align-items: center; justify-content: center; gap: 4px; color: #b9c8e4; font-size: 12.5px; }
+.relay-call-error { margin: auto 24px; padding: 14px; border-radius: 12px; background: #3b1515; color: #ffd7d7; text-align: center; }
+.relay-grid { flex: 1; min-height: 0; display: grid; gap: 6px; padding: 6px 6px 96px; grid-template-columns: 1fr; grid-auto-rows: 1fr; }
+.relay-grid.count-2 { grid-template-rows: 1fr 1fr; }
+.relay-grid.count-3, .relay-grid.count-4 { grid-template-columns: 1fr 1fr; }
+.relay-grid.count-5, .relay-grid.count-6 { grid-template-columns: 1fr 1fr; }
+.relay-grid.count-7, .relay-grid.count-8, .relay-grid.count-9 { grid-template-columns: 1fr 1fr 1fr; }
+@media (min-width: 900px) { .relay-grid.count-2 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr; } .relay-grid.count-5, .relay-grid.count-6 { grid-template-columns: repeat(3, 1fr); } }
+.relay-tile { position: relative; min-height: 0; overflow: hidden; display: grid; place-items: center; border: 2px solid transparent; border-radius: 14px; background: #11223f; }
+.relay-tile.is-speaking { border-color: #3b82f6; }
+.relay-tile video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.relay-tile video.is-mirrored { transform: scaleX(-1); }
+.relay-tile-initial { display: grid; place-items: center; width: 72px; height: 72px; border-radius: 50%; background: #1d4ed8; font-size: 30px; font-weight: 700; }
+.relay-tile-name { position: absolute; left: 8px; bottom: 8px; display: inline-flex; align-items: center; gap: 4px; max-width: calc(100% - 16px); padding: 3px 8px; border-radius: 10px; background: rgba(4, 12, 28, .6); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.relay-dock { position: fixed; bottom: calc(22px + env(safe-area-inset-bottom, 0px)); }

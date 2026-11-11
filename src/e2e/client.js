@@ -350,9 +350,10 @@ export async function safetyNumberWith(peerId) {
  * A group's encryption state: { encrypted, missing: [userId] } (members without a device with keys mean the group
  * is sent without end-to-end encryption until they update).
  */
-export async function groupEncryption(groupId) {
+// fresh: ask the server now (and refresh the cached list used for sending), for decisions such as a group call key.
+export async function groupEncryption(groupId, { fresh = false } = {}) {
   if (!current) return { encrypted: false, missing: [] };
-  const { members, devices } = await groupDevicesOf(groupId).catch(() => ({ members: [], devices: {} }));
+  const { members, devices } = await groupDevicesOf(groupId, { fresh }).catch(() => ({ members: [], devices: {} }));
   const missing = members.filter((userId) => !devices[userId]?.length);
   return { encrypted: members.length > 0 && missing.length === 0, missing };
 }

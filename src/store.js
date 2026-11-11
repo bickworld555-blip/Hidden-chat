@@ -94,6 +94,7 @@ export function previewFor(content) {
   if (extra) return extra;
   if (content.startsWith('emedia:')) return mediaPreviewLabel(`media:x:${content.split(':').slice(3).join(':')}`);
   if (content.startsWith('poll:')) return pollSummary(content) ?? '📊 Poll';
+  if (content.startsWith('relaycall:')) return content.includes('"mode":"video"') ? '📹 Group video call' : '📞 Group voice call';
   if (content.startsWith('event:')) return eventSummary(content) ?? '📅 Event';
   if (content.startsWith('media:')) return mediaPreviewLabel(content);
   if (content.startsWith('file:')) return '📎 Attachment';
