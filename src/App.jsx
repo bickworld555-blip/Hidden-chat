@@ -9,7 +9,7 @@ import { clearAvatarCache } from './avatar.js';
 import { RealtimeClient } from './realtime.js';
 import { initialTabFromUrl } from './pwa.js';
 import { countUnreadConversations, groupRow } from './groupRows.js';
-import { getViewingGroup, readMutedGroups, useMutedGroups } from './groupPrefs.js';
+import { getViewingGroup, readMutedGroups, setGroupMuted, useMutedGroups } from './groupPrefs.js';
 import { classifyIncoming, groupNotificationText, parseConversationOpenParam, shouldAlertGroup } from './notificationChannels.js';
 import { nativeClearSession, nativeRequestStartupPermissions, nativeSetSession, nativeShell, nativeStartBackground, nativeState, nativeStopBackground, nativeTakePendingCall, nativeMoveToBackground, nativeClearShare, nativeSetCallActive, nativeClearMessageNotifications, nativeTakeMessageActions, onNative } from './native.js';
 import { parseShare } from './shareTarget.js';
@@ -555,6 +555,12 @@ export default function App() {
     stopAllTones();
   }
 
+  // "Call back" on Android's missed-call notification.
+  const initiateCallRef = useRef(null);
+  useEffect(() => onNative('callBack', ({ peerId, mode } = {}) => {
+    if (typeof peerId === 'string' && peerId) initiateCallRef.current?.(peerId, mode === 'video' ? 'video' : 'audio');
+  }), []);
+
   async function initiateCall(peerId, mode) {
     if (!peerId) return;
     const active = callRef.current;
@@ -842,13 +848,20 @@ export default function App() {
     };
   }, [userId]);
 
-  // "Reply" and "Mark as read" on an Android message notification: the reply is sent (encrypted) like any message
+  // "Reply", "Mark as read" and "Mute" on an Android message notification: the reply is sent (encrypted) like any message
   // and the chat counts as read; actions taken while the app was closed waited in a queue.
   useEffect(() => {
     if (!nativeShell() || !userId) return undefined;
     const handle = (event) => {
       const target = parseConversationOpenParam(event?.open);
-      if (target?.kind !== 'chat') return;
+      if (!target) return;
+      if (event.action === 'mute') {
+        // "Mute" on a notification: the same as muting from the chat (the background connection is already quiet).
+        if (target.kind === 'group') setGroupMuted(userId, target.id, true);
+        else useChatStore.getState().setPreference('mutedChatIds', (ids = []) => (ids.includes(target.id) ? ids : [...ids, target.id]));
+        return;
+      }
+      if (target.kind !== 'chat') return;
       const store = useChatStore.getState();
       const text = typeof event.text === 'string' ? event.text.trim().slice(0, 4000) : '';
       if (event.action === 'reply' && text) store.sendMessage(target.id, text);
@@ -905,6 +918,8 @@ export default function App() {
     const timer = setTimeout(() => publishShareShortcuts({ chats, groups: groupRows, userId, sessionToken }), 1500);
     return () => clearTimeout(timer);
   }, [chats, groupRows, userId, sessionToken]);
+
+  initiateCallRef.current = initiateCall;
 
   // Motion preference goes on <html> so overlays rendered outside the shell follow it too.
   const appearance = useAppearance();

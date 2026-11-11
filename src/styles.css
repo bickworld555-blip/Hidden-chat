@@ -4282,6 +4282,8 @@ canvas.recording-wave { color: #5d6662; }
 /* Text bubbles: time and ticks at the end of the last line (ChatWindow TextWithPreview). The spacer reserves the
    room on that line; when the line is full the spacer wraps and the time sits on its own line below. */
 .text-with-meta { position: relative; }
+/* Lines typed with Enter stay on their own lines (the text keeps its line breaks; HTML would fold them into spaces). */
+.text-with-meta > p, .groups-message-text { white-space: pre-wrap; }
 .text-with-meta > .message-meta { position: absolute; right: 0; bottom: 0; margin: 0; height: auto; line-height: 1; }
 .text-with-meta .meta-spacer { display: inline-flex; height: 1px; margin-left: 8px; overflow: hidden; visibility: hidden; vertical-align: baseline; }
 .text-with-meta .meta-spacer .message-meta { margin: 0; }

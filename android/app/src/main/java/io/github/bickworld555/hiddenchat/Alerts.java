@@ -61,29 +61,68 @@ final class Alerts {
 
     /** As showMessage, once per message id however many ways the message arrives (push, connection, the app). */
     static boolean showMessage(Context context, String channel, String title, String body, String tag, String open, int count, String messageId) {
-        if (!firstNotice(messageId)) return true;
-        return showMessage(context, channel, title, body, tag, open, count);
+        return showMessage(context, channel, title, body, tag, open, count, messageId, null, null);
     }
 
-    /** `count` is this chat's unread total: shown on the notification and, on most launchers, the app icon badge. */
     static boolean showMessage(Context context, String channel, String title, String body, String tag, String open, int count) {
+        return showMessage(context, channel, title, body, tag, open, count, null, null, null);
+    }
+
+    // The last lines of each conversation's notification, shown stacked like WhatsApp's ("jo" / "shakil").
+    private static final class Line {
+        final String sender;
+        final CharSequence text;
+        final long at;
+        Line(String sender, CharSequence text, long at) { this.sender = sender; this.text = text; this.at = at; }
+    }
+    private static final java.util.Map<String, java.util.ArrayList<Line>> history = new java.util.HashMap<>();
+    private static final int HISTORY_LINES = 7;
+
+    /**
+     * A conversation notification: the chat's photo and name with its latest lines (a group shows each sender),
+     * and Reply / Mark as read / Mute. `count` is this chat's unread total (0: continue the running count), shown
+     * on the notification and, on most launchers, the app icon badge. `sender` names the person in a group (null
+     * for one-to-one chats); `avatar` is the server path of the photo to show (null: none).
+     */
+    static boolean showMessage(Context context, String channel, String title, String body, String tag, String open, int count,
+                               String messageId, String sender, String avatar) {
+        if (!firstNotice(messageId)) return true;
         String channelId = NotificationChannels.isMessageChannel(channel) ? channel : NotificationChannels.DIRECT_MESSAGES;
         String key = tag == null || tag.isEmpty() ? channelId : tag;
+        String name = title == null || title.isEmpty() ? "Hidden Messenger" : title;
+        boolean group = channelId.startsWith(NotificationChannels.GROUP_MESSAGES);
+        java.util.ArrayList<Line> lines;
+        int unread;
+        synchronized (Alerts.class) {
+            java.util.ArrayList<Line> kept = history.get(key);
+            if (kept == null) { kept = new java.util.ArrayList<>(); history.put(key, kept); }
+            kept.add(new Line(sender, body == null ? "" : body, System.currentTimeMillis()));
+            while (kept.size() > HISTORY_LINES) kept.remove(0);
+            lines = new java.util.ArrayList<>(kept);
+            unread = count > 0 ? count : nextCount(key);
+            counts.put(key, unread);
+        }
+        android.graphics.Bitmap photo = Avatars.circle(context, avatar);
+        Person chat = new Person.Builder().setName(name).setKey(key)
+            .setIcon(photo == null ? null : androidx.core.graphics.drawable.IconCompat.createWithBitmap(photo)).build();
+        NotificationCompat.MessagingStyle style = new NotificationCompat.MessagingStyle(new Person.Builder().setName("You").build());
+        if (group) style.setConversationTitle(name).setGroupConversation(true);
+        for (Line line : lines) {
+            Person from = group && line.sender != null && !line.sender.isEmpty() ? new Person.Builder().setName(line.sender).build() : chat;
+            style.addMessage(line.text, line.at, from);
+        }
         NotificationCompat.Builder builder = new NotificationCompat.Builder(context, channelId)
             .setSmallIcon(R.drawable.ic_stat_hidden)
-            .setContentTitle(title == null || title.isEmpty() ? "Hidden Messenger" : title)
+            .setContentTitle(name)
             .setContentText(body == null ? "" : body)
-            .setStyle(new NotificationCompat.BigTextStyle().bigText(body == null ? "" : body))
+            .setStyle(style)
             .setContentIntent(openIntent(context, open, key.hashCode()))
             .setAutoCancel(true)
             .setCategory(NotificationCompat.CATEGORY_MESSAGE)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE);
-        // No count from the caller (groups, reactions): continue this conversation's running count.
-        int unread = count > 0 ? count : nextCount(key);
         builder.setNumber(unread);
-        synchronized (Alerts.class) { counts.put(key, unread); }
-        if (unread > 1) builder.setSubText(unread + " new messages");
+        if (photo != null) builder.setLargeIcon(photo);
         addMessageActions(context, builder, key, open);
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
             builder.setSound(NotificationChannels.soundOf(context, channelId));
@@ -100,10 +139,12 @@ final class Alerts {
     /**
      * Heads-up / full-screen incoming call with Accept and Reject; the ringtone repeats until it is handled.
      * `ringtoneSound`: a SoundChoice (the app's ringtone, the phone's default or a ringtone picked from the phone's
-     * list). `avatar`: the caller's profile photo path on the server (shown on the call screen), or null.
+     * list). `callerId`: who is calling (for "Call back" if it is missed). `avatar`: the caller's profile photo path on
+     * the server (shown on the call screen and the missed-call notification), or null.
      */
-    static boolean showIncomingCall(Context context, String callId, String caller, boolean video, String ringtoneSound, String avatar) {
+    static boolean showIncomingCall(Context context, String callId, String callerId, String caller, boolean video, String ringtoneSound, String avatar) {
         String id = callId == null ? "" : callId;
+        ringingCaller = new MissedCaller(callerId, caller, video, avatar);
         // Already ringing for this call (the push rang first, then the connection brought the offer): keep ringing.
         if (ringing && !id.isEmpty() && id.equals(ringingCallId)) return true;
         String name = caller == null || caller.isEmpty() ? "Hidden Messenger" : caller;
@@ -161,7 +202,7 @@ final class Alerts {
     }
 
     /** The chat was read: its notification (and its share of the icon badge) goes away. */
-    // "Reply" (typed right in the notification) for one-to-one chats and "Mark as read" for every conversation.
+    // "Reply" (typed right in the notification) for one-to-one chats; "Mark as read" and "Mute" for every conversation.
     private static void addMessageActions(Context context, NotificationCompat.Builder builder, String tag, String open) {
         if (open == null || open.isEmpty()) return;
         if (open.startsWith("chat:")) {
@@ -189,6 +230,15 @@ final class Alerts {
             .setSemanticAction(NotificationCompat.Action.SEMANTIC_ACTION_MARK_AS_READ)
             .setShowsUserInterface(false)
             .build());
+        Intent mute = new Intent(context, MessageActionReceiver.class)
+            .setAction(MessageActionReceiver.ACTION_MUTE)
+            .putExtra(EXTRA_OPEN, open)
+            .putExtra(MessageActionReceiver.EXTRA_TAG, tag);
+        PendingIntent muteIntent = PendingIntent.getBroadcast(context, tag.hashCode() * 31 + 3, mute, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+        builder.addAction(new NotificationCompat.Action.Builder(R.drawable.ic_stat_hidden, "Mute", muteIntent)
+            .setSemanticAction(NotificationCompat.Action.SEMANTIC_ACTION_MUTE)
+            .setShowsUserInterface(false)
+            .build());
     }
 
     /** A reply typed in a notification while the app was closed: it is end-to-end encrypted by the app, so it waits. */
@@ -214,23 +264,96 @@ final class Alerts {
 
     static void cancelMessage(Context context, String tag) {
         if (tag == null || tag.isEmpty()) return;
-        synchronized (Alerts.class) { counts.remove(tag); }
+        synchronized (Alerts.class) { counts.remove(tag); history.remove(tag); }
         NotificationManagerCompat.from(context).cancel(tag, 1);
     }
 
     static void cancelAllMessages(Context context) {
         android.app.NotificationManager manager = context.getSystemService(android.app.NotificationManager.class);
-        synchronized (Alerts.class) { counts.clear(); }
+        synchronized (Alerts.class) { counts.clear(); history.clear(); }
         if (manager == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return;
         for (android.service.notification.StatusBarNotification posted : manager.getActiveNotifications()) {
             if (posted.getId() == 1) manager.cancel(posted.getTag(), posted.getId());
         }
     }
 
-    /** The caller gave up (a push says so): stop ringing if it is still this call. */
+    /** The caller gave up (a push says so): stop ringing if it is still this call, and say it was missed. */
     static void cancelIncomingCall(Context context, String callId) {
         if (!ringing || callId == null || !(callId.equals(ringingCallId) || ringingCallId == null || ringingCallId.isEmpty())) return;
+        missedCall(context);
+    }
+
+    // Who is ringing now, so a call that stops ringing unanswered can be shown as missed.
+    private static final class MissedCaller {
+        final String id;
+        final String name;
+        final boolean video;
+        final String avatar;
+        MissedCaller(String id, String name, boolean video, String avatar) { this.id = id; this.name = name; this.video = video; this.avatar = avatar; }
+    }
+    private static volatile MissedCaller ringingCaller;
+    private static final java.util.Map<String, Integer> missedCounts = new java.util.HashMap<>();
+    static final String EXTRA_CALL_BACK = "hm_call_back";
+    static final String EXTRA_CALL_BACK_MODE = "hm_call_back_mode";
+
+    /**
+     * The caller hung up (or the call timed out) while this phone was still ringing: stop ringing and post
+     * "Missed voice call" / "2 missed calls" with the caller's photo, Call back and Message, like WhatsApp.
+     * Calls declined or answered here are not missed (ringing has already stopped by then).
+     */
+    static void missedCall(Context context) {
+        MissedCaller caller = ringingCaller;
+        boolean wasRinging = ringing;
         cancelIncomingCall(context);
+        if (!wasRinging || caller == null || caller.id == null || caller.id.isEmpty()) return;
+        final Context app = context.getApplicationContext();
+        // The photo is fetched from the network: never on the thread that delivered the event.
+        new Thread(() -> postMissedCall(app, caller), "missed-call").start();
+    }
+
+    private static void postMissedCall(Context context, MissedCaller caller) {
+        String tag = "missed:" + caller.id;
+        int count;
+        synchronized (Alerts.class) {
+            Integer previous = missedCounts.get(tag);
+            count = previous == null ? 1 : previous + 1;
+            missedCounts.put(tag, count);
+        }
+        String name = caller.name == null || caller.name.isEmpty() ? "Hidden Messenger" : caller.name;
+        String text = count > 1 ? count + " missed calls" : caller.video ? "Missed video call" : "Missed voice call";
+        String open = "chat:" + caller.id;
+        Intent back = new Intent(context, MainActivity.class)
+            .setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            .putExtra(EXTRA_CALL_BACK, caller.id)
+            .putExtra(EXTRA_CALL_BACK_MODE, caller.video ? "video" : "audio");
+        int flags = PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT;
+        PendingIntent callBack = PendingIntent.getActivity(context, tag.hashCode() * 31 + 7, back, flags);
+        android.graphics.Bitmap photo = Avatars.circle(context, caller.avatar != null ? caller.avatar : Avatars.pathFor(caller.id));
+        NotificationCompat.Builder builder = new NotificationCompat.Builder(context, NotificationChannels.MISSED_CALLS)
+            .setSmallIcon(R.drawable.ic_stat_hidden)
+            .setContentTitle(name)
+            .setContentText(text)
+            .setContentIntent(openIntent(context, open, tag.hashCode()))
+            .setAutoCancel(true)
+            .setCategory(NotificationCompat.CATEGORY_MISSED_CALL)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            .setNumber(count)
+            .addAction(new NotificationCompat.Action.Builder(R.drawable.ic_stat_hidden, "Call back", callBack).build())
+            .addAction(new NotificationCompat.Action.Builder(R.drawable.ic_stat_hidden, "Message", openIntent(context, open, tag.hashCode() * 31 + 8)).build());
+        if (photo != null) builder.setLargeIcon(photo);
+        try {
+            NotificationManagerCompat.from(context).notify(tag, 1, builder.build());
+        } catch (SecurityException missingPermission) {
+            // Notifications are off: the call log in the app still lists it.
+        }
+    }
+
+    /** The missed-call notification for this person is gone (opened, called back or the chat was read). */
+    static void clearMissedCalls(Context context, String callerId) {
+        String tag = "missed:" + callerId;
+        synchronized (Alerts.class) { missedCounts.remove(tag); }
+        NotificationManagerCompat.from(context).cancel(tag, 1);
     }
 
     static void cancelIncomingCall(Context context) {
@@ -240,6 +363,7 @@ final class Alerts {
         lastCallScreen = null;
         releaseScreen();
         IncomingCallActivity.dismiss();
+        ringingCaller = null;
         MainActivity.callWindowChanged();
         TelecomCalls.ringingStopped();
     }

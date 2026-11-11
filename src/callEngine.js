@@ -100,6 +100,8 @@ export function createCallEngine({
     status: 'idle',
     error: '',
     endReason: null,
+    // True when the other person ended the call (their "end" signal), not this device.
+    endedByPeer: false,
     localStream: null,
     remoteStream: null,
     muted: false,
@@ -208,11 +210,11 @@ export function createCallEngine({
     state.remoteStream = null;
   }
 
-  function finish(status, { reason = 'ended', message = '', notify = true } = {}) {
+  function finish(status, { reason = 'ended', message = '', notify = true, byPeer = false } = {}) {
     if (closed) return;
     if (notify) sendSignal({ type: 'end', reason });
     teardown();
-    set({ status, error: message, endReason: reason });
+    set({ status, error: message, endReason: reason, endedByPeer: byPeer });
   }
 
   function failConnection(message) {
@@ -618,7 +620,7 @@ export function createCallEngine({
       }
       case 'end': {
         const reason = typeof signal.reason === 'string' ? signal.reason : 'ended';
-        finish(endReasonStatus(reason, direction), { reason, message: endReasonMessage(reason, direction), notify: false });
+        finish(endReasonStatus(reason, direction), { reason, message: endReasonMessage(reason, direction), notify: false, byPeer: true });
         return;
       }
       case 'media':

@@ -265,7 +265,7 @@ final class NativeRelay extends WebSocketListener {
             String title = name.isEmpty() ? "@" + message.optString("senderUsername", "someone") : name;
             String tag = "chat:" + sender;
             Alerts.showMessage(context, NotificationChannels.messageChannel(context, false, session.messageSound),
-                title, MessagePreview.of(message.optString("content")), tag, tag, Alerts.nextCount(tag), message.optString("id"));
+                title, MessagePreview.of(message.optString("content")), tag, tag, 0, message.optString("id"), null, Avatars.pathFor(sender));
         } else if ("group:message".equals(type)) {
             JSONObject message = event.optJSONObject("message");
             if (message == null || session.userId.equals(message.optString("senderId"))) return;
@@ -275,7 +275,7 @@ final class NativeRelay extends WebSocketListener {
             String body = MessagePreview.of(message.optString("content"));
             String tag = "group:" + groupId;
             Alerts.showMessage(context, NotificationChannels.messageChannel(context, true, session.groupSound),
-                event.optString("groupName", "Group"), senderName.isEmpty() ? body : senderName + ": " + body, tag, tag, Alerts.nextCount(tag), message.optString("id"));
+                event.optString("groupName", "Group"), body, tag, tag, 0, message.optString("id"), senderName, null);
         } else if ("message:reaction".equals(type)) {
             // Someone reacted to a message I sent: a notification like WhatsApp's "Reacted ❤️ to: …".
             String reactor = event.optString("userId");
@@ -295,7 +295,7 @@ final class NativeRelay extends WebSocketListener {
                 pendingIce.clear();
                 pendingAt = System.currentTimeMillis();
             }
-            Alerts.showIncomingCall(context, "", callerName(event), "video".equals(event.optString("mode")), session.ringtoneSound, callerAvatar(event));
+            Alerts.showIncomingCall(context, "", event.optString("from"), callerName(event), "video".equals(event.optString("mode")), session.ringtoneSound, callerAvatar(event));
         }
     }
 
@@ -310,16 +310,17 @@ final class NativeRelay extends WebSocketListener {
                 pendingIce.clear();
                 pendingAt = System.currentTimeMillis();
                 RelaySession current = RelaySession.read(context);
-                Alerts.showIncomingCall(context, callId, callerName(event), "video".equals(event.optString("mode")), current == null ? "" : current.ringtoneSound, callerAvatar(event));
+                Alerts.showIncomingCall(context, callId, event.optString("from"), callerName(event), "video".equals(event.optString("mode")), current == null ? "" : current.ringtoneSound, callerAvatar(event));
                 return;
             }
             if (pendingCall == null || !callId.equals(pendingCall.optString("callId"))) return;
             if ("ice".equals(signalType)) {
                 if (pendingIce.size() < 64) pendingIce.add(event);
             } else if ("end".equals(signalType)) {
-                // The caller gave up (or another device answered): stop ringing.
+                // The caller gave up (missed, unless another of my devices answered): stop ringing.
                 clearPending();
-                Alerts.cancelIncomingCall(context);
+                if ("answered-elsewhere".equals(signal.optString("reason"))) Alerts.cancelIncomingCall(context);
+                else Alerts.missedCall(context);
             }
         }
     }

@@ -514,7 +514,7 @@ export function createChatServer({
     const delivered = await presentMessage(message);
     broadcastUser(receiverId, { type: 'message:new', message: delivered });
     broadcastUser(senderId, { type: 'message:new', message: delivered });
-    if (needsPush(receiverId)) pushInBackground(receiverId, { t: 'msg', id: message.id, from: senderId, senderName: sender.name || `@${sender.username}`, content: pushContent(content) }, { collapseKey: `chat:${senderId}` });
+    if (needsPush(receiverId)) pushInBackground(receiverId, { t: 'msg', id: message.id, from: senderId, senderName: sender.name || `@${sender.username}`, avatar: publicUser(sender).avatar, content: pushContent(content) }, { collapseKey: `chat:${senderId}` });
     return delivered;
   }
 
@@ -656,6 +656,12 @@ export function createChatServer({
       .run(digest(token), userId, deviceId, deviceName, null, now, now));
     const user = (await db.prepare(`SELECT ${USER_COLUMNS} FROM users WHERE id = ?`).get(userId));
     return { token, deviceId, deviceName, user: publicUser(user) };
+  }
+
+  // The sender's photo path for a notification (the phone fetches it with its own session), or null.
+  async function avatarPathOf(userId) {
+    const row = await db.prepare('SELECT id, username, name, initials, color, avatar_disk_name, avatar_updated_at FROM users WHERE id = ?').get(userId);
+    return row ? publicUser(row).avatar : null;
   }
 
   function publicUser(row) {
@@ -2654,7 +2660,7 @@ export function createChatServer({
       const delivered = (await presentMessage(message));
       broadcastUser(receiverId, { type: 'message:new', message: delivered });
       if (needsPush(receiverId)) {
-        pushInBackground(receiverId, { t: 'msg', id: message.id, from: userId, senderName: message.senderName || `@${message.senderUsername}`, content: pushContent(message.content) }, { collapseKey: `chat:${userId}` });
+        pushInBackground(receiverId, { t: 'msg', id: message.id, from: userId, senderName: message.senderName || `@${message.senderUsername}`, avatar: await avatarPathOf(userId), content: pushContent(message.content) }, { collapseKey: `chat:${userId}` });
       }
       broadcastUser(userId, { type: 'message:new', message: delivered }, socket);
       json(socket, { type: 'message:ack', message: delivered });

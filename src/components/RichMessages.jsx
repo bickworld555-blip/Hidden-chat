@@ -14,25 +14,51 @@ function OnceMark({ opened }) {
   return <span className={`view-once-mark${opened ? ' is-opened' : ''}`} aria-hidden="true">1</span>;
 }
 
-// Recipient: tap to fetch and play the audio once (it is never cached or downloadable). Sender: a status card.
+// A view once note that was claimed from the server but has not played to the end yet, kept in memory only (never
+// stored or downloadable) for the rest of this session: if Android refuses to start playback, the bubble re-renders
+// or the chat is reopened, it plays from here instead of being lost (the server hands the audio out only once).
+const heldOnce = new Map(); // messageId -> object URL
+
+function releaseHeld(messageId) {
+  const url = heldOnce.get(messageId);
+  if (url) URL.revokeObjectURL(url);
+  heldOnce.delete(messageId);
+}
+
+// Recipient: tap to fetch and play the audio once (it is never cached on disk or downloadable). Sender: a status card.
 // An end-to-end encrypted note arrives as ciphertext and is decrypted here with the key from its message.
 export function ViewOnceVoice({ messageId, seconds, opened, mine, sessionToken, descriptor = null, children }) {
-  const [state, setState] = useState('idle'); // idle | loading | playing | paused | done | error
+  // idle | loading | ready (audio held, not playing yet) | playing | paused | done | error
+  const [state, setState] = useState(() => (heldOnce.has(messageId) ? 'ready' : 'idle'));
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState('');
   const audioRef = useRef(null);
-  const urlRef = useRef('');
 
-  useEffect(() => () => {
-    audioRef.current?.pause();
-    if (urlRef.current) URL.revokeObjectURL(urlRef.current);
-  }, []);
+  useEffect(() => () => { audioRef.current?.pause(); audioRef.current = null; }, []);
+
+  function startAudio(url) {
+    const audio = audioRef.current ?? new Audio(url);
+    if (!audioRef.current) {
+      audioRef.current = audio;
+      audio.ontimeupdate = () => setProgress(Number.isFinite(audio.duration) && audio.duration > 0 ? audio.currentTime / audio.duration : 0);
+      audio.onended = () => {
+        audioRef.current = null;
+        releaseHeld(messageId);
+        setState('done');
+      };
+      audio.onerror = () => { audioRef.current = null; setState('ready'); setError('Tap to try again.'); };
+    }
+    // Rejected (e.g. Android wants a fresh tap after the download): the audio stays held, one more tap plays it.
+    audio.play().then(() => { setError(''); setState('playing'); }).catch(() => { setState('ready'); setError('Tap to play.'); });
+  }
 
   async function play() {
     if (state === 'playing') { audioRef.current?.pause(); setState('paused'); return; }
-    if (state === 'paused') { audioRef.current?.play().then(() => setState('playing')).catch(() => {}); return; }
+    const held = heldOnce.get(messageId);
+    if (held) { startAudio(held); return; }
     setState('loading');
     setError('');
+    let received;
     try {
       const response = await apiFetch(`/api/v1/messages/${encodeURIComponent(messageId)}/view-once`, {
         method: 'POST', headers: { Authorization: `Bearer ${sessionToken}` },
@@ -43,27 +69,27 @@ export function ViewOnceVoice({ messageId, seconds, opened, mine, sessionToken, 
         setState(response.status === 410 ? 'done' : 'error');
         return;
       }
-      const received = await response.blob();
-      urlRef.current = URL.createObjectURL(descriptor ? await decryptMedia(received, descriptor) : received);
-      const audio = new Audio(urlRef.current);
-      audioRef.current = audio;
-      audio.ontimeupdate = () => setProgress(audio.duration ? audio.currentTime / audio.duration : 0);
-      audio.onended = () => {
-        setState('done');
-        URL.revokeObjectURL(urlRef.current);
-        urlRef.current = '';
-        audioRef.current = null;
-      };
-      await audio.play();
-      setState('playing');
+      received = await response.blob();
     } catch {
-      setError('This voice message could not be played.');
-      setState('error');
+      // Nothing was claimed (no answer from the server): the note can still be played.
+      setError('No connection. Tap to try again.');
+      setState('idle');
+      return;
     }
+    try {
+      const audio = descriptor ? await decryptMedia(received, descriptor) : received;
+      heldOnce.set(messageId, URL.createObjectURL(audio));
+    } catch {
+      setError('This voice message could not be decrypted.');
+      setState('error');
+      return;
+    }
+    startAudio(heldOnce.get(messageId));
   }
 
-  const active = state === 'loading' || state === 'playing' || state === 'paused';
-  if ((opened || state === 'done') && !active) {
+  // Still held (claimed, not finished) means it can play, even though the server already reports it opened.
+  const active = ['loading', 'ready', 'playing', 'paused'].includes(state);
+  if ((opened || state === 'done' || state === 'error') && !active) {
     return (
       <div className="view-once-voice is-opened">
         <OnceMark opened />
@@ -81,14 +107,15 @@ export function ViewOnceVoice({ messageId, seconds, opened, mine, sessionToken, 
       </div>
     );
   }
+  const playing = state === 'playing';
   return (
     <div className="view-once-voice">
-      <button type="button" className="view-once-play" onClick={play} disabled={state === 'loading'} aria-label={state === 'playing' ? 'Pause' : 'Play view once voice message'}>
-        {state === 'playing' ? <Pause size={18} /> : <Play size={18} />}
+      <button type="button" className="view-once-play" onClick={play} disabled={state === 'loading'} aria-label={playing ? 'Pause' : 'Play view once voice message'}>
+        {playing ? <Pause size={18} /> : <Play size={18} />}
       </button>
       <span className="view-once-copy">
-        <strong>{active ? 'Playing once…' : 'Voice message'}</strong>
-        {active
+        <strong>{state === 'loading' ? 'Opening…' : playing || state === 'paused' ? 'Playing once…' : 'Voice message'}</strong>
+        {playing || state === 'paused'
           ? <span className="view-once-progress"><i style={{ width: `${Math.round(progress * 100)}%` }} /></span>
           : <small>{error || `View once · ${formatClock(seconds)}`}</small>}
       </span>

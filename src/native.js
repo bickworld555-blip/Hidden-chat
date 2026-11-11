@@ -103,7 +103,8 @@ export const nativeNotify = (options) => invoke('notify', options);
 export const nativeShowIncomingCall = (options) => invoke('showIncomingCall', options);
 // "Reply" / "Mark as read" taken on a notification while the app's screen was gone: [{ action, open, text }].
 export const nativeTakeMessageActions = async () => (await invoke('takeMessageActions'))?.actions ?? [];
-export const nativeCancelIncomingCall = () => invoke('cancelIncomingCall');
+// Stops the ringing notification; `missed`: the caller hung up first, so a "Missed call" notification takes its place.
+export const nativeCancelIncomingCall = ({ missed = false } = {}) => invoke('cancelIncomingCall', { missed: Boolean(missed) });
 export const nativeEndCallWindow = () => invoke('endCallWindow');
 // An incoming call rings inside the app: keeps it over the lock screen after the call notification is withdrawn.
 export const nativeSetCallRinging = (ringing) => invoke('setCallRinging', { ringing: Boolean(ringing) });

@@ -51,8 +51,10 @@ public class PushService extends FirebaseMessagingService {
         String from = body.optString("from");
         if (!session.mutedChats.contains(from)) {
             String tag = "chat:" + from;
+            String avatar = body.isNull("avatar") ? null : body.optString("avatar", null);
             Alerts.showMessage(this, NotificationChannels.messageChannel(this, false, session.messageSound),
-                body.optString("senderName", "New message"), MessagePreview.of(body.optString("content")), tag, tag, 0, id);
+                body.optString("senderName", "New message"), MessagePreview.of(body.optString("content")), tag, tag, 0, id,
+                null, avatar == null || avatar.isEmpty() ? Avatars.pathFor(from) : avatar);
         }
         // The phone has it: one tick becomes two for the sender, as with an open connection.
         PushRegistration.markDelivered(this, id);
@@ -65,7 +67,7 @@ public class PushService extends FirebaseMessagingService {
         String sender = body.optString("senderName");
         String tag = "group:" + groupId;
         Alerts.showMessage(this, NotificationChannels.messageChannel(this, true, session.groupSound),
-            body.optString("groupName", "Group"), sender.isEmpty() ? preview : sender + ": " + preview, tag, tag, 0, body.optString("id"));
+            body.optString("groupName", "Group"), preview, tag, tag, 0, body.optString("id"), sender, null);
     }
 
     private void onReaction(RelaySession session, JSONObject body) {
@@ -81,7 +83,7 @@ public class PushService extends FirebaseMessagingService {
     private void onCall(RelaySession session, JSONObject body) {
         String avatar = body.isNull("avatar") ? null : body.optString("avatar", null);
         // Ring now (full-screen call screen over the lock screen), then connect to fetch the offer.
-        Alerts.showIncomingCall(this, body.optString("callId"), body.optString("callerName", "Hidden Messenger"),
+        Alerts.showIncomingCall(this, body.optString("callId"), body.optString("from"), body.optString("callerName", "Hidden Messenger"),
             "video".equals(body.optString("mode")), session.ringtoneSound, avatar);
         MessagingService.startSync(this, CALL_SYNC_MS);
     }

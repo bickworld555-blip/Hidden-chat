@@ -415,13 +415,15 @@ export default function CallOverlay({
   // notification (ringtone, Accept / Reject); it is withdrawn once the app is in front or the call moves on.
   const pageHidden = usePageHidden();
   const ringingIncoming = call.direction === 'incoming' && status === 'idle';
+  // The caller hung up while this phone was still ringing (not answered here or on another device): a missed call.
+  const missedByPeer = call.direction === 'incoming' && Boolean(snapshot.endedByPeer) && !answered && snapshot.endReason !== 'answered-elsewhere';
   useEffect(() => {
     if (!nativeShell()) return;
     if (ringingIncoming && pageHidden) {
       stopTone('incomingCall');
-      nativeShowIncomingCall({ callId: call.id, callerName: peer?.name ?? 'Hidden Messenger', callerAvatar: typeof peer?.avatar === 'string' && peer.avatar.startsWith('/') ? peer.avatar : null, mode: call.mode, ringtoneSound: phoneSoundFor('incomingCall', undefined, true) });
-    } else nativeCancelIncomingCall();
-  }, [ringingIncoming, pageHidden, call.id, call.mode, peer?.name]);
+      nativeShowIncomingCall({ callId: call.id, callerId: call.peerId, callerName: peer?.name ?? 'Hidden Messenger', callerAvatar: typeof peer?.avatar === 'string' && peer.avatar.startsWith('/') ? peer.avatar : null, mode: call.mode, ringtoneSound: phoneSoundFor('incomingCall', undefined, true) });
+    } else nativeCancelIncomingCall({ missed: missedByPeer });
+  }, [ringingIncoming, pageHidden, missedByPeer, call.id, call.peerId, call.mode, peer?.name]);
   // While it rings the call screen stays over the lock screen, whether or not the notification is still up.
   useEffect(() => {
     if (!nativeShell() || !ringingIncoming) return undefined;

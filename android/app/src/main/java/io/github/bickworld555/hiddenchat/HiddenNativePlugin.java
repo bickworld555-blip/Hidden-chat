@@ -96,6 +96,16 @@ public class HiddenNativePlugin extends Plugin {
             notifyListeners("notificationOpen", data, true);
             intent.removeExtra(EXTRA_OPEN);
         }
+        String callBack = intent.getStringExtra(Alerts.EXTRA_CALL_BACK);
+        if (callBack != null && !callBack.isEmpty()) {
+            // "Call back" on a missed-call notification: the app places the call (retained until it listens).
+            JSObject data = new JSObject();
+            data.put("peerId", callBack);
+            data.put("mode", "video".equals(intent.getStringExtra(Alerts.EXTRA_CALL_BACK_MODE)) ? "video" : "audio");
+            notifyListeners("callBack", data, true);
+            Alerts.clearMissedCalls(getContext(), callBack);
+            intent.removeExtra(Alerts.EXTRA_CALL_BACK);
+        }
         if (SharedContent.isShare(intent)) {
             // Shared from another app's share sheet: the web app shows a chat picker. Retained until it listens.
             notifyListeners("shareReceived", SharedContent.read(getContext(), intent), true);
@@ -703,8 +713,11 @@ public class HiddenNativePlugin extends Plugin {
     public void notify(PluginCall call) {
         String channel = NotificationChannels.messageChannel(getContext(), Boolean.TRUE.equals(call.getBoolean("group", false)),
             SoundChoice.parse(call.getString("sound", "")));
+        String open = call.getString("open", "");
+        String avatar = call.getString("avatar");
+        if ((avatar == null || avatar.isEmpty()) && open.startsWith("chat:")) avatar = Avatars.pathFor(open.substring(5));
         boolean shown = Alerts.showMessage(getContext(), channel, call.getString("title", "Hidden Messenger"), call.getString("body", ""),
-            call.getString("tag", channel), call.getString("open", ""), call.getInt("count", 0), call.getString("messageId"));
+            call.getString("tag", channel), open, call.getInt("count", 0), call.getString("messageId"), call.getString("sender"), avatar);
         JSObject result = new JSObject();
         result.put("shown", shown);
         call.resolve(result);
@@ -713,7 +726,7 @@ public class HiddenNativePlugin extends Plugin {
     /** Heads-up / full-screen incoming call with Accept and Reject; the ringtone repeats until it is handled. */
     @PluginMethod
     public void showIncomingCall(PluginCall call) {
-        boolean shown = Alerts.showIncomingCall(getContext(), call.getString("callId", ""), call.getString("callerName", "Hidden Messenger"),
+        boolean shown = Alerts.showIncomingCall(getContext(), call.getString("callId", ""), call.getString("callerId", ""), call.getString("callerName", "Hidden Messenger"),
             "video".equals(call.getString("mode")), call.getString("ringtoneSound", ""), call.getString("callerAvatar"));
         if (shown) setCallWindow(true);
         JSObject result = new JSObject();
@@ -723,7 +736,9 @@ public class HiddenNativePlugin extends Plugin {
 
     @PluginMethod
     public void cancelIncomingCall(PluginCall call) {
-        cancelCallNotification(getContext());
+        // Still ringing when the caller hung up: Alerts turns it into a missed-call notification.
+        if (Boolean.TRUE.equals(call.getBoolean("missed", false))) Alerts.missedCall(getContext());
+        else cancelCallNotification(getContext());
         call.resolve();
     }
 

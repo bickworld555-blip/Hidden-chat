@@ -88,6 +88,17 @@ final class RelaySession {
         return prefs.getBoolean(legacyKey, false) ? SoundChoice.PHONE_DEFAULT : "";
     }
 
+    /** "Mute" on a notification: "chat:<id>" or "group:<id>" joins the muted set the background connection checks. */
+    static void mute(Context context, String open) {
+        if (open == null) return;
+        String key = open.startsWith("chat:") ? "mutedChats" : open.startsWith("group:") ? "mutedGroups" : null;
+        if (key == null) return;
+        SharedPreferences prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        Set<String> muted = new HashSet<>(prefs.getStringSet(key, Collections.emptySet()));
+        muted.add(open.substring(open.indexOf(':') + 1));
+        prefs.edit().putStringSet(key, muted).apply();
+    }
+
     static void clear(Context context) {
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().clear().apply();
     }

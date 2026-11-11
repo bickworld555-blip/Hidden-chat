@@ -11,13 +11,14 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 /**
- * "Reply" and "Mark as read" on a message notification. Messages are end-to-end encrypted by the web app, so the
+ * "Reply", "Mark as read" and "Mute" on a message notification. Messages are end-to-end encrypted by the web app, so the
  * action goes to it: straight away while its screen is alive, otherwise queued until the app next opens (the
  * notification then says the reply is waiting, rather than pretending it was sent).
  */
 public class MessageActionReceiver extends BroadcastReceiver {
     static final String ACTION_REPLY = "io.github.bickworld555.hiddenchat.MESSAGE_REPLY";
     static final String ACTION_READ = "io.github.bickworld555.hiddenchat.MESSAGE_READ";
+    static final String ACTION_MUTE = "io.github.bickworld555.hiddenchat.MESSAGE_MUTE";
     static final String EXTRA_TAG = "hm_tag";
     static final String KEY_TEXT = "hm_reply_text";
     private static final String PREFS = "hidden_message_actions";
@@ -30,6 +31,13 @@ public class MessageActionReceiver extends BroadcastReceiver {
         String tag = intent.getStringExtra(EXTRA_TAG);
         if (open == null || open.isEmpty()) return;
         boolean reply = ACTION_REPLY.equals(action);
+        if (ACTION_MUTE.equals(action)) {
+            // Quiet at once, also while the app is closed; the app records the mute in its settings too.
+            RelaySession.mute(context, open);
+            if (!HiddenNativePlugin.emitMessageAction("mute", open, "")) queue(context, "mute", open, "");
+            Alerts.cancelMessage(context, tag);
+            return;
+        }
         if (!reply && !ACTION_READ.equals(action)) return;
         String text = "";
         if (reply) {

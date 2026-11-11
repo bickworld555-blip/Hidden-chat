@@ -24,6 +24,8 @@ final class NotificationChannels {
     static final String ONGOING_CALL = "ongoing_call";
     // Files being sent ("Sending 2 files · 45%"): quiet, with a progress bar.
     static final String UPLOADS = "uploads";
+    // "Missed voice call" / "2 missed calls" with Call back and Message.
+    static final String MISSED_CALLS = "missed_calls";
     // The same three with the phone's own default sounds, for the in-app "Default" tone choice.
     static final String DIRECT_MESSAGES_PHONE = "direct_messages_phone";
     static final String GROUP_MESSAGES_PHONE = "group_messages_phone";
@@ -171,6 +173,11 @@ final class NotificationChannels {
         uploads.setSound(null, null);
         uploads.setShowBadge(false);
 
-        manager.createNotificationChannels(Arrays.asList(direct, group, calls, connection, ongoingCall, directPhone, groupPhone, callsPhone, uploads));
+        NotificationChannel missed = new NotificationChannel(MISSED_CALLS, "Missed calls", NotificationManager.IMPORTANCE_HIGH);
+        missed.setDescription("Calls you did not answer, with Call back and Message");
+        missed.setSound(android.provider.Settings.System.DEFAULT_NOTIFICATION_URI, message);
+        missed.enableVibration(true);
+
+        manager.createNotificationChannels(Arrays.asList(direct, group, calls, connection, ongoingCall, directPhone, groupPhone, callsPhone, uploads, missed));
     }
 }
