@@ -3,7 +3,7 @@
 import { get, set } from 'idb-keyval';
 import { getNotificationSettings, soundPlan } from './notificationSettings.js';
 import { nativeAlertsActive, nativePlaySystemSound, nativeStopSystemSound, nativeShell, nativeStartRingback, nativeStopRingback } from './native.js';
-import { usesPhoneSound } from './phoneSounds.js';
+import { phoneSoundFor } from './phoneSounds.js';
 import { ALERT_TONE, RINGBACK_TONE, SENT_TONE, TIMBRES, defaultToneForCategory, defaultToneId, resolveToneChoice, toneDuration } from './tones.js';
 
 const CUSTOM_TONES_KEY = 'relay:custom-tones';
@@ -177,16 +177,17 @@ export async function playStoredTone(categoryId, { loop = categoryId === 'incomi
   }
   if (plan.tone === 'silent') return stopTone(categoryId);
   const kind = CATEGORY_KINDS[categoryId] ?? 'notification';
-  // "Default" in the Android app: the phone's own ringtone / notification sound instead of a built-in tone.
-  if (usesPhoneSound(categoryId, settings) && await playPhoneSound(categoryId, { ringtone: kind === 'ringtone', loop })) return undefined;
+  // In the Android app "Default" and phone-list choices play the phone's own sound instead of a built-in tone.
+  const phoneSound = phoneSoundFor(categoryId, settings);
+  if (phoneSound && await playPhoneSound(categoryId, { sound: phoneSound, ringtone: kind === 'ringtone', loop })) return undefined;
   return playToneChoice(plan.tone, kind, { loop, volume: plan.volume, key: categoryId, defaultId: defaultToneForCategory(categoryId, kind) });
 }
 
-// The phone's own default ringtone / notification sound (Android app only); stopTone(key) stops it.
-export async function playPhoneSound(key, { ringtone = false, loop = false } = {}) {
+// A phone sound (Android app only): `sound` is 'default' (the phone's default) or a phone sound URI; stopTone(key) stops it.
+export async function playPhoneSound(key, { sound = 'default', ringtone = false, loop = false } = {}) {
   stopTone(key);
   activeTones.set(key, { native: true, stopped: false });
-  const result = await nativePlaySystemSound({ key, ringtone, loop });
+  const result = await nativePlaySystemSound({ key, sound, ringtone, loop });
   if (result?.played) return true;
   activeTones.delete(key);
   return false;

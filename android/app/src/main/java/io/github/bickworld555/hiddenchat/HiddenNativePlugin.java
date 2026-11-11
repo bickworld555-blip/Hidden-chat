@@ -266,8 +266,7 @@ public class HiddenNativePlugin extends Plugin {
         Set<String> mutedChats = new HashSet<>(stringList(call.getArray("mutedChats")));
         Set<String> mutedGroups = new HashSet<>(stringList(call.getArray("mutedGroups")));
         boolean saved = RelaySession.save(getContext(), call.getString("origin"), call.getString("token"), call.getString("userId"), mutedChats, mutedGroups,
-            Boolean.TRUE.equals(call.getBoolean("phoneMessageSound", false)), Boolean.TRUE.equals(call.getBoolean("phoneGroupSound", false)),
-            Boolean.TRUE.equals(call.getBoolean("phoneRingtone", false)));
+            call.getString("messageSound", ""), call.getString("groupSound", ""), call.getString("ringtoneSound", ""));
         if (saved) PushRegistration.ensure(getContext());
         JSObject result = new JSObject();
         result.put("saved", saved);
@@ -511,13 +510,34 @@ public class HiddenNativePlugin extends Plugin {
         call.resolve(result);
     }
 
-    /** This phone's own default sound (the in-app "Default" choice): ringtone for calls, notification sound otherwise. */
+    /**
+     * A phone sound: `sound` is a SoundChoice ("default" or a URI from listSystemSounds); `ringtone` says which
+     * default and which audio stream (ringtone for calls, notification sound otherwise).
+     */
     @PluginMethod
     public void playSystemSound(PluginCall call) {
-        boolean played = SystemSounds.play(getContext(), call.getString("key", "default"), Boolean.TRUE.equals(call.getBoolean("ringtone", false)),
-            Boolean.TRUE.equals(call.getBoolean("loop", false)));
+        String sound = SoundChoice.parse(call.getString("sound", SoundChoice.PHONE_DEFAULT));
+        boolean played = SystemSounds.play(getContext(), call.getString("key", "default"), sound.isEmpty() ? SoundChoice.PHONE_DEFAULT : sound,
+            Boolean.TRUE.equals(call.getBoolean("ringtone", false)), Boolean.TRUE.equals(call.getBoolean("loop", false)));
         JSObject result = new JSObject();
         result.put("played", played);
+        call.resolve(result);
+    }
+
+    /** The phone's own ringtones (`ringtone`) or notification sounds, as { sounds: [{ uri, title }] }. */
+    @PluginMethod
+    public void listSystemSounds(PluginCall call) {
+        boolean ringtone = Boolean.TRUE.equals(call.getBoolean("ringtone", false));
+        // Plugin methods run on Capacitor's plugin thread, so the media query does not block the UI.
+        JSArray sounds = new JSArray();
+        for (SystemSounds.Sound sound : SystemSounds.list(getContext(), ringtone)) {
+            JSObject item = new JSObject();
+            item.put("uri", sound.uri);
+            item.put("title", sound.title);
+            sounds.put(item);
+        }
+        JSObject result = new JSObject();
+        result.put("sounds", sounds);
         call.resolve(result);
     }
 
@@ -696,10 +716,14 @@ public class HiddenNativePlugin extends Plugin {
         return values;
     }
 
-    /** A message notification on the direct_messages or group_messages channel, with that channel's sound. */
+    /**
+     * A message notification: `group` picks group or direct messages, `sound` (a SoundChoice) the channel and so
+     * the sound it plays.
+     */
     @PluginMethod
     public void notify(PluginCall call) {
-        String channel = call.getString("channel");
+        String channel = NotificationChannels.messageChannel(getContext(), Boolean.TRUE.equals(call.getBoolean("group", false)),
+            SoundChoice.parse(call.getString("sound", "")));
         boolean shown = Alerts.showMessage(getContext(), channel, call.getString("title", "Hidden Messenger"), call.getString("body", ""),
             call.getString("tag", channel), call.getString("open", ""), call.getInt("count", 0), call.getString("messageId"));
         JSObject result = new JSObject();
@@ -711,7 +735,7 @@ public class HiddenNativePlugin extends Plugin {
     @PluginMethod
     public void showIncomingCall(PluginCall call) {
         boolean shown = Alerts.showIncomingCall(getContext(), call.getString("callId", ""), call.getString("callerName", "Hidden Messenger"),
-            "video".equals(call.getString("mode")), Boolean.TRUE.equals(call.getBoolean("phoneRingtone", false)), call.getString("callerAvatar"));
+            "video".equals(call.getString("mode")), call.getString("ringtoneSound", ""), call.getString("callerAvatar"));
         if (shown) setCallWindow(true);
         JSObject result = new JSObject();
         result.put("shown", shown);

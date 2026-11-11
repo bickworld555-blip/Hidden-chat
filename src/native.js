@@ -44,8 +44,9 @@ export const nativeRequestStartupPermissions = async () => remember(await invoke
 // The service needs the account before it starts (it stops itself without one), so starting waits for any
 // session hand-over still in flight.
 let sessionSaved = Promise.resolve(null);
-export function nativeSetSession({ origin, token, userId, mutedChats = [], mutedGroups = [], phoneMessageSound = false, phoneGroupSound = false, phoneRingtone = false }) {
-  sessionSaved = invoke('setSession', { origin, token, userId, mutedChats, mutedGroups, phoneMessageSound, phoneGroupSound, phoneRingtone });
+// The *Sound values come from phoneSoundSession(): '' (the app's tone), 'default' or a phone sound URI.
+export function nativeSetSession({ origin, token, userId, mutedChats = [], mutedGroups = [], messageSound = '', groupSound = '', ringtoneSound = '' }) {
+  sessionSaved = invoke('setSession', { origin, token, userId, mutedChats, mutedGroups, messageSound, groupSound, ringtoneSound });
   return sessionSaved;
 }
 export const nativeClearSession = () => invoke('clearSession');
@@ -64,8 +65,10 @@ export const nativeSetCallActive = (active, video = false, name = '') => invoke(
 export const nativeSetSpeaker = (on) => invoke('setSpeaker', { on: Boolean(on) });
 // Video call with both cameras off: the phone goes to the ear (earpiece + proximity sensor); a camera back on → loudspeaker.
 export const nativeSetCallVideoShown = (shown) => invoke('setCallVideoShown', { shown: Boolean(shown) });
-// The phone's own default sounds, for the in-app "Default" tone choice.
-export const nativePlaySystemSound = ({ key, ringtone = false, loop = false }) => invoke('playSystemSound', { key, ringtone, loop });
+// The phone's own sounds: `sound` is 'default' or a URI from nativeListSystemSounds; `ringtone` picks the call stream.
+export const nativePlaySystemSound = ({ key, sound = 'default', ringtone = false, loop = false }) => invoke('playSystemSound', { key, sound, ringtone, loop });
+// The phone's ringtones (ringtone true) or notification sounds: [{ uri, title }], empty outside the app.
+export const nativeListSystemSounds = async (ringtone) => (await invoke('listSystemSounds', { ringtone: Boolean(ringtone) }))?.sounds ?? [];
 export const nativeStopSystemSound = (key) => invoke('stopSystemSound', { key });
 // Outgoing-call ringback on the phone's call stream: earpiece for voice calls, following the Speaker button.
 export const nativeStartRingback = async () => Boolean((await invoke('startRingback'))?.played);

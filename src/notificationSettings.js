@@ -46,7 +46,8 @@ function pickBoolean(value, fallback) {
 }
 
 function pickChoice(value, fallback) {
-  return typeof value === 'string' && value.length > 0 && value.length <= 120 ? value : fallback;
+  // Phone sound choices carry a title and a content URI, so they are longer than library ids.
+  return typeof value === 'string' && value.length > 0 && value.length <= 1000 ? value : fallback;
 }
 
 function pickEnum(value, allowed, fallback) {

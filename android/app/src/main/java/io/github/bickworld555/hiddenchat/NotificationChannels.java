@@ -8,6 +8,8 @@ import android.media.AudioAttributes;
 import android.net.Uri;
 import android.os.Build;
 import java.util.Arrays;
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * Android notification channels. Each message kind has its own sound: Android fixes a channel's sound
@@ -27,12 +29,14 @@ final class NotificationChannels {
     static final String GROUP_MESSAGES_PHONE = "group_messages_phone";
     static final String INCOMING_CALLS_PHONE = "incoming_calls_phone";
 
-    static boolean isMessageChannel(String channel) {
-        return DIRECT_MESSAGES.equals(channel) || GROUP_MESSAGES.equals(channel) || DIRECT_MESSAGES_PHONE.equals(channel) || GROUP_MESSAGES_PHONE.equals(channel);
-    }
+    // A sound picked from the phone's own list ("Standard ringtones") gets a channel of its own, named by this prefix
+    // and the sound's hash; only the current pick for each kind is kept.
+    private static final String PICKED = "_pick_";
+    // The sound each picked channel was made with, for Android 7 (no channels: the sound goes on each notification).
+    private static final Map<String, Uri> pickedSounds = new HashMap<>();
 
-    static boolean isPhoneSound(String channel) {
-        return DIRECT_MESSAGES_PHONE.equals(channel) || GROUP_MESSAGES_PHONE.equals(channel) || INCOMING_CALLS_PHONE.equals(channel);
+    static boolean isMessageChannel(String channel) {
+        return channel != null && (channel.startsWith(DIRECT_MESSAGES) || channel.startsWith(GROUP_MESSAGES));
     }
 
     private NotificationChannels() {}
@@ -41,10 +45,65 @@ final class NotificationChannels {
         return Uri.parse(ContentResolver.SCHEME_ANDROID_RESOURCE + "://" + context.getPackageName() + "/" + resource);
     }
 
-    static int soundFor(String channel) {
-        if (GROUP_MESSAGES.equals(channel)) return R.raw.group_message;
-        if (INCOMING_CALLS.equals(channel)) return R.raw.incoming_call_ringtone;
-        return R.raw.normal_message;
+    /** The channel for a message alert with a SoundChoice (app tone, phone default or a picked phone sound). */
+    static String messageChannel(Context context, boolean group, String sound) {
+        String base = group ? GROUP_MESSAGES : DIRECT_MESSAGES;
+        if (sound.isEmpty()) return base;
+        if (SoundChoice.PHONE_DEFAULT.equals(sound)) return group ? GROUP_MESSAGES_PHONE : DIRECT_MESSAGES_PHONE;
+        return pickedChannel(context, base, sound, group ? "Group Messages" : "Direct Messages", false);
+    }
+
+    /** The channel for a ringing call with a SoundChoice. */
+    static String callChannel(Context context, String sound) {
+        if (sound.isEmpty()) return INCOMING_CALLS;
+        if (SoundChoice.PHONE_DEFAULT.equals(sound)) return INCOMING_CALLS_PHONE;
+        return pickedChannel(context, INCOMING_CALLS, sound, "Incoming Calls", true);
+    }
+
+    /** The sound a channel plays: what Android 7 needs on each notification (channels arrived with Android 8). */
+    static Uri soundOf(Context context, String channel) {
+        if (DIRECT_MESSAGES_PHONE.equals(channel) || GROUP_MESSAGES_PHONE.equals(channel)) return SystemSounds.defaultUri(false);
+        if (INCOMING_CALLS_PHONE.equals(channel)) return SystemSounds.defaultUri(true);
+        synchronized (pickedSounds) {
+            Uri picked = pickedSounds.get(channel);
+            if (picked != null) return picked;
+        }
+        if (channel.startsWith(GROUP_MESSAGES)) return rawSound(context, R.raw.group_message);
+        if (channel.startsWith(INCOMING_CALLS)) return rawSound(context, R.raw.incoming_call_ringtone);
+        return rawSound(context, R.raw.normal_message);
+    }
+
+    private static AudioAttributes attributes(boolean ringtone) {
+        return new AudioAttributes.Builder()
+            .setUsage(ringtone ? AudioAttributes.USAGE_NOTIFICATION_RINGTONE : AudioAttributes.USAGE_NOTIFICATION_COMMUNICATION_INSTANT)
+            .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+            .build();
+    }
+
+    private static String pickedChannel(Context context, String base, String sound, String name, boolean ringtone) {
+        String id = base + PICKED + Integer.toHexString(sound.hashCode());
+        Uri uri = Uri.parse(sound);
+        synchronized (pickedSounds) { pickedSounds.put(id, uri); }
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return id;
+        NotificationManager manager = context.getSystemService(NotificationManager.class);
+        if (manager == null) return base;
+        if (manager.getNotificationChannel(id) == null) {
+            NotificationChannel channel = new NotificationChannel(id, name + " (chosen sound)", NotificationManager.IMPORTANCE_HIGH);
+            channel.setDescription(ringtone ? "Ringing calls, with the ringtone you chose" : "Messages, with the sound you chose");
+            channel.setSound(uri, attributes(ringtone));
+            channel.enableVibration(true);
+            if (ringtone) {
+                channel.setVibrationPattern(new long[] { 0, 800, 600, 800, 600 });
+                channel.setLockscreenVisibility(android.app.Notification.VISIBILITY_PUBLIC);
+            }
+            manager.createNotificationChannel(channel);
+        }
+        // Earlier picks for this kind are no longer used.
+        for (NotificationChannel existing : manager.getNotificationChannels()) {
+            String other = existing.getId();
+            if (other.startsWith(base + PICKED) && !other.equals(id)) manager.deleteNotificationChannel(other);
+        }
+        return id;
     }
 
     static void ensure(Context context) {

@@ -20,30 +20,30 @@ final class RelaySession {
     final String userId;
     final Set<String> mutedChats;
     final Set<String> mutedGroups;
-    // The in-app "Default" tone choice means this phone's own sound for that kind of alert.
-    final boolean phoneMessageSound;
-    final boolean phoneGroupSound;
-    final boolean phoneRingtone;
+    // The sound for each kind of alert, as a SoundChoice: "" (the app's tone), "default" (the phone's) or a phone sound URI.
+    final String messageSound;
+    final String groupSound;
+    final String ringtoneSound;
 
     private RelaySession(String origin, String token, String userId, Set<String> mutedChats, Set<String> mutedGroups,
-                         boolean phoneMessageSound, boolean phoneGroupSound, boolean phoneRingtone) {
+                         String messageSound, String groupSound, String ringtoneSound) {
         this.origin = origin;
         this.token = token;
         this.userId = userId;
         this.mutedChats = mutedChats;
         this.mutedGroups = mutedGroups;
-        this.phoneMessageSound = phoneMessageSound;
-        this.phoneGroupSound = phoneGroupSound;
-        this.phoneRingtone = phoneRingtone;
+        this.messageSound = messageSound;
+        this.groupSound = groupSound;
+        this.ringtoneSound = ringtoneSound;
     }
 
     /** Only an https origin (or http on a local test server) with a token and a user id is accepted. */
     static boolean save(Context context, String origin, String token, String userId, Set<String> mutedChats, Set<String> mutedGroups) {
-        return save(context, origin, token, userId, mutedChats, mutedGroups, false, false, false);
+        return save(context, origin, token, userId, mutedChats, mutedGroups, "", "", "");
     }
 
     static boolean save(Context context, String origin, String token, String userId, Set<String> mutedChats, Set<String> mutedGroups,
-                        boolean phoneMessageSound, boolean phoneGroupSound, boolean phoneRingtone) {
+                        String messageSound, String groupSound, String ringtoneSound) {
         if (origin == null || token == null || userId == null || token.isEmpty() || userId.isEmpty()) return false;
         Uri uri = Uri.parse(origin);
         String scheme = uri.getScheme();
@@ -55,9 +55,10 @@ final class RelaySession {
             .putString("userId", userId)
             .putStringSet("mutedChats", mutedChats == null ? Collections.emptySet() : new HashSet<>(mutedChats))
             .putStringSet("mutedGroups", mutedGroups == null ? Collections.emptySet() : new HashSet<>(mutedGroups))
-            .putBoolean("phoneMessageSound", phoneMessageSound)
-            .putBoolean("phoneGroupSound", phoneGroupSound)
-            .putBoolean("phoneRingtone", phoneRingtone)
+            .putString("messageSound", SoundChoice.parse(messageSound))
+            .putString("groupSound", SoundChoice.parse(groupSound))
+            .putString("ringtoneSound", SoundChoice.parse(ringtoneSound))
+            .remove("phoneMessageSound").remove("phoneGroupSound").remove("phoneRingtone")
             .apply();
         return true;
     }
@@ -77,7 +78,14 @@ final class RelaySession {
         return new RelaySession(origin, token, userId,
             new HashSet<>(prefs.getStringSet("mutedChats", Collections.emptySet())),
             new HashSet<>(prefs.getStringSet("mutedGroups", Collections.emptySet())),
-            prefs.getBoolean("phoneMessageSound", false), prefs.getBoolean("phoneGroupSound", false), prefs.getBoolean("phoneRingtone", false));
+            storedSound(prefs, "messageSound", "phoneMessageSound"), storedSound(prefs, "groupSound", "phoneGroupSound"),
+            storedSound(prefs, "ringtoneSound", "phoneRingtone"));
+    }
+
+    /** Older versions kept only "phone default or not", as a boolean under `legacyKey`. */
+    private static String storedSound(SharedPreferences prefs, String key, String legacyKey) {
+        if (prefs.contains(key)) return SoundChoice.parse(prefs.getString(key, ""));
+        return prefs.getBoolean(legacyKey, false) ? SoundChoice.PHONE_DEFAULT : "";
     }
 
     static void clear(Context context) {

@@ -4,7 +4,7 @@ import { badgeCount, getNotificationSettings, shouldRemind, soundPlan, systemNot
 import { channelForCategory, conversationOpenParam } from './notificationChannels.js';
 import { nativeNotify, nativeShell } from './native.js';
 import { plainText } from './textFormat.js';
-import { usesPhoneSound } from './phoneSounds.js';
+import { phoneSoundFor } from './phoneSounds.js';
 
 export function vibrateFor(category) {
   const plan = soundPlan(category, getNotificationSettings());
@@ -41,11 +41,11 @@ export async function showSystemNotification(category, { title, body: rawBody, t
   // Inside the Android app the native channel posts it (with that channel's own sound).
   if (nativeShell()) {
     // One notification per conversation (tag "chat:<id>" / "group:<id>", cleared when the chat is read), with its
-    // unread count for the app icon badge; "Default" tone = the phone's own sound channel.
-    const base = channel.id === 'group_messages' ? 'group_messages' : 'direct_messages';
+    // unread count for the app icon badge; the native side picks the channel for the chosen sound.
     const open = conversationOpenParam(conversation);
     const result = await nativeNotify({
-      channel: usesPhoneSound(category, undefined, true) ? `${base}_phone` : base,
+      group: channel.id === 'group_messages',
+      sound: phoneSoundFor(category, undefined, true),
       title,
       body,
       tag: category === 'reaction' ? `${channel.id}:${tag ?? open}` : (open || tag),

@@ -84,9 +84,7 @@ final class Alerts {
         synchronized (Alerts.class) { counts.put(key, unread); }
         if (unread > 1) builder.setSubText(unread + " new messages");
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
-            builder.setSound(NotificationChannels.isPhoneSound(channelId)
-                ? SystemSounds.defaultUri(false)
-                : NotificationChannels.rawSound(context, NotificationChannels.soundFor(channelId)));
+            builder.setSound(NotificationChannels.soundOf(context, channelId));
             builder.setDefaults(NotificationCompat.DEFAULT_VIBRATE);
         }
         try {
@@ -97,20 +95,12 @@ final class Alerts {
         }
     }
 
-    /** Heads-up / full-screen incoming call with Accept and Reject; the ringtone repeats until it is handled. */
-    static boolean showIncomingCall(Context context, String callId, String caller, boolean video) {
-        return showIncomingCall(context, callId, caller, video, false);
-    }
-
-    static boolean showIncomingCall(Context context, String callId, String caller, boolean video, boolean phoneRingtone) {
-        return showIncomingCall(context, callId, caller, video, phoneRingtone, null);
-    }
-
     /**
-     * `phoneRingtone`: ring with this phone's default ringtone (the in-app "Default" choice). `avatar`: the caller's
-     * profile photo path on the server (shown on the call screen), or null.
+     * Heads-up / full-screen incoming call with Accept and Reject; the ringtone repeats until it is handled.
+     * `ringtoneSound`: a SoundChoice (the app's ringtone, the phone's default or a ringtone picked from the phone's
+     * list). `avatar`: the caller's profile photo path on the server (shown on the call screen), or null.
      */
-    static boolean showIncomingCall(Context context, String callId, String caller, boolean video, boolean phoneRingtone, String avatar) {
+    static boolean showIncomingCall(Context context, String callId, String caller, boolean video, String ringtoneSound, String avatar) {
         String id = callId == null ? "" : callId;
         // Already ringing for this call (the push rang first, then the connection brought the offer): keep ringing.
         if (ringing && !id.isEmpty() && id.equals(ringingCallId)) return true;
@@ -133,7 +123,8 @@ final class Alerts {
         PendingIntent rejectIntent = PendingIntent.getBroadcast(context, 3003, reject, flags);
 
         Person person = new Person.Builder().setName(name).setImportant(true).build();
-        NotificationCompat.Builder builder = new NotificationCompat.Builder(context, phoneRingtone ? NotificationChannels.INCOMING_CALLS_PHONE : NotificationChannels.INCOMING_CALLS)
+        String channelId = NotificationChannels.callChannel(context, SoundChoice.parse(ringtoneSound));
+        NotificationCompat.Builder builder = new NotificationCompat.Builder(context, channelId)
             .setSmallIcon(R.drawable.ic_stat_hidden)
             .setContentTitle(name)
             .setContentText(video ? "Incoming video call" : "Incoming voice call")
@@ -146,7 +137,7 @@ final class Alerts {
             .setFullScreenIntent(showIntent, true)
             .setStyle(NotificationCompat.CallStyle.forIncomingCall(person, rejectIntent, acceptIntent).setIsVideo(video));
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
-            builder.setSound(phoneRingtone ? SystemSounds.defaultUri(true) : NotificationChannels.rawSound(context, R.raw.incoming_call_ringtone));
+            builder.setSound(NotificationChannels.soundOf(context, channelId));
             builder.setVibrate(new long[] { 0, 800, 600, 800, 600 });
         }
         Notification notification = builder.build();

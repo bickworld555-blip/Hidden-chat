@@ -8,12 +8,14 @@ import {
   updateNotificationSettings,
   useNotificationSettings,
 } from '../notificationSettings.js';
-import { defaultToneForCategory, defaultToneId, isCustomChoice, libraryTone, toneChoiceLabel, toneLibrary } from '../tones.js';
+import { defaultToneForCategory, defaultToneId, isCustomChoice, libraryTone, parsePhoneToneChoice, phoneToneChoice, toneChoiceLabel, toneLibrary } from '../tones.js';
 import { addCustomTone, getCustomTones, playPhoneSound, playToneChoice, removeCustomTone, stopTone } from '../sounds.js';
-import { nativeShell } from '../native.js';
+import { nativeListSystemSounds, nativeShell } from '../native.js';
 import { notificationPermission, requestNotificationPermission, vibrateFor } from '../notify.js';
 
 const RINGTONE_PREVIEW_MS = 4500;
+// The phone's list can run to dozens of sounds: the first few show, "See all" opens the rest.
+const PHONE_SOUNDS_SHOWN = 5;
 
 function Switch({ checked }) {
   return <span className={`wa-switch${checked ? ' on' : ''}`} aria-hidden="true"><span /></span>;
@@ -75,6 +77,16 @@ function TonePicker({ title, kind, defaultId = defaultToneId(kind), value, volum
   // In the Android app "Default" is the phone's own sound (set in Android's sound settings).
   const phoneSounds = nativeShell();
   const defaultTone = libraryTone(kind, defaultId) ?? libraryTone(kind, defaultToneId(kind));
+  const [phoneList, setPhoneList] = useState([]);
+  const [allPhoneSounds, setAllPhoneSounds] = useState(false);
+  const pickedPhone = parsePhoneToneChoice(value);
+
+  useEffect(() => {
+    if (!phoneSounds) return undefined;
+    let mounted = true;
+    nativeListSystemSounds(kind === 'ringtone').then((list) => { if (mounted) setPhoneList(list); }).catch(() => {});
+    return () => { mounted = false; };
+  }, [kind, phoneSounds]);
 
   useEffect(() => {
     let mounted = true;
@@ -86,7 +98,8 @@ function TonePicker({ title, kind, defaultId = defaultToneId(kind), value, volum
     onChange(choice);
     stopTone(previewKey);
     if (choice === 'silent') return;
-    if (choice === 'default' && phoneSounds) playPhoneSound(previewKey, { ringtone: kind === 'ringtone', loop: kind === 'ringtone' });
+    const phone = parsePhoneToneChoice(choice);
+    if ((choice === 'default' || phone) && phoneSounds) playPhoneSound(previewKey, { sound: phone?.uri ?? 'default', ringtone: kind === 'ringtone', loop: kind === 'ringtone' });
     else playToneChoice(choice, kind, { loop: kind === 'ringtone', volume, key: previewKey, defaultId });
     if (kind === 'ringtone') window.setTimeout(() => stopTone(previewKey), RINGTONE_PREVIEW_MS);
   }
@@ -129,6 +142,19 @@ function TonePicker({ title, kind, defaultId = defaultToneId(kind), value, volum
         {option('default', kind === 'ringtone' ? 'Default ringtone' : 'Default notification sound', phoneSounds ? (kind === 'ringtone' ? "Your phone's ringtone" : "Your phone's notification sound") : defaultTone.name)}
         {option('silent', 'Silent')}
       </section>
+      {phoneSounds && phoneList.length > 0 && (
+        <section className="wa-info-section notif-card">
+          <h3>{kind === 'ringtone' ? 'Phone ringtones' : 'Phone sounds'}</h3>
+          {phoneList
+            .filter((sound, index) => allPhoneSounds || index < PHONE_SOUNDS_SHOWN || sound.uri === pickedPhone?.uri)
+            .map((sound) => option(sound.uri === pickedPhone?.uri ? value : phoneToneChoice(sound), sound.title))}
+          {!allPhoneSounds && phoneList.length > PHONE_SOUNDS_SHOWN && (
+            <button type="button" className="wa-info-row notif-see-all" onClick={() => setAllPhoneSounds(true)}>
+              <span className="wa-info-row-text"><span>See all</span><small>{phoneList.length} sounds on this phone</small></span>
+            </button>
+          )}
+        </section>
+      )}
       <section className="wa-info-section notif-card">
         <h3>Custom</h3>
         {custom.map((tone) => option(`custom:${tone.id}`, tone.name, null, (

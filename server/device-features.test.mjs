@@ -5,7 +5,8 @@ import { test } from 'node:test';
 import { chatPreview, unreadFrom } from '../src/store.js';
 import { savableMedia } from '../src/mediaSave.js';
 import { backStackDepthForTests, handleBack } from '../src/backStack.js';
-import { phoneSoundSession, usesPhoneSound } from '../src/phoneSounds.js';
+import { phoneSoundFor, phoneSoundSession, usesPhoneSound } from '../src/phoneSounds.js';
+import { parsePhoneToneChoice, phoneToneChoice, toneChoiceLabel } from '../src/tones.js';
 import { DEFAULT_SETTINGS } from '../src/notificationSettings.js';
 
 const root = new URL('../', import.meta.url);
@@ -57,7 +58,24 @@ test('"Default" means the phone\'s own sound only inside the Android app', () =>
   settings.messages.tone = 'crystal-bells';
   assert.equal(usesPhoneSound('message', settings, true), false, 'a chosen tone stays the app tone');
   assert.equal(usesPhoneSound('sent', settings, true), false);
-  assert.deepEqual(phoneSoundSession(settings), { phoneMessageSound: false, phoneGroupSound: true, phoneRingtone: true });
+  assert.deepEqual(phoneSoundSession(settings), { messageSound: '', groupSound: 'default', ringtoneSound: 'default' });
+});
+
+test('a sound picked from the phone list plays and rings natively, and falls back to the app tone in a browser', () => {
+  const settings = structuredClone(DEFAULT_SETTINGS);
+  const uri = 'content://media/internal/audio/media/42?title=Over%20the%20Horizon&canonical=1';
+  const choice = phoneToneChoice({ uri, title: 'Over the Horizon | Remix' });
+  assert.deepEqual(parsePhoneToneChoice(choice), { uri, title: 'Over the Horizon | Remix' }, 'a | in the title survives');
+  settings.calls.ringtone = choice;
+  settings.groups.tone = 'silent';
+  assert.equal(phoneSoundFor('incomingCall', settings, true), uri);
+  assert.equal(phoneSoundFor('incomingCall', settings, false), '', 'a browser cannot reach phone sounds');
+  assert.equal(phoneSoundFor('group', settings, true), '', 'silent stays silent');
+  assert.equal(toneChoiceLabel(choice, 'ringtone'), 'Over the Horizon | Remix');
+  assert.deepEqual(phoneSoundSession(settings), { messageSound: 'default', groupSound: '', ringtoneSound: uri });
+  for (const bad of ['phone:x|https://example.com/a.mp3', 'phone:no-separator', 'phone:%E0%A4|content://media/1']) {
+    assert.equal(parsePhoneToneChoice(bad), null, bad);
+  }
 });
 
 test('the Android app wires Back, picture-in-picture, earpiece calls, phone sounds, badges and Media Save', async () => {

@@ -105,10 +105,33 @@ export function customChoiceId(choice) {
   return isCustomChoice(choice) ? choice.slice('custom:'.length) : null;
 }
 
+// A sound picked from the phone's own list (Android app): 'phone:<encoded title>|<content uri>'. The title travels
+// with the choice so its label shows without asking the phone again.
+const PHONE_PREFIX = 'phone:';
+
+export function phoneToneChoice({ uri, title }) {
+  return `${PHONE_PREFIX}${encodeURIComponent(title)}|${uri}`;
+}
+
+export function parsePhoneToneChoice(choice) {
+  if (typeof choice !== 'string' || !choice.startsWith(PHONE_PREFIX)) return null;
+  const rest = choice.slice(PHONE_PREFIX.length);
+  const split = rest.indexOf('|');
+  if (split < 0) return null;
+  const uri = rest.slice(split + 1);
+  if (!uri.startsWith('content://')) return null;
+  let title;
+  try { title = decodeURIComponent(rest.slice(0, split)); } catch { return null; }
+  return { uri, title: title || 'Phone sound' };
+}
+
 // Turns a stored choice into something playable: { kind: 'silent' } | { kind: 'synth', tone } | { kind: 'file', custom }.
-// Missing custom files or unknown ids fall back to the library default rather than silence.
+// Missing custom files or unknown ids fall back to the library default rather than silence. A phone sound plays
+// through the Android app (phoneSounds.js); where it cannot (a browser), the library default stands in for it.
 export function resolveToneChoice(choice, kind, customTones = [], defaultId = defaultToneId(kind)) {
   if (choice === 'silent') return { kind: 'silent', label: 'Silent' };
+  const phone = parsePhoneToneChoice(choice);
+  if (phone) return { kind: 'synth', tone: libraryTone(kind, defaultId) ?? libraryTone(kind, defaultToneId(kind)), label: phone.title };
   if (isCustomChoice(choice)) {
     const custom = customTones.find((item) => item.id === customChoiceId(choice));
     if (custom) return { kind: 'file', custom, label: custom.name };

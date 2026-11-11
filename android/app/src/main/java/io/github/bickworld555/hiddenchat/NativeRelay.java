@@ -264,7 +264,7 @@ final class NativeRelay extends WebSocketListener {
             String name = message.optString("senderName");
             String title = name.isEmpty() ? "@" + message.optString("senderUsername", "someone") : name;
             String tag = "chat:" + sender;
-            Alerts.showMessage(context, session.phoneMessageSound ? NotificationChannels.DIRECT_MESSAGES_PHONE : NotificationChannels.DIRECT_MESSAGES,
+            Alerts.showMessage(context, NotificationChannels.messageChannel(context, false, session.messageSound),
                 title, MessagePreview.of(message.optString("content")), tag, tag, Alerts.nextCount(tag), message.optString("id"));
         } else if ("group:message".equals(type)) {
             JSONObject message = event.optJSONObject("message");
@@ -274,7 +274,7 @@ final class NativeRelay extends WebSocketListener {
             String senderName = event.optString("senderName", "");
             String body = MessagePreview.of(message.optString("content"));
             String tag = "group:" + groupId;
-            Alerts.showMessage(context, session.phoneGroupSound ? NotificationChannels.GROUP_MESSAGES_PHONE : NotificationChannels.GROUP_MESSAGES,
+            Alerts.showMessage(context, NotificationChannels.messageChannel(context, true, session.groupSound),
                 event.optString("groupName", "Group"), senderName.isEmpty() ? body : senderName + ": " + body, tag, tag, Alerts.nextCount(tag), message.optString("id"));
         } else if ("message:reaction".equals(type)) {
             // Someone reacted to a message I sent: a notification like WhatsApp's "Reacted ❤️ to: …".
@@ -284,7 +284,7 @@ final class NativeRelay extends WebSocketListener {
             if (session.mutedChats.contains(reactor)) return;
             String preview = MessagePreview.of(event.optString("messageContent"));
             String body = "Reacted " + emoji + (preview.isEmpty() ? " to your message" : " to: \u201C" + preview + "\u201D");
-            Alerts.showMessage(context, session.phoneMessageSound ? NotificationChannels.DIRECT_MESSAGES_PHONE : NotificationChannels.DIRECT_MESSAGES,
+            Alerts.showMessage(context, NotificationChannels.messageChannel(context, false, session.messageSound),
                 event.optString("reactorName", "Reaction"), body, "reaction:" + event.optString("messageId"), "chat:" + reactor, 0,
                 "react:" + event.optString("messageId") + ":" + emoji);
         } else if ("call:signal".equals(type)) {
@@ -295,7 +295,7 @@ final class NativeRelay extends WebSocketListener {
                 pendingIce.clear();
                 pendingAt = System.currentTimeMillis();
             }
-            Alerts.showIncomingCall(context, "", callerName(event), "video".equals(event.optString("mode")), session.phoneRingtone, callerAvatar(event));
+            Alerts.showIncomingCall(context, "", callerName(event), "video".equals(event.optString("mode")), session.ringtoneSound, callerAvatar(event));
         }
     }
 
@@ -310,7 +310,7 @@ final class NativeRelay extends WebSocketListener {
                 pendingIce.clear();
                 pendingAt = System.currentTimeMillis();
                 RelaySession current = RelaySession.read(context);
-                Alerts.showIncomingCall(context, callId, callerName(event), "video".equals(event.optString("mode")), current != null && current.phoneRingtone, callerAvatar(event));
+                Alerts.showIncomingCall(context, callId, callerName(event), "video".equals(event.optString("mode")), current == null ? "" : current.ringtoneSound, callerAvatar(event));
                 return;
             }
             if (pendingCall == null || !callId.equals(pendingCall.optString("callId"))) return;

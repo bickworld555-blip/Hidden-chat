@@ -42,7 +42,7 @@ import { createAvatarFilter } from '../avatar/avatarStream.js';
 import { loadFaceTracker } from '../avatar/faceTracker.js';
 import { lazyComponent } from '../lazy.js';
 import { useBackHandler } from '../backStack.js';
-import { usesPhoneSound } from '../phoneSounds.js';
+import { phoneSoundFor } from '../phoneSounds.js';
 import { useCallStore } from '../callStore.js';
 import { appSettings, useSetting } from '../settings.js';
 import { NOTICE_PRIORITY } from '../noticeQueue.js';
@@ -419,7 +419,7 @@ export default function CallOverlay({
     if (!nativeShell()) return;
     if (ringingIncoming && pageHidden) {
       stopTone('incomingCall');
-      nativeShowIncomingCall({ callId: call.id, callerName: peer?.name ?? 'Hidden Messenger', callerAvatar: typeof peer?.avatar === 'string' && peer.avatar.startsWith('/') ? peer.avatar : null, mode: call.mode, phoneRingtone: usesPhoneSound('incomingCall', undefined, true) });
+      nativeShowIncomingCall({ callId: call.id, callerName: peer?.name ?? 'Hidden Messenger', callerAvatar: typeof peer?.avatar === 'string' && peer.avatar.startsWith('/') ? peer.avatar : null, mode: call.mode, ringtoneSound: phoneSoundFor('incomingCall', undefined, true) });
     } else nativeCancelIncomingCall();
   }, [ringingIncoming, pageHidden, call.id, call.mode, peer?.name]);
   // While it rings the call screen stays over the lock screen, whether or not the notification is still up.

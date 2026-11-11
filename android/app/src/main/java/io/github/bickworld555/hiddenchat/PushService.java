@@ -51,7 +51,7 @@ public class PushService extends FirebaseMessagingService {
         String from = body.optString("from");
         if (!session.mutedChats.contains(from)) {
             String tag = "chat:" + from;
-            Alerts.showMessage(this, session.phoneMessageSound ? NotificationChannels.DIRECT_MESSAGES_PHONE : NotificationChannels.DIRECT_MESSAGES,
+            Alerts.showMessage(this, NotificationChannels.messageChannel(this, false, session.messageSound),
                 body.optString("senderName", "New message"), MessagePreview.of(body.optString("content")), tag, tag, 0, id);
         }
         // The phone has it: one tick becomes two for the sender, as with an open connection.
@@ -64,7 +64,7 @@ public class PushService extends FirebaseMessagingService {
         String preview = MessagePreview.of(body.optString("content"));
         String sender = body.optString("senderName");
         String tag = "group:" + groupId;
-        Alerts.showMessage(this, session.phoneGroupSound ? NotificationChannels.GROUP_MESSAGES_PHONE : NotificationChannels.GROUP_MESSAGES,
+        Alerts.showMessage(this, NotificationChannels.messageChannel(this, true, session.groupSound),
             body.optString("groupName", "Group"), sender.isEmpty() ? preview : sender + ": " + preview, tag, tag, 0, body.optString("id"));
     }
 
@@ -74,7 +74,7 @@ public class PushService extends FirebaseMessagingService {
         if (emoji.isEmpty() || session.mutedChats.contains(from)) return;
         String preview = MessagePreview.of(body.optString("content"));
         String text = "Reacted " + emoji + (preview.isEmpty() ? " to your message" : " to: “" + preview + "”");
-        Alerts.showMessage(this, session.phoneMessageSound ? NotificationChannels.DIRECT_MESSAGES_PHONE : NotificationChannels.DIRECT_MESSAGES,
+        Alerts.showMessage(this, NotificationChannels.messageChannel(this, false, session.messageSound),
             body.optString("reactorName", "Reaction"), text, "reaction:" + body.optString("id"), "chat:" + from, 0, "react:" + body.optString("id") + ":" + emoji);
     }
 
@@ -82,7 +82,7 @@ public class PushService extends FirebaseMessagingService {
         String avatar = body.isNull("avatar") ? null : body.optString("avatar", null);
         // Ring now (full-screen call screen over the lock screen), then connect to fetch the offer.
         Alerts.showIncomingCall(this, body.optString("callId"), body.optString("callerName", "Hidden Messenger"),
-            "video".equals(body.optString("mode")), session.phoneRingtone, avatar);
+            "video".equals(body.optString("mode")), session.ringtoneSound, avatar);
         MessagingService.startSync(this, CALL_SYNC_MS);
     }
 }
