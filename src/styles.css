@@ -4724,3 +4724,6 @@ canvas.recording-wave { color: #5d6662; }
 .invite-avatar { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; background: var(--wa-chip, #e0e9f5); color: var(--wa-green, #1d4ed8); font-weight: 700; }
 .invite-cta { color: var(--wa-green, #1d4ed8); font-weight: 600; font-size: 13px; }
 .permissions-note { margin: -8px 0 18px; font-size: 12.5px; color: var(--wa-sub, #5b6b82); text-align: left; }
+/* Phones: chat rows are name, preview, time and badges only (calls start from the chat header or Calls tab),
+   so the preview gets the full width. */
+@media (max-width: 899px) { .app-shell .wa-row-actions { display: none; } }
