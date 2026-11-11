@@ -1,6 +1,6 @@
 import { setMediaSaveEnabled, useMediaSave } from '../mediaSave.js';
 import { nativeShell } from '../native.js';
-import { Settings, Users, Plus, ChevronRight, LogOut, Bell, Moon, Sun, Pencil, Check, X, Sparkles, Video, ScanFace, Download, Store, Star, DatabaseBackup, HardDrive, Radio, Megaphone, Clock, Link2, EyeOff, Languages, ShieldCheck } from 'lucide-react';
+import { Settings, Users, Plus, ChevronRight, LogOut, Bell, Moon, Sun, Pencil, Check, X, Sparkles, Video, ScanFace, Download, Store, Star, DatabaseBackup, HardDrive, Radio, Megaphone, Clock, Link2, EyeOff, Languages, ShieldCheck, UserPlus } from 'lucide-react';
 import { useChatStore } from '../store.js';
 import ProfilePhoto from './ProfilePhoto.jsx';
 import Avatar from './Avatar.jsx';
@@ -191,6 +191,7 @@ export default function ToolsView({ darkMode, onToggleTheme, onLogout, onNotific
             ['calllinks', Link2, 'Call links', 'Let people call you with a link'],
             ['statusprivacy', EyeOff, 'Status privacy', 'Who sees your status, muted updates'],
             ['language', Languages, 'App language', 'English, বাংলা, हिन्दी, Español'],
+            ['invite', UserPlus, 'Invite a friend', 'Text an invite to someone in your contacts'],
           ].map(([id, Icon, title, detail]) => (
             <button key={id} className="tool-item" onClick={() => onSheet?.(id)}>
               <Icon size={20} />

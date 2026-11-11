@@ -23,7 +23,7 @@ import ShareSheet from './components/ShareSheet.jsx';
 import CallAccessSheet from './components/CallAccessSheet.jsx';
 import { publishShareShortcuts } from './shareShortcuts.js';
 import { CALL_ACCESS_ASKED_KEY, shouldAskCallAccess } from './callAccess.js';
-import { PERMISSIONS_ASKED_KEY } from './permissionsKey.js';
+import { permissionsAskedKey } from './permissionsKey.js';
 import Sidebar from './components/Sidebar.jsx';
 import ChatWindow from './components/ChatWindow.jsx';
 import UsernameGate from './components/UsernameGate.jsx';
@@ -61,6 +61,7 @@ const BroadcastLists = lazyComponent(extrasPanels, (module) => module.BroadcastL
 const Channels = lazyComponent(extrasPanels, (module) => module.Channels);
 const ScheduledMessages = lazyComponent(extrasPanels, (module) => module.ScheduledMessages);
 const CallLinks = lazyComponent(extrasPanels, (module) => module.CallLinks);
+const InviteFriend = lazyComponent(() => import('./components/parity/InviteFriend.jsx'));
 const JoinCallLink = lazyComponent(extrasPanels, (module) => module.JoinCallLink);
 const StatusPrivacy = lazyComponent(extrasPanels, (module) => module.StatusPrivacy);
 const LanguageSettings = lazyComponent(() => import('./components/extras/LanguageSettings.jsx'));
@@ -825,7 +826,7 @@ export default function App() {
       return undefined;
     }
     let asked = false;
-    try { asked = localStorage.getItem(PERMISSIONS_ASKED_KEY) === '1'; } catch { /* private mode */ }
+    try { asked = localStorage.getItem(permissionsAskedKey()) === '1'; } catch { /* private mode */ }
     const needsWebPrompt = !nativeShell() && typeof Notification !== 'undefined' && Notification.permission === 'default';
     if (!asked && (nativeShell() || needsWebPrompt)) setPermissionsOpen(true);
     else if (nativeShell()) {
@@ -909,6 +910,7 @@ export default function App() {
       {sessionToken && paritySheet === 'broadcasts' && <BroadcastLists token={sessionToken} onClose={() => setParitySheet(null)} />}
       {sessionToken && paritySheet === 'channels' && <Channels token={sessionToken} initialChannelId={channelToOpen} onClose={() => { setParitySheet(null); setChannelToOpen(''); }} />}
       {sessionToken && paritySheet === 'scheduled' && <ScheduledMessages token={sessionToken} userId={userId} onClose={() => setParitySheet(null)} />}
+      {sessionToken && paritySheet === 'invite' && <InviteFriend username={useChatStore.getState().user?.username} onClose={() => setParitySheet(null)} />}
       {sessionToken && paritySheet === 'calllinks' && <CallLinks token={sessionToken} onClose={() => setParitySheet(null)} />}
       {sessionToken && paritySheet === 'statusprivacy' && <StatusPrivacy token={sessionToken} onClose={() => setParitySheet(null)} />}
       {paritySheet === 'language' && <LanguageSettings onClose={() => setParitySheet(null)} />}
