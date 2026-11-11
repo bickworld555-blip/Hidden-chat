@@ -1,6 +1,6 @@
 // Panels for broadcast lists, channels, scheduled messages, call links and status privacy (server/extras.mjs).
 import { useEffect, useMemo, useState } from 'react';
-import { Copy, Link2, Megaphone, Plus, Send, Trash2, Users } from 'lucide-react';
+import { Copy, Link2, Lock, Megaphone, Plus, Send, SmilePlus, Trash2, Users } from 'lucide-react';
 import Panel, { Notice } from '../parity/Panel.jsx';
 import { request } from '../../parityApi.js';
 import { useChatStore } from '../../store.js';
@@ -190,6 +190,8 @@ export function Channels({ token, onClose, initialChannelId = '' }) {
   const [channel, setChannel] = useState(null);
   const [creating, setCreating] = useState(initialChannelId === ':create' ? { name: '', description: '', category: 'other' } : null);
   const [post, setPost] = useState('');
+  // The post whose reaction picker is open (one at a time).
+  const [picking, setPicking] = useState(null);
   const [error, setError] = useState('');
 
   const loadMine = () => request(token, '/api/v1/channels').then(setMine).catch((caught) => setError(caught.message));
@@ -264,14 +266,22 @@ export function Channels({ token, onClose, initialChannelId = '' }) {
                     {channel.canPost && <button type="button" className="hm-channel-delete" aria-label="Delete post" onClick={() => act(async () => { await request(token, `/api/v1/channels/${channel.id}/posts/${item.id}`, { method: 'DELETE' }); await loadChannel(channel.id); })}><Trash2 size={13} /></button>}
                   </footer>
                 </article>
+                {/* A reaction summary under each update; the picker opens on tap, one post at a time. */}
                 <div className="hm-channel-reactions" aria-label="Reactions">
                   {counts.length > 0 && <span className="hm-channel-reaction-total">{counts.map(([emoji]) => emoji).join('')} {counts.reduce((sum, [, count]) => sum + count, 0)}</span>}
-                  {CHANNEL_REACTIONS.map((emoji) => (
-                    <button key={emoji} type="button" className={item.myReaction === emoji ? 'is-on' : ''} aria-label={item.myReaction === emoji ? `Remove ${emoji}` : `React ${emoji}`} aria-pressed={item.myReaction === emoji} onClick={() => act(async () => {
-                      await request(token, `/api/v1/channels/${channel.id}/posts/${item.id}/reaction`, { method: 'PUT', body: { emoji: item.myReaction === emoji ? null : emoji } });
-                      await loadChannel(channel.id);
-                    })}>{emoji}</button>
-                  ))}
+                  <button type="button" className={`hm-channel-react${picking === item.id ? ' is-open' : ''}`} aria-label={item.myReaction ? `Your reaction: ${item.myReaction}. Change` : 'React'} aria-expanded={picking === item.id} onClick={() => setPicking(picking === item.id ? null : item.id)}>
+                    {item.myReaction ? <span aria-hidden="true">{item.myReaction}</span> : <SmilePlus size={15} aria-hidden="true" />}
+                  </button>
+                  {picking === item.id && (
+                    <span className="hm-channel-picker" role="group" aria-label="Choose a reaction">
+                      {CHANNEL_REACTIONS.map((emoji) => (
+                        <button key={emoji} type="button" className={item.myReaction === emoji ? 'is-on' : ''} aria-label={item.myReaction === emoji ? `Remove ${emoji}` : `React ${emoji}`} aria-pressed={item.myReaction === emoji} onClick={() => { setPicking(null); act(async () => {
+                          await request(token, `/api/v1/channels/${channel.id}/posts/${item.id}/reaction`, { method: 'PUT', body: { emoji: item.myReaction === emoji ? null : emoji } });
+                          await loadChannel(channel.id);
+                        }); }}>{emoji}</button>
+                      ))}
+                    </span>
+                  )}
                 </div>
               </div>
             );
@@ -284,7 +294,10 @@ export function Channels({ token, onClose, initialChannelId = '' }) {
             <button type="submit" className="icon-button" aria-label="Post" disabled={!post.trim()}><Send size={18} /></button>
           </form>
         ) : !channel.following && (
-          <button type="button" className="hm-channel-follow-bar" onClick={toggleFollow}>Follow</button>
+          <div className="hm-channel-follow-foot">
+            <button type="button" className="hm-channel-follow-bar" onClick={toggleFollow}>Follow</button>
+            <p><Lock size={12} aria-hidden="true" /> Channel updates are public. The channel and other followers can’t see who follows it.</p>
+          </div>
         )}
       </Panel>
     );
