@@ -125,7 +125,7 @@ export const HELP_CENTER_URL = 'https://hiddenmessenger.com/help';
 // Settings, in the order a business messenger uses: Business tools first, then Account, Privacy, Avatar, Chats,
 // Notifications, Storage and data, App language, Help, Invite a friend. Privacy, Avatar and Chats open their own
 // page here; the rest open their panels.
-export default function ToolsView({ darkMode, onToggleTheme, onLogout, onNotifications, onAccountSettings, onAccounts, onAvatarStudio, onGroups, onCommunities, onBusinessTools, onStarred, onBackup, onStorage, onSheet, onBack, isAdmin = false }) {
+export default function ToolsView({ darkMode, onToggleTheme, onLogout, onNotifications, onAccountSettings, onAccounts, onAvatarStudio, onGroups, onCommunities, onBusinessTools, onStarred, onBackup, onStorage, onSheet, onBack }) {
   const user = useChatStore((state) => state.user);
   const userId = useChatStore((state) => state.userId);
   const { accounts } = useAccounts();
@@ -290,7 +290,6 @@ export default function ToolsView({ darkMode, onToggleTheme, onLogout, onNotific
           <Item icon={Megaphone} title="Broadcast lists" detail="One message, sent privately to many" onClick={() => onSheet?.('broadcasts')} />
           <Item icon={Link2} title="Call links" detail="Let people call you with a link, revoke any time" onClick={() => onSheet?.('calllinks')} />
           <Item icon={Clock} title="Scheduled messages" detail="Write now, send later (end-to-end encrypted)" onClick={() => onSheet?.('scheduled')} />
-          {isAdmin && <Item icon={ShieldCheck} title="Admin console" detail="Statistics, users, reports, Help Center" onClick={() => onSheet?.('admin')} />}
         </div>
 
         <div className="tools-section">

@@ -32,7 +32,6 @@ import { syncMissedMessages } from './messageSync.js';
 import { HISTORY_CONCURRENCY, forEachLimited } from './concurrency.js';
 import MobileBottomNav from './components/MobileBottomNav.jsx';
 import DesktopRail from './components/DesktopRail.jsx';
-import { canAdminister } from './adminAccess.js';
 import { takePendingHistory } from './linking.js';
 import { validateBackupData } from './backup.js';
 import { SIGNED_IN_HINT } from './site/links.js';
@@ -57,7 +56,6 @@ const BusinessTools = lazyComponent(() => import('./components/parity/BusinessTo
 const VerifiedPanel = lazyComponent(() => import('./components/parity/VerifiedPanel.jsx'));
 const StarredMessages = lazyComponent(() => import('./components/parity/StarredMessages.jsx'));
 const extrasPanels = () => import('./components/extras/ExtrasPanels.jsx');
-const AdminConsole = lazyComponent(() => import('./components/admin/AdminConsole.jsx'));
 const BroadcastLists = lazyComponent(extrasPanels, (module) => module.BroadcastLists);
 const Channels = lazyComponent(extrasPanels, (module) => module.Channels);
 const ScheduledMessages = lazyComponent(extrasPanels, (module) => module.ScheduledMessages);
@@ -696,23 +694,7 @@ export default function App() {
     }, 1500);
     return () => { cancelled = true; clearTimeout(timer); };
   }, [sessionToken, userId]);
-  // Admin console: offered in Settings to admins, and opened directly at /admin.
-  const [isAdmin, setIsAdmin] = useState(false);
-  // /admin opened by an account that isn't an admin: say so instead of quietly showing the chats.
-  const [adminDenied, setAdminDenied] = useState(false);
-  useEffect(() => {
-    let cancelled = false;
-    if (!sessionToken) { setIsAdmin(false); return undefined; }
-    canAdminister(sessionToken).then((allowed) => {
-      if (cancelled) return;
-      setIsAdmin(allowed);
-      if (location.pathname === '/admin') {
-        if (allowed) setParitySheet('admin');
-        else setAdminDenied(true);
-      }
-    });
-    return () => { cancelled = true; };
-  }, [sessionToken]);
+  // The admin console is its own page at /admin (admin.html, src/admin/), not part of the chat app.
   const activeTab = isMobile ? mobileActiveTab : desktopTab;
   const setActiveTab = isMobile ? setMobileActiveTab : setDesktopTab;
   const [channelToOpen, setChannelToOpen] = useState('');
@@ -930,7 +912,7 @@ export default function App() {
         ) : activeTab === 'tools' ? (
           <ToolsView darkMode={darkMode} onToggleTheme={toggleTheme} onLogout={() => { logout(); }} onNotifications={() => setNotificationsOpen(true)} onAccountSettings={(section) => setAccountSettingsOpen(section === 'privacy' || section === 'devices' ? section : 'account')} onAccounts={() => setAccountsOpen(true)} onAvatarStudio={() => setAvatarStudioOpen(true)} onGroups={() => openGroups()}
             onCommunities={() => setParitySheet('communities')} onBusinessTools={() => setParitySheet('business')} onStarred={() => setParitySheet('starred')}
-            onBackup={() => setParitySheet('backup')} onStorage={() => setParitySheet('storage')} onSheet={setParitySheet} isAdmin={isAdmin} onBack={isMobile ? () => setActiveTab('chats') : undefined} />
+            onBackup={() => setParitySheet('backup')} onStorage={() => setParitySheet('storage')} onSheet={setParitySheet} onBack={isMobile ? () => setActiveTab('chats') : undefined} />
         ) : null}
         {activeTab === 'chats' && !isMobile && <footer className="workspace-footer"><span /><span className="workspace-footer-right"><button onClick={toggleTheme} title={`Switch to ${darkMode ? 'light' : 'dark'} theme`}>{darkMode ? <Sun size={14} /> : <Moon size={14} />}{darkMode ? 'Light' : 'Dark'}</button><ChevronRight size={13} /></span></footer>}
       </div>
@@ -952,16 +934,6 @@ export default function App() {
         onOpenChat={(id) => { setParitySheet(null); openChat({ id }); }} onOpenGroup={(id) => { setParitySheet(null); openGroups(false, id); }} />}
       {sessionToken && paritySheet === 'backup' && <BackupView token={sessionToken} onClose={() => setParitySheet(null)} />}
       {sessionToken && paritySheet === 'storage' && <StorageView onClose={() => setParitySheet(null)} />}
-      {sessionToken && adminDenied && (
-        <div className="admin-denied" role="alertdialog" aria-modal="true" aria-labelledby="admin-denied-title">
-          <div className="admin-denied-card">
-            <h2 id="admin-denied-title">Admin console unavailable</h2>
-            <p>This page is only for Hidden Messenger admins, and this account isn't one.</p>
-            <button type="button" onClick={() => { setAdminDenied(false); history.replaceState(null, '', '/app'); }}>Go to your chats</button>
-          </div>
-        </div>
-      )}
-      {sessionToken && isAdmin && paritySheet === 'admin' && <AdminConsole token={sessionToken} onClose={() => { setParitySheet(null); if (location.pathname === '/admin') history.replaceState(null, '', '/app'); }} />}
       {sessionToken && paritySheet === 'broadcasts' && <BroadcastLists token={sessionToken} onClose={() => setParitySheet(null)} />}
       {sessionToken && paritySheet === 'channels' && <Channels token={sessionToken} initialChannelId={channelToOpen} onClose={() => { setParitySheet(null); setChannelToOpen(''); }} />}
       {sessionToken && paritySheet === 'scheduled' && <ScheduledMessages token={sessionToken} userId={userId} onClose={() => setParitySheet(null)} />}

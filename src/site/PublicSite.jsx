@@ -1,6 +1,6 @@
 // hiddenmessenger.com's public website: Home, Features, Privacy, Business, Download and the Help Center. The
 // messenger itself lives at /app (src/App.jsx). Pages switch without reloading (history API); the Help Center reads
-// its articles from the server, where admins edit them (src/components/admin/AdminConsole.jsx).
+// its articles from the server, where admins edit them on the admin page (src/admin/AdminConsole.jsx).
 import { useEffect, useState } from 'react';
 import { ArrowRight, BadgeCheck, Building2, Check, ChevronRight, CircleDashed, KeyRound, Lock, Megaphone, MessageCircle, Phone, Search, ShieldCheck, Smartphone, Store, UsersRound } from 'lucide-react';
 import ShieldMark from '../components/ShieldMark.jsx';

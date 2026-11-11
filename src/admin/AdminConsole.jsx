@@ -1,9 +1,9 @@
-// Admin console (server/admin.mjs): overview, users, reports and the Help Center editor. Only admin accounts
-// can open it; the server checks every request. Chat content is end-to-end encrypted and never shown here.
+// Admin console (server/admin.mjs): overview, users, reports and the Help Center editor, on the standalone /admin
+// page. Requests use the admin session (adminApi.js); chat content is end-to-end encrypted and never shown here.
 import { useEffect, useState } from 'react';
 import { BarChart3, FileText, Flag, RefreshCw, Users } from 'lucide-react';
-import Panel, { Notice } from '../parity/Panel.jsx';
-import { request } from '../../parityApi.js';
+import { Notice } from '../components/parity/Panel.jsx';
+import { adminRequest } from './adminApi.js';
 
 const TABS = [
   { id: 'overview', label: 'Overview', icon: BarChart3 },
@@ -34,18 +34,18 @@ function Bars({ series, label }) {
 }
 
 // Attachments whose file is missing on the server: how many, from when, and a clean-up of their records.
-function MediaIntegrity({ token }) {
+function MediaIntegrity() {
   const [scan, setScan] = useState(null);
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
   const [confirming, setConfirming] = useState(false);
-  const load = () => request(token, '/api/v1/admin/media-integrity').then(setScan).catch((caught) => setError(caught.message));
-  useEffect(() => { load(); }, [token]);
+  const load = () => adminRequest('/api/admin/v1/media-integrity').then(setScan).catch((caught) => setError(caught.message));
+  useEffect(() => { load(); }, []);
   const day = (ms) => (ms ? new Date(ms).toLocaleDateString() : '—');
   async function clean() {
     setConfirming(false);
     try {
-      const { removed } = await request(token, '/api/v1/admin/media-integrity/clean', { method: 'POST' });
+      const { removed } = await adminRequest('/api/admin/v1/media-integrity/clean', { method: 'POST' });
       setNotice(`Removed ${removed} record${removed === 1 ? '' : 's'} of missing files.`);
       await load();
     } catch (caught) { setError(caught.message); }
@@ -74,16 +74,16 @@ function MediaIntegrity({ token }) {
 }
 
 // Verified business badges: approve or decline requests, and remove a badge (server/verification.mjs).
-function VerificationQueue({ token }) {
+function VerificationQueue() {
   const [data, setData] = useState(null);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
-  const load = () => request(token, '/api/v1/admin/verification').then(setData).catch((caught) => setError(caught.message));
-  useEffect(() => { load(); }, [token]);
+  const load = () => adminRequest('/api/admin/v1/verification').then(setData).catch((caught) => setError(caught.message));
+  useEffect(() => { load(); }, []);
   async function decide(user, verified) {
     setError(''); setNotice('');
     try {
-      await request(token, `/api/v1/admin/users/${user.id}/verified`, { method: 'PUT', body: { verified } });
+      await adminRequest(`/api/admin/v1/users/${user.id}/verified`, { method: 'PUT', body: { verified } });
       setNotice(verified ? `@${user.username} is verified.` : `@${user.username} isn’t verified.`);
       await load();
     } catch (caught) { setError(caught.message); }
@@ -115,11 +115,11 @@ function VerificationQueue({ token }) {
   );
 }
 
-function Overview({ token }) {
+function Overview() {
   const [stats, setStats] = useState(null);
   const [error, setError] = useState('');
-  const load = () => request(token, '/api/v1/admin/stats').then(setStats).catch((caught) => setError(caught.message));
-  useEffect(() => { load(); }, [token]);
+  const load = () => adminRequest('/api/admin/v1/stats').then(setStats).catch((caught) => setError(caught.message));
+  useEffect(() => { load(); }, []);
   if (!stats) return <Notice error={error} />;
   const tiles = [
     ['Accounts', stats.users], ['Active today', stats.activeToday], ['Active this week', stats.activeWeek], ['Open reports', stats.openReports],
@@ -135,39 +135,34 @@ function Overview({ token }) {
         <span className="admin-pill">Media stored {bytes(stats.mediaBytes)}</span>
         <button type="button" className="icon-button" onClick={load} aria-label="Refresh"><RefreshCw size={16} /></button>
       </div>
-      <VerificationQueue token={token} />
-      <MediaIntegrity token={token} />
+      <VerificationQueue />
+      <MediaIntegrity />
       <Bars series={stats.signups} label="New accounts" />
       <Bars series={stats.messages} label="Direct messages sent" />
     </div>
   );
 }
 
-function UsersTab({ token }) {
+function UsersTab() {
   const [query, setQuery] = useState('');
-  const [adminsOnly, setAdminsOnly] = useState(false);
   const [rows, setRows] = useState([]);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
-  const load = () => request(token, `/api/v1/admin/users?q=${encodeURIComponent(query)}${adminsOnly ? '&role=admin' : ''}`).then(setRows).catch((caught) => setError(caught.message));
-  useEffect(() => { const timer = setTimeout(load, 250); return () => clearTimeout(timer); }, [token, query, adminsOnly]);
-  const act = (user, action, done) => request(token, `/api/v1/admin/users/${user.id}/${action}`, { method: 'POST' })
+  const load = () => adminRequest(`/api/admin/v1/users?q=${encodeURIComponent(query)}`).then(setRows).catch((caught) => setError(caught.message));
+  useEffect(() => { const timer = setTimeout(load, 250); return () => clearTimeout(timer); }, [query]);
+  const act = (user, action, done) => adminRequest(`/api/admin/v1/users/${user.id}/${action}`, { method: 'POST' })
     .then(() => { setError(''); setNotice(done); return load(); }).catch((caught) => setError(caught.message));
   return (
     <div>
       <Notice error={error} notice={notice} />
       <input className="hm-input" placeholder="Search by username or name" value={query} onChange={(event) => setQuery(event.target.value)} />
-      <div className="admin-segment" role="tablist" aria-label="Which accounts">
-        {[[false, 'Everyone'], [true, 'Admins']].map(([value, label]) => <button key={label} type="button" role="tab" aria-selected={adminsOnly === value} className={adminsOnly === value ? 'is-on' : ''} onClick={() => setAdminsOnly(value)}>{label}</button>)}
-      </div>
-      <p className="admin-hint">Make any account an admin here. Accounts listed in the ADMIN_USERNAMES setting on the server are admins at every deployment and are managed there.</p>
       <div className="admin-table">
         <table>
           <thead><tr><th>Account</th><th>Joined</th><th>Last seen</th><th>Reports</th><th>Status</th><th /></tr></thead>
           <tbody>
             {rows.map((user) => (
               <tr key={user.id}>
-                <td><strong>{user.name}</strong><small>@{user.username}{user.isAdmin ? (user.configuredAdmin ? ' · admin (server setting)' : ' · admin') : ''}</small></td>
+                <td><strong>{user.name}</strong><small>@{user.username}</small></td>
                 <td>{when(user.createdAt)}</td>
                 <td>{when(user.lastSeenAt)}</td>
                 <td>{user.openReports || ''}</td>
@@ -176,7 +171,6 @@ function UsersTab({ token }) {
                   {user.suspendedAt
                     ? <button type="button" onClick={() => act(user, 'restore', `@${user.username} restored`)}>Restore</button>
                     : <button type="button" className="is-danger" onClick={() => act(user, 'suspend', `@${user.username} suspended and signed out`)}>Suspend</button>}
-                  <button type="button" disabled={user.isAdmin && user.configuredAdmin} title={user.isAdmin && user.configuredAdmin ? 'Listed in ADMIN_USERNAMES on the server' : undefined} onClick={() => act(user, user.isAdmin ? 'unadmin' : 'admin', user.isAdmin ? `@${user.username} is no longer an admin` : `@${user.username} is now an admin`)}>{user.isAdmin ? 'Remove admin' : 'Make admin'}</button>
                 </td>
               </tr>
             ))}
@@ -187,14 +181,14 @@ function UsersTab({ token }) {
   );
 }
 
-function ReportsTab({ token }) {
+function ReportsTab() {
   const [status, setStatus] = useState('open');
   const [rows, setRows] = useState([]);
   const [error, setError] = useState('');
-  const load = () => request(token, `/api/v1/admin/reports?status=${status}`).then(setRows).catch((caught) => setError(caught.message));
-  useEffect(() => { load(); }, [token, status]);
-  const close = (report, value) => request(token, `/api/v1/admin/reports/${report.kind}/${report.id}`, { method: 'POST', body: { status: value } }).then(load).catch((caught) => setError(caught.message));
-  const suspend = (report) => request(token, `/api/v1/admin/users/${report.targetId}/suspend`, { method: 'POST' }).then(() => close(report, 'resolved')).catch((caught) => setError(caught.message));
+  const load = () => adminRequest(`/api/admin/v1/reports?status=${status}`).then(setRows).catch((caught) => setError(caught.message));
+  useEffect(() => { load(); }, [status]);
+  const close = (report, value) => adminRequest(`/api/admin/v1/reports/${report.kind}/${report.id}`, { method: 'POST', body: { status: value } }).then(load).catch((caught) => setError(caught.message));
+  const suspend = (report) => adminRequest(`/api/admin/v1/users/${report.targetId}/suspend`, { method: 'POST' }).then(() => close(report, 'resolved')).catch((caught) => setError(caught.message));
   return (
     <div>
       <Notice error={error} />
@@ -222,19 +216,19 @@ function ReportsTab({ token }) {
 
 const EMPTY_ARTICLE = { slug: '', category: 'getting-started', title: '', body: '', published: true };
 
-function HelpTab({ token }) {
+function HelpTab() {
   const [articles, setArticles] = useState([]);
   const [editing, setEditing] = useState(null);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
-  const load = () => request(token, '/api/v1/admin/help').then(setArticles).catch((caught) => setError(caught.message));
-  useEffect(() => { load(); }, [token]);
+  const load = () => adminRequest('/api/admin/v1/help').then(setArticles).catch((caught) => setError(caught.message));
+  useEffect(() => { load(); }, []);
   async function save() {
     setError('');
     try {
       const body = { slug: editing.slug, category: editing.category, title: editing.title, body: editing.body, published: editing.published };
-      if (editing.id) await request(token, `/api/v1/admin/help/${editing.id}`, { method: 'PUT', body });
-      else await request(token, '/api/v1/admin/help', { method: 'POST', body });
+      if (editing.id) await adminRequest(`/api/admin/v1/help/${editing.id}`, { method: 'PUT', body });
+      else await adminRequest('/api/admin/v1/help', { method: 'POST', body });
       setNotice(editing.published ? 'Published.' : 'Saved as hidden.');
       setEditing(null);
       await load();
@@ -254,7 +248,7 @@ function HelpTab({ token }) {
         <span className="admin-actions">
           <button type="button" className="is-primary" onClick={save} disabled={!editing.title.trim() || !editing.body.trim()}>Save</button>
           <button type="button" onClick={() => setEditing(null)}>Cancel</button>
-          {editing.id && <button type="button" className="is-danger" onClick={() => request(token, `/api/v1/admin/help/${editing.id}`, { method: 'DELETE' }).then(() => { setEditing(null); return load(); }).catch((caught) => setError(caught.message))}>Delete</button>}
+          {editing.id && <button type="button" className="is-danger" onClick={() => adminRequest(`/api/admin/v1/help/${editing.id}`, { method: 'DELETE' }).then(() => { setEditing(null); return load(); }).catch((caught) => setError(caught.message))}>Delete</button>}
         </span>
       </div>
     );
@@ -281,19 +275,21 @@ function HelpTab({ token }) {
   );
 }
 
-export default function AdminConsole({ token, onClose }) {
+export default function AdminConsole() {
   const [tab, setTab] = useState('overview');
   return (
-    <Panel title="Admin console" subtitle="Hidden Messenger" onClose={onClose}>
+    <>
       <nav className="admin-tabs" role="tablist">
         {TABS.map(({ id, label, icon: Icon }) => (
           <button key={id} type="button" role="tab" aria-selected={tab === id} className={tab === id ? 'is-on' : ''} onClick={() => setTab(id)}><Icon size={16} /> {label}</button>
         ))}
       </nav>
-      {tab === 'overview' && <Overview token={token} />}
-      {tab === 'users' && <UsersTab token={token} />}
-      {tab === 'reports' && <ReportsTab token={token} />}
-      {tab === 'help' && <HelpTab token={token} />}
-    </Panel>
+      <div className="admin-tab-body">
+        {tab === 'overview' && <Overview />}
+        {tab === 'users' && <UsersTab />}
+        {tab === 'reports' && <ReportsTab />}
+        {tab === 'help' && <HelpTab />}
+      </div>
+    </>
   );
 }

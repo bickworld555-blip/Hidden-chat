@@ -27,7 +27,8 @@ import { createVerifiedAccounts, ensureVerificationSchema, registerVerification 
 import { ensureE2eSchema, registerE2e } from './e2e.mjs';
 import { registerSfu } from './sfu.mjs';
 import { ensureExtrasSchema, registerExtras, statusAudienceSql } from './extras.mjs';
-import { adminUsernamesFrom, ensureAdminSchema, registerAdmin } from './admin.mjs';
+import { ensureAdminSchema, registerAdmin } from './admin.mjs';
+import { adminCredentialsFrom, createAdminAuth } from './adminAuth.mjs';
 import { ACCEPTED_STATUS_BACKGROUNDS } from '../src/statusColors.js';
 import { registerLinking } from './linking.mjs';
 import { registerAccount } from './account.mjs';
@@ -127,8 +128,8 @@ export function createChatServer({
   linkPreviews = null,
   // Firebase push sender ({ send }); by default from FCM_SERVICE_ACCOUNT / FCM_SERVICE_ACCOUNT_FILE, else off.
   pushSender = undefined,
-  // Accounts that are made admins at every start-up (comma-separated ADMIN_USERNAMES; default: shakil).
-  adminUsernames = adminUsernamesFrom(process.env.ADMIN_USERNAMES),
+  // The standalone admin console's sign-in (ADMIN_USERNAME / ADMIN_PASSWORD); null turns admin sign-in off.
+  adminCredentials = adminCredentialsFrom(process.env),
 } = {}) {
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('PORT must be an integer from 0 to 65535.');
   if (process.env.NODE_ENV === 'production' && port === 0) throw new Error('Production requires a fixed nonzero PORT.');
@@ -1050,13 +1051,16 @@ export function createChatServer({
     await forgetPushDevicesOf(removed.map((row) => row.hash));
   }
   // Help Center, reports about people, and the admin console (server/admin.mjs).
+  // Admin sessions are separate from chat sessions (server/adminAuth.mjs): own cookie, own routes under /api/admin.
+  const adminAuth = createAdminAuth({ app, credentials: adminCredentials });
   const admin = registerAdmin({
+    requireAdmin: adminAuth.requireAdmin,
     mediaFileExists: async (diskName) => Boolean(diskName && await stat(join(mediaDirectory, diskName)).catch(() => null)),
-    app, db, requireSession, publicUser, userColumns: USER_COLUMNS, pushEnabled: () => Boolean(push), initialAdmins: adminUsernames,
+    app, db, requireSession, publicUser, userColumns: USER_COLUMNS, pushEnabled: () => Boolean(push),
     closeUserSessions,
   });
 
-  registerVerification({ app, db, requireSession, isAdmin: (userId) => admin.isAdmin(userId), verified: verifiedAccounts, publicUser, userColumns: USER_COLUMNS });
+  registerVerification({ app, db, requireSession, requireAdmin: adminAuth.requireAdmin, verified: verifiedAccounts, publicUser, userColumns: USER_COLUMNS });
 
   // Linking a browser by scanning a QR code with the phone (server/linking.mjs).
   const linking = registerLinking({ app, requireSession, issueSession: (userId, name) => issueSession(userId, name), suspended: (userId) => admin.suspended(userId) });
@@ -2688,6 +2692,17 @@ export function createChatServer({
   }
   // Serves the Vite build when present, for hosts without a separate web server in front of the API.
   if (existsSync(join(webDirectory, 'index.html'))) {
+    // /admin is its own page (admin.html, src/admin/): none of the chat app loads there, and it is never cached,
+    // framed or indexed. Its API is /api/admin/v1 (server/adminAuth.mjs).
+    if (existsSync(join(webDirectory, 'admin.html'))) {
+      app.get(/^\/admin(?:\/.*)?$/, (_request, response) => {
+        response.setHeader('Cache-Control', 'no-store');
+        response.setHeader('X-Frame-Options', 'DENY');
+        response.setHeader('X-Robots-Tag', 'noindex, nofollow');
+        response.setHeader('Referrer-Policy', 'no-referrer');
+        response.sendFile('admin.html', { root: webDirectory });
+      });
+    }
     app.use(express.static(webDirectory, { index: 'index.html' }));
     app.get(/^(?!\/api\/|\/ws$)/, (_request, response) => response.sendFile('index.html', { root: webDirectory }));
   }

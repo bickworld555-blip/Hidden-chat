@@ -37,21 +37,11 @@ export function ensureAdminSchema(db) {
 const clean = (value, limit) => (typeof value === 'string' ? value.trim().slice(0, limit) : '');
 const day = 24 * 60 * 60 * 1000;
 
-/**
- * Admin usernames from the environment: ADMIN_USERNAMES="shakil, @ops_lead". Unset or blank keeps the
- * original single admin. Entries that aren't valid usernames are ignored.
- */
-export function adminUsernamesFrom(value) {
-  const names = String(value ?? '').split(',').map((name) => name.trim().replace(/^@/, '').toLowerCase()).filter((name) => /^[a-z0-9_]{3,24}$/.test(name));
-  return names.length ? [...new Set(names)] : ['shakil'];
-}
-
-export function registerAdmin({ app, db, requireSession, publicUser, userColumns, closeUserSessions, pushEnabled = () => false, dataDirectoryBytes = async () => null, initialAdmins = ['shakil'], mediaFileExists = async () => true }) {
+export function registerAdmin({ app, db, requireSession, requireAdmin, publicUser, userColumns, closeUserSessions, pushEnabled = () => false, dataDirectoryBytes = async () => null, mediaFileExists = async () => true }) {
   const fail = (response, status, error) => response.status(status).json({ error });
 
-  // The first admins (and the starter Help Center) are set up once, at start-up.
+  // The starter Help Center is set up once, at start-up.
   const seeded = (async () => {
-    for (const username of initialAdmins) await db.prepare('UPDATE users SET is_admin = 1 WHERE lower(username) = lower(?) AND is_admin = 0').run(username);
     const count = Number((await db.prepare('SELECT count(*) AS "count" FROM help_articles').get())?.count ?? 0);
     if (!count) {
       for (const [slug, category, title, body] of STARTER_ARTICLES) {
@@ -61,19 +51,8 @@ export function registerAdmin({ app, db, requireSession, publicUser, userColumns
     }
   })().catch((error) => console.error('Admin setup failed:', error.message));
 
-  // Configured admins are granted at start-up, and only to accounts that already exist then. An account
-  // registered later under a listed name gets the role at the next deployment, so a typo or unclaimed name in
-  // the list can't hand admin to whoever registers it first.
-  const configured = new Set(initialAdmins.map((name) => name.toLowerCase()));
-  const isConfigured = (username) => configured.has(String(username).toLowerCase());
-  async function isAdmin(userId) {
-    await seeded;
-    return Boolean(Number((await db.prepare('SELECT is_admin AS "admin" FROM users WHERE id = ?').get(userId))?.admin));
-  }
-  async function requireAdmin(request, response, next) {
-    if (!await isAdmin(request.session.user_id)) return fail(response, 404, 'Not found.');
-    return next();
-  }
+  // Admin routes live under /api/admin/v1 and take only an admin session (server/adminAuth.mjs), never a chat
+  // session: chat accounts have no admin powers.
 
   /** Sign-in and pairing refuse suspended accounts (index.mjs calls this before issuing a session). */
   async function suspended(userId) {
@@ -116,7 +95,6 @@ export function registerAdmin({ app, db, requireSession, publicUser, userColumns
   });
 
   // --- Admin: overview ---
-  app.get('/api/v1/admin/me', requireSession, requireAdmin, (_request, response) => response.json({ admin: true }));
 
   // --- Admin: stored media integrity -------------------------------------------------------------------------
   // Which attachment records have lost their file on disk (for example files saved inside an earlier release
@@ -135,18 +113,18 @@ export function registerAdmin({ app, db, requireSession, publicUser, userColumns
       missing,
     };
   }
-  app.get('/api/v1/admin/media-integrity', requireSession, requireAdmin, async (_request, response) => {
+  app.get('/api/admin/v1/media-integrity', requireAdmin, async (_request, response) => {
     response.json((await scanMedia()).scan);
   });
   // Removes the records of attachments whose file is gone, so chats show "no longer available" at once and the
   // health check reflects only real problems. Files that exist are never touched.
-  app.post('/api/v1/admin/media-integrity/clean', requireSession, requireAdmin, async (_request, response) => {
+  app.post('/api/admin/v1/media-integrity/clean', requireAdmin, async (_request, response) => {
     const { missing } = await scanMedia();
     for (const row of missing) await db.prepare('DELETE FROM media WHERE id = ?').run(row.id);
     response.json({ removed: missing.length });
   });
 
-  app.get('/api/v1/admin/stats', requireSession, requireAdmin, async (_request, response) => {
+  app.get('/api/admin/v1/stats', requireAdmin, async (_request, response) => {
     const now = Date.now();
     const count = async (sql, ...values) => Number((await db.prepare(sql).get(...values))?.count ?? 0);
     const series = async (table, column, iso) => {
@@ -182,39 +160,29 @@ export function registerAdmin({ app, db, requireSession, publicUser, userColumns
   });
 
   // --- Admin: users ---
-  app.get('/api/v1/admin/users', requireSession, requireAdmin, async (request, response) => {
+  app.get('/api/admin/v1/users', requireAdmin, async (request, response) => {
     const query = clean(String(request.query.q ?? ''), 60).toLowerCase().replace(/^@/, '');
-    const adminsOnly = request.query.role === 'admin' ? ' AND is_admin = 1' : '';
-    const rows = await db.prepare(`SELECT ${userColumns}, created_at AS "createdAt", last_seen_at AS "lastSeenAt", is_admin AS "isAdmin", suspended_at AS "suspendedAt",
+    const rows = await db.prepare(`SELECT ${userColumns}, created_at AS "createdAt", last_seen_at AS "lastSeenAt", suspended_at AS "suspendedAt",
         (SELECT count(*) FROM user_reports r WHERE r.reported_id = users.id AND r.status = 'open') AS "openReports"
-      FROM users WHERE (lower(username) LIKE ? OR lower(name) LIKE ?)${adminsOnly} ORDER BY created_at DESC LIMIT 50`).all(`%${query}%`, `%${query}%`);
+      FROM users WHERE (lower(username) LIKE ? OR lower(name) LIKE ?) ORDER BY created_at DESC LIMIT 50`).all(`%${query}%`, `%${query}%`);
     response.json(rows.map((row) => ({
       ...publicUser(row),
       createdAt: row.createdAt,
       lastSeenAt: row.lastSeenAt ? Number(row.lastSeenAt) : null,
-      isAdmin: Boolean(Number(row.isAdmin)),
-      // Listed in ADMIN_USERNAMES: the role comes back at every deployment, so it is managed there.
-      configuredAdmin: isConfigured(row.username),
       suspendedAt: row.suspendedAt ? Number(row.suspendedAt) : null,
       openReports: Number(row.openReports),
     })));
   });
 
-  app.post('/api/v1/admin/users/:userId/:action', requireSession, requireAdmin, async (request, response) => {
+  app.post('/api/admin/v1/users/:userId/:action', requireAdmin, async (request, response) => {
     const { userId, action } = request.params;
-    if (userId === request.session.user_id) return fail(response, 400, 'You can’t change your own account here.');
     const target = await db.prepare('SELECT username FROM users WHERE id = ?').get(userId);
     if (!target) return fail(response, 404, 'User not found.');
-    if (action === 'unadmin' && isConfigured(target.username)) {
-      return fail(response, 409, `@${target.username} is listed in ADMIN_USERNAMES. Remove them there and redeploy, then remove admin here.`);
-    }
     if (action === 'suspend') {
       await db.prepare('UPDATE users SET suspended_at = ? WHERE id = ?').run(Date.now(), userId);
       await closeUserSessions(userId, 'This account was suspended');
     } else if (action === 'restore') {
       await db.prepare('UPDATE users SET suspended_at = NULL WHERE id = ?').run(userId);
-    } else if (action === 'admin' || action === 'unadmin') {
-      await db.prepare('UPDATE users SET is_admin = ? WHERE id = ?').run(action === 'admin' ? 1 : 0, userId);
     } else {
       return fail(response, 400, 'Unknown action.');
     }
@@ -222,7 +190,7 @@ export function registerAdmin({ app, db, requireSession, publicUser, userColumns
   });
 
   // --- Admin: reports (people and groups) ---
-  app.get('/api/v1/admin/reports', requireSession, requireAdmin, async (request, response) => {
+  app.get('/api/admin/v1/reports', requireAdmin, async (request, response) => {
     const status = request.query.status === 'closed' ? 'closed' : 'open';
     const people = await db.prepare(`SELECT r.id, r.reason, r.details, r.created_at AS "createdAt", r.status,
         r.reported_id AS "targetId", u.username AS "targetName", u.suspended_at AS "targetSuspended", rp.username AS "reporterName"
@@ -237,20 +205,20 @@ export function registerAdmin({ app, db, requireSession, publicUser, userColumns
     ].sort((left, right) => right.createdAt - left.createdAt));
   });
 
-  app.post('/api/v1/admin/reports/:kind/:id', requireSession, requireAdmin, async (request, response) => {
+  app.post('/api/admin/v1/reports/:kind/:id', requireAdmin, async (request, response) => {
     const status = ['resolved', 'dismissed'].includes(request.body?.status) ? request.body.status : null;
     if (!status) return fail(response, 400, 'Resolve or dismiss the report.');
     const table = request.params.kind === 'group' ? 'group_reports' : request.params.kind === 'user' ? 'user_reports' : null;
     if (!table) return fail(response, 404, 'Report not found.');
     const updated = table === 'user_reports'
-      ? await db.prepare('UPDATE user_reports SET status = ?, resolved_at = ?, resolved_by = ? WHERE id = ? RETURNING id').get(status, Date.now(), request.session.user_id, request.params.id)
+      ? await db.prepare('UPDATE user_reports SET status = ?, resolved_at = ?, resolved_by = ? WHERE id = ? RETURNING id').get(status, Date.now(), request.admin.actor, request.params.id)
       : await db.prepare('UPDATE group_reports SET status = ? WHERE id = ? RETURNING id').get(status, request.params.id);
     if (!updated) return fail(response, 404, 'Report not found.');
     response.json({ ok: true });
   });
 
   // --- Admin: Help Center editor ---
-  app.get('/api/v1/admin/help', requireSession, requireAdmin, async (_request, response) => {
+  app.get('/api/admin/v1/help', requireAdmin, async (_request, response) => {
     const rows = await db.prepare(`SELECT ${articleColumns} FROM help_articles ORDER BY category, title`).all();
     response.json(rows.map(presentArticle));
   });
@@ -263,32 +231,32 @@ export function registerAdmin({ app, db, requireSession, publicUser, userColumns
     return { slug, title, body: text, category: body.category, published: body?.published !== false };
   }
 
-  app.post('/api/v1/admin/help', requireSession, requireAdmin, async (request, response) => {
+  app.post('/api/admin/v1/help', requireAdmin, async (request, response) => {
     const article = readArticle(request.body);
     if (!article) return fail(response, 400, 'Give a title, text, a category and a web address (lower-case words joined by dashes).');
     if (await db.prepare('SELECT 1 FROM help_articles WHERE slug = ?').get(article.slug)) return fail(response, 409, 'Another article already uses that web address.');
     const id = randomUUID();
     await db.prepare('INSERT INTO help_articles(id, slug, category, title, body, published, updated_at, updated_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
-      .run(id, article.slug, article.category, article.title, article.body, article.published ? 1 : 0, Date.now(), request.session.user_id);
+      .run(id, article.slug, article.category, article.title, article.body, article.published ? 1 : 0, Date.now(), request.admin.actor);
     response.status(201).json(presentArticle(await db.prepare(`SELECT ${articleColumns} FROM help_articles WHERE id = ?`).get(id)));
   });
 
-  app.put('/api/v1/admin/help/:id', requireSession, requireAdmin, async (request, response) => {
+  app.put('/api/admin/v1/help/:id', requireAdmin, async (request, response) => {
     const article = readArticle(request.body);
     if (!article) return fail(response, 400, 'Give a title, text, a category and a web address (lower-case words joined by dashes).');
     const clash = await db.prepare('SELECT id FROM help_articles WHERE slug = ? AND id <> ?').get(article.slug, request.params.id);
     if (clash) return fail(response, 409, 'Another article already uses that web address.');
     const updated = await db.prepare(`UPDATE help_articles SET slug = ?, category = ?, title = ?, body = ?, published = ?, updated_at = ?, updated_by = ? WHERE id = ? RETURNING id`)
-      .get(article.slug, article.category, article.title, article.body, article.published ? 1 : 0, Date.now(), request.session.user_id, request.params.id);
+      .get(article.slug, article.category, article.title, article.body, article.published ? 1 : 0, Date.now(), request.admin.actor, request.params.id);
     if (!updated) return fail(response, 404, 'Article not found.');
     response.json(presentArticle(await db.prepare(`SELECT ${articleColumns} FROM help_articles WHERE id = ?`).get(request.params.id)));
   });
 
-  app.delete('/api/v1/admin/help/:id', requireSession, requireAdmin, async (request, response) => {
+  app.delete('/api/admin/v1/help/:id', requireAdmin, async (request, response) => {
     const removed = await db.prepare('DELETE FROM help_articles WHERE id = ? RETURNING id').get(request.params.id);
     if (!removed) return fail(response, 404, 'Article not found.');
     response.status(204).end();
   });
 
-  return { suspended, isAdmin, ready: () => seeded };
+  return { suspended, ready: () => seeded };
 }

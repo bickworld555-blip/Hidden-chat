@@ -16,6 +16,19 @@ function androidCsp(mode) {
   };
 }
 
+// /admin is its own page (admin.html → src/admin/). In development, serve it at /admin like the server does.
+function adminPage() {
+  return {
+    name: 'hidden-admin-page',
+    configureServer(server) {
+      server.middlewares.use((request, _response, next) => {
+        if (/^\/admin(?:\/[^.?]*)?(?:\?.*)?$/.test(request.url ?? '')) request.url = '/admin.html';
+        next();
+      });
+    },
+  };
+}
+
 const configuredHosts = (process.env.VITE_ALLOWED_HOSTS ?? '')
   .split(',')
   .map((host) => host.trim().toLowerCase())
@@ -24,7 +37,9 @@ const tunnelHost = process.env.VITE_TUNNEL_HOST?.trim().toLowerCase();
 const allowedHosts = [...new Set(['localhost', '127.0.0.1', '.ngrok-free.app', ...configuredHosts, ...(tunnelHost ? [tunnelHost] : [])])];
 
 export default defineConfig(({ mode }) => ({
-  plugins: [react(), tailwindcss(), androidCsp(mode)],
+  plugins: [react(), tailwindcss(), androidCsp(mode), adminPage()],
+  // The web build has two pages: the app and the standalone admin page. The APK bundle has only the app.
+  build: mode === 'android' ? undefined : { rollupOptions: { input: { main: 'index.html', admin: 'admin.html' } } },
   server: {
     host: true,
     strictPort: true,

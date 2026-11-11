@@ -27,12 +27,8 @@ export function createVerifiedAccounts(db) {
   return { ready, has: (userId) => ids.has(userId), add: (userId) => ids.add(userId), remove: (userId) => ids.delete(userId) };
 }
 
-export function registerVerification({ app, db, requireSession, isAdmin, verified, publicUser, userColumns, now = () => Date.now() }) {
+export function registerVerification({ app, db, requireSession, requireAdmin, verified, publicUser, userColumns, now = () => Date.now() }) {
   const fail = (response, status, error) => response.status(status).json({ error });
-  async function requireAdmin(request, response, next) {
-    if (!await isAdmin(request.session.user_id)) return fail(response, 404, 'Not found.');
-    return next();
-  }
   async function stateFor(userId) {
     await verified.ready;
     if (verified.has(userId)) {
@@ -68,7 +64,7 @@ export function registerVerification({ app, db, requireSession, isAdmin, verifie
   });
 
   // --- Admin ---
-  app.get('/api/v1/admin/verification', requireSession, requireAdmin, async (_request, response) => {
+  app.get('/api/admin/v1/verification', requireAdmin, async (_request, response) => {
     const pending = await db.prepare(`SELECT ${userColumns}, r.note AS "note", r.created_at AS "requestedAt"
       FROM verification_requests r JOIN users ON users.id = r.user_id WHERE r.status = 'pending' ORDER BY r.created_at`).all();
     const granted = await db.prepare(`SELECT ${userColumns}, v.verified_at AS "verifiedAt"
@@ -80,7 +76,7 @@ export function registerVerification({ app, db, requireSession, isAdmin, verifie
   });
 
   // Grant or remove the badge (approving a request, declining it, or revoking).
-  app.put('/api/v1/admin/users/:id/verified', requireSession, requireAdmin, async (request, response) => {
+  app.put('/api/admin/v1/users/:id/verified', requireAdmin, async (request, response) => {
     const userId = request.params.id;
     const exists = await db.prepare('SELECT id FROM users WHERE id = ? AND deleted_at IS NULL').get(userId);
     if (!exists) return fail(response, 404, 'No such account.');
@@ -88,7 +84,7 @@ export function registerVerification({ app, db, requireSession, isAdmin, verifie
     const at = now();
     if (on) {
       await db.prepare('DELETE FROM verified_accounts WHERE user_id = ?').run(userId);
-      await db.prepare('INSERT INTO verified_accounts(user_id, verified_at, granted_by) VALUES (?, ?, ?)').run(userId, at, request.session.user_id);
+      await db.prepare('INSERT INTO verified_accounts(user_id, verified_at, granted_by) VALUES (?, ?, ?)').run(userId, at, request.admin.actor);
       await db.prepare("UPDATE verification_requests SET status = 'approved', decided_at = ? WHERE user_id = ?").run(at, userId);
       verified.add(userId);
     } else {
