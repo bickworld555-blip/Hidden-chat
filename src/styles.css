@@ -5124,3 +5124,44 @@ textarea.hm-input { min-height: 96px; resize: vertical; }
 .dark-theme .updates-channels-button.is-quiet { border-color: transparent; }
 /* The Tools tab is an inline panel: the app shell already clears the status bar. */
 @media (max-width: 720px) { .hm-panel.hm-panel-inline { height: 100%; padding-top: 0; } }
+
+/* Verified business badge and Settings › Verified (server/verification.mjs). */
+.verified-badge { display: inline-block; flex: none; margin-left: 5px; vertical-align: -2px; }
+.wa-row-top strong .verified-badge, .conversation-person strong .verified-badge { vertical-align: -2px; }
+.wa-info-profile h3 { display: inline-flex; align-items: center; justify-content: center; gap: 2px; }
+.app-shell .tool-item > .tool-item-badge { display: grid; place-items: center; flex: none; width: 24px; margin: 0 32px 0 4px; }
+.tool-item-badge .verified-badge { margin: 0; }
+.verified-hero { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 28px 24px 12px; text-align: center; }
+.verified-hero .verified-badge { margin: 0; filter: drop-shadow(0 6px 14px #1e3a8a40); }
+.verified-hero h3 { margin: 6px 0 0; font-size: 20px; }
+.verified-hero p { margin: 0; color: var(--wa-sub, #5b6b82); font-size: 14.5px; line-height: 1.45; }
+.verified-status { display: flex; align-items: center; gap: 12px; margin: 12px 16px; padding: 14px 16px; border-radius: 14px; background: var(--wa-chip, #e8eef8); }
+.verified-status.is-on { background: linear-gradient(135deg, #2563eb1f, #1e3a8a26); }
+.verified-status.is-declined { background: #ea00381a; }
+.verified-status > span { display: flex; flex-direction: column; gap: 2px; }
+.verified-status small { color: var(--wa-sub, #5b6b82); }
+.verified-status .verified-badge { margin: 0; }
+.verified-points { margin: 8px 16px 0; padding-left: 20px; color: var(--wa-sub, #5b6b82); font-size: 14px; line-height: 1.6; }
+.hm-primary.is-quiet { margin-top: 0; border: 1px solid var(--line); background: transparent; color: var(--wa-green, #2563eb); }
+.hm-chip.is-primary { border-color: transparent; background: #0050b8; color: #fff; }
+.admin-verification { margin-bottom: 12px; }
+
+/* Account switcher: a bottom sheet with a handle, an intro line, 76px account rows and an Add account button. */
+.account-sheet-handle { display: grid; place-items: center; width: 100%; height: 24px; margin: -6px 0 2px; padding: 0; border: 0; background: transparent; cursor: pointer; }
+.account-sheet-handle span { width: 32px; height: 4px; border-radius: 2px; background: var(--wa-sub, #8696a0); opacity: .45; }
+.account-sheet-intro { margin: 0 4px 10px; color: var(--wa-sub, #5b6b82); font-size: 14px; line-height: 1.45; }
+.account-sheet li.is-active { background: transparent; }
+.account-sheet .account-row { min-height: 64px; gap: 16px; }
+.account-sheet .account-row .avatar { width: 40px; height: 40px; }
+.account-radio { display: grid; place-items: center; flex: none; width: 20px; height: 20px; border: 2px solid var(--wa-sub, #8696a0); border-radius: 50%; color: #fff; }
+.account-radio.is-on { border-color: var(--wa-green, #2563eb); background: var(--wa-green, #2563eb); }
+.account-sheet .account-add { border: 0; border-radius: 22px; background: var(--wa-chip, #e8eef8); }
+
+/* Business profile form sections (Business information, Contact information, Links). */
+.hm-form-section { margin: 10px 0 -2px; color: var(--wa-sub, #5b6b82); font-size: 14px; font-weight: 600; }
+.hm-prefixed > span { color: var(--wa-sub, #5b6b82); font-size: 14px; }
+
+/* Three-dot menus on the Calls, Updates and Tools tab headers. */
+.tab-menu { margin-left: auto; }
+.hm-panel-inline > .hm-panel-header .tab-menu { margin-left: 0; }
+.verified-points li { list-style: disc; }

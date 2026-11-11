@@ -33,6 +33,7 @@ import BusinessInfoCard from './BusinessInfoCard.jsx';
 import { safetyNumberWith } from '../e2e/client.js';
 import { apiFetch } from '../api.js';
 import { GalleryTile } from './MediaViewer.jsx';
+import VerifiedBadge from './VerifiedBadge.jsx';
 
 const CLOSE_ANIMATION_MS = 200;
 const STRIP_LIMIT = 4;
@@ -364,7 +365,7 @@ export default function ContactInfoDrawer({
         <div className="wa-info-scroll">
           <section className="wa-info-profile">
             <Avatar name={name} initials={chat.initials ?? name.slice(0, 2).toUpperCase()} color={chat.color} image={chat.avatar} size="xl" />
-            <h3>{name}</h3>
+            <h3>{name}{chat.verified && <VerifiedBadge size={20} />}</h3>
             {chat.username && <p className="wa-info-handle">@{chat.username}{hasCustomDisplayName(chat) ? '' : ' · No display name yet'}</p>}
             {!blocked && status && <p className="wa-info-status">{status}</p>}
             <div className="wa-info-quick">

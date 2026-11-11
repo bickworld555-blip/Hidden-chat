@@ -19,6 +19,7 @@ import FormattedText from './FormattedText.jsx';
 import MessageSearch, { SearchFilterChips } from './MessageSearch.jsx';
 import { ListEditor, ListPicker, listEntries } from './ChatLists.jsx';
 import { countUnreadConversations, mergeGroupRows, unreadBadge } from '../groupRows.js';
+import VerifiedBadge from './VerifiedBadge.jsx';
 
 function GroupListRow({ row, onOpen, pressHandlers, labels = [], consumeLongPress = () => false }) {
   return (
@@ -540,7 +541,7 @@ export default function ChatsList({ onOpenChat, onStartCall, onGroups, groups = 
                 </div>
                 <span className="wa-row-body">
                   <span className="wa-row-top">
-                    <strong>{chat.name ?? 'Unknown contact'}</strong>
+                    <strong>{chat.name ?? 'Unknown contact'}{chat.verified && <VerifiedBadge size={15} />}</strong>
                     <time className={chat.unread > 0 ? 'unread' : ''}>{chat.time ?? ''}</time>
                   </span>
                   <span className="wa-row-bottom">

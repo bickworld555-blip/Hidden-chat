@@ -551,6 +551,11 @@ export const useChatStore = create((setState, getState) => ({
       ])),
     }));
   },
+  // Calls › Clear call log: this device's history (call logs live on the device).
+  clearCallLogs() {
+    setState({ callLogs: [] });
+    getState().persistCallLogs(getState().userId);
+  },
   logCall(peerId, { duration = 0, mode = 'audio', status = 'completed', direction = 'outgoing' } = {}) {
     const state = getState();
     const timestamp = new Date().toISOString();

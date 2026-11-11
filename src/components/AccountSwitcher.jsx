@@ -1,9 +1,10 @@
 import { useEffect } from 'react';
-import { Check, LogOut, Plus, X } from 'lucide-react';
+import { Check, LogOut, Plus } from 'lucide-react';
 import Avatar from './Avatar.jsx';
 import { MAX_ACCOUNTS, useAccounts } from '../accounts.js';
 
-// Sheet listing every signed-in account on this device; tap to switch, remove, or add another.
+// Bottom sheet listing every signed-in account on this device (opened from the profile row in Settings): tap to
+// switch, sign one out, or add another. Each account keeps its own chats and settings.
 export default function AccountSwitcher({ onSwitch, onRemove, onAdd, onClose, busyId = null }) {
   const { accounts, activeId } = useAccounts();
 
@@ -16,10 +17,8 @@ export default function AccountSwitcher({ onSwitch, onRemove, onAdd, onClose, bu
   return (
     <div className="profile-photo-backdrop" onClick={onClose} role="presentation">
       <div className="profile-photo-sheet account-sheet" role="dialog" aria-modal="true" aria-label="Accounts" onClick={(event) => event.stopPropagation()}>
-        <header>
-          <strong>Accounts</strong>
-          <button type="button" className="icon-button" onClick={onClose} aria-label="Close"><X size={18} /></button>
-        </header>
+        <button type="button" className="account-sheet-handle" onClick={onClose} aria-label="Close accounts"><span /></button>
+        <p className="account-sheet-intro">Switch between the accounts on this phone. Each one keeps its own chats, contacts and settings.</p>
         <ul className="account-list">
           {accounts.map((account) => {
             const active = account.id === activeId;
@@ -28,10 +27,10 @@ export default function AccountSwitcher({ onSwitch, onRemove, onAdd, onClose, bu
                 <button type="button" className="account-row" onClick={() => !active && onSwitch(account.id)} disabled={busyId === account.id} aria-current={active ? 'true' : undefined}>
                   <Avatar {...account.user} size="small" />
                   <span className="account-row-text">
-                    <strong>{account.user?.name ?? account.user?.username}</strong>
-                    <small>@{account.user?.username}{active ? ' · Active' : ''}{busyId === account.id ? ' · Switching…' : ''}</small>
+                    <strong>{account.user?.name || `@${account.user?.username}`}</strong>
+                    <small>{account.user?.name && account.user.name !== `@${account.user?.username}` ? `@${account.user?.username}` : (active ? 'Active' : 'Tap to switch')}{account.user?.name && account.user.name !== `@${account.user?.username}` && active ? ' · Active' : ''}{busyId === account.id ? ' · Switching…' : ''}</small>
                   </span>
-                  {active && <Check size={18} className="account-check" aria-label="Active account" />}
+                  <span className={`account-radio${active ? ' is-on' : ''}`} aria-label={active ? 'Active account' : undefined}>{active && <Check size={13} strokeWidth={3} />}</span>
                 </button>
                 <button type="button" className="icon-button account-remove" onClick={() => onRemove(account.id)} aria-label={`Sign out ${account.user?.username}`} title={active ? 'Log out' : 'Remove from this device'}><LogOut size={16} /></button>
               </li>

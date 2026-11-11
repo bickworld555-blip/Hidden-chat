@@ -1,6 +1,6 @@
 import { setMediaSaveEnabled, useMediaSave } from '../mediaSave.js';
 import { nativeShell } from '../native.js';
-import { Accessibility, ArrowLeft, MonitorSmartphone, QrCode, Bell, Check, ChevronRight, Contrast, CornerDownLeft, ListChecks, Type, CircleHelp, Clock, DatabaseBackup, Download, HardDrive, Image, KeyRound, Languages, Link2, Lock, LogOut, Megaphone, MessageSquare, Moon, Pencil, Radio, ScanFace, ShieldCheck, Smile, Sparkles, Star, Store, Sun, UserPlus, Users, Video, X } from 'lucide-react';
+import { Accessibility, ArrowLeft, ChevronDown, MonitorSmartphone, QrCode, Bell, Check, ChevronRight, Contrast, CornerDownLeft, ListChecks, Type, CircleHelp, Clock, DatabaseBackup, Download, HardDrive, Image, KeyRound, Languages, Link2, Lock, LogOut, Megaphone, MessageSquare, Moon, Pencil, Radio, ScanFace, ShieldCheck, Smile, Sparkles, Star, Store, Sun, UserPlus, Users, Video, X } from 'lucide-react';
 import { useChatStore } from '../store.js';
 import { WALLPAPERS, setWallpaper, useWallpaper } from '../wallpaper.js';
 import { setEnterSends, useEnterSends } from '../enterSends.js';
@@ -13,6 +13,7 @@ import { useAnimationsEnabled, useAvatarCallsEnabled, useCallAnimationsEnabled, 
 import { personaCharacter, usePersona } from '../avatar/persona.js';
 import { drawAvatar, idleExpression } from '../avatar/characters.js';
 import { useEffect, useRef, useState } from 'react';
+import VerifiedBadge from './VerifiedBadge.jsx';
 
 // Small idle-animated thumbnail of the chosen character for the settings row.
 function AvatarThumb({ persona }) {
@@ -90,7 +91,7 @@ function DisplayNameEditor({ user, userId }) {
   return (
     <div className="user-info">
       <span className="display-name-row-view">
-        <strong>{user ? presentName(user) : 'Connecting...'}</strong>
+        <strong>{user ? presentName(user) : 'Connecting...'}{user?.verified && <VerifiedBadge size={16} />}</strong>
         <button type="button" className="display-name-pencil" onClick={startEditing} disabled={!user || !sessionToken} aria-label="Edit display name" title="Edit display name">
           <Pencil size={13} />
         </button>
@@ -243,7 +244,7 @@ export default function ToolsView({ darkMode, onToggleTheme, onLogout, onNotific
             <DisplayNameEditor user={user} userId={userId} />
             <button type="button" className="profile-qr-btn" onClick={() => onSheet?.('shortlink')} aria-label="QR code" title="Your QR code and short link"><QrCode size={20} /></button>
             <button type="button" className="account-switch-btn" onClick={() => onAccounts?.()} aria-label="Switch account" title="Switch account">
-              <Users size={18} />
+              <ChevronDown size={20} />
               {accounts.length > 1 && <span className="account-switch-count">{accounts.length}</span>}
             </button>
           </div>
@@ -266,6 +267,7 @@ export default function ToolsView({ darkMode, onToggleTheme, onLogout, onNotific
         )}
 
         <div className="tools-section">
+          <Item iconNode={<span className="tool-item-badge"><VerifiedBadge size={22} /></span>} title="Verified" detail={user?.verified ? 'Your business is verified' : 'Get the verified badge for your business'} onClick={() => onSheet?.('verified')} />
           <Item icon={MonitorSmartphone} title="Linked devices" detail="Use your account on a computer" onClick={() => onAccountSettings?.('devices')} />
           <Item icon={KeyRound} title="Account" detail="Security, two-step, delete account" onClick={() => onAccountSettings?.('account')} />
           <Item icon={Lock} title="Privacy" detail="Last seen, read receipts, status, app lock" onClick={() => onAccountSettings?.('privacy')} />

@@ -54,6 +54,7 @@ const GroupsView = lazyComponent(() => import('./components/GroupsView.jsx'));
 // WhatsApp (Business) parity screens.
 const CommunitiesView = lazyComponent(() => import('./components/parity/CommunitiesView.jsx'));
 const BusinessTools = lazyComponent(() => import('./components/parity/BusinessTools.jsx'));
+const VerifiedPanel = lazyComponent(() => import('./components/parity/VerifiedPanel.jsx'));
 const StarredMessages = lazyComponent(() => import('./components/parity/StarredMessages.jsx'));
 const extrasPanels = () => import('./components/extras/ExtrasPanels.jsx');
 const AdminConsole = lazyComponent(() => import('./components/admin/AdminConsole.jsx'));
@@ -919,11 +920,11 @@ export default function App() {
               onSheet={(id) => (id === 'linked' ? setAccountSettingsOpen('devices') : setParitySheet(id))} />
             : <ChatWindow key={chat.id} chat={chat} connection={connection} client={client} onPair={() => setPairingOpen(true)} onBack={() => setMobileListOpen(true)} onStartCall={(mode) => initiateCall(chat.id, mode)} onGroups={openGroups} />
         ) : activeTab === 'calls' ? (
-          <CallsView onCall={initiateCall} onSheet={setParitySheet} />
+          <CallsView onCall={initiateCall} onSheet={setParitySheet} onSettings={() => setActiveTab('tools')} />
         ) : activeTab === 'updates' ? (
-          <UpdatesView onOpenChannels={(id) => { setChannelToOpen(id ?? ''); setParitySheet('channels'); }} />
+          <UpdatesView onOpenChannels={(id) => { setChannelToOpen(id ?? ''); setParitySheet('channels'); }} onSheet={setParitySheet} onSettings={() => setActiveTab('tools')} />
         ) : activeTab === 'business' && sessionToken ? (
-          <BusinessTools inline token={sessionToken} userId={userId} onSheet={setParitySheet} onClose={() => setActiveTab('chats')} />
+          <BusinessTools inline token={sessionToken} userId={userId} onSheet={setParitySheet} onSettings={() => setActiveTab('tools')} onClose={() => setActiveTab('chats')} />
         ) : activeTab === 'communities' && sessionToken ? (
           <CommunitiesView inline token={sessionToken} revision={groupRevision} onClose={() => setActiveTab('chats')} onOpenGroup={(id) => openGroups(false, id)} />
         ) : activeTab === 'tools' ? (
@@ -943,6 +944,8 @@ export default function App() {
       {accountsOpen && <AccountSwitcher busyId={switchingId} onSwitch={switchAccount} onRemove={removeAccountFromDevice} onAdd={() => { setAccountsOpen(false); setAuthOpen(true); }} onClose={() => setAccountsOpen(false)} />}
       {avatarStudioOpen && <AvatarStudio onClose={() => setAvatarStudioOpen(false)} />}
       {sessionToken && paritySheet === 'communities' && <CommunitiesView token={sessionToken} revision={groupRevision} onClose={() => setParitySheet(null)} onOpenGroup={(id) => { setParitySheet(null); openGroups(false, id); }} />}
+      {sessionToken && paritySheet === 'verified' && <VerifiedPanel token={sessionToken} onClose={() => setParitySheet(null)} onOpenBusinessProfile={() => setParitySheet('businessprofile')} />}
+      {sessionToken && paritySheet === 'businessprofile' && <BusinessTools token={sessionToken} userId={userId} initialSection="profile" onClose={() => setParitySheet(null)} />}
       {sessionToken && paritySheet === 'shortlink' && <BusinessTools token={sessionToken} userId={userId} initialSection="link" onClose={() => setParitySheet(null)} />}
       {sessionToken && paritySheet === 'business' && <BusinessTools token={sessionToken} userId={userId} onSheet={setParitySheet} onClose={() => setParitySheet(null)} />}
       {sessionToken && paritySheet === 'starred' && <StarredMessages token={sessionToken} userId={userId} onClose={() => setParitySheet(null)}

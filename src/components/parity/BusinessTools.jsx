@@ -10,6 +10,7 @@ import { refreshLabels, refreshQuickReplies, useAccountData } from '../../accoun
 import { LABEL_PALETTE, labelColor } from '../../labels.js';
 import { CatalogImage, formatPrice } from './ProductCard.jsx';
 import Panel, { Notice } from './Panel.jsx';
+import TabMenu from '../TabMenu.jsx';
 
 // Grouped the way a business messenger's Tools tab is: selling, organising chats, then the business itself.
 const GROUPS = [
@@ -32,7 +33,7 @@ const GROUPS = [
 export const BUSINESS_SECTIONS = GROUPS.flatMap(([, items]) => items).filter((item) => !item.sheet);
 
 // inline: the Tools tab (the menu sits in the tab; each tool opens full screen over it).
-export default function BusinessTools({ token, userId, onClose, onSheet, initialSection = null, inline = false }) {
+export default function BusinessTools({ token, userId, onClose, onSheet, onSettings, initialSection = null, inline = false }) {
   const [section, setSection] = useState(initialSection);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -44,7 +45,8 @@ export default function BusinessTools({ token, userId, onClose, onSheet, initial
   const current = BUSINESS_SECTIONS.find((item) => item.id === section);
   const feedback = { onError: (message) => { setNotice(''); setError(message); }, onNotice: (message) => { setError(''); setNotice(message); } };
   return (
-    <Panel inline={inline && !section} title={current?.label ?? (inline ? 'Tools' : 'Business tools')} onClose={onClose} onBack={section && !initialSection ? () => { setSection(null); setError(''); } : undefined}>
+    <Panel inline={inline && !section} title={current?.label ?? (inline ? 'Tools' : 'Business tools')} onClose={onClose} onBack={section && !initialSection ? () => { setSection(null); setError(''); } : undefined}
+      actions={inline && !section ? <TabMenu items={[{ label: 'Short link', onClick: () => setSection('link') }, { label: 'Verified', onClick: () => onSheet?.('verified') }, { label: 'Settings', onClick: () => onSettings?.() }]} /> : null}>
       <Notice error={error} notice={notice} />
       {!section && GROUPS.map(([title, items]) => (
         <section key={title} className="hm-menu-group">
@@ -439,20 +441,31 @@ function BusinessProfileForm({ token, onError, onNotice }) {
     <form className="hm-form" onSubmit={save}>
       <p className="hm-muted">People who chat with you see this in your contact info.</p>
       <CoverPicker token={token} cover={profile.cover} onChanged={(next) => { setSettings(next); onNotice('Cover photo updated.'); }} onError={onError} />
+      <h4 className="hm-form-section">Business information</h4>
       <label>Category<input list="business-categories" value={profile.category} maxLength={60} onChange={(event) => update({ category: event.target.value })} placeholder="Choose or type a category" /></label>
       <datalist id="business-categories">{BUSINESS_CATEGORIES.map((name) => <option key={name} value={name} />)}</datalist>
       <label>Description<textarea value={profile.description} maxLength={512} rows={3} onChange={(event) => update({ description: event.target.value })} placeholder="What your business does" /></label>
+      <h4 className="hm-form-section">Contact information</h4>
       <label>Address<input value={profile.address} maxLength={256} onChange={(event) => update({ address: event.target.value })} placeholder="Street, city" autoComplete="street-address" /></label>
       <label>Email<input type="email" value={profile.email} maxLength={128} onChange={(event) => update({ email: event.target.value })} placeholder="name@example.com" autoComplete="email" /></label>
       <label>Website<input value={profile.website} maxLength={256} onChange={(event) => update({ website: event.target.value })} placeholder="example.com" inputMode="url" autoComplete="url" /></label>
-      <fieldset className="hm-radio-list hm-links"><legend>Links (up to {MAX_LINKS})</legend>
-        {(profile.links ?? []).map((link, index) => (
+      <h4 className="hm-form-section">Links</h4>
+      {/* Instagram and Facebook have their own fields; they're saved as labelled links (up to MAX_LINKS in all). */}
+      {SOCIAL_LINKS.map((social) => (
+        <label key={social.label}>{social.label}
+          <span className="hm-prefixed"><span aria-hidden="true">{social.host}/</span>
+            <input value={socialHandle(profile.links, social)} maxLength={80} placeholder="yourbusiness" autoCapitalize="none" inputMode="url"
+              onChange={(event) => update({ links: withSocial(profile.links, social, event.target.value) })} /></span>
+        </label>
+      ))}
+      <fieldset className="hm-radio-list hm-links"><legend>Other links</legend>
+        {(profile.links ?? []).map((link, index) => (isSocial(link) ? null : (
           <div key={index} className="hm-link-row">
-            <input value={link.label} maxLength={40} placeholder="Label (Instagram, Shop…)" aria-label={`Link ${index + 1} label`} onChange={(event) => update({ links: profile.links.map((item, at) => (at === index ? { ...item, label: event.target.value } : item)) })} />
-            <input value={link.url} maxLength={256} placeholder="instagram.com/yourshop" inputMode="url" aria-label={`Link ${index + 1} address`} onChange={(event) => update({ links: profile.links.map((item, at) => (at === index ? { ...item, url: event.target.value } : item)) })} />
+            <input value={link.label} maxLength={40} placeholder="Label (Shop, Menu…)" aria-label={`Link ${index + 1} label`} onChange={(event) => update({ links: profile.links.map((item, at) => (at === index ? { ...item, label: event.target.value } : item)) })} />
+            <input value={link.url} maxLength={256} placeholder="example.com/shop" inputMode="url" aria-label={`Link ${index + 1} address`} onChange={(event) => update({ links: profile.links.map((item, at) => (at === index ? { ...item, url: event.target.value } : item)) })} />
             <button type="button" className="icon-button" aria-label={`Remove link ${index + 1}`} onClick={() => update({ links: profile.links.filter((_, at) => at !== index) })}><X size={16} /></button>
           </div>
-        ))}
+        )))}
         {(profile.links ?? []).length < MAX_LINKS && <button type="button" className="groups-secondary" onClick={() => update({ links: [...(profile.links ?? []), { label: '', url: '' }] })}><Link2 size={16} /> Add link</button>}
       </fieldset>
       <p className="hm-muted">Business hours: {settings.away.hours ? hoursSummary(settings.away.hours) : 'not set'} (Business tools › Business hours)</p>
@@ -461,6 +474,22 @@ function BusinessProfileForm({ token, onError, onNotice }) {
   );
 }
 const MAX_LINKS = 4;
+
+// Instagram and Facebook: typed as a handle (or pasted as a full address), stored as { label, url } links.
+export const SOCIAL_LINKS = [{ label: 'Instagram', host: 'instagram.com' }, { label: 'Facebook', host: 'facebook.com' }];
+const isSocial = (link) => SOCIAL_LINKS.some((social) => social.label === link?.label);
+export function socialHandle(links = [], social) {
+  const url = links.find((link) => link.label === social.label)?.url ?? '';
+  return url.replace(/^https?:\/\//i, '').replace(/^www\./i, '').replace(new RegExp(`^${social.host.replace('.', '\\.')}/?`, 'i'), '').replace(/\/$/, '');
+}
+export function withSocial(links = [], social, value) {
+  const others = links.filter((link) => link.label !== social.label);
+  const handle = value.trim().replace(/^@/, '');
+  if (!handle) return others;
+  const url = /\./.test(handle) && /\//.test(handle) ? handle : `https://${social.host}/${handle}`;
+  const socials = [...others.filter(isSocial), { label: social.label, url }].sort((a, b) => SOCIAL_LINKS.findIndex((x) => x.label === a.label) - SOCIAL_LINKS.findIndex((x) => x.label === b.label));
+  return [...socials, ...others.filter((link) => !isSocial(link))].slice(0, MAX_LINKS);
+}
 
 // The cover photo across the top of the business profile (shown to customers in contact info).
 export function BusinessCover({ path, token, className = 'hm-business-cover' }) {

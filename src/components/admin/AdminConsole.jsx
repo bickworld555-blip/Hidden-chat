@@ -73,6 +73,48 @@ function MediaIntegrity({ token }) {
   );
 }
 
+// Verified business badges: approve or decline requests, and remove a badge (server/verification.mjs).
+function VerificationQueue({ token }) {
+  const [data, setData] = useState(null);
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  const load = () => request(token, '/api/v1/admin/verification').then(setData).catch((caught) => setError(caught.message));
+  useEffect(() => { load(); }, [token]);
+  async function decide(user, verified) {
+    setError(''); setNotice('');
+    try {
+      await request(token, `/api/v1/admin/users/${user.id}/verified`, { method: 'PUT', body: { verified } });
+      setNotice(verified ? `@${user.username} is verified.` : `@${user.username} isn’t verified.`);
+      await load();
+    } catch (caught) { setError(caught.message); }
+  }
+  return (
+    <section className="admin-verification" aria-label="Verified businesses">
+      <h3 className="hm-section">Verified businesses</h3>
+      <Notice error={error} notice={notice} />
+      {!data ? <p className="hm-muted">Loading…</p> : (
+        <>
+          {data.pending.length === 0 && <p className="hm-muted">No requests waiting.</p>}
+          {data.pending.map((item) => (
+            <div key={item.user.id} className="hm-row">
+              <span className="hm-row-main"><span><strong>@{item.user.username}</strong><small>{item.note || 'No note'} · {new Date(item.requestedAt).toLocaleDateString()}</small></span></span>
+              <button type="button" className="hm-chip" onClick={() => decide(item.user, false)}>Decline</button>
+              <button type="button" className="hm-chip is-primary" onClick={() => decide(item.user, true)}>Approve</button>
+            </div>
+          ))}
+          {data.verified.length > 0 && <p className="hm-muted">Verified: {data.verified.length}</p>}
+          {data.verified.map((item) => (
+            <div key={item.user.id} className="hm-row">
+              <span className="hm-row-main"><span><strong>@{item.user.username}</strong><small>Since {new Date(item.verifiedAt).toLocaleDateString()}</small></span></span>
+              <button type="button" className="hm-chip" onClick={() => decide(item.user, false)}>Remove</button>
+            </div>
+          ))}
+        </>
+      )}
+    </section>
+  );
+}
+
 function Overview({ token }) {
   const [stats, setStats] = useState(null);
   const [error, setError] = useState('');
@@ -93,6 +135,7 @@ function Overview({ token }) {
         <span className="admin-pill">Media stored {bytes(stats.mediaBytes)}</span>
         <button type="button" className="icon-button" onClick={load} aria-label="Refresh"><RefreshCw size={16} /></button>
       </div>
+      <VerificationQueue token={token} />
       <MediaIntegrity token={token} />
       <Bars series={stats.signups} label="New accounts" />
       <Bars series={stats.messages} label="Direct messages sent" />

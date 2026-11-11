@@ -66,6 +66,7 @@ import { StickerMessage, StickerPalette } from './parity/Stickers.jsx';
 import { ComposerAssist } from './parity/ComposerAssist.jsx';
 import PinnedBanner from './parity/PinnedBanner.jsx';
 import { ProductCard, parseProductContent, productContent } from './parity/ProductCard.jsx';
+import VerifiedBadge from './VerifiedBadge.jsx';
 const CatalogPicker = lazyComponent(() => import('./parity/CatalogPicker.jsx'));
 
 function usePageVisible() {
@@ -1623,6 +1624,7 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
             <span>
               <strong>
                 {presentName(chat) || 'Unknown contact'}
+                {chat.verified && <VerifiedBadge size={15} />}
                 {chat.disappearSeconds > 0 && <Timer size={13} className="conversation-timer" aria-label={`Disappearing messages: ${disappearingLabel(chat.disappearSeconds)}`} />}
               </strong>
               <small>

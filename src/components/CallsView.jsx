@@ -6,6 +6,7 @@ import { groupCallLogs } from '../callLogGroups.js';
 import { presentName } from '../profile.js';
 import { useBackHandler } from '../backStack.js';
 import Avatar from './Avatar.jsx';
+import TabMenu from './TabMenu.jsx';
 
 function describeDuration(seconds) {
   const total = Math.max(0, Math.floor(seconds));
@@ -56,7 +57,8 @@ function ContactPicker({ title, chats, onClose, onPick, onCall }) {
 
 // Calls tab: shortcuts (new call, call links, favourites), Favourites (shared with the Favourites chat filter) with one-tap voice and video, the Recent list
 // (back-to-back calls with the same person are one row with a count), and a new-call button.
-export default function CallsView({ onCall, onSheet }) {
+export default function CallsView({ onCall, onSheet, onSettings }) {
+  const clearCallLogs = useChatStore((state) => state.clearCallLogs);
   const callLogs = useChatStore((state) => state.callLogs);
   const chats = useChatStore((state) => state.chats);
   const favouriteChatIds = useChatStore((state) => state.favouriteChatIds ?? []);
@@ -69,7 +71,13 @@ export default function CallsView({ onCall, onSheet }) {
 
   return (
     <div className="calls-view-container">
-      <div className="calls-header"><h2>Calls</h2></div>
+      <div className="calls-header"><h2>Calls</h2>
+        <TabMenu items={[
+          { label: 'Call links', onClick: () => onSheet?.('calllinks') },
+          callLogs?.length > 0 && { label: 'Clear call log', onClick: () => { if (window.confirm('Clear your call log on this device?')) clearCallLogs(); } },
+          { label: 'Settings', onClick: () => onSettings?.() },
+        ]} />
+      </div>
       <div className="calls-list-content">
         {/* Shortcuts in a row of round buttons, as on a business messenger's Calls tab. */}
         <div className="calls-quick" role="toolbar" aria-label="Call shortcuts">

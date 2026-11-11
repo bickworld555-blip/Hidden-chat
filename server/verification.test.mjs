@@ -1,0 +1,70 @@
+// Verified business badge (server/verification.mjs): a business asks, an admin approves, everyone sees the badge.
+import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { after, before, test } from 'node:test';
+import { createChatServer } from './index.mjs';
+
+const PASSWORD = 'correct horse battery staple';
+let directory;
+let service;
+let base;
+
+async function start() {
+  await service?.close();
+  service = createChatServer({ port: 0, host: '127.0.0.1', databasePath: join(directory, 'db.sqlite'), pushSender: null, adminUsernames: ['shakil'] });
+  base = `http://127.0.0.1:${(await service.listen()).port}`;
+}
+async function api(path, { token, method = 'GET', body } = {}) {
+  const response = await fetch(base + path, { method, headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(body ? { 'Content-Type': 'application/json' } : {}) }, body: body ? JSON.stringify(body) : undefined });
+  const text = await response.text();
+  return { status: response.status, body: text ? JSON.parse(text) : null };
+}
+const register = async (username) => (await api('/api/v1/auth/register', { method: 'POST', body: { username, dob: '1990-04-12', password: PASSWORD } })).body;
+const contactOf = async (token, userId) => (await api('/api/v1/contacts', { token })).body.find((row) => row.id === userId);
+const login = async (identity) => (await api('/api/v1/auth/login', { method: 'POST', body: { identity, password: PASSWORD } })).body;
+
+before(async () => {
+  directory = mkdtempSync(join(tmpdir(), 'relay-verified-'));
+  await start();
+  await register('shakil');
+  await start();
+});
+after(async () => {
+  await service?.close();
+  if (directory) rmSync(directory, { recursive: true, force: true });
+});
+
+test('a business asks for the verified badge, an admin approves it, and others see it; revoking removes it', async () => {
+  const admin = await login('shakil');
+  const shop = await register('bakery_shop');
+  const customer = await register('customer_1');
+  await api('/api/v1/contacts', { token: customer.token, method: 'POST', body: { userId: shop.user.id } });
+
+  assert.deepEqual((await api('/api/v1/me/verification', { token: shop.token })).body, { status: 'none' });
+  const early = await api('/api/v1/me/verification', { token: shop.token, method: 'POST', body: { note: 'Bakery on Lake Road' } });
+  assert.equal(early.status, 400, 'a business category comes first');
+  await api('/api/v1/business', { token: shop.token, method: 'PUT', body: { profile: { category: 'Bakery', description: 'Bread' } } });
+  const asked = await api('/api/v1/me/verification', { token: shop.token, method: 'POST', body: { note: 'Bakery on Lake Road' } });
+  assert.equal(asked.status, 201);
+  assert.equal(asked.body.status, 'pending');
+  assert.equal((await api('/api/v1/me/verification', { token: shop.token, method: 'POST', body: {} })).status, 409, 'one request at a time');
+
+  assert.equal((await api('/api/v1/admin/verification', { token: shop.token })).status, 404, 'only admins see requests');
+  const queue = await api('/api/v1/admin/verification', { token: admin.token });
+  assert.deepEqual(queue.body.pending.map((item) => [item.user.username, item.note]), [['bakery_shop', 'Bakery on Lake Road']]);
+
+  assert.equal((await api(`/api/v1/admin/users/${shop.user.id}/verified`, { token: shop.token, method: 'PUT', body: { verified: true } })).status, 404);
+  const approved = await api(`/api/v1/admin/users/${shop.user.id}/verified`, { token: admin.token, method: 'PUT', body: { verified: true } });
+  assert.equal(approved.body.status, 'verified');
+  assert.equal((await contactOf(customer.token, shop.user.id)).verified, true, 'the badge is on the public record');
+  assert.equal((await api('/api/v1/admin/verification', { token: admin.token })).body.pending.length, 0);
+
+  // Survives a restart (loaded from the database).
+  await start();
+  assert.equal((await contactOf(customer.token, shop.user.id)).verified, true);
+
+  await api(`/api/v1/admin/users/${shop.user.id}/verified`, { token: admin.token, method: 'PUT', body: { verified: false } });
+  assert.equal((await contactOf(customer.token, shop.user.id)).verified, undefined);
+});

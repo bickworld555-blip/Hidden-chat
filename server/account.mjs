@@ -33,6 +33,8 @@ export const PERSONAL_ROWS = [
   ['business_auto_replies', 'user_id = ? OR peer_id = ?'],
   ['business_profiles', 'user_id = ?'],
   ['catalog_collections', 'user_id = ?'],
+  ['verified_accounts', 'user_id = ?'],
+  ['verification_requests', 'user_id = ?'],
   ['catalog_items', 'user_id = ?'],
   ['label_chats', 'label_id IN (SELECT id FROM labels WHERE user_id = ?)'],
   ['labels', 'user_id = ?'],

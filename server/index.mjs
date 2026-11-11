@@ -23,6 +23,7 @@ import { pdfPageCountOfFile } from './pdfPages.mjs';
 import { createLinkPreviews } from './linkPreview.mjs';
 import { createPushSender, encryptForDevice, loadServiceAccount, validDeviceKey } from './push.mjs';
 import { createLoginThrottle, ensureParitySchema, registerParity } from './parity.mjs';
+import { createVerifiedAccounts, ensureVerificationSchema, registerVerification } from './verification.mjs';
 import { ensureE2eSchema, registerE2e } from './e2e.mjs';
 import { registerSfu } from './sfu.mjs';
 import { ensureExtrasSchema, registerExtras, statusAudienceSql } from './extras.mjs';
@@ -398,7 +399,10 @@ export function createChatServer({
   ensureE2eSchema(db);
   ensureExtrasSchema(db);
   ensureAdminSchema(db);
+  ensureVerificationSchema(db);
   }
+  // Verified business badges (server/verification.mjs), read into memory for public user records.
+  const verifiedAccounts = createVerifiedAccounts(db);
   const upsertLink = db.prepare(`INSERT INTO contacts(owner_id, contact_id, created_at, saved, hidden) VALUES (?, ?, ?, ?, 0)
     ON CONFLICT(owner_id, contact_id) DO UPDATE SET saved = CASE WHEN contacts.saved > excluded.saved THEN contacts.saved ELSE excluded.saved END, hidden = 0`);
   // Links `peerId` into `ownerId`'s chat list (un-hiding a deleted thread); `save` also puts them in the contact book.
@@ -651,7 +655,7 @@ export function createChatServer({
 
   function publicUser(row) {
     const avatar = row.avatar_disk_name ? `/api/v1/users/${encodeURIComponent(row.id)}/avatar?v=${row.avatar_updated_at ?? 0}` : null;
-    return { id: row.id, username: row.username, name: row.name, initials: row.initials, color: row.color, avatar };
+    return { id: row.id, username: row.username, name: row.name, initials: row.initials, color: row.color, avatar, ...(verifiedAccounts.has(row.id) ? { verified: true } : {}) };
   }
 
   async function hashPassword(password) {
@@ -1051,6 +1055,8 @@ export function createChatServer({
     app, db, requireSession, publicUser, userColumns: USER_COLUMNS, pushEnabled: () => Boolean(push), initialAdmins: adminUsernames,
     closeUserSessions,
   });
+
+  registerVerification({ app, db, requireSession, isAdmin: (userId) => admin.isAdmin(userId), verified: verifiedAccounts, publicUser, userColumns: USER_COLUMNS });
 
   // Linking a browser by scanning a QR code with the phone (server/linking.mjs).
   const linking = registerLinking({ app, requireSession, issueSession: (userId, name) => issueSession(userId, name), suspended: (userId) => admin.suspended(userId) });

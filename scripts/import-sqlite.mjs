@@ -50,6 +50,8 @@ export const IMPORT_TABLES = Object.freeze([
   { name: 'broadcast_members', columns: ['list_id', 'user_id'], users: ['user_id'], key: ['list_id', 'user_id'] },
   { name: 'channels', columns: ['id', 'owner_id', 'name', 'description', 'created_at', 'category'], users: ['owner_id'] },
   { name: 'catalog_collections', columns: ['id', 'user_id', 'name', 'item_ids', 'created_at'], users: ['user_id'] },
+  { name: 'verified_accounts', columns: ['user_id', 'verified_at', 'granted_by'], users: ['user_id'], key: ['user_id'] },
+  { name: 'verification_requests', columns: ['user_id', 'note', 'status', 'created_at', 'decided_at'], users: ['user_id'], key: ['user_id'] },
   { name: 'channel_admins', columns: ['channel_id', 'user_id', 'added_at'], users: ['user_id'], key: ['channel_id', 'user_id'] },
   { name: 'channel_followers', columns: ['channel_id', 'user_id', 'followed_at'], users: ['user_id'], key: ['channel_id', 'user_id'] },
   { name: 'channel_posts', columns: ['id', 'channel_id', 'author_id', 'content', 'created_at'], users: ['author_id'] },

@@ -4,6 +4,7 @@ import { Camera, ChevronLeft, Eye, Pencil, Plus, Send, Trash2, Type, X } from 'l
 import { useChatStore } from '../store.js';
 import { apiFetch } from '../api.js';
 import Avatar from './Avatar.jsx';
+import TabMenu from './TabMenu.jsx';
 import { loadMediaBlob } from '../media.js';
 import { presentName } from '../profile.js';
 import { useBackHandler } from '../backStack.js';
@@ -17,7 +18,7 @@ const IMAGE_SECONDS = 5;
 
 // The Updates tab: a row of status cards (yours first: Add status; then new, viewed and muted updates),
 // channels below, and buttons for a text or camera status.
-export default function UpdatesView({ onOpenChannels }) {
+export default function UpdatesView({ onOpenChannels, onSheet, onSettings }) {
   const token = useChatStore((state) => state.sessionToken);
   const userId = useChatStore((state) => state.userId);
   const me = useChatStore((state) => state.user);
@@ -100,6 +101,12 @@ export default function UpdatesView({ onOpenChannels }) {
     <div className="updates-view-container">
       <div className="updates-header">
         <h2>Updates</h2>
+        <TabMenu items={[
+          { label: 'Create channel', onClick: () => onOpenChannels?.(':create') },
+          { label: 'Status privacy', onClick: () => onSheet?.('statusprivacy') },
+          { label: 'Starred messages', onClick: () => onSheet?.('starred') },
+          { label: 'Settings', onClick: () => onSettings?.() },
+        ]} />
       </div>
       <div className="updates-content">
         <h3 className="status-title">Status</h3>
