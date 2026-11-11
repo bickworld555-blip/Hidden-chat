@@ -262,7 +262,7 @@ test('the UI wires PiP calls, screen sharing, download progress, the camera shor
   assert.ok(app.includes('async function switchAccount(id)') && app.includes('addOrActivateAccount(session)') && app.includes('removeAccountFromDevice'), 'accounts are added, switched and removed');
   assert.ok(app.includes('const following = next.accounts.find((item) => item.id === next.activeId)'), 'logging out the active account moves to the next one');
   assert.ok(switcher.includes("aria-current={active ? 'true' : undefined}") && switcher.includes('Add account'), 'the switcher marks the active account');
-  assert.ok(tools.includes('<strong>Accounts</strong>') && tools.includes('account-strip') && sidebar.includes('Switch account'), 'entry points in Tools and the sidebar');
+  assert.ok(tools.includes('title="Accounts"') && tools.includes('account-strip') && sidebar.includes('Switch account'), 'entry points in Tools and the sidebar');
 });
 
 test('the UI wires group chats: attachments, unread badges, group-bound calls, clear and report', async () => {
@@ -345,8 +345,8 @@ test('the UI wires the WhatsApp composer, display names, the live-location sheet
   assert.ok(tools.includes('className="display-name-pencil"') && tools.includes('aria-label="Edit display name"') && styles.includes('.display-name-pencil {') && !styles.includes('.display-name-button svg { color: #89969b; opacity: 0;'), 'an always-visible pencil beside the name opens the editor');
   assert.ok(sidebar.includes('presentName(user)') && drawer.includes('presentName(chat)') && chat.includes('presentName(chat)') && !chat.includes('className="conversation-handle"'), 'headers show the display name; the chat header has no @handle line (like WhatsApp)');
 
-  assert.ok(tools.includes('<strong>Animation</strong>') && tools.includes('setAnimationsEnabled(!animations)') && tools.includes('role="switch"'), 'an Animation switch in Settings & Preferences');
-  assert.ok(tools.includes('<strong>Animation Video Call</strong>') && tools.includes('setCallAnimationsEnabled(!callAnimations)') && tools.includes('Off while Animation is off'), 'a separate Animation Video Call switch with its own description');
+  assert.ok(tools.includes('title="Animation"') && tools.includes('setAnimationsEnabled(!animations)') && tools.includes("role: 'switch'"), 'an Animation switch in Settings › Chats');
+  assert.ok(tools.includes('title="Animation Video Call"') && tools.includes('setCallAnimationsEnabled(!callAnimations)') && tools.includes('Off while Animation is off'), 'a separate Animation Video Call switch with its own description');
   assert.ok(app.includes('document.documentElement.dataset.animations = animationsAttribute(appearance)') && app.includes('data-animations={animationsAttribute(appearance)}'), 'the preference is applied to the document');
   assert.ok(app.includes('data-call-animations={callAnimationsAttribute(appearance)}') && styles.includes('[data-call-animations="off"] .wa-call-backdrop *'), 'call-screen motion is scoped to the call overlay');
   assert.ok(styles.includes('[data-animations="off"] *') && styles.includes('transition-duration: 0s !important'), 'one rule turns motion off');

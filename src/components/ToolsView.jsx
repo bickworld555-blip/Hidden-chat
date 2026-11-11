@@ -1,6 +1,6 @@
 import { setMediaSaveEnabled, useMediaSave } from '../mediaSave.js';
 import { nativeShell } from '../native.js';
-import { Settings, Users, Plus, ChevronRight, LogOut, Bell, Moon, Sun, Pencil, Check, X, Sparkles, Video, ScanFace, Download, Store, Star, DatabaseBackup, HardDrive, Radio, Megaphone, Clock, Link2, EyeOff, Languages, ShieldCheck, UserPlus } from 'lucide-react';
+import { ArrowLeft, Bell, Check, ChevronRight, CircleDashed, CircleHelp, Clock, DatabaseBackup, Download, EyeOff, HardDrive, KeyRound, Languages, Link2, Lock, LogOut, Megaphone, MessageSquare, Moon, Pencil, Radio, ScanFace, ShieldCheck, Smile, Sparkles, Star, Store, Sun, UserPlus, Users, Video, X } from 'lucide-react';
 import { useChatStore } from '../store.js';
 import ProfilePhoto from './ProfilePhoto.jsx';
 import Avatar from './Avatar.jsx';
@@ -99,34 +99,99 @@ function DisplayNameEditor({ user, userId }) {
   );
 }
 
+
+// One settings row: icon, title and a one-line detail; a chevron, or a switch when `checked` is given.
+function Item({ icon: Icon, iconNode, title, detail, onClick, checked, disabled, className = '' }) {
+  const isSwitch = typeof checked === 'boolean';
+  return (
+    <button type="button" className={`tool-item ${className}`} onClick={onClick} disabled={disabled}
+      {...(isSwitch ? { role: 'switch', 'aria-checked': checked } : {})}>
+      {iconNode ?? <Icon size={20} />}
+      <div className="tool-item-info">
+        <strong>{title}</strong>
+        {detail && <small>{detail}</small>}
+      </div>
+      {isSwitch ? <span className={`wa-switch${checked ? ' on' : ''}`} aria-hidden="true"><span /></span> : <ChevronRight size={16} />}
+    </button>
+  );
+}
+
+export const HELP_CENTER_URL = 'https://hiddenmessenger.com/help';
+
+// Settings, in the order a business messenger uses: Business tools first, then Account, Privacy, Avatar, Chats,
+// Notifications, Storage and data, App language, Help, Invite a friend. Privacy, Avatar and Chats open their own
+// page here; the rest open their panels.
 export default function ToolsView({ darkMode, onToggleTheme, onLogout, onNotifications, onAccountSettings, onAccounts, onAvatarStudio, onGroups, onCommunities, onBusinessTools, onStarred, onBackup, onStorage, onSheet, isAdmin = false }) {
   const user = useChatStore((state) => state.user);
   const userId = useChatStore((state) => state.userId);
   const { accounts } = useAccounts();
-  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [page, setPage] = useState(null);
   const animations = useAnimationsEnabled();
   const callAnimations = useCallAnimationsEnabled();
   const avatarCalls = useAvatarCallsEnabled();
   const persona = usePersona();
   const mediaSave = useMediaSave();
   const inApp = nativeShell();
+  const openHelp = () => { window.open(HELP_CENTER_URL, '_blank', 'noopener'); };
+
+  const pages = {
+    privacy: ['Privacy', (
+      <div className="tools-section">
+        <Item icon={EyeOff} title="Last seen, profile photo and read receipts" detail="Who sees what, app lock and two-step verification" onClick={onAccountSettings} />
+        <Item icon={CircleDashed} title="Status" detail="Who sees your status, muted updates" onClick={() => onSheet?.('statusprivacy')} />
+        <Item icon={Link2} title="Call links" detail="Let people call you with a link, revoke any time" onClick={() => onSheet?.('calllinks')} />
+      </div>
+    )],
+    avatar: ['Avatar', (
+      <div className="tools-section">
+        <Item iconNode={<AvatarThumb persona={persona} />} title="Your avatar"
+          detail={persona ? `${personaCharacter(persona).name} · ${persona.profile ? 'face scan saved' : 'not scanned yet'} · tap to change` : 'Set up your animated avatar'} onClick={onAvatarStudio} />
+        <Item icon={ScanFace} title="Animation Video Call" checked={avatarCalls}
+          detail={avatarCalls ? `Your cartoon avatar (${personaCharacter(persona).name}) replaces your camera in video calls` : persona ? 'Video calls send your real camera' : 'Scan your face once and pick a cartoon character'}
+          onClick={() => { if (!avatarCalls && !persona) onAvatarStudio?.(); setAvatarCallsEnabled(!avatarCalls); }} />
+      </div>
+    )],
+    chats: ['Chats', (
+      <div className="tools-section">
+        <h3>Display</h3>
+        <Item icon={darkMode ? Sun : Moon} title="Theme" detail={darkMode ? 'Dark · tap for light' : 'Light · tap for dark'} onClick={onToggleTheme} />
+        <Item icon={Sparkles} title="Animation" checked={animations} detail={animations ? 'Transitions and motion effects are on' : 'Reduced motion · transitions are off'} onClick={() => setAnimationsEnabled(!animations)} />
+        <Item icon={Video} title="Call screen animations" checked={callAnimations}
+          detail={!animations ? 'Off while Animation is off' : callAnimations ? 'Ringing pulse, connect and picture-in-picture transitions during calls' : 'Call screens switch instantly, without motion'}
+          onClick={() => setCallAnimationsEnabled(!callAnimations)} />
+        <h3>Chat settings</h3>
+        <Item icon={Download} title="Media Save" checked={mediaSave && Boolean(inApp)} disabled={!inApp}
+          detail={!inApp ? 'In the Android app: save received photos, videos and files to the phone' : mediaSave ? 'On · received media is saved to Download/Hidden Messenger' : 'Off · received media stays in the chat until you tap download'}
+          onClick={() => setMediaSaveEnabled(!mediaSave)} />
+        <Item icon={DatabaseBackup} title="Chat backup" detail="Encrypted backup, restore and chat export" onClick={onBackup} />
+        <Item icon={Star} title="Starred messages" detail="Saved on your account, on every device" onClick={onStarred} />
+      </div>
+    )],
+  };
+
+  if (page && pages[page]) {
+    const [title, body] = pages[page];
+    return (
+      <div className="tools-view-container">
+        <div className="tools-header">
+          <button type="button" className="icon-button" onClick={() => setPage(null)} aria-label="Back to settings"><ArrowLeft size={18} /></button>
+          <h2>{title}</h2>
+        </div>
+        <div className="tools-content">{body}</div>
+      </div>
+    );
+  }
 
   return (
     <div className="tools-view-container">
       <div className="tools-header">
-        <h2>Tools</h2>
-        <button 
-          className="icon-button" 
-          title="More options"
-          onClick={() => setSettingsOpen(!settingsOpen)}
-          aria-label="Open settings"
-        >
-          <Settings size={18} />
+        <h2>Settings</h2>
+        <button type="button" className="icon-button" title="Switch account" onClick={() => onAccounts?.()} aria-label="Switch account">
+          <Users size={18} />
         </button>
       </div>
 
       <div className="tools-content">
-        {/* User Profile Card */}
         <div className="user-profile-section">
           <div className="user-profile-card">
             <ProfilePhoto size="large" />
@@ -147,195 +212,36 @@ export default function ToolsView({ darkMode, onToggleTheme, onLogout, onNotific
           )}
         </div>
 
-        {/* Workspace & Communities */}
         <div className="tools-section">
-          <h3>Workspace & Communities</h3>
-          <button className="tool-item" onClick={onGroups}>
-            <Users size={20} />
-            <div className="tool-item-info">
-              <strong>Create a group</strong>
-              <small>Start a new group chat</small>
-            </div>
-            <ChevronRight size={16} />
-          </button>
-          <button className="tool-item" onClick={() => onCommunities?.()}>
-            <Users size={20} />
-            <div className="tool-item-info">
-              <strong>Create a community</strong>
-              <small>Organize groups under one space</small>
-            </div>
-            <ChevronRight size={16} />
-          </button>
-          <button className="tool-item" onClick={() => onBusinessTools?.()}>
-            <Store size={20} />
-            <div className="tool-item-info">
-              <strong>Business tools</strong>
-              <small>Catalog, labels, quick replies, away and greeting messages</small>
-            </div>
-            <ChevronRight size={16} />
-          </button>
-          {isAdmin && (
-            <button className="tool-item" onClick={() => onSheet?.('admin')}>
-              <ShieldCheck size={20} />
-              <div className="tool-item-info">
-                <strong>Admin console</strong>
-                <small>Statistics, users, reports, Help Center</small>
-              </div>
-              <ChevronRight size={16} />
-            </button>
-          )}
-          {[
-            ['channels', Radio, 'Channels', 'Follow channels or start your own'],
-            ['broadcasts', Megaphone, 'Broadcast lists', 'One message, sent privately to many'],
-            ['scheduled', Clock, 'Scheduled messages', 'Write now, send later (end-to-end encrypted)'],
-            ['calllinks', Link2, 'Call links', 'Let people call you with a link'],
-            ['statusprivacy', EyeOff, 'Status privacy', 'Who sees your status, muted updates'],
-            ['language', Languages, 'App language', 'English, বাংলা, हिन्दी, Español'],
-            ['invite', UserPlus, 'Invite a friend', 'Text an invite to someone in your contacts'],
-          ].map(([id, Icon, title, detail]) => (
-            <button key={id} className="tool-item" onClick={() => onSheet?.(id)}>
-              <Icon size={20} />
-              <div className="tool-item-info">
-                <strong>{title}</strong>
-                <small>{detail}</small>
-              </div>
-              <ChevronRight size={16} />
-            </button>
-          ))}
-          <button className="tool-item" onClick={() => onStarred?.()}>
-            <Star size={20} />
-            <div className="tool-item-info">
-              <strong>Starred messages</strong>
-              <small>Saved on your account, on every device</small>
-            </div>
-            <ChevronRight size={16} />
-          </button>
-          <button className="tool-item" onClick={() => onBackup?.()}>
-            <DatabaseBackup size={20} />
-            <div className="tool-item-info">
-              <strong>Chat backup</strong>
-              <small>Encrypted backup, restore and chat export</small>
-            </div>
-            <ChevronRight size={16} />
-          </button>
-          <button className="tool-item" onClick={() => onStorage?.()}>
-            <HardDrive size={20} />
-            <div className="tool-item-info">
-              <strong>Storage and data</strong>
-              <small>Manage storage, photo upload quality</small>
-            </div>
-            <ChevronRight size={16} />
-          </button>
+          <Item icon={Store} title="Business tools" detail="Business profile, catalog, hours, labels and messaging tools" onClick={onBusinessTools} />
         </div>
 
-        {/* Settings & Preferences */}
         <div className="tools-section">
-          <h3>Settings & Preferences</h3>
-          <button className="tool-item" onClick={() => onNotifications?.()}>
-            <Bell size={20} />
-            <div className="tool-item-info">
-              <strong>Notifications</strong>
-              <small>Tones, vibration, reminders and badges</small>
-            </div>
-            <ChevronRight size={16} />
-          </button>
-          <button className="tool-item" onClick={() => onToggleTheme?.()}>
-            {darkMode ? <Sun size={20} /> : <Moon size={20} />}
-            <div className="tool-item-info">
-              <strong>Theme</strong>
-              <small>Switch to {darkMode ? 'light' : 'dark'} mode</small>
-            </div>
-            <ChevronRight size={16} />
-          </button>
-          <button type="button" className="tool-item" role="switch" aria-checked={animations} onClick={() => setAnimationsEnabled(!animations)}>
-            <Sparkles size={20} />
-            <div className="tool-item-info">
-              <strong>Animation</strong>
-              <small>{animations ? 'Transitions and motion effects are on' : 'Reduced motion · transitions are off'}</small>
-            </div>
-            <span className={`wa-switch${animations ? ' on' : ''}`} aria-hidden="true"><span /></span>
-          </button>
-          <button type="button" className="tool-item" role="switch" aria-checked={avatarCalls} onClick={() => { if (!avatarCalls && !persona) onAvatarStudio?.(); setAvatarCallsEnabled(!avatarCalls); }}>
-            <ScanFace size={20} />
-            <div className="tool-item-info">
-              <strong>Animation Video Call</strong>
-              <small>
-                {avatarCalls
-                  ? `Your cartoon avatar (${personaCharacter(persona).name}) replaces your camera in video calls`
-                  : persona ? 'Video calls send your real camera' : 'Scan your face once and pick a cartoon character'}
-              </small>
-            </div>
-            <span className={`wa-switch${avatarCalls ? ' on' : ''}`} aria-hidden="true"><span /></span>
-          </button>
-          <button className="tool-item" onClick={() => onAvatarStudio?.()}>
-            <AvatarThumb persona={persona} />
-            <div className="tool-item-info">
-              <strong>Your avatar</strong>
-              <small>{persona ? `${personaCharacter(persona).name} · ${persona.profile ? 'face scan saved' : 'not scanned yet'} · tap to change` : 'Set up your animated avatar'}</small>
-            </div>
-            <ChevronRight size={16} />
-          </button>
-          <button type="button" className="tool-item" role="switch" aria-checked={callAnimations} onClick={() => setCallAnimationsEnabled(!callAnimations)}>
-            <Video size={20} />
-            <div className="tool-item-info">
-              <strong>Call screen animations</strong>
-              <small>
-                {!animations
-                  ? 'Off while Animation is off'
-                  : callAnimations
-                    ? 'Ringing pulse, connect and picture-in-picture transitions during calls'
-                    : 'Call screens switch instantly, without motion'}
-              </small>
-            </div>
-            <span className={`wa-switch${callAnimations ? ' on' : ''}`} aria-hidden="true"><span /></span>
-          </button>
-          <button type="button" className="tool-item" role="switch" aria-checked={mediaSave} disabled={!inApp} onClick={() => setMediaSaveEnabled(!mediaSave)}>
-            <Download size={20} />
-            <div className="tool-item-info">
-              <strong>Media Save</strong>
-              <small>
-                {!inApp
-                  ? 'In the Android app: save received photos, videos and files to the phone'
-                  : mediaSave
-                    ? 'On · received media is saved to Download/Hidden Messenger'
-                    : 'Off · received media stays in the chat until you tap download'}
-              </small>
-            </div>
-            <span className={`wa-switch${mediaSave && inApp ? ' on' : ''}`} aria-hidden="true"><span /></span>
-          </button>
-          <button className="tool-item" onClick={() => onAccounts?.()}>
-            <Users size={20} />
-            <div className="tool-item-info">
-              <strong>Accounts</strong>
-              <small>{accounts.length > 1 ? `${accounts.length} accounts on this device · switch or add` : 'Add another account and switch anytime'}</small>
-            </div>
-            <ChevronRight size={16} />
-          </button>
-          <button className="tool-item" onClick={() => onAccountSettings?.()}>
-            <Settings size={20} />
-            <div className="tool-item-info">
-              <strong>Account & privacy</strong>
-              <small>Last seen, change password, linked devices</small>
-            </div>
-            <ChevronRight size={16} />
-          </button>
+          <Item icon={KeyRound} title="Account" detail="Security, password, two-step verification, linked devices" onClick={onAccountSettings} />
+          <Item icon={Lock} title="Privacy" detail="Last seen, status, call links" onClick={() => setPage('privacy')} />
+          <Item icon={Smile} title="Avatar" detail="Create, edit, use in video calls" onClick={() => setPage('avatar')} />
+          <Item icon={MessageSquare} title="Chats" detail="Theme, animations, media save, backup" onClick={() => setPage('chats')} />
+          <Item icon={Bell} title="Notifications" detail="Message, group and call tones" onClick={onNotifications} />
+          <Item icon={HardDrive} title="Storage and data" detail="Manage storage, photo upload quality" onClick={onStorage} />
+          <Item icon={Languages} title="App language" detail="English, বাংলা, हिन्दी, Español" onClick={() => onSheet?.('language')} />
+          <Item icon={CircleHelp} title="Help" detail="Help Center, privacy" onClick={openHelp} />
+          <Item icon={UserPlus} title="Invite a friend" detail="Text an invite to someone in your contacts" onClick={() => onSheet?.('invite')} />
         </div>
 
-        {/* Account Actions */}
         <div className="tools-section">
-          <button 
-            className="tool-item logout-item"
-            onClick={onLogout}
-          >
-            <LogOut size={20} />
-            <div className="tool-item-info">
-              <strong>Log out</strong>
-              <small>Sign out from this device</small>
-            </div>
-            <ChevronRight size={16} />
-          </button>
+          <h3>More tools</h3>
+          <Item icon={Users} title="Create a group" detail="Start a new group chat" onClick={onGroups} />
+          <Item icon={Users} title="Create a community" detail="Organize groups under one space" onClick={onCommunities} />
+          <Item icon={Radio} title="Channels" detail="Follow channels or start your own" onClick={() => onSheet?.('channels')} />
+          <Item icon={Megaphone} title="Broadcast lists" detail="One message, sent privately to many" onClick={() => onSheet?.('broadcasts')} />
+          <Item icon={Clock} title="Scheduled messages" detail="Write now, send later (end-to-end encrypted)" onClick={() => onSheet?.('scheduled')} />
+          {isAdmin && <Item icon={ShieldCheck} title="Admin console" detail="Statistics, users, reports, Help Center" onClick={() => onSheet?.('admin')} />}
         </div>
 
+        <div className="tools-section">
+          <Item icon={Users} title="Accounts" detail={accounts.length > 1 ? `${accounts.length} accounts on this device · switch or add` : 'Add another account and switch anytime'} onClick={onAccounts} />
+          <Item icon={LogOut} title="Log out" detail="Sign out from this device" onClick={onLogout} className="logout-item" />
+        </div>
       </div>
     </div>
   );

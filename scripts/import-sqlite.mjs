@@ -35,7 +35,7 @@ export const IMPORT_TABLES = Object.freeze([
   { name: 'message_stars', columns: ['user_id', 'message_id', 'chat_key', 'starred_at'], users: ['user_id'], key: ['user_id', 'message_id'] },
   { name: 'chat_prefs', columns: ['user_id', 'chat_key', 'archived', 'updated_at'], users: ['user_id'], key: ['user_id', 'chat_key'] },
   { name: 'pinned_messages', columns: ['chat_key', 'message_id', 'pinned_by', 'pinned_at'], users: ['pinned_by'], key: ['chat_key', 'message_id'] },
-  { name: 'business_profiles', columns: ['user_id', 'away_enabled', 'away_text', 'away_schedule', 'away_hours', 'greeting_enabled', 'greeting_text', 'updated_at'], users: ['user_id'] },
+  { name: 'business_profiles', columns: ['user_id', 'away_enabled', 'away_text', 'away_schedule', 'away_hours', 'greeting_enabled', 'greeting_text', 'updated_at', 'category', 'description', 'address', 'email', 'website'], users: ['user_id'] },
   { name: 'business_auto_replies', columns: ['user_id', 'peer_id', 'kind', 'sent_at'], users: ['user_id', 'peer_id'], key: ['user_id', 'peer_id', 'kind'] },
   { name: 'catalog_items', columns: ['id', 'user_id', 'name', 'description', 'price', 'currency', 'link', 'hidden', 'image_disk_name', 'image_type', 'created_at', 'updated_at'], users: ['user_id'] },
   { name: 'labels', columns: ['id', 'user_id', 'name', 'color', 'created_at'], users: ['user_id'] },

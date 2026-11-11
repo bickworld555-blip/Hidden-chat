@@ -1,22 +1,30 @@
-// WhatsApp Business tools: catalog, chat labels, quick replies, and away / greeting messages.
+// Business tools, laid out like a business messenger's: manage the business (profile, catalog, hours, labels)
+// and messaging tools (greeting, away, quick replies). Profile, hours and auto-replies share /api/v1/business.
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ChevronRight, Clock, Hand, ImagePlus, MessageSquareText, Pencil, Plus, ShoppingBag, Tag, Trash2, Zap } from 'lucide-react';
+import { CalendarClock, ChevronRight, Clock, Hand, ImagePlus, MessageSquareText, Pencil, Plus, ShoppingBag, Store, Tag, Trash2, Zap } from 'lucide-react';
 import * as api from '../../parityApi.js';
 import { refreshLabels, refreshQuickReplies, useAccountData } from '../../accountData.js';
 import { LABEL_PALETTE, labelColor } from '../../labels.js';
 import { CatalogImage, formatPrice } from './ProductCard.jsx';
 import Panel, { Notice } from './Panel.jsx';
 
-const SECTIONS = [
-  { id: 'catalog', label: 'Catalog', detail: 'Show products and services', icon: ShoppingBag },
-  { id: 'labels', label: 'Labels', detail: 'Organise chats and customers', icon: Tag },
-  { id: 'quick', label: 'Quick replies', detail: 'Type / in a chat to reuse messages', icon: Zap },
-  { id: 'away', label: 'Away message', detail: 'Reply automatically when you’re away', icon: Clock },
-  { id: 'greeting', label: 'Greeting message', detail: 'Welcome new customers', icon: Hand },
+const GROUPS = [
+  ['Manage your business', [
+    { id: 'profile', label: 'Business profile', detail: 'Category, description, address, email and website', icon: Store },
+    { id: 'catalog', label: 'Catalog', detail: 'Show products and services', icon: ShoppingBag },
+    { id: 'hours', label: 'Business hours', detail: 'When you’re open, shown on your profile', icon: CalendarClock },
+    { id: 'labels', label: 'Labels', detail: 'Organise chats and customers', icon: Tag },
+  ]],
+  ['Messaging', [
+    { id: 'greeting', label: 'Greeting message', detail: 'Welcome new customers automatically', icon: Hand },
+    { id: 'away', label: 'Away message', detail: 'Reply automatically when you’re away', icon: Clock },
+    { id: 'quick', label: 'Quick replies', detail: 'Type / in a chat to reuse messages', icon: Zap },
+  ]],
 ];
+export const BUSINESS_SECTIONS = GROUPS.flatMap(([, items]) => items);
 
-export default function BusinessTools({ token, userId, onClose }) {
-  const [section, setSection] = useState(null);
+export default function BusinessTools({ token, userId, onClose, initialSection = null }) {
+  const [section, setSection] = useState(initialSection);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   useEffect(() => {
@@ -24,24 +32,29 @@ export default function BusinessTools({ token, userId, onClose }) {
     const timer = setTimeout(() => setNotice(''), 2500);
     return () => clearTimeout(timer);
   }, [notice]);
-  const current = SECTIONS.find((item) => item.id === section);
+  const current = BUSINESS_SECTIONS.find((item) => item.id === section);
   const feedback = { onError: (message) => { setNotice(''); setError(message); }, onNotice: (message) => { setError(''); setNotice(message); } };
   return (
     <Panel title={current?.label ?? 'Business tools'} onClose={onClose} onBack={section ? () => { setSection(null); setError(''); } : undefined}>
       <Notice error={error} notice={notice} />
-      {!section && (
-        <ul className="hm-menu-list">
-          {SECTIONS.map((item) => (
-            <li key={item.id}>
-              <button type="button" onClick={() => setSection(item.id)}>
-                <item.icon size={22} aria-hidden="true" />
-                <span><strong>{item.label}</strong><small>{item.detail}</small></span>
-                <ChevronRight size={16} aria-hidden="true" />
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
+      {!section && GROUPS.map(([title, items]) => (
+        <section key={title} className="hm-menu-group">
+          <h3 className="hm-section">{title}</h3>
+          <ul className="hm-menu-list">
+            {items.map((item) => (
+              <li key={item.id}>
+                <button type="button" onClick={() => setSection(item.id)}>
+                  <item.icon size={22} aria-hidden="true" />
+                  <span><strong>{item.label}</strong><small>{item.detail}</small></span>
+                  <ChevronRight size={16} aria-hidden="true" />
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ))}
+      {section === 'profile' && <BusinessProfileForm token={token} {...feedback} />}
+      {section === 'hours' && <BusinessHoursForm token={token} {...feedback} />}
       {section === 'catalog' && <CatalogManager token={token} userId={userId} {...feedback} />}
       {section === 'labels' && <LabelsManager token={token} {...feedback} />}
       {section === 'quick' && <QuickRepliesManager token={token} {...feedback} />}
@@ -249,13 +262,17 @@ function AutoMessage({ kind, token, onError, onNotice }) {
           <label><input type="radio" name="away-schedule" checked={value.schedule === 'offline'} onChange={() => update({ schedule: 'offline' })} /> Only when I’m offline (no Hidden Messenger app open)</label>
         </fieldset>
       )}
-      {kind === 'away' && <BusinessHoursEditor hours={value.hours ?? null} onChange={(hours) => update({ hours })} />}
+      {kind === 'away' && (
+        <p className="hm-muted">{value.hours
+          ? `Sent only outside your business hours (${hoursSummary(value.hours)}). Change them in Business tools › Business hours.`
+          : 'No business hours set, so it follows the schedule above. Set them in Business tools › Business hours to send it only when you’re closed.'}</p>
+      )}
       <button type="submit" className="groups-primary" disabled={busy || (value.enabled && !value.text.trim())}>{busy ? 'Saving…' : 'Save'}</button>
     </form>
   );
 }
 
-// Opening hours for the away message (sent only outside them), in this device's time zone.
+// Opening hours: shown to customers, and the away message goes out only outside them. Set in this device's time zone.
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const toTime = (minute) => `${String(Math.floor(minute / 60)).padStart(2, "0")}:${String(minute % 60).padStart(2, "0")}`;
 const fromTime = (text) => { const [hours, minutes] = String(text).split(':').map(Number); return hours * 60 + minutes; };
@@ -265,8 +282,8 @@ function BusinessHoursEditor({ hours, onChange }) {
   const set = (nextDays) => onChange({ timeZone, days: nextDays });
   return (
     <fieldset className="hm-radio-list hm-hours"><legend>Business hours</legend>
-      <label className="hm-switch-row"><span><strong>Only outside business hours</strong><small>The away message goes out only when you’re closed ({timeZone}).</small></span>
-        <input type="checkbox" className="groups-switch-input" checked={Boolean(hours)} onChange={(event) => onChange(event.target.checked ? { timeZone, days: { 1: [540, 1020], 2: [540, 1020], 3: [540, 1020], 4: [540, 1020], 5: [540, 1020] } } : null)} aria-label="Only outside business hours" /></label>
+      <label className="hm-switch-row"><span><strong>Set business hours</strong><small>Shown on your profile ({timeZone}). Your away message, when on, goes out only when you’re closed.</small></span>
+        <input type="checkbox" className="groups-switch-input" checked={Boolean(hours)} onChange={(event) => onChange(event.target.checked ? { timeZone, days: { 1: [540, 1020], 2: [540, 1020], 3: [540, 1020], 4: [540, 1020], 5: [540, 1020] } } : null)} aria-label="Set business hours" /></label>
       {hours && DAY_NAMES.map((name, index) => {
         const range = days[index];
         return (
@@ -283,5 +300,101 @@ function BusinessHoursEditor({ hours, onChange }) {
         );
       })}
     </fieldset>
+  );
+}
+
+/** "Mon–Fri 09:00–17:00, Sat 10:00–14:00" style summary of business hours. */
+export function hoursSummary(hours) {
+  if (!hours) return '';
+  const order = [1, 2, 3, 4, 5, 6, 0];
+  const short = (index) => DAY_NAMES[index].slice(0, 3);
+  const runs = [];
+  for (const day of order) {
+    const range = hours.days?.[day];
+    if (!range) continue;
+    const key = range.join('-');
+    const last = runs.at(-1);
+    if (last && last.key === key && order.indexOf(day) === order.indexOf(last.end) + 1) last.end = day;
+    else runs.push({ key, start: day, end: day, range });
+  }
+  if (!runs.length) return 'Closed every day';
+  return runs.map((run) => `${short(run.start)}${run.end !== run.start ? `–${short(run.end)}` : ''} ${toTime(run.range[0])}–${toTime(run.range[1])}`).join(', ');
+}
+
+/** Whether the business is open now, in its own time zone (null when it has no hours). */
+export function openNow(hours, at = new Date()) {
+  if (!hours) return null;
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: hours.timeZone, weekday: 'short', hour: 'numeric', minute: 'numeric', hourCycle: 'h23' })
+    .formatToParts(at).map((part) => [part.type, part.value]));
+  const range = hours.days?.[['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(parts.weekday)];
+  const minute = Number(parts.hour) * 60 + Number(parts.minute);
+  return Boolean(range && minute >= range[0] && minute < range[1]);
+}
+
+export const BUSINESS_CATEGORIES = ['Shopping & retail', 'Food & grocery', 'Restaurant', 'Bakery', 'Clothing & apparel', 'Beauty, cosmetic & personal care',
+  'Health & medical', 'Education', 'Professional services', 'Automotive service', 'Travel & transportation', 'Hotel & lodging',
+  'Event planning & service', 'Finance', 'Public service', 'Entertainment', 'Non-profit organisation', 'Other business'];
+
+function useBusinessSettings(token, onError) {
+  const [settings, setSettings] = useState(null);
+  useEffect(() => { api.getBusinessProfile(token).then(setSettings).catch((caught) => onError(caught.message)); }, [token, onError]);
+  return [settings, setSettings];
+}
+
+function BusinessProfileForm({ token, onError, onNotice }) {
+  const [settings, setSettings] = useBusinessSettings(token, onError);
+  const [busy, setBusy] = useState(false);
+  if (!settings) return <p className="hm-muted hm-padded">Loading…</p>;
+  const profile = settings.profile;
+  const update = (patch) => setSettings({ ...settings, profile: { ...profile, ...patch } });
+  async function save(event) {
+    event.preventDefault();
+    setBusy(true);
+    try {
+      setSettings(await api.saveBusinessProfile(token, { profile }));
+      onNotice('Business profile saved.');
+    } catch (caught) {
+      onError(caught.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <form className="hm-form" onSubmit={save}>
+      <p className="hm-muted">People who chat with you see this in your contact info.</p>
+      <label>Category<input list="business-categories" value={profile.category} maxLength={60} onChange={(event) => update({ category: event.target.value })} placeholder="Choose or type a category" /></label>
+      <datalist id="business-categories">{BUSINESS_CATEGORIES.map((name) => <option key={name} value={name} />)}</datalist>
+      <label>Description<textarea value={profile.description} maxLength={512} rows={3} onChange={(event) => update({ description: event.target.value })} placeholder="What your business does" /></label>
+      <label>Address<input value={profile.address} maxLength={256} onChange={(event) => update({ address: event.target.value })} placeholder="Street, city" autoComplete="street-address" /></label>
+      <label>Email<input type="email" value={profile.email} maxLength={128} onChange={(event) => update({ email: event.target.value })} placeholder="name@example.com" autoComplete="email" /></label>
+      <label>Website<input value={profile.website} maxLength={256} onChange={(event) => update({ website: event.target.value })} placeholder="example.com" inputMode="url" autoComplete="url" /></label>
+      <p className="hm-muted">Business hours: {settings.away.hours ? hoursSummary(settings.away.hours) : 'not set'} (Business tools › Business hours)</p>
+      <button type="submit" className="groups-primary" disabled={busy}>{busy ? 'Saving…' : 'Save'}</button>
+    </form>
+  );
+}
+
+function BusinessHoursForm({ token, onError, onNotice }) {
+  const [settings, setSettings] = useBusinessSettings(token, onError);
+  const [busy, setBusy] = useState(false);
+  if (!settings) return <p className="hm-muted hm-padded">Loading…</p>;
+  const hours = settings.away.hours ?? null;
+  async function save(event) {
+    event.preventDefault();
+    setBusy(true);
+    try {
+      setSettings(await api.saveBusinessProfile(token, { away: { hours } }));
+      onNotice(hours ? 'Business hours saved.' : 'Business hours removed.');
+    } catch (caught) {
+      onError(caught.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <form className="hm-form" onSubmit={save}>
+      <BusinessHoursEditor hours={hours} onChange={(next) => setSettings({ ...settings, away: { ...settings.away, hours: next } })} />
+      <button type="submit" className="groups-primary" disabled={busy}>{busy ? 'Saving…' : 'Save'}</button>
+    </form>
   );
 }

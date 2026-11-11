@@ -4727,3 +4727,19 @@ canvas.recording-wave { color: #5d6662; }
 /* Phones: chat rows are name, preview, time and badges only (calls start from the chat header or Calls tab),
    so the preview gets the full width. */
 @media (max-width: 899px) { .app-shell .wa-row-actions { display: none; } }
+/* Business profile in contact info (BusinessInfoCard.jsx) and the grouped Business tools menu */
+.wa-business-card { display: grid; gap: 10px; padding: 14px 18px; }
+.wa-business-kicker { display: flex; align-items: center; gap: 6px; margin: 0; color: var(--wa-green, #1d4ed8); font-weight: 600; font-size: 13px; }
+.wa-business-description { margin: 0; color: var(--wa-text, #0f1b2d); white-space: pre-wrap; }
+.wa-business-row { display: flex; align-items: flex-start; gap: 12px; margin: 0; color: var(--wa-text, #0f1b2d); }
+.wa-business-row svg { flex: none; margin-top: 2px; color: var(--wa-sub, #5b6b82); }
+.wa-business-row span { display: grid; }
+.wa-business-row small { color: var(--wa-sub, #5b6b82); }
+.wa-business-row a { color: var(--wa-green, #1d4ed8); text-decoration: none; word-break: break-all; }
+.wa-business-row .is-open { color: #16a34a; }
+.wa-business-row .is-closed { color: #dc2626; }
+.hm-menu-group + .hm-menu-group { margin-top: 8px; }
+.hm-menu-group .hm-section { margin: 12px 16px 4px; font-size: 13px; font-weight: 600; color: var(--wa-sub, #5b6b82); text-transform: none; }
+/* Settings header: a title like the other screens (sentence case, full size), back arrow on sub-pages. */
+.app-shell .tools-header { justify-content: flex-start; gap: 12px; }
+.app-shell .tools-header h2 { flex: 1; font-size: 20px; font-weight: 600; text-transform: none; letter-spacing: 0; color: var(--wa-text); }

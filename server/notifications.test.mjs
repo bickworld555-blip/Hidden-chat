@@ -188,7 +188,7 @@ test('the panel and the app are wired: sections, pickers, tones on events, vibra
   assert.ok(app.includes("playNotificationTone('reaction')") && app.includes("showSystemNotification('reaction'"), 'reactions to my messages notify');
   assert.ok(app.includes('applyAppBadge({ chats: [...chats, ...groupRows.filter((row) => !row.muted)], callLogs, callsSeenAt })') && app.includes('maybeRemind({ unseenCount: unseen() })'));
   assert.ok(app.includes('<NotificationSettings onClose=') && app.includes('onNotifications={() => setNotificationsOpen(true)}'));
-  assert.ok(tools.includes('onClick={() => onNotifications?.()}') && sidebar.includes('title="Notifications" onClick={onNotifications}'));
+  assert.ok(tools.includes('title="Notifications" detail="Message, group and call tones" onClick={onNotifications}') && sidebar.includes('title="Notifications" onClick={onNotifications}'));
   assert.ok(overlay.includes("vibrateFor('incomingCall')") && overlay.includes('stopVibration()'), 'incoming calls vibrate with the call pattern');
   assert.ok(chatWindow.includes("playNotificationTone('sent')"), 'outgoing messages play the conversation tone');
   assert.ok(sounds.includes("if (plan.tone === 'silent') return stopTone(categoryId)") && sounds.includes('playToneChoice(plan.tone, kind, { loop, volume: plan.volume, key: categoryId, defaultId: defaultToneForCategory(categoryId, kind) })'), 'playback follows the resolved choice');

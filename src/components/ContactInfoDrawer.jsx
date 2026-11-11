@@ -29,6 +29,7 @@ import { parseMediaRef, saveBlob } from '../media.js';
 import { formatViewerTimestamp } from '../time.js';
 import { hasCustomDisplayName, presentName } from '../profile.js';
 import Avatar from './Avatar.jsx';
+import BusinessInfoCard from './BusinessInfoCard.jsx';
 import { safetyNumberWith } from '../e2e/client.js';
 import { apiFetch } from '../api.js';
 import { GalleryTile } from './MediaViewer.jsx';
@@ -372,6 +373,8 @@ export default function ContactInfoDrawer({
               <button type="button" onClick={() => leaveTo(onSearch)}><Search size={20} /><span>Search</span></button>
             </div>
           </section>
+
+          {!blocked && <BusinessInfoCard userId={chatId} sessionToken={sessionToken} />}
 
           <section className="wa-info-section">
             <Row title="Media, links and docs" value={shared.total} onClick={() => setView('media')}><ChevronRight size={18} className="wa-info-chevron" /></Row>

@@ -315,7 +315,7 @@ test('greeting and away messages reply automatically, without repeating', async 
   const customer = await register('aw');
   assert.equal((await api('/api/v1/business', { session: shop, method: 'PUT', body: { away: { enabled: true, text: '' } } })).status, 400, 'a message is needed to turn it on');
   const saved = (await api('/api/v1/business', { session: shop, method: 'PUT', body: { greeting: { enabled: true, text: 'Welcome to our shop!' }, away: { enabled: true, text: 'We are closed now.', schedule: 'always' } } })).body;
-  assert.deepEqual(saved, { away: { enabled: true, text: 'We are closed now.', schedule: 'always', hours: null }, greeting: { enabled: true, text: 'Welcome to our shop!' } });
+  assert.deepEqual({ away: saved.away, greeting: saved.greeting }, { away: { enabled: true, text: 'We are closed now.', schedule: 'always', hours: null }, greeting: { enabled: true, text: 'Welcome to our shop!' } });
   const customerSocket = await connect(customer);
   await sendDirect(customerSocket, shop.user.id, 'Hello, are you open?');
   await until(() => customerSocket.events.some((event) => event.type === 'message:new' && event.message.content === 'Welcome to our shop!'), 'greeting');
@@ -379,4 +379,24 @@ test('business hours: away messages only outside opening hours, in the business 
   assert.equal(parseBusinessHours({ timeZone: 'Mars/Base', days: {} }), undefined);
   assert.equal(parseBusinessHours({ timeZone: 'UTC', days: { 1: [600, 500] } }), undefined, 'closing must follow opening');
   assert.equal(parseBusinessHours({ timeZone: 'UTC', days: { 9: [1, 2] } }), undefined);
+});
+
+test('a business profile is saved with the business settings and shown to customers with the hours', async () => {
+  const shop = await register('bizprof');
+  const customer = await register('cust');
+  assert.equal((await api(`/api/v1/users/${shop.user.id}/business`, { session: customer })).body, null, 'nothing to show before it is filled in');
+  const bad = await api('/api/v1/business', { session: shop, method: 'PUT', body: { profile: { email: 'not-an-email' } } });
+  assert.deepEqual([bad.status, /email address/.test(bad.body.error)], [400, true]);
+  assert.equal((await api('/api/v1/business', { session: shop, method: 'PUT', body: { profile: { website: 'not a site' } } })).status, 400);
+  assert.equal((await api('/api/v1/business', { session: shop, method: 'PUT', body: { profile: { description: 'x'.repeat(513) } } })).status, 400);
+  const hours = { timeZone: 'Asia/Dhaka', days: { 1: [540, 1020], 2: [540, 1020] } };
+  const saved = (await api('/api/v1/business', { session: shop, method: 'PUT', body: { profile: { category: 'Bakery', description: 'Fresh bread daily', address: '12 Lake Road, Dhaka', email: 'hello@bakery.example', website: 'bakery.example' }, away: { hours } } })).body;
+  assert.equal(saved.profile.website, 'https://bakery.example/', 'a bare domain becomes a link');
+  assert.equal(saved.away.enabled, false, 'saving the profile leaves the away message as it was');
+  const seen = (await api(`/api/v1/users/${shop.user.id}/business`, { session: customer })).body;
+  assert.deepEqual(seen, { profile: saved.profile, hours: { timeZone: 'Asia/Dhaka', days: { 1: [540, 1020], 2: [540, 1020] } } });
+  assert.equal(JSON.stringify(seen).includes('awayText') || 'away' in seen, false, 'customers never see the auto-reply texts');
+  // A partial update keeps the other fields.
+  const updated = (await api('/api/v1/business', { session: shop, method: 'PUT', body: { profile: { category: 'Café' } } })).body;
+  assert.deepEqual([updated.profile.category, updated.profile.address], ['Café', '12 Lake Road, Dhaka']);
 });

@@ -40,7 +40,7 @@ export function LinkWithPhone({ onAuthenticated }) {
     <div className="link-phone">
       <ol className="link-steps">
         <li>Open Hidden Messenger on your phone</li>
-        <li>Tap <strong>⋮ › Settings › Account &amp; privacy › Linked devices</strong></li>
+        <li>Tap <strong>⋮ › Settings › Account › Linked devices</strong></li>
         <li>Tap <strong>Link a device</strong> and point your phone at this screen</li>
       </ol>
       <div className="link-qr" aria-live="polite">

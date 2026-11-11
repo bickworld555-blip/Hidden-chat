@@ -82,6 +82,26 @@ function boundedText(value, max, { required = false } = {}) {
 }
 const bool = (value) => (value ? 1 : 0);
 
+/** Business profile text fields and their lengths (the business_profiles columns of the same names). */
+export const BUSINESS_PROFILE_FIELDS = ['category', 'description', 'address', 'email', 'website'];
+const BUSINESS_PROFILE_LIMITS = { category: 60, description: 512, address: 256, email: 128, website: 256 };
+
+/** Cleans a business profile; returns undefined with the field name in `problem` when a value is not allowed. */
+export function parseBusinessProfile(value = {}) {
+  const profile = {};
+  for (const field of BUSINESS_PROFILE_FIELDS) {
+    const text = boundedText(value?.[field] ?? '', BUSINESS_PROFILE_LIMITS[field]);
+    if (text === undefined) return { problem: field };
+    profile[field] = text;
+  }
+  if (profile.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(profile.email)) return { problem: 'email' };
+  if (profile.website) {
+    const withScheme = /^https?:\/\//i.test(profile.website) ? profile.website : `https://${profile.website}`;
+    try { const url = new URL(withScheme); if (!url.hostname.includes('.')) return { problem: 'website' }; profile.website = url.href; } catch { return { problem: 'website' }; }
+  }
+  return { profile };
+}
+
 /** SQLite schema (Postgres: supabase/migrations/010_parity.sql). */
 export function ensureParitySchema(db) {
   const columns = (table) => new Set(db.prepare(`PRAGMA table_info(${table})`).all().map((column) => column.name));
@@ -193,6 +213,9 @@ export function ensureParitySchema(db) {
   `);
   // Business hours for away messages (added after the table exists, also on databases made before them).
   if (!columns('business_profiles').has('away_hours')) db.exec('ALTER TABLE business_profiles ADD COLUMN away_hours TEXT');
+  // Business profile (Postgres: 014_business_profile.sql).
+  const business = columns('business_profiles');
+  for (const name of BUSINESS_PROFILE_FIELDS) if (!business.has(name)) db.exec(`ALTER TABLE business_profiles ADD COLUMN ${name} TEXT NOT NULL DEFAULT ''`);
 }
 
 /**
@@ -1007,15 +1030,24 @@ export function registerParity(ctx) {
 
   // --- Business: away and greeting messages -------------------------------------------------------------------
   const businessRow = db.prepare(`SELECT away_enabled AS "awayEnabled", away_text AS "awayText", away_schedule AS "awaySchedule",
-    away_hours AS "awayHours", greeting_enabled AS "greetingEnabled", greeting_text AS "greetingText" FROM business_profiles WHERE user_id = ?`);
+    away_hours AS "awayHours", greeting_enabled AS "greetingEnabled", greeting_text AS "greetingText", ${BUSINESS_PROFILE_FIELDS.join(', ')} FROM business_profiles WHERE user_id = ?`);
   const hoursOf = (row) => { try { return row?.awayHours ? parseBusinessHours(JSON.parse(row.awayHours)) ?? null : null; } catch { return null; } };
   const presentBusiness = (row) => ({
     // `hours`: when set, the away message goes out only outside these business hours.
     away: { enabled: Number(row?.awayEnabled) === 1, text: row?.awayText ?? '', schedule: row?.awaySchedule ?? 'always', hours: hoursOf(row) },
     greeting: { enabled: Number(row?.greetingEnabled) === 1, text: row?.greetingText ?? '' },
+    profile: Object.fromEntries(BUSINESS_PROFILE_FIELDS.map((field) => [field, row?.[field] ?? ''])),
   });
 
   app.get('/api/v1/business', requireSession, async (request, response) => response.json(presentBusiness(await businessRow.get(request.session.user_id))));
+
+  // What a customer sees in a business's contact info: the profile and business hours (never the auto-reply texts).
+  // null when the account has filled in neither.
+  app.get('/api/v1/users/:userId/business', requireSession, async (request, response) => {
+    const { profile, away } = presentBusiness(await businessRow.get(request.params.userId));
+    const any = Object.values(profile).some(Boolean) || away.hours;
+    response.json(any ? { profile, hours: away.hours } : null);
+  });
 
   app.put('/api/v1/business', requireSession, async (request, response) => {
     const userId = request.session.user_id;
@@ -1030,10 +1062,13 @@ export function registerParity(ctx) {
     }
     const hours = parseBusinessHours(away.hours);
     if (hours === undefined) return response.status(400).json({ error: 'Business hours need a time zone and opening times that end after they start.' });
-    await db.prepare(`INSERT INTO business_profiles(user_id, away_enabled, away_text, away_schedule, away_hours, greeting_enabled, greeting_text, updated_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET away_enabled = excluded.away_enabled, away_text = excluded.away_text,
-      away_schedule = excluded.away_schedule, away_hours = excluded.away_hours, greeting_enabled = excluded.greeting_enabled, greeting_text = excluded.greeting_text, updated_at = excluded.updated_at`)
-      .run(userId, bool(away.enabled), awayText, away.schedule, hours ? JSON.stringify(hours) : null, bool(greeting.enabled), greetingText, now());
+    const { profile, problem } = parseBusinessProfile({ ...current.profile, ...(request.body?.profile ?? {}) });
+    if (problem) return response.status(400).json({ error: problem === 'email' ? 'Enter an email address like name@example.com.' : problem === 'website' ? 'Enter a website address like example.com.' : `The ${problem} is too long.` });
+    await db.prepare(`INSERT INTO business_profiles(user_id, away_enabled, away_text, away_schedule, away_hours, greeting_enabled, greeting_text, updated_at, ${BUSINESS_PROFILE_FIELDS.join(', ')})
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ${BUSINESS_PROFILE_FIELDS.map(() => '?').join(', ')}) ON CONFLICT(user_id) DO UPDATE SET away_enabled = excluded.away_enabled, away_text = excluded.away_text,
+      away_schedule = excluded.away_schedule, away_hours = excluded.away_hours, greeting_enabled = excluded.greeting_enabled, greeting_text = excluded.greeting_text, updated_at = excluded.updated_at,
+      ${BUSINESS_PROFILE_FIELDS.map((field) => `${field} = excluded.${field}`).join(', ')}`)
+      .run(userId, bool(away.enabled), awayText, away.schedule, hours ? JSON.stringify(hours) : null, bool(greeting.enabled), greetingText, now(), ...BUSINESS_PROFILE_FIELDS.map((field) => profile[field]));
     response.json(presentBusiness(await businessRow.get(userId)));
   });
 

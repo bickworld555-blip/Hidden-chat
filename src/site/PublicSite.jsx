@@ -226,7 +226,7 @@ function Messaging({ go }) {
         ))}
       </div>
       <h2>Use it on your computer</h2>
-      <Steps items={[['Open hiddenmessenger.com/app', 'on your computer and choose “Link with your phone”.'], ['On your phone', 'go to Settings › Account & privacy › Linked devices › Link a device.'], ['Scan the QR code', 'Your recent chats arrive end-to-end encrypted, and new messages show on both.']]} />
+      <Steps items={[['Open hiddenmessenger.com/app', 'on your computer and choose “Link with your phone”.'], ['On your phone', 'go to Settings › Account › Linked devices › Link a device.'], ['Scan the QR code', 'Your recent chats arrive end-to-end encrypted, and new messages show on both.']]} />
       <p><a className="site-button" href="/app">Open the web app</a></p>
     </div>
   );

@@ -176,7 +176,7 @@ test('the app wires the parity features into its screens', async () => {
   assert.match(groups, /<GroupAdminSettings/);
   assert.match(groups, /Only admins can send messages/);
   assert.match(list, /Archived/);
-  assert.match(tools, /onCommunities\?\.\(\)/);
+  assert.match(tools, /onClick=\{onCommunities\}/);
   assert.match(account, /<TwoStepSettings/);
   assert.match(gate, /twoStepRequired/);
   for (const method of ['authenticate', 'setSecureScreen', 'saveBytes', 'transcribeAudio', 'securityStatus']) assert.match(plugin, new RegExp(`public void ${method}\\(PluginCall call\\)`));

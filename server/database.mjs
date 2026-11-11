@@ -2,9 +2,9 @@ import { readFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import pg from 'pg';
 
-export const DATABASE_SCHEMA_VERSION = 13;
+export const DATABASE_SCHEMA_VERSION = 14;
 // Additive migrations applied in order to reach each version from the one before it.
-const MIGRATIONS = { 2: '002_groups.sql', 3: '003_group_media.sql', 4: '004_presence_polls.sql', 5: '005_voice_played.sql', 6: '006_statuses.sql', 7: '007_push_devices.sql', 8: '008_identity_keys.sql', 9: '009_privacy_settings.sql', 10: '010_parity.sql', 11: '011_e2e_devices.sql', 12: '012_stage_a.sql', 13: '013_admin_help.sql' };
+const MIGRATIONS = { 2: '002_groups.sql', 3: '003_group_media.sql', 4: '004_presence_polls.sql', 5: '005_voice_played.sql', 6: '006_statuses.sql', 7: '007_push_devices.sql', 8: '008_identity_keys.sql', 9: '009_privacy_settings.sql', 10: '010_parity.sql', 11: '011_e2e_devices.sql', 12: '012_stage_a.sql', 13: '013_admin_help.sql', 14: '014_business_profile.sql' };
 
 let chatEventsPool;
 
