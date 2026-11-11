@@ -24,7 +24,7 @@ const GROUPS = [
     { id: 'quick', label: 'Quick replies', detail: 'Type / in a chat to reuse messages', icon: Zap },
   ]],
   ['Your business', [
-    { id: 'profile', label: 'Business profile', detail: 'Category, description, address, email and website', icon: Store },
+    { id: 'profile', label: 'Business profile', detail: 'Description, address, website, links', icon: Store },
     { id: 'hours', label: 'Business hours', detail: 'When you’re open, shown on your profile', icon: CalendarClock },
     { id: 'link', label: 'Short link', detail: 'A link and QR code that open a chat with you', icon: QrCode },
   ]],

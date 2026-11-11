@@ -5122,3 +5122,5 @@ textarea.hm-input { min-height: 96px; resize: vertical; }
 .updates-channels-button.is-quiet { border-color: transparent; }
 .dark-theme .updates-channels-button { border-color: #353c44; }
 .dark-theme .updates-channels-button.is-quiet { border-color: transparent; }
+/* The Tools tab is an inline panel: the app shell already clears the status bar. */
+@media (max-width: 720px) { .hm-panel.hm-panel-inline { height: 100%; padding-top: 0; } }
