@@ -86,9 +86,9 @@ test('voice calls ring back on the earpiece; Speaker keeps its icon; the PiP win
   const sounds = await source('src/sounds.js');
   assert.match(sounds, /categoryId === 'outgoingCall'\) \{\s*\/\/[^\n]*\n\s*if \(nativeShell\(\)\)/);
   const overlay = await callUiSource();
-  // One icon rule for both the video dock and the voice card (ControlCard's speakerIcon helper).
+  // One icon rule in the one dock voice and video calls share (ControlCard's speakerIcon helper).
   assert.ok(overlay.includes('const speakerIcon = (size) => (c.speakerOn || c.nativeRouting ? <Volume2 size={size} /> : <VolumeX size={size} />);'), 'earpiece is not shown as a muted speaker');
-  assert.equal((overlay.match(/\{speakerIcon\(2[24]\)\}/g) ?? []).length, 2, 'both the dock and the card use it');
+  assert.equal((overlay.match(/\{speakerIcon\(2[24]\)\}/g) ?? []).length, 1, 'the shared dock uses it');
   const activity = await java('MainActivity.java');
   assert.match(activity, /setActions\(Collections\.singletonList\(new RemoteAction\([\s\S]*"Hang up"/);
   assert.ok(activity.includes('if (!active && activity.isInPictureInPictureMode()) activity.moveTaskToBack(false);'), 'the floating window closes when the call ends');

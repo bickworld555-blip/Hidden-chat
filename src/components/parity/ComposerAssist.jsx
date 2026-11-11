@@ -4,7 +4,7 @@ import { Zap } from 'lucide-react';
 import { useAccountData, quickReplyMatches } from '../../accountData.js';
 import { activeMention, applyMention, mentionCandidates, splitMentions } from '../../mentions.js';
 import Avatar from '../Avatar.jsx';
-import LinkText from '../LinkText.jsx';
+import FormattedText from '../FormattedText.jsx';
 
 /**
  * Renders the matching suggestions for `text` at `caret` and calls onReplace(nextText, nextCaret) when one is
@@ -51,8 +51,8 @@ export function ComposerAssist({ text, caret, members, userId, onReplace }) {
 /** Message text with @mentions of known members highlighted (links stay links). */
 export function MentionText({ text, usernames, ownUsername }) {
   const parts = useMemo(() => splitMentions(text ?? '', usernames), [text, usernames]);
-  if (parts.length === 1 && parts[0].text !== undefined) return <LinkText text={text} />;
+  if (parts.length === 1 && parts[0].text !== undefined) return <FormattedText text={text} />;
   return parts.map((part, index) => (part.mention
     ? <span key={index} className={`hm-mention${part.username === ownUsername?.toLowerCase() ? ' is-me' : ''}`}>{part.mention}</span>
-    : <LinkText key={index} text={part.text} />));
+    : <FormattedText key={index} text={part.text} />));
 }

@@ -3,6 +3,7 @@
 import { badgeCount, getNotificationSettings, shouldRemind, soundPlan, systemNotificationAllowed } from './notificationSettings.js';
 import { channelForCategory, conversationOpenParam } from './notificationChannels.js';
 import { nativeNotify, nativeShell } from './native.js';
+import { plainText } from './textFormat.js';
 import { usesPhoneSound } from './phoneSounds.js';
 
 export function vibrateFor(category) {
@@ -31,7 +32,9 @@ export async function requestNotificationPermission() {
 // Android Chrome only allows notifications from the service worker (the Notification constructor throws
 // there), so the registration is used whenever one is active; clicks then arrive via postMessage.
 // `messageId` lets Android show a message once even when a push and the app both deliver it.
-export async function showSystemNotification(category, { title, body, tag, conversation, onClick, count = 0, messageId } = {}) {
+export async function showSystemNotification(category, { title, body: rawBody, tag, conversation, onClick, count = 0, messageId } = {}) {
+  // Formatting markers (*bold* …) read as noise in a notification: show the plain words.
+  const body = typeof rawBody === 'string' ? plainText(rawBody) : rawBody;
   if (typeof document !== 'undefined' && document.visibilityState === 'visible' && document.hasFocus?.()) return null;
   if (!systemNotificationAllowed(category, getNotificationSettings())) return null;
   const channel = channelForCategory(category);

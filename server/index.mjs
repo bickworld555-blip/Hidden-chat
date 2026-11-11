@@ -27,6 +27,7 @@ import { ensureE2eSchema, registerE2e } from './e2e.mjs';
 import { registerSfu } from './sfu.mjs';
 import { ensureExtrasSchema, registerExtras, statusAudienceSql } from './extras.mjs';
 import { adminUsernamesFrom, ensureAdminSchema, registerAdmin } from './admin.mjs';
+import { ACCEPTED_STATUS_BACKGROUNDS } from '../src/statusColors.js';
 import { registerLinking } from './linking.mjs';
 import { BUNDLED_APP_ORIGIN } from '../scripts/configure-android.mjs';
 import { effectiveRouting, isEnvelope, MAX_DIRECT_ENVELOPE, parseRouting, routingFor } from '../src/e2e/envelope.js';
@@ -1822,7 +1823,6 @@ export function createChatServer({
 
   // --- Status: text, photo or video updates that disappear after 24 hours, seen by people in your contacts. ---
   const STATUS_TTL_MS = 24 * 60 * 60 * 1000;
-  const STATUS_BACKGROUNDS = new Set(['#00a884', '#128c7e', '#7e57c2', '#ef6c00', '#c2185b', '#1e88e5', '#5d4037', '#37474f']);
   // Everyone who has this author saved or linked: they can see the author's status.
   // Who sees an author's statuses: their contacts, narrowed by status privacy (server/extras.mjs).
   async function statusAudience(authorId) {
@@ -1893,7 +1893,7 @@ export function createChatServer({
     if (mediaId && !(await db.prepare('SELECT 1 FROM media WHERE id = ? AND sender_id = ?').get(mediaId, userId))) {
       return response.status(400).json({ error: 'Upload the photo or video first.' });
     }
-    const background = !mediaId && STATUS_BACKGROUNDS.has(request.body?.background) ? request.body.background : null;
+    const background = !mediaId && ACCEPTED_STATUS_BACKGROUNDS.has(request.body?.background) ? request.body.background : null;
     const now = Date.now();
     const id = randomUUID();
     await db.prepare('INSERT INTO statuses(id, user_id, content, background, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)')

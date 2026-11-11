@@ -1,9 +1,11 @@
 // Panels for broadcast lists, channels, scheduled messages, call links and status privacy (server/extras.mjs).
 import { useEffect, useMemo, useState } from 'react';
-import { Copy, Link2, Megaphone, Plus, Radio, Send, Trash2, Users } from 'lucide-react';
+import { Copy, Link2, Megaphone, Plus, Send, Trash2, Users } from 'lucide-react';
 import Panel, { Notice } from '../parity/Panel.jsx';
 import { request } from '../../parityApi.js';
 import { useChatStore } from '../../store.js';
+import { useWallpaper } from '../../wallpaper.js';
+import FormattedText from '../FormattedText.jsx';
 import { openContent, sealDirect } from '../../e2e/client.js';
 import { publicOrigin } from '../../api.js';
 
@@ -105,7 +107,15 @@ export function BroadcastLists({ token, onClose }) {
 }
 
 // --- Channels ------------------------------------------------------------------------------------------------
+/** "1 follower", "950 followers", "1.2K followers", "3.4M followers". */
+export function followerCount(count = 0) {
+  const n = Number(count) || 0;
+  const short = n >= 1e6 ? `${(n / 1e6).toFixed(n >= 1e7 ? 0 : 1).replace(/.0$/, '')}M` : n >= 1e4 ? `${Math.round(n / 1e3)}K` : n >= 1e3 ? `${(n / 1e3).toFixed(1).replace(/.0$/, '')}K` : String(n);
+  return `${short} follower${n === 1 ? '' : 's'}`;
+}
+
 export function Channels({ token, onClose, initialChannelId = '' }) {
+  const wallpaper = useWallpaper();
   const [mine, setMine] = useState([]);
   const [found, setFound] = useState([]);
   const [query, setQuery] = useState('');
@@ -146,42 +156,59 @@ export function Channels({ token, onClose, initialChannelId = '' }) {
     );
   }
   if (openId && channel) {
+    const toggleFollow = () => act(async () => {
+      await request(token, `/api/v1/channels/${channel.id}/follow`, { method: channel.following ? 'DELETE' : 'POST' });
+      await loadChannel(channel.id);
+      await loadMine();
+    });
+    let lastDay = '';
     return (
-      <Panel title={channel.name} subtitle={`${channel.followers} follower${channel.followers === 1 ? '' : 's'}`} onBack={() => setOpenId('')} onClose={onClose}
-        actions={!channel.mine && (
-          <button type="button" className="hm-chip" onClick={() => act(async () => {
-            await request(token, `/api/v1/channels/${channel.id}/follow`, { method: channel.following ? 'DELETE' : 'POST' });
-            await loadChannel(channel.id);
-            await loadMine();
-          })}>{channel.following ? 'Following' : 'Follow'}</button>
-        )}>
+      <Panel title={channel.name} subtitle={`Channel · ${followerCount(channel.followers)}`} onBack={() => setOpenId('')} onClose={onClose}>
         <Notice error={error} />
-        {channel.description && <p className="hm-muted">{channel.description}</p>}
-        <div className="hm-channel-posts">
-          {channel.posts.map((item) => (
-            <article key={item.id} className="hm-channel-post">
-              <p>{item.content}</p>
-              <footer>
-                <time>{new Date(item.createdAt).toLocaleString()}</time>
-                <span className="hm-channel-reactions">
+        <div className="hm-channel-feed message-scroll" data-chat-theme="default" data-wallpaper={wallpaper}>
+          <section className="hm-channel-info" aria-label="About this channel">
+            <span className="hm-channel-avatar is-large" aria-hidden="true">{channel.name.slice(0, 1).toUpperCase()}</span>
+            <h2>{channel.name}</h2>
+            <p className="hm-channel-meta">Channel · {followerCount(channel.followers)}</p>
+            {channel.description && <p className="hm-channel-description">{channel.description}</p>}
+            {!channel.mine && <button type="button" className={`hm-channel-follow${channel.following ? ' is-following' : ''}`} onClick={toggleFollow}>{channel.following ? 'Following' : 'Follow'}</button>}
+          </section>
+          {channel.posts.map((item) => {
+            const day = new Date(item.createdAt).toDateString();
+            const showDay = day !== lastDay;
+            lastDay = day;
+            const counts = Object.entries(item.reactions ?? {}).filter(([, count]) => count > 0);
+            return (
+              <div key={item.id} className="hm-channel-item">
+                {showDay && <div className="day-divider"><span>{new Date(item.createdAt).toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })}</span></div>}
+                <article className="hm-channel-bubble">
+                  <p><FormattedText text={item.content} /></p>
+                  <footer>
+                    <time>{new Date(item.createdAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</time>
+                    {channel.mine && <button type="button" className="hm-channel-delete" aria-label="Delete post" onClick={() => act(async () => { await request(token, `/api/v1/channels/${channel.id}/posts/${item.id}`, { method: 'DELETE' }); await loadChannel(channel.id); })}><Trash2 size={13} /></button>}
+                  </footer>
+                </article>
+                <div className="hm-channel-reactions" aria-label="Reactions">
+                  {counts.length > 0 && <span className="hm-channel-reaction-total">{counts.map(([emoji]) => emoji).join('')} {counts.reduce((sum, [, count]) => sum + count, 0)}</span>}
                   {CHANNEL_REACTIONS.map((emoji) => (
-                    <button key={emoji} type="button" className={item.myReaction === emoji ? 'is-on' : ''} aria-label={`React ${emoji}`} onClick={() => act(async () => {
+                    <button key={emoji} type="button" className={item.myReaction === emoji ? 'is-on' : ''} aria-label={item.myReaction === emoji ? `Remove ${emoji}` : `React ${emoji}`} aria-pressed={item.myReaction === emoji} onClick={() => act(async () => {
                       await request(token, `/api/v1/channels/${channel.id}/posts/${item.id}/reaction`, { method: 'PUT', body: { emoji: item.myReaction === emoji ? null : emoji } });
                       await loadChannel(channel.id);
-                    })}>{emoji}{item.reactions[emoji] ? <small>{item.reactions[emoji]}</small> : null}</button>
+                    })}>{emoji}</button>
                   ))}
-                </span>
-                {channel.mine && <button type="button" className="icon-button" aria-label="Delete post" onClick={() => act(async () => { await request(token, `/api/v1/channels/${channel.id}/posts/${item.id}`, { method: 'DELETE' }); await loadChannel(channel.id); })}><Trash2 size={14} /></button>}
-              </footer>
-            </article>
-          ))}
-          {!channel.posts.length && <p className="hm-muted">No posts yet.</p>}
+                </div>
+              </div>
+            );
+          })}
+          {!channel.posts.length && <p className="hm-channel-empty">No updates yet.</p>}
         </div>
-        {channel.mine && (
+        {channel.mine ? (
           <form className="hm-compose" onSubmit={(event) => { event.preventDefault(); act(async () => { await request(token, `/api/v1/channels/${channel.id}/posts`, { method: 'POST', body: { content: post } }); setPost(''); await loadChannel(channel.id); }); }}>
-            <input className="hm-input" value={post} maxLength={4000} placeholder="Post to your followers" onChange={(event) => setPost(event.target.value)} />
+            <input className="hm-input" value={post} maxLength={4000} placeholder="Post an update" onChange={(event) => setPost(event.target.value)} />
             <button type="submit" className="icon-button" aria-label="Post" disabled={!post.trim()}><Send size={18} /></button>
           </form>
+        ) : !channel.following && (
+          <button type="button" className="hm-channel-follow-bar" onClick={toggleFollow}>Follow</button>
         )}
       </Panel>
     );
@@ -191,11 +218,11 @@ export function Channels({ token, onClose, initialChannelId = '' }) {
       <Notice error={error} />
       <button type="button" className="hm-row-button" onClick={() => setCreating({ name: '', description: '' })}><Plus size={18} /> Create channel</button>
       {mine.length > 0 && <h3 className="hm-section">Your channels</h3>}
-      {mine.map((item) => <button key={item.id} type="button" className="hm-row-main" onClick={() => setOpenId(item.id)}><Radio size={18} /><span><strong>{item.name}</strong><small>{item.mine ? 'Owner' : 'Following'} · {item.followers} followers</small></span></button>)}
+      {mine.map((item) => <button key={item.id} type="button" className="hm-row-main hm-channel-row" onClick={() => setOpenId(item.id)}><span className="hm-channel-avatar" aria-hidden="true">{item.name.slice(0, 1).toUpperCase()}</span><span><strong>{item.name}</strong><small>{item.mine ? 'Your channel' : 'Following'} · {followerCount(item.followers)}</small></span></button>)}
       <h3 className="hm-section">Find channels</h3>
       <input className="hm-input" placeholder="Search channels" value={query} onChange={(event) => setQuery(event.target.value)} />
       {found.filter((item) => !mine.some((own) => own.id === item.id)).map((item) => (
-        <button key={item.id} type="button" className="hm-row-main" onClick={() => setOpenId(item.id)}><Radio size={18} /><span><strong>{item.name}</strong><small>{item.followers} followers</small></span></button>
+        <button key={item.id} type="button" className="hm-row-main hm-channel-row" onClick={() => setOpenId(item.id)}><span className="hm-channel-avatar" aria-hidden="true">{item.name.slice(0, 1).toUpperCase()}</span><span><strong>{item.name}</strong><small>{followerCount(item.followers)}</small></span></button>
       ))}
     </Panel>
   );

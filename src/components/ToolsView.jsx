@@ -1,7 +1,8 @@
 import { setMediaSaveEnabled, useMediaSave } from '../mediaSave.js';
 import { nativeShell } from '../native.js';
-import { ArrowLeft, Bell, Check, ChevronRight, CircleDashed, CircleHelp, Clock, DatabaseBackup, Download, EyeOff, HardDrive, KeyRound, Languages, Link2, Lock, LogOut, Megaphone, MessageSquare, Moon, Pencil, Radio, ScanFace, ShieldCheck, Smile, Sparkles, Star, Store, Sun, UserPlus, Users, Video, X } from 'lucide-react';
+import { ArrowLeft, Bell, Check, ChevronRight, CircleDashed, CircleHelp, Clock, DatabaseBackup, Download, EyeOff, HardDrive, Image, KeyRound, Languages, Link2, Lock, LogOut, Megaphone, MessageSquare, Moon, Pencil, Radio, ScanFace, ShieldCheck, Smile, Sparkles, Star, Store, Sun, UserPlus, Users, Video, X } from 'lucide-react';
 import { useChatStore } from '../store.js';
+import { WALLPAPERS, setWallpaper, useWallpaper } from '../wallpaper.js';
 import ProfilePhoto from './ProfilePhoto.jsx';
 import Avatar from './Avatar.jsx';
 import { useAccounts } from '../accounts.js';
@@ -132,6 +133,7 @@ export default function ToolsView({ darkMode, onToggleTheme, onLogout, onNotific
   const persona = usePersona();
   const mediaSave = useMediaSave();
   const inApp = nativeShell();
+  const wallpaper = useWallpaper();
   const openHelp = () => { window.open(HELP_CENTER_URL, '_blank', 'noopener'); };
 
   const pages = {
@@ -155,6 +157,7 @@ export default function ToolsView({ darkMode, onToggleTheme, onLogout, onNotific
       <div className="tools-section">
         <h3>Display</h3>
         <Item icon={darkMode ? Sun : Moon} title="Theme" detail={darkMode ? 'Dark · tap for light' : 'Light · tap for dark'} onClick={onToggleTheme} />
+        <Item icon={Image} title="Wallpaper" detail={WALLPAPERS.find((item) => item.id === wallpaper)?.label ?? 'Default'} onClick={() => setPage('wallpaper')} />
         <Item icon={Sparkles} title="Animation" checked={animations} detail={animations ? 'Transitions and motion effects are on' : 'Reduced motion · transitions are off'} onClick={() => setAnimationsEnabled(!animations)} />
         <Item icon={Video} title="Call screen animations" checked={callAnimations}
           detail={!animations ? 'Off while Animation is off' : callAnimations ? 'Ringing pulse, connect and picture-in-picture transitions during calls' : 'Call screens switch instantly, without motion'}
@@ -169,12 +172,35 @@ export default function ToolsView({ darkMode, onToggleTheme, onLogout, onNotific
     )],
   };
 
+  pages.wallpaper = ['Wallpaper', (
+    <div className="tools-section">
+      <p className="tools-page-note">Shown behind every chat on this device. A chat with its own theme (Contact info › Chat theme) keeps it.</p>
+      {['Pattern', 'Solid'].map((kind) => (
+        <div key={kind}>
+          <h3>{kind === 'Pattern' ? 'Patterns' : 'Solid colours'}</h3>
+          <div className="wallpaper-grid" role="radiogroup" aria-label={kind === 'Pattern' ? 'Patterns' : 'Solid colours'}>
+            {WALLPAPERS.filter((item) => item.kind === kind).map((item) => (
+              <button key={item.id} type="button" role="radio" aria-checked={wallpaper === item.id} className="wallpaper-option" onClick={() => setWallpaper(item.id)}>
+                <span className="message-scroll" data-chat-theme="default" data-wallpaper={item.id}>
+                  <span className="wp-bubble" /><span className="wp-bubble out" /><span className="wp-bubble" />
+                  {wallpaper === item.id && <span className="wallpaper-check" aria-hidden="true"><Check size={14} /></span>}
+                </span>
+                {item.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
+  )];
+
+  const back = page === 'wallpaper' ? 'chats' : null;
   if (page && pages[page]) {
     const [title, body] = pages[page];
     return (
       <div className="tools-view-container">
         <div className="tools-header">
-          <button type="button" className="icon-button" onClick={() => setPage(null)} aria-label="Back to settings"><ArrowLeft size={18} /></button>
+          <button type="button" className="icon-button" onClick={() => setPage(back)} aria-label={back ? 'Back to chats settings' : 'Back to settings'}><ArrowLeft size={18} /></button>
           <h2>{title}</h2>
         </div>
         <div className="tools-content">{body}</div>

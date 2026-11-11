@@ -7,15 +7,15 @@ import Avatar from './Avatar.jsx';
 import { loadMediaBlob } from '../media.js';
 import { presentName } from '../profile.js';
 import { useBackHandler } from '../backStack.js';
-import { mutedStatusUsers, setStatusMuted } from './extras/ExtrasPanels.jsx';
+import { followerCount, mutedStatusUsers, setStatusMuted } from './extras/ExtrasPanels.jsx';
 import {
   STATUS_BACKGROUNDS, deleteStatus, fetchStatuses, markStatusSeen, postMediaStatus, postTextStatus, statusKind, statusTime, statusViewers,
 } from '../statusApi.js';
 
 const IMAGE_SECONDS = 5;
 
-// The Updates tab: your status ("Add status · Disappears after 24 hours"), then your contacts' statuses
-// ("Recent updates" with a green ring until you have seen them all, then "Viewed updates").
+// The Updates tab: a row of status cards (yours first: Add status; then new, viewed and muted updates),
+// channels below, and buttons for a text or camera status.
 export default function UpdatesView({ onOpenChannels }) {
   const token = useChatStore((state) => state.sessionToken);
   const userId = useChatStore((state) => state.userId);
@@ -80,35 +80,30 @@ export default function UpdatesView({ onOpenChannels }) {
       </div>
       <div className="updates-content">
         <h3 className="status-title">Status</h3>
-        <div className="status-row status-mine">
-          <button type="button" className="status-row-main" onClick={() => (mine.length ? setViewing({ owner: 'me', index: 0 }) : setAdding(true))}>
-            <span className={`status-ring ${mine.length ? 'is-mine' : 'is-empty'}`}>
-              <Avatar name={me?.name ?? 'You'} initials={me?.initials ?? 'ME'} color={me?.color} image={me?.avatar} />
-            </span>
-            <span className="status-row-text">
-              <strong>{mine.length ? 'My status' : 'Add status'}</strong>
-              <small>{posting || (myLast ? `${mine.length} update${mine.length === 1 ? '' : 's'} · ${statusTime(myLast.createdAt)}` : 'Disappears after 24 hours')}</small>
-            </span>
-          </button>
-          <button type="button" className="status-add-badge" onClick={() => setAdding(true)} aria-label="Add status"><Plus size={16} strokeWidth={3} /></button>
+        {/* One row of tall cards: yours first, then new updates, viewed ones, and muted ones (dimmed). */}
+        <div className="status-cards" role="list" aria-label="Status updates">
+          <div className="status-card-wrap" role="listitem">
+            <button type="button" className={`status-card is-mine${mine.length ? '' : ' is-add'}`} onClick={() => (mine.length ? setViewing({ owner: 'me', index: 0 }) : setAdding(true))}
+              aria-label={mine.length ? 'View my status' : 'Add status'}>
+              {myLast ? <StatusCardPreview token={token} status={myLast} /> : <span className="status-card-add-bg" aria-hidden="true"><Avatar name={me?.name ?? 'You'} initials={me?.initials ?? 'ME'} color={me?.color} image={me?.avatar} size="large" /></span>}
+              <span className="status-card-name">{posting || (mine.length ? 'My status' : 'Add status')}</span>
+            </button>
+            <button type="button" className="status-card-plus" onClick={() => setAdding(true)} aria-label="Add status"><Plus size={16} strokeWidth={3} /></button>
+          </div>
+          {recent.map((entry) => (
+            <StatusCard key={entry.user.id} token={token} entry={entry} onOpen={() => setViewing({ owner: entry.user.id, index: Math.max(0, entry.statuses.findIndex((status) => !status.seen)) })} />
+          ))}
+          {viewed.map((entry) => <StatusCard key={entry.user.id} token={token} entry={entry} seen onOpen={() => setViewing({ owner: entry.user.id, index: 0 })} />)}
+          {mutedEntries.map((entry) => <StatusCard key={entry.user.id} token={token} entry={entry} seen muted onOpen={() => setViewing({ owner: entry.user.id, index: 0 })} />)}
         </div>
 
         {error && <p className="status-error" role="alert">{error}</p>}
-
-        {recent.length > 0 && <h4 className="status-section">Recent updates</h4>}
-        {recent.map((entry) => (
-          <StatusPerson key={entry.user.id} entry={entry} onOpen={() => setViewing({ owner: entry.user.id, index: Math.max(0, entry.statuses.findIndex((status) => !status.seen)) })} />
-        ))}
-        {viewed.length > 0 && <h4 className="status-section">Viewed updates</h4>}
-        {viewed.map((entry) => <StatusPerson key={entry.user.id} entry={entry} seen onOpen={() => setViewing({ owner: entry.user.id, index: 0 })} />)}
-        {mutedEntries.length > 0 && <h4 className="status-section">Muted updates</h4>}
-        {mutedEntries.map((entry) => <StatusPerson key={entry.user.id} entry={entry} seen onOpen={() => setViewing({ owner: entry.user.id, index: 0 })} />)}
         <section className="updates-channels" aria-label="Channels">
           <header><h3 className="status-title">Channels</h3><button type="button" className="updates-channels-find" onClick={() => onOpenChannels?.()}>Explore</button></header>
           {channels.map((channel) => (
             <button key={channel.id} type="button" className="status-row-main updates-channel" onClick={() => onOpenChannels?.(channel.id)}>
               <span className="updates-channel-icon" aria-hidden="true">{channel.name.slice(0, 1).toUpperCase()}</span>
-              <span className="status-row-text"><strong>{channel.name}</strong><small>{channel.mine ? 'Your channel' : `${channel.followers} followers`}</small></span>
+              <span className="status-row-text"><strong>{channel.name}</strong><small>{channel.mine ? 'Your channel' : followerCount(channel.followers)}</small></span>
             </button>
           ))}
           {!channels.length && <p className="updates-channels-empty">Stay up to date on topics that matter to you. Find channels to follow below.</p>}
@@ -173,19 +168,43 @@ function StatusReply({ status, authorId, onFocus, onBlur, onSent }) {
   );
 }
 
-function StatusPerson({ entry, seen = false, onOpen }) {
+// A tall card: the person's latest status as the picture, their photo in a ring (new or seen), name below.
+function StatusCard({ token, entry, seen = false, muted = false, onOpen }) {
   const { user, statuses } = entry;
+  const latest = statuses.at(-1);
   return (
-    <button type="button" className="status-row-main status-person" onClick={onOpen}>
-      <span className={`status-ring ${seen ? 'is-seen' : 'is-new'}`} style={{ '--segments': statuses.length }}>
-        <Avatar name={user.name} initials={user.initials ?? user.username?.slice(0, 2)?.toUpperCase() ?? '?'} color={user.color} image={user.avatar} />
-      </span>
-      <span className="status-row-text">
-        <strong>{presentName(user)}</strong>
-        <small>{statusTime(entry.lastAt)}</small>
-      </span>
-    </button>
+    <div className="status-card-wrap" role="listitem">
+      <button type="button" className={`status-card${seen ? ' is-seen' : ' is-new'}${muted ? ' is-muted' : ''}`} onClick={onOpen}
+        aria-label={`${presentName(user)}, ${statuses.length} update${statuses.length === 1 ? '' : 's'}, ${statusTime(entry.lastAt)}${seen ? '' : ', new'}`}>
+        {latest && <StatusCardPreview token={token} status={latest} />}
+        <span className={`status-card-ring ${seen ? 'is-seen' : 'is-new'}`}>
+          <Avatar name={user.name} initials={user.initials ?? user.username?.slice(0, 2)?.toUpperCase() ?? '?'} color={user.color} image={user.avatar} size="small" />
+        </span>
+        <span className="status-card-name">{presentName(user)}</span>
+      </button>
+    </div>
   );
+}
+
+// The picture on a card: a text status on its colour, or the photo / first frame of the video.
+function StatusCardPreview({ token, status }) {
+  const { kind, mediaId, text } = statusKind(status.content);
+  const [url, setUrl] = useState('');
+  useEffect(() => {
+    if (!mediaId || kind === 'file') return undefined;
+    let cancelled = false;
+    let objectUrl = '';
+    loadMediaBlob(mediaId, token).then((blob) => {
+      if (cancelled) return;
+      objectUrl = URL.createObjectURL(blob);
+      setUrl(objectUrl);
+    }).catch(() => {});
+    return () => { cancelled = true; if (objectUrl) URL.revokeObjectURL(objectUrl); };
+  }, [mediaId, kind, token]);
+  if (kind === 'text') return <span className="status-card-text" style={{ background: status.background ?? '#005ad1' }}><span>{text}</span></span>;
+  if (!url) return <span className="status-card-media is-loading" aria-hidden="true" />;
+  if (kind === 'video') return <video className="status-card-media" src={`${url}#t=0.1`} muted playsInline preload="metadata" aria-hidden="true" />;
+  return <img className="status-card-media" src={url} alt="" />;
 }
 
 function TextStatusComposer({ onClose, onPost }) {

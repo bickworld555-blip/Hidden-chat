@@ -4764,3 +4764,121 @@ canvas.recording-wave { color: #5d6662; }
 .app-shell :is(.updates-view-container .updates-header, .calls-view-container .calls-header, .tools-view-container .tools-header) { background: var(--wa-bg); border-bottom: 0; }
 .app-shell .updates-channels-empty { padding: 0 16px; }
 .app-shell .updates-channels-find { margin-right: 16px; }
+/* ===== Message formatting (FormattedText.jsx, textFormat.js) ===== */
+.fmt-bold { font-weight: 700; }
+.fmt-italic { font-style: italic; }
+.fmt-strike { text-decoration: line-through; }
+.fmt-mono, .fmt-code, .fmt-block { font-family: ui-monospace, "Roboto Mono", "SFMono-Regular", Consolas, monospace; font-size: .92em; }
+.fmt-code { padding: 0 4px; border-radius: 4px; background: color-mix(in srgb, currentColor 12%, transparent); }
+.fmt-block { display: block; margin: 4px 0; padding: 6px 8px; border-radius: 6px; white-space: pre-wrap; background: color-mix(in srgb, currentColor 10%, transparent); }
+.fmt-quote { display: block; margin: 2px 0; padding-left: 8px; border-left: 3px solid color-mix(in srgb, currentColor 45%, transparent); opacity: .9; }
+.fmt-item { display: flex; gap: 6px; }
+.fmt-bullet { flex: none; min-width: 1em; text-align: right; opacity: .8; }
+.wa-preview .fmt-bold { font-weight: 600; }
+/* Composer: the mirror layer draws the formatting under a transparent-text input (ComposerMirror.jsx). Styles
+   keep the plain text's width so the caret lines up. */
+.composer { position: relative; }
+.composer-mirror { position: absolute; z-index: 0; display: flex; align-items: center; box-sizing: border-box; overflow: hidden; white-space: pre; border-style: solid; border-color: transparent; border-top-width: 0; border-bottom-width: 0; color: var(--wa-text, var(--ink)); pointer-events: none; }
+.composer input.has-mirror { position: relative; z-index: 1; color: transparent; -webkit-text-fill-color: transparent; caret-color: var(--wa-text, var(--ink)); }
+.composer input.has-mirror::selection { color: transparent; -webkit-text-fill-color: transparent; background: color-mix(in srgb, var(--wa-green, #1d4ed8) 35%, transparent); }
+.fmt-marker { opacity: .45; }
+.fmt-live-bold { -webkit-text-stroke: .45px currentColor; }
+.fmt-live-italic { display: inline-block; transform: skewX(-9deg); }
+.fmt-live-strike { text-decoration: line-through; }
+.fmt-live-mono, .fmt-live-code { border-radius: 3px; background: color-mix(in srgb, currentColor 14%, transparent); }
+/* ===== Updates: status card row (UpdatesView.jsx) ===== */
+.status-cards { display: flex; gap: 8px; overflow-x: auto; padding: 4px 16px 12px; scroll-snap-type: x proximity; scrollbar-width: none; }
+.status-cards::-webkit-scrollbar { display: none; }
+.status-card-wrap { position: relative; flex: none; scroll-snap-align: start; }
+.status-card { position: relative; display: block; width: 92px; height: 148px; padding: 0; overflow: hidden; border: 0; border-radius: 14px; background: var(--wa-panel, #16233a); color: #fff; cursor: pointer; text-align: left; }
+.status-card:focus-visible { outline: 2px solid var(--wa-green, #3b82f6); outline-offset: 2px; }
+.status-card-media, .status-card-text, .status-card-add-bg { position: absolute; inset: 0; width: 100%; height: 100%; }
+.status-card-media { object-fit: cover; }
+.status-card-media.is-loading { background: linear-gradient(110deg, var(--wa-panel, #16233a) 30%, color-mix(in srgb, var(--wa-panel, #16233a) 70%, #fff) 50%, var(--wa-panel, #16233a) 70%); background-size: 200% 100%; animation: status-shimmer 1.2s linear infinite; }
+@keyframes status-shimmer { to { background-position: -200% 0; } }
+@media (prefers-reduced-motion: reduce) { .status-card-media.is-loading { animation: none; } }
+.status-card-text { display: grid; place-items: center; padding: 10px 8px 26px; box-sizing: border-box; }
+.status-card-text span { display: -webkit-box; -webkit-line-clamp: 5; -webkit-box-orient: vertical; overflow: hidden; font-size: 12px; font-weight: 600; line-height: 1.3; text-align: center; overflow-wrap: anywhere; }
+.status-card-add-bg { display: grid; place-items: center; padding-bottom: 24px; box-sizing: border-box; background: color-mix(in srgb, var(--wa-panel, #16233a) 85%, var(--wa-green, #2563eb)); }
+/* Name over a dark fade so it reads on any photo. */
+.status-card::after { content: ''; position: absolute; inset: auto 0 0; height: 52px; background: linear-gradient(transparent, rgba(4, 12, 28, .78)); pointer-events: none; }
+.status-card-name { position: absolute; z-index: 1; left: 8px; right: 8px; bottom: 8px; overflow: hidden; font-size: 12.5px; font-weight: 600; line-height: 1.2; text-overflow: ellipsis; white-space: nowrap; color: #fff; }
+.status-card-ring { position: absolute; z-index: 1; top: 8px; left: 8px; display: grid; place-items: center; width: 36px; height: 36px; border-radius: 50%; }
+.status-card-ring.is-new { background: var(--wa-green, #2563eb); }
+.status-card-ring.is-seen { background: rgba(255, 255, 255, .55); }
+.status-card-ring .avatar { width: 32px !important; height: 32px !important; min-width: 0; border: 2px solid var(--wa-bg, #0b1426); font-size: 11px; }
+.status-card.is-muted { opacity: .55; }
+.status-card-plus { position: absolute; z-index: 2; left: 50%; bottom: 30px; transform: translateX(-50%); display: grid; place-items: center; width: 28px; height: 28px; border: 3px solid var(--wa-bg, #0b1426); border-radius: 50%; background: var(--wa-green, #2563eb); color: #fff; cursor: pointer; }
+.status-card.is-mine:not(.is-add) ~ .status-card-plus { top: 8px; right: 8px; left: auto; bottom: auto; transform: none; }
+/* ===== Calls tab: favourites, new-call button and contact picker (CallsView.jsx) ===== */
+.app-shell .calls-view-container { position: relative; }
+.app-shell .call-log-item { gap: 14px; padding: 10px 16px; border-bottom: 0; }
+.app-shell .call-actions { display: flex; gap: 4px; flex: none; }
+.app-shell .call-action-btn { width: 40px; height: 40px; border-radius: 50%; color: var(--wa-text); }
+.app-shell .call-log-meta { color: var(--wa-sub); }
+.calls-add-favourite { width: 100%; border: 0; background: none; color: var(--wa-text); text-align: left; cursor: pointer; font: inherit; }
+.calls-add-icon { display: grid; place-items: center; width: 44px; height: 44px; flex: none; border-radius: 50%; background: var(--wa-green, #2563eb); color: #fff; }
+.calls-empty { display: grid; justify-items: center; gap: 8px; padding: 24px 32px; text-align: center; color: var(--wa-sub); }
+.calls-fab { position: absolute; right: max(16px, env(safe-area-inset-right, 0px)); bottom: 16px; z-index: 5; display: grid; place-items: center; width: 56px; height: 56px; border: 0; border-radius: 16px; background: var(--wa-green, #2563eb); color: #fff; box-shadow: 0 4px 12px rgba(0, 0, 0, .3); cursor: pointer; }
+.calls-picker { position: absolute; inset: 0; z-index: 20; display: flex; flex-direction: column; background: var(--wa-bg); color: var(--wa-text); }
+.calls-picker-head { display: flex; align-items: center; gap: 12px; padding: 12px 16px; }
+.calls-picker-head h2 { margin: 0; font-size: 20px; font-weight: 600; }
+.calls-picker-search { display: flex; align-items: center; gap: 8px; margin: 0 16px 8px; padding: 9px 14px; border-radius: 22px; background: var(--wa-input); color: var(--wa-sub); }
+.calls-picker-search input { flex: 1; min-width: 0; border: 0; outline: 0; background: none; color: var(--wa-text); font: inherit; }
+.calls-picker-list { flex: 1; overflow-y: auto; }
+.calls-picker-main { flex: 1; min-width: 0; display: flex; align-items: center; gap: 14px; padding: 0; border: 0; background: none; color: inherit; text-align: left; font: inherit; cursor: pointer; }
+.calls-picker-main:disabled { cursor: default; }
+.calls-picker-main .call-log-details { display: grid; min-width: 0; }
+.calls-picker-main strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.calls-picker-empty { padding: 24px 16px; color: var(--wa-sub); text-align: center; }
+/* Chip row scrolls sideways when labels make it wider than the screen (no wrapping, no clipping). */
+.app-shell .wa-chips { overflow-x: auto; scrollbar-width: none; flex-wrap: nowrap; }
+.app-shell .wa-chips::-webkit-scrollbar { display: none; }
+.app-shell .wa-chips > button { flex: none; white-space: nowrap; }
+
+/* ===== Chat wallpaper (wallpaper.js; Settings › Chats › Wallpaper). A per-chat theme wins over it. ===== */
+.app-shell .message-scroll[data-chat-theme="default"][data-wallpaper="doodle"] { background-color: var(--wa-chat-bg); background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20width%3D'160'%20height%3D'160'%20viewBox%3D'0%200%20160%20160'%3E%3Cg%20fill%3D'none'%20stroke%3D'%230b1f44'%20stroke-opacity%3D'.09'%20stroke-width%3D'1.6'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Cpath%20d%3D'M14%2018h30a6%206%200%200%201%206%206v14a6%206%200%200%201-6%206H28l-9%207v-7h-5a6%206%200%200%201-6-6V24a6%206%200%200%201%206-6z'%2F%3E%3Crect%20x%3D'98'%20y%3D'30'%20width%3D'22'%20height%3D'17'%20rx%3D'3'%2F%3E%3Cpath%20d%3D'M103%2030v-5a6%206%200%200%201%2012%200v5'%2F%3E%3Cpath%20d%3D'M34%2090l4%209%2010%201-7.5%206.5%202.5%2010-9-5.5-9%205.5%202.5-10L20%20100l10-1z'%2F%3E%3Cpath%20d%3D'M116%20126l-12-11.5a7.5%207.5%200%200%201%2012-9%207.5%207.5%200%200%201%2012%209z'%2F%3E%3Cpath%20d%3D'M80%2070l12%204v8c0%208-5.5%2013-12%2015-6.5-2-12-7-12-15v-8z'%2F%3E%3Ccircle%20cx%3D'138'%20cy%3D'78'%20r%3D'3'%2F%3E%3Ccircle%20cx%3D'62'%20cy%3D'138'%20r%3D'3'%2F%3E%3Ccircle%20cx%3D'70'%20cy%3D'26'%20r%3D'2'%2F%3E%3C%2Fg%3E%3C%2Fsvg%3E"); background-size: 160px 160px; }
+.app-shell.dark-theme .message-scroll[data-chat-theme="default"][data-wallpaper="doodle"] { background-image: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20width%3D'160'%20height%3D'160'%20viewBox%3D'0%200%20160%20160'%3E%3Cg%20fill%3D'none'%20stroke%3D'%23cfe0ff'%20stroke-opacity%3D'.045'%20stroke-width%3D'1.6'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%3E%3Cpath%20d%3D'M14%2018h30a6%206%200%200%201%206%206v14a6%206%200%200%201-6%206H28l-9%207v-7h-5a6%206%200%200%201-6-6V24a6%206%200%200%201%206-6z'%2F%3E%3Crect%20x%3D'98'%20y%3D'30'%20width%3D'22'%20height%3D'17'%20rx%3D'3'%2F%3E%3Cpath%20d%3D'M103%2030v-5a6%206%200%200%201%2012%200v5'%2F%3E%3Cpath%20d%3D'M34%2090l4%209%2010%201-7.5%206.5%202.5%2010-9-5.5-9%205.5%202.5-10L20%20100l10-1z'%2F%3E%3Cpath%20d%3D'M116%20126l-12-11.5a7.5%207.5%200%200%201%2012-9%207.5%207.5%200%200%201%2012%209z'%2F%3E%3Cpath%20d%3D'M80%2070l12%204v8c0%208-5.5%2013-12%2015-6.5-2-12-7-12-15v-8z'%2F%3E%3Ccircle%20cx%3D'138'%20cy%3D'78'%20r%3D'3'%2F%3E%3Ccircle%20cx%3D'62'%20cy%3D'138'%20r%3D'3'%2F%3E%3Ccircle%20cx%3D'70'%20cy%3D'26'%20r%3D'2'%2F%3E%3C%2Fg%3E%3C%2Fsvg%3E"); }
+.app-shell .message-scroll[data-chat-theme="default"][data-wallpaper="dots"] { background-color: var(--wa-chat-bg); background-image: radial-gradient(color-mix(in srgb, var(--wa-text) 14%, transparent) 1.2px, transparent 1.4px); background-size: 18px 18px; }
+.app-shell .message-scroll[data-chat-theme="default"][data-wallpaper="grid"] { background-color: var(--wa-chat-bg); background-image: linear-gradient(color-mix(in srgb, var(--wa-text) 7%, transparent) 1px, transparent 1px), linear-gradient(90deg, color-mix(in srgb, var(--wa-text) 7%, transparent) 1px, transparent 1px); background-size: 24px 24px; }
+.app-shell .message-scroll[data-chat-theme="default"][data-wallpaper="waves"] { background-color: var(--wa-chat-bg); background-image: repeating-radial-gradient(circle at 0 100%, transparent 0 14px, color-mix(in srgb, var(--wa-text) 7%, transparent) 14px 15.5px); background-size: 48px 48px; }
+.app-shell .message-scroll[data-chat-theme="default"][data-wallpaper="plain"] { background-color: var(--wa-chat-bg); background-image: none; }
+.app-shell .message-scroll[data-chat-theme="default"][data-wallpaper="navy"] { background-color: #102447; background-image: none; }
+.app-shell .message-scroll[data-chat-theme="default"][data-wallpaper="harbour"] { background-color: #1d3b66; background-image: none; }
+.app-shell .message-scroll[data-chat-theme="default"][data-wallpaper="slate"] { background-color: #2b3646; background-image: none; }
+.app-shell .message-scroll[data-chat-theme="default"][data-wallpaper="dawn"] { background-color: #dfe8f5; background-image: none; }
+/* The picker's preview tiles reuse the same rules. */
+.wallpaper-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 10px; padding: 8px 16px 16px; }
+.wallpaper-option { display: grid; gap: 6px; padding: 0; border: 0; background: none; color: var(--wa-text); font: inherit; font-size: 13px; text-align: center; cursor: pointer; }
+.wallpaper-option .message-scroll { position: relative; display: flex; flex-direction: column; justify-content: center; gap: 6px; height: 132px; padding: 10px !important; overflow: hidden; border: 2px solid transparent; border-radius: 12px; }
+.wallpaper-option[aria-checked="true"] .message-scroll { border-color: var(--wa-green, #2563eb); }
+.wallpaper-option .wp-bubble { width: 62%; height: 14px; border-radius: 6px; background: var(--wa-in); }
+.wallpaper-option .wp-bubble.out { align-self: flex-end; background: var(--wa-out); }
+.wallpaper-check { position: absolute; top: 6px; right: 6px; display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--wa-green, #2563eb); color: #fff; }
+.tools-page-note { margin: 12px 16px 4px; font-size: 13px; color: var(--wa-sub, var(--muted)); }
+/* ===== Channel page (ExtrasPanels.jsx Channels) ===== */
+.hm-channel-avatar { display: grid; place-items: center; flex: none; width: 44px; height: 44px; border-radius: 14px; background: linear-gradient(135deg, var(--wa-green, #2563eb), #0b2a66); color: #fff; font-weight: 700; font-size: 18px; }
+.hm-channel-avatar.is-large { width: 84px; height: 84px; border-radius: 26px; font-size: 34px; }
+.hm-channel-row { align-items: center; gap: 14px; }
+.hm-channel-feed { flex: 1; min-height: 60vh; margin: 8px 0 0; padding: 12px !important; display: flex; flex-direction: column; gap: 6px; overflow-y: auto; border-radius: 0; }
+.hm-channel-info { display: grid; justify-items: center; gap: 4px; margin: 4px auto 12px; padding: 16px; width: min(100%, 420px); box-sizing: border-box; border-radius: 16px; background: var(--wa-in, var(--wa-panel)); color: var(--wa-text); text-align: center; }
+.hm-channel-info h2 { margin: 8px 0 0; font-size: 20px; overflow-wrap: anywhere; }
+.hm-channel-meta { margin: 0; color: var(--wa-sub); font-size: 13.5px; }
+.hm-channel-description { margin: 6px 0 0; font-size: 14px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.hm-channel-follow { margin-top: 10px; padding: 8px 22px; border: 0; border-radius: 20px; background: var(--wa-green, #2563eb); color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
+.hm-channel-follow.is-following { background: color-mix(in srgb, var(--wa-green, #2563eb) 16%, transparent); color: var(--wa-text); }
+.hm-channel-item { display: grid; gap: 4px; justify-items: start; }
+.hm-channel-item .day-divider { justify-self: stretch; }
+.hm-channel-bubble { max-width: min(88%, 520px); padding: 8px 10px 6px; border-radius: 0 10px 10px 10px; background: var(--wa-in, var(--wa-panel)); color: var(--wa-text); box-shadow: 0 1px .5px rgba(11, 30, 60, .13); }
+.hm-channel-bubble p { margin: 0; font-size: 15px; line-height: 1.4; white-space: pre-wrap; overflow-wrap: anywhere; }
+.hm-channel-bubble footer { display: flex; justify-content: flex-end; align-items: center; gap: 6px; margin-top: 2px; color: var(--wa-sub); font-size: 11px; }
+.hm-channel-delete { display: grid; place-items: center; padding: 2px; border: 0; background: none; color: inherit; cursor: pointer; }
+.hm-channel-reactions { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-left: 4px; }
+.hm-channel-reactions button { padding: 2px 6px; border: 1px solid transparent; border-radius: 12px; background: color-mix(in srgb, var(--wa-panel, #16233a) 80%, transparent); font-size: 14px; cursor: pointer; }
+.hm-channel-reactions button.is-on { border-color: var(--wa-green, #2563eb); background: color-mix(in srgb, var(--wa-green, #2563eb) 20%, transparent); }
+.hm-channel-reaction-total { padding: 2px 8px; border-radius: 12px; background: var(--wa-in, var(--wa-panel)); color: var(--wa-text); font-size: 12.5px; box-shadow: 0 1px .5px rgba(11, 30, 60, .13); }
+.hm-channel-empty { align-self: center; padding: 6px 12px; border-radius: 8px; background: var(--wa-in, var(--wa-panel)); color: var(--wa-sub); font-size: 13px; }
+.hm-channel-follow-bar { margin: 8px 0 0; padding: 12px; border: 0; border-radius: 24px; background: var(--wa-green, #2563eb); color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
+/* Chat header: long names end in an ellipsis (the name line was a flex box, which ignores text-overflow). */
+.app-shell .conversation-person > span:not(.avatar) { flex: 1; min-width: 0; }
+.app-shell .conversation-person strong { display: block; max-width: 100%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -15,6 +15,7 @@ import { attachmentContent, sealForUpload } from '../mediaCrypto.js';
 import Avatar from './Avatar.jsx';
 import SelectContactModal from './SelectContactModal.jsx';
 import ShieldMark from './ShieldMark.jsx';
+import FormattedText from './FormattedText.jsx';
 import { countUnreadConversations, mergeGroupRows, unreadBadge } from '../groupRows.js';
 
 function GroupListRow({ row, onOpen, pressHandlers, labels = [], consumeLongPress = () => false }) {
@@ -28,7 +29,7 @@ function GroupListRow({ row, onOpen, pressHandlers, labels = [], consumeLongPres
             <time className={row.unread > 0 ? 'unread' : ''}>{row.time}</time>
           </span>
           <span className="wa-row-bottom">
-            <span className="wa-preview">{row.preview}</span>
+            <span className="wa-preview"><FormattedText text={row.preview} inline /></span>
             <span className="wa-row-indicators">
               {labels.map((label) => <Tag key={label.id} size={14} className="wa-row-badge-icon" style={{ color: labelColor(label.color) }} aria-label={`Label ${label.name}`} />)}
               {row.unread > 0 && <span className={`wa-badge ${row.muted ? 'is-muted' : ''}`}>{unreadBadge(row.unread)}</span>}
@@ -297,7 +298,8 @@ export default function ChatsList({ onOpenChat, onStartCall, onGroups, groups = 
   const visibleChats = normalizedQuery
     ? folderChats.filter((chat) => `${chat.name ?? ''} ${chat.username ?? ''}`.toLowerCase().includes(normalizedQuery))
     : filterTab === 'unread' ? folderChats.filter((chat) => chat.unread > 0)
-      : filterTab === 'favourites' ? folderChats.filter((chat) => favouriteChatIds.includes(chat.id)) : folderChats;
+      : filterTab === 'favourites' ? folderChats.filter((chat) => favouriteChatIds.includes(chat.id))
+        : filterTab === 'groups' ? [] : folderChats;
   // Groups sit in the same list as direct chats (after pinned/favourite chats, by recency); they are not favouritable.
   const visibleGroups = isSelectionMode || filterTab === 'favourites' ? []
     : normalizedQuery ? folderGroups.filter((group) => group.name.toLowerCase().includes(normalizedQuery))
@@ -454,6 +456,7 @@ export default function ChatsList({ onOpenChat, onStartCall, onGroups, groups = 
             Unread{totalUnread > 0 ? ` ${totalUnread}` : ''}
           </button>
           <button type="button" role="tab" aria-selected={filterTab === 'favourites'} className={filterTab === 'favourites' ? 'active' : ''} onClick={() => setFilterTab('favourites')}>Favourites</button>
+          <button type="button" role="tab" aria-selected={filterTab === 'groups'} className={filterTab === 'groups' ? 'active' : ''} onClick={() => setFilterTab('groups')}>Groups</button>
           {labels.map((label) => (
             <button type="button" role="tab" key={label.id} aria-selected={filterTab === `label:${label.id}`} className={`wa-label-chip ${filterTab === `label:${label.id}` ? 'active' : ''}`}
               onClick={() => setFilterTab(filterTab === `label:${label.id}` ? 'all' : `label:${label.id}`)}>
@@ -521,7 +524,7 @@ export default function ChatsList({ onOpenChat, onStartCall, onGroups, groups = 
                     <time className={chat.unread > 0 ? 'unread' : ''}>{chat.time ?? ''}</time>
                   </span>
                   <span className="wa-row-bottom">
-                    <span className="wa-preview">{chat.preview || 'No messages yet'}</span>
+                    <span className="wa-preview"><FormattedText text={chat.preview || 'No messages yet'} inline /></span>
                     <span className="wa-row-indicators">
                       {isMuted && <VolumeX size={15} className="wa-row-badge-icon" title="Muted" />}
                       {isPinned && <Pin size={15} className="wa-row-badge-icon" title="Pinned" />}
@@ -588,8 +591,8 @@ export default function ChatsList({ onOpenChat, onStartCall, onGroups, groups = 
         {!normalizedQuery && visibleRows.length === 0 && (
           <div className="wa-empty">
             <MessageSquarePlus size={40} />
-            <h3>{filterTab === 'unread' ? 'No unread chats' : 'No chats yet'}</h3>
-            <p>Tap the green plus button to find people and start chatting.</p>
+            <h3>{filterTab === 'unread' ? 'No unread chats' : filterTab === 'groups' ? 'No groups yet' : filterTab === 'favourites' ? 'No favourites yet' : filterTab.startsWith('label:') ? 'No chats with this label' : 'No chats yet'}</h3>
+            <p>{filterTab === 'groups' ? 'Create a group from the menu, or join one with an invite link.' : filterTab === 'favourites' ? 'Long-press a chat and choose Add to favourites.' : 'Tap the + button to find people and start chatting.'}</p>
           </div>
         )}
       </div>

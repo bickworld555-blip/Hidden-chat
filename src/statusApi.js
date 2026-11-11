@@ -5,7 +5,7 @@ import { openContent, sealStatus } from './e2e/client.js';
 import { attachmentContent, sealForUpload } from './mediaCrypto.js';
 import { parseMediaRef } from './media.js';
 
-export const STATUS_BACKGROUNDS = ['#00a884', '#128c7e', '#7e57c2', '#ef6c00', '#c2185b', '#1e88e5', '#5d4037', '#37474f'];
+export { STATUS_BACKGROUNDS } from './statusColors.js';
 
 async function request(path, token, { method = 'GET', body } = {}) {
   const response = await apiFetch(`/api/v1/statuses${path}`, {

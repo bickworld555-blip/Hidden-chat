@@ -333,7 +333,7 @@ test('the UI wires the WhatsApp composer, display names, the live-location sheet
   const app = await read('../src/App.jsx');
   const styles = await read('../src/styles.css');
 
-  const pill = chat.slice(chat.indexOf('<div className="composer-row">'), chat.indexOf('<div className="composer-row">') + 1800);
+  const pill = chat.slice(chat.indexOf('<div className="composer-row">'), chat.indexOf('<div className="composer-row">') + 2600);
   for (const needle of ['aria-label="Emoji"', 'ref={composerInputRef}', 'aria-label="Attach"', 'aria-label="Camera"', 'className="composer-fab"', 'aria-label="Send"', 'aria-label="Record voice note"']) {
     assert.ok(pill.includes(needle), `composer has ${needle}`);
   }

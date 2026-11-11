@@ -45,6 +45,10 @@ const ContactInfoDrawer = lazyComponent(() => import('./ContactInfoDrawer.jsx'))
 const MediaViewer = lazyComponent(() => import('./MediaViewer.jsx'));
 import VoiceMessage from './VoiceMessage.jsx';
 import LinkText from './LinkText.jsx';
+import FormattedText from './FormattedText.jsx';
+import ComposerMirror from './ComposerMirror.jsx';
+import { hasFormatting } from '../textFormat.js';
+import { useWallpaper } from '../wallpaper.js';
 import VoiceRecorderBar from './VoiceRecorderBar.jsx';
 import { presenceLine } from '../presence.js';
 import PendingUpload from './PendingUpload.jsx';
@@ -137,7 +141,7 @@ function TextWithPreview({ content, sessionToken, meta, message }) {
       {quote}
       {card}
       <div className="text-with-meta">
-        <p><LinkText text={content} /><span className="meta-spacer" aria-hidden="true">{meta}</span></p>
+        <p><FormattedText text={content} /><span className="meta-spacer" aria-hidden="true">{meta}</span></p>
         {meta}
       </div>
     </>
@@ -663,6 +667,7 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
   const setActiveChat = useChatStore((state) => state.setActiveChat);
   const blocked = useChatStore((state) => (chatId ? isBlocked(state.blockedChats[chatId]) : false));
   const chatTheme = useChatStore((state) => (chatId ? state.chatThemes[chatId] : undefined)) ?? 'default';
+  const wallpaper = useWallpaper();
   const unblockChat = useChatStore((state) => state.unblockChat);
 
   const [text, setText] = useState('');
@@ -1650,6 +1655,7 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
       <div
         className="message-scroll"
         data-chat-theme={chatTheme}
+        data-wallpaper={wallpaper}
         ref={messageScrollRef}
         onScroll={() => { syncScrollState(); loadOlderIfNearTop(); }}
         onWheel={cancelAutoScroll}
@@ -1733,7 +1739,8 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
           <div className="composer-row">
             <div className="composer">
               <button type="button" className={`composer-icon${emojiOpen ? ' toggled' : ''}`} onClick={() => setEmojiOpen((open) => !open)} aria-label="Emoji" aria-expanded={emojiOpen} disabled={busy}><Smile size={20} /></button>
-              <input ref={composerInputRef} value={text} onChange={(event) => { setCaret(event.target.selectionStart ?? event.target.value.length); handleTextChange(event); }}
+              {hasFormatting(text) && <ComposerMirror inputRef={composerInputRef} text={text} />}
+              <input ref={composerInputRef} className={hasFormatting(text) ? 'has-mirror' : undefined} value={text} onChange={(event) => { setCaret(event.target.selectionStart ?? event.target.value.length); handleTextChange(event); }}
                 onSelect={(event) => setCaret(event.target.selectionStart ?? 0)} onKeyDown={(event) => { if (event.key === 'Escape' && editing) { event.preventDefault(); cancelEdit(); } }}
                 placeholder={translate(editing ? 'Edit message' : 'Message', language)} maxLength={COMPOSER_MAX_LENGTH} />
               <button type="button" className="composer-icon" onClick={() => setMenuOpen(true)} aria-label="Attach" disabled={busy}><Paperclip size={20} /></button>
