@@ -34,11 +34,16 @@ public class CallActionReceiver extends BroadcastReceiver {
         if (ACTION_REJECT.equals(intent.getAction())) decline(context, intent.getStringExtra(Alerts.EXTRA_CALL_ID));
     }
 
+    // The call in progress (set by the web app with setCallActive), so a hang-up from the notification, a headset
+    // or the car reaches the server even while the app's screen is paused.
+    static volatile String activeCallId;
+
     /** Ends the ongoing call (notification button, or a headset / car / watch through Android). */
     static void hangUp(Context context) {
-        // The call lives in the WebView, which ends it and tells the other side. Without a WebView there is no
-        // call left to end, so only the call state (notification, audio route) is cleared.
+        // The call lives in the WebView, which ends it and tells the other side. The server is told directly as well,
+        // so the other side leaves at once even if the WebView is paused in the background (ending twice is harmless).
         Context app = context.getApplicationContext();
+        endOnServer(app, activeCallId, "hang-up");
         if (!HiddenNativePlugin.emitCallAction("hangup", null)) {
             MessagingService.endOrphanedCall(app, "hang-up with no screen");
             return;
@@ -52,18 +57,20 @@ public class CallActionReceiver extends BroadcastReceiver {
     static void decline(Context context, String callId) {
         TelecomCalls.rejected();
         Alerts.cancelIncomingCall(context);
-        // App closed: the service's connection tells the caller. App open (or in the background): the web app does.
+        // The caller's phone stops ringing at once: the server is told directly (it ends the call once; a later copy
+        // is a no-op), besides the service's connection or the web app, which may be paused in the background.
+        endOnServer(context.getApplicationContext(), callId, "decline");
         boolean byService = NativeRelay.declinePendingCall(callId);
         boolean byApp = !byService && HiddenNativePlugin.emitCallAction("reject", callId);
-        if (!byService && !byApp) {
-            // Rung by push, connection not up yet: the server ends the call for the caller (network off the main thread).
-            final Context app = context.getApplicationContext();
-            new Thread(() -> {
-                boolean byServer = PushRegistration.declineCall(app, callId);
-                android.util.Log.i("CallAction", "decline " + callId + " via " + (byServer ? "server" : "nobody"));
-            }).start();
-            return;
-        }
-        android.util.Log.i("CallAction", "decline " + callId + " via " + (byService ? "service" : "app"));
+        android.util.Log.i("CallAction", "decline " + callId + " via server" + (byService ? " + service" : byApp ? " + app" : ""));
+    }
+
+    /** POST /api/v1/calls/:id/end off the main thread. */
+    private static void endOnServer(Context app, String callId, String why) {
+        if (callId == null || callId.isEmpty()) return;
+        new Thread(() -> {
+            boolean ended = PushRegistration.endCall(app, callId);
+            android.util.Log.i("CallAction", why + " " + callId + (ended ? " ended on the server" : " already over"));
+        }, "call-end").start();
     }
 }

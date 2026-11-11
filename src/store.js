@@ -238,8 +238,8 @@ function ensureLiveTracking(send) {
   );
 }
 
-// Read receipts already sent this session (a message's status can be overwritten by a later server echo).
-const readReceiptsSent = new Set();
+// Chats read on screen before the connection was up (see setClient).
+const readsWithoutConnection = new Set();
 
 export const useChatStore = create((setState, getState) => ({
   userId: '',
@@ -360,7 +360,16 @@ export const useChatStore = create((setState, getState) => ({
   setConnection(connection) { setState({ connection }); },
   // The realtime client, so views without a prop (e.g. the home camera shortcut) can send a message.
   client: null,
-  setClient(client) { setState({ client }); },
+  setClient(client) {
+    setState({ client });
+    // Chats read while there was no connection: their blue ticks go now, so the server's unread state (which the
+    // badge is rebuilt from on the next history load) matches what was seen.
+    if (client?.send && readsWithoutConnection.size > 0) {
+      const chatIds = [...readsWithoutConnection];
+      readsWithoutConnection.clear();
+      for (const chatId of chatIds) getState().readChat(chatId);
+    }
+  },
   sendMessage(receiverId, content, extras = {}) {
     const { userId, client } = getState();
     if (!receiverId || !userId || !content) return null;
@@ -468,14 +477,15 @@ export const useChatStore = create((setState, getState) => ({
     }));
   },
   // The person has read this chat (on screen, or "Mark as read" on its notification): blue ticks for the sender's
-  // unread messages, once each, and the unread count cleared.
+  // unread messages and the unread count cleared at once.
   readChat(chatId) {
     const { client, messages } = getState();
     if (!chatId) return;
-    // Not connected yet (an app just opened from a notification): the receipts go once the chat is next read.
+    // Not connected yet (an app just opened from a notification): the receipts go as soon as it connects.
+    if (!client?.send) readsWithoutConnection.add(chatId);
     for (const message of client?.send ? messages[chatId] ?? [] : []) {
-      if (message?.senderId === chatId && message.status !== 'read' && !readReceiptsSent.has(message.id)) {
-        readReceiptsSent.add(message.id);
+      // Marking it read locally (statuses only move forward, see mergeMessageStatus) is what stops a second receipt.
+      if (message?.senderId === chatId && message.status !== 'read') {
         client.send({ type: 'message:read', messageId: message.id });
         getState().updateMessage(message.id, { status: 'read' });
       }

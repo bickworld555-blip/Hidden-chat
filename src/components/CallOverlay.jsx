@@ -159,9 +159,10 @@ export default function CallOverlay({
   useEffect(() => {
     if (!nativeShell()) return undefined;
     // Starting (or switching to video) picks the default route; the button shows what Android actually chose.
-    nativeSetCallActive(callLive, isVideo, callTitle).then((result) => { if (callLive && typeof result?.speaker === 'boolean') setSpeakerOn(result.speaker); });
+    // The call id lets Android's Hang up (notification, headset, car) end it on the server even while this screen is paused.
+    nativeSetCallActive(callLive, isVideo, callTitle, call.id).then((result) => { if (callLive && typeof result?.speaker === 'boolean') setSpeakerOn(result.speaker); });
     return () => { if (callLive) nativeSetCallActive(false); };
-  }, [callLive, isVideo, callTitle]);
+  }, [callLive, isVideo, callTitle, call.id]);
   // While live, tell Android every few seconds that the call goes on; if the confirmations stop, it ends the call
   // there by itself, so a timer can never keep running on the lock screen for a call that is gone.
   useEffect(() => {

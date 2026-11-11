@@ -286,6 +286,7 @@ public class HiddenNativePlugin extends Plugin {
         boolean active = Boolean.TRUE.equals(call.getBoolean("active", false));
         boolean video = Boolean.TRUE.equals(call.getBoolean("video", false));
         MessagingService.setCall(getContext(), active, video, call.getString("name"));
+        CallActionReceiver.activeCallId = active ? call.getString("callId") : null;
         // Voice calls start on the earpiece (or a headset), video calls on the loudspeaker.
         if (active) CallAudio.start(getContext(), video);
         else CallAudio.stop(getContext());
@@ -542,6 +543,17 @@ public class HiddenNativePlugin extends Plugin {
         String tag = call.getString("tag");
         if (tag == null || tag.isEmpty()) Alerts.cancelAllMessages(getContext());
         else Alerts.cancelMessage(getContext(), tag);
+        // Reading someone's chat also clears their missed-call notification, like WhatsApp.
+        if (tag != null && tag.startsWith("chat:")) Alerts.clearMissedCalls(getContext(), tag.substring(5));
+        call.resolve();
+    }
+
+    /** Missed-call notifications: one person's ({ peerId }) or all of them (the Calls tab was opened). */
+    @PluginMethod
+    public void clearMissedCalls(PluginCall call) {
+        String peerId = call.getString("peerId");
+        if (peerId == null || peerId.isEmpty()) Alerts.clearAllMissedCalls(getContext());
+        else Alerts.clearMissedCalls(getContext(), peerId);
         call.resolve();
     }
 

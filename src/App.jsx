@@ -11,7 +11,7 @@ import { initialTabFromUrl } from './pwa.js';
 import { countUnreadConversations, groupRow } from './groupRows.js';
 import { getViewingGroup, readMutedGroups, setGroupMuted, useMutedGroups } from './groupPrefs.js';
 import { classifyIncoming, groupNotificationText, parseConversationOpenParam, shouldAlertGroup } from './notificationChannels.js';
-import { nativeClearSession, nativeRequestStartupPermissions, nativeSetSession, nativeShell, nativeStartBackground, nativeState, nativeStopBackground, nativeTakePendingCall, nativeMoveToBackground, nativeClearShare, nativeSetCallActive, nativeClearMessageNotifications, nativeTakeMessageActions, onNative } from './native.js';
+import { nativeClearSession, nativeRequestStartupPermissions, nativeSetSession, nativeShell, nativeStartBackground, nativeState, nativeStopBackground, nativeTakePendingCall, nativeMoveToBackground, nativeClearShare, nativeSetCallActive, nativeClearMessageNotifications, nativeClearMissedCalls, nativeTakeMessageActions, onNative } from './native.js';
 import { parseShare } from './shareTarget.js';
 import { onE2eEvent, startE2e, stopE2e } from './e2e/client.js';
 import { SECURITY_NOTICE } from './e2e/notices.js';
@@ -93,7 +93,7 @@ function inviteCodeFromLocation(location = globalThis.location) {
 }
 import { playNotificationTone, stopAllTones } from './sounds.js';
 import { applyAppBadge, maybeRemind, showSystemNotification, vibrateFor } from './notify.js';
-import { badgeCount, useNotificationSettings } from './notificationSettings.js';
+import { badgeCount, unseenMissedCalls, useNotificationSettings } from './notificationSettings.js';
 import { hiddenByBlock, isBlocked } from './blocking.js';
 import { TERMINAL_STATUSES } from './callEngine.js';
 import { isRoomOffer } from './callRoom.js';
@@ -757,12 +757,15 @@ export default function App() {
   const callLogs = useChatStore((state) => state.callLogs);
   const notificationSettings = useNotificationSettings();
 
-  // Opening the Calls tab counts missed calls as viewed, which is what clears them from the badge.
+  // Opening the Calls tab counts missed calls as viewed: the tab badge and the missed-call notifications clear, and
+  // the next missed call counts from 1 again.
+  const missedCallsUnseen = unseenMissedCalls(callLogs, callsSeenAt);
   useEffect(() => {
     if (activeTab !== 'calls') return;
     const now = Date.now();
     setCallsSeenAt(now);
     localStorage.setItem('relay:calls-seen-at', String(now));
+    if (nativeShell()) nativeClearMissedCalls();
   }, [activeTab, callLogs]);
 
   useEffect(() => {
@@ -954,7 +957,7 @@ export default function App() {
         {activeTab === 'chats' && !isMobile && <footer className="workspace-footer"><span /><span className="workspace-footer-right"><button onClick={toggleTheme} title={`Switch to ${darkMode ? 'light' : 'dark'} theme`}>{darkMode ? <Sun size={14} /> : <Moon size={14} />}{darkMode ? 'Light' : 'Dark'}</button><ChevronRight size={13} /></span></footer>}
       </div>
       {/* Settings is its own full screen on the phone (back arrow, no tab bar), like the business messenger. */}
-      {isMobile && !chatOpenOnMobile && activeTab !== 'tools' && <MobileBottomNav activeTab={mobileActiveTab} onTabChange={setMobileActiveTab} unreadCount={unreadChats} />}
+      {isMobile && !chatOpenOnMobile && activeTab !== 'tools' && <MobileBottomNav activeTab={mobileActiveTab} onTabChange={setMobileActiveTab} unreadCount={unreadChats} missedCalls={activeTab === 'calls' ? 0 : missedCallsUnseen} />}
       {fatalError && <div className="status-toast"><Bell size={15} /><span>{fatalError}</span><button onClick={() => setFatalError('')}>Dismiss</button></div>}
       {pairingOpen && user && <PairingModal onClose={() => setPairingOpen(false)} token={sessionToken} userId={userId} />}
       {notificationsOpen && <NotificationSettings onClose={() => setNotificationsOpen(false)} />}

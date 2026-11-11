@@ -349,6 +349,20 @@ final class Alerts {
         }
     }
 
+    /** Every missed-call notification (the Calls tab was opened): the next missed call counts from 1 again. */
+    static void clearAllMissedCalls(Context context) {
+        java.util.List<String> tags;
+        synchronized (Alerts.class) { tags = new java.util.ArrayList<>(missedCounts.keySet()); missedCounts.clear(); }
+        android.app.NotificationManager manager = context.getSystemService(android.app.NotificationManager.class);
+        if (manager != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            for (android.service.notification.StatusBarNotification posted : manager.getActiveNotifications()) {
+                if (posted.getTag() != null && posted.getTag().startsWith("missed:")) manager.cancel(posted.getTag(), posted.getId());
+            }
+        } else {
+            for (String tag : tags) NotificationManagerCompat.from(context).cancel(tag, 1);
+        }
+    }
+
     /** The missed-call notification for this person is gone (opened, called back or the chat was read). */
     static void clearMissedCalls(Context context, String callerId) {
         String tag = "missed:" + callerId;

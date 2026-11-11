@@ -185,7 +185,8 @@ final class PushRegistration {
     }
 
     /** Decline or hang up over HTTP (no connection needed): the server ends the call for both sides. */
-    static boolean declineCall(Context context, String callId) {
+    /** Ends a call on the server (decline, cancel or hang up): the other side stops ringing / leaves at once. */
+    static boolean endCall(Context context, String callId) {
         if (callId == null || callId.isEmpty()) return false;
         return post(context, "/api/v1/calls/" + android.net.Uri.encode(callId) + "/end", new JSONObject());
     }

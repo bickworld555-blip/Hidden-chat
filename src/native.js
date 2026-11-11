@@ -59,7 +59,7 @@ export const nativeOpenSecret = (sealed) => invoke('openSecret', { sealed });
 // The call is over: the native side clears the call state, Android's call, audio and notifications at once.
 export const nativeEndCall = () => invoke('endCall');
 export const nativeCallHeartbeat = () => invoke('callHeartbeat');
-export const nativeSetCallActive = (active, video = false, name = '') => invoke('setCallActive', { active: Boolean(active), video: Boolean(video), name: String(name || '') });
+export const nativeSetCallActive = (active, video = false, name = '', callId = '') => invoke('setCallActive', { active: Boolean(active), video: Boolean(video), name: String(name || ''), callId: String(callId || '') });
 // Loudspeaker on/off during a call (off = earpiece, or a headset when one is connected). Resolves { speaker }.
 export const nativeSetSpeaker = (on) => invoke('setSpeaker', { on: Boolean(on) });
 // Video call with both cameras off: the phone goes to the ear (earpiece + proximity sensor); a camera back on → loudspeaker.
@@ -102,6 +102,8 @@ export const nativeStopBackground = () => invoke('stopBackground');
 export const nativeNotify = (options) => invoke('notify', options);
 export const nativeShowIncomingCall = (options) => invoke('showIncomingCall', options);
 // "Reply" / "Mark as read" taken on a notification while the app's screen was gone: [{ action, open, text }].
+// Missed-call notifications: all of them (Calls tab opened) or one person's (their chat was opened).
+export const nativeClearMissedCalls = (peerId) => invoke('clearMissedCalls', peerId ? { peerId } : {});
 export const nativeTakeMessageActions = async () => (await invoke('takeMessageActions'))?.actions ?? [];
 // Stops the ringing notification; `missed`: the caller hung up first, so a "Missed call" notification takes its place.
 export const nativeCancelIncomingCall = ({ missed = false } = {}) => invoke('cancelIncomingCall', { missed: Boolean(missed) });

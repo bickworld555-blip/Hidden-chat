@@ -129,12 +129,17 @@ export function shouldRemind({ enabled, unseenCount, hidden, lastRemindedAt, now
   return now - (lastRemindedAt ?? 0) >= REMINDER_INTERVAL_MS;
 }
 
+// Missed calls since the Calls tab was last opened: the Calls tab badge, and part of the app icon badge. Opening
+// the tab moves callsSeenAt forward, so the next missed call counts from 1 again.
+export function unseenMissedCalls(callLogs = [], callsSeenAt = 0) {
+  return callLogs.filter((log) => log.status === 'missed' && Date.parse(log.timestamp) > callsSeenAt).length;
+}
+
 // Badge count = chats with unread messages + missed calls not yet viewed in the Calls tab.
 export function badgeCount({ enabled, chats = [], callLogs = [], callsSeenAt = 0 }) {
   if (!enabled) return 0;
   const unreadChats = chats.filter((chat) => (chat.unread ?? 0) > 0).length;
-  const missedCalls = callLogs.filter((log) => log.status === 'missed' && Date.parse(log.timestamp) > callsSeenAt).length;
-  return unreadChats + missedCalls;
+  return unreadChats + unseenMissedCalls(callLogs, callsSeenAt);
 }
 
 // --- Tiny external store -------------------------------------------------------------------------

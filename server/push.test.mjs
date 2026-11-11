@@ -249,7 +249,7 @@ test('Android: idle with push (no always-on service), woken by Firebase like Wha
   assert.ok(alerts.includes('if (ringing && !id.isEmpty() && id.equals(ringingCallId)) return true;'), 'the push and the connection ring a call once');
   assert.ok(alerts.includes('if (!firstNotice(messageId)) return true;'), 'a message is notified once however it arrives');
   const receiver = await java('CallActionReceiver.java');
-  assert.ok(receiver.includes('PushRegistration.declineCall(app, callId)'), 'Decline works before the connection is up');
+  assert.ok(receiver.includes('PushRegistration.endCall(app, callId)') && receiver.includes('endOnServer(context.getApplicationContext(), callId, "decline")'), 'Decline reaches the server at once, also before the connection is up');
   const plugin = await java('HiddenNativePlugin.java');
   assert.match(plugin, /public void clearSession\(PluginCall call\) \{[\s\S]*?PushRegistration\.unregister\(getContext\(\)\);\s*RelaySession\.clear/);
 });
