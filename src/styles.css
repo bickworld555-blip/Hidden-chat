@@ -4740,6 +4740,27 @@ canvas.recording-wave { color: #5d6662; }
 .wa-business-row .is-closed { color: #dc2626; }
 .hm-menu-group + .hm-menu-group { margin-top: 8px; }
 .hm-menu-group .hm-section { margin: 12px 16px 4px; font-size: 13px; font-weight: 600; color: var(--wa-sub, #5b6b82); text-transform: none; }
-/* Settings header: a title like the other screens (sentence case, full size), back arrow on sub-pages. */
-.app-shell .tools-header { justify-content: flex-start; gap: 12px; }
-.app-shell .tools-header h2 { flex: 1; font-size: 20px; font-weight: 600; text-transform: none; letter-spacing: 0; color: var(--wa-text); }
+/* Tab headers (Updates, Calls, Settings) match the Chats header: same band, padding and a full-size title. */
+.app-shell .tools-header, .app-shell .updates-header, .app-shell .calls-header { display: flex; align-items: center; justify-content: flex-start; gap: 12px; padding: 14px 16px 10px; background: var(--wa-bg); border-bottom: 0; }
+.app-shell .tools-header h2, .app-shell .updates-header h2, .app-shell .calls-header h2 { flex: 1; margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -.2px; text-transform: none; color: var(--wa-text); }
+.app-shell .calls-section { margin: 4px 16px 4px; font-size: 15px; font-weight: 600; color: var(--wa-text); }
+.app-shell .call-log-count { font-weight: 400; color: var(--wa-sub); }
+/* Bubble runs (ChatWindow: run-start / run-continued): the first bubble from a sender has a pointed corner with a
+   small tail; following ones are fully rounded and stack closer, as in WhatsApp. */
+.app-shell .message-day-group.run-start { margin-top: 6px; }
+.app-shell .message-day-group.run-continued .message-line { margin-top: -2px; }
+.app-shell .run-start .message-bubble { position: relative; }
+.app-shell .run-start .message-bubble.incoming { border-top-left-radius: 0; }
+.app-shell .run-start .message-bubble.outgoing { border-top-right-radius: 0; }
+.app-shell .run-start .message-bubble.incoming::before,
+.app-shell .run-start .message-bubble.outgoing::before { content: ''; position: absolute; top: 0; width: 8px; height: 13px; pointer-events: none; }
+.app-shell .run-start .message-bubble.incoming::before { left: -7px; background: var(--wa-in); clip-path: polygon(0 0, 100% 0, 100% 100%); }
+.app-shell .run-start .message-bubble.outgoing::before { right: -7px; background: var(--wa-out); clip-path: polygon(0 0, 100% 0, 0 100%); }
+.app-shell .run-continued .message-bubble.incoming { border-top-left-radius: 8px; }
+.app-shell .run-continued .message-bubble.outgoing { border-top-right-radius: 8px; }
+/* Rows use content-visibility (paint containment), so the tail must sit inside the row: give rows room for it. */
+.app-shell .message-scroll .message-line { padding-left: 8px; padding-right: 8px; }
+/* Same band as Chats for the tab headers, over the older themed rules. */
+.app-shell :is(.updates-view-container .updates-header, .calls-view-container .calls-header, .tools-view-container .tools-header) { background: var(--wa-bg); border-bottom: 0; }
+.app-shell .updates-channels-empty { padding: 0 16px; }
+.app-shell .updates-channels-find { margin-right: 16px; }

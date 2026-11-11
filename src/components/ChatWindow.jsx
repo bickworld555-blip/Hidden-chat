@@ -1247,14 +1247,18 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
   const messageList = useMemo(() => {
     if (!chat) return null;
     let lastDay = '';
+    let lastSender = null;
     return visibleMessages.map((message) => {
             if (!message?.id) return null;
             const day = localDateKey(message.timestamp);
             const showDay = day !== lastDay;
             lastDay = day;
+            // The first message of a run from one sender (or of a day) gets the bubble tail; the rest stack closer.
+            const runStart = showDay || message.senderId !== lastSender;
+            lastSender = message.senderId;
 
             return (
-              <div className="message-day-group" key={message.id}>
+              <div className={`message-day-group ${runStart ? 'run-start' : 'run-continued'}`} key={message.id}>
                 {showDay && <div className="day-divider"><span>{formatMessageDate(message.timestamp)}</span></div>}
                 <MessageBubble
                   message={message}

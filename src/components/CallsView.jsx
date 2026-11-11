@@ -1,6 +1,8 @@
 import { Phone, Video, ArrowDownLeft, ArrowUpRight } from 'lucide-react';
 import { useChatStore } from '../store.js';
 import { formatViewerTimestamp } from '../time.js';
+import { groupCallLogs } from '../callLogGroups.js';
+import { presentName } from '../profile.js';
 import Avatar from './Avatar.jsx';
 
 function describeDuration(seconds) {
@@ -10,16 +12,16 @@ function describeDuration(seconds) {
   return `${minutes}m ${total % 60}s`;
 }
 
+// Calls tab: a "Recent" list where back-to-back calls with the same person are one row with a count.
 export default function CallsView({ onCall }) {
   const callLogs = useChatStore((state) => state.callLogs);
   const chats = useChatStore((state) => state.chats);
+  const header = <div className="calls-header"><h2>Calls</h2></div>;
 
   if (!callLogs || callLogs.length === 0) {
     return (
       <div className="calls-view-container">
-        <div className="calls-header">
-          <h2>Calls</h2>
-        </div>
+        {header}
         <div className="empty-state">
           <Phone size={48} strokeWidth={1.5} />
           <h3>No call history</h3>
@@ -29,55 +31,51 @@ export default function CallsView({ onCall }) {
     );
   }
 
-  const getChatInfo = (peerId) => {
-    return chats.find((c) => c.id === peerId);
-  };
-
   return (
     <div className="calls-view-container">
-      <div className="calls-header">
-        <h2>Calls</h2>
-      </div>
+      {header}
       <div className="calls-list-content">
-        {callLogs.map((log) => {
-          const chat = getChatInfo(log.peerId);
-          const name = chat?.name || 'Unknown';
-          const isIncoming = log.direction === 'incoming';
-          const answered = log.status === 'completed' && log.duration > 0;
-          const missed = !answered;
+        <h3 className="calls-section">Recent</h3>
+        {groupCallLogs(callLogs).map((row) => {
+          const chat = chats.find((c) => c.id === row.peerId);
+          const name = (chat && presentName(chat)) || chat?.name || 'Unknown';
+          const isIncoming = row.direction === 'incoming';
+          const missed = !row.answered;
           const Arrow = isIncoming ? ArrowDownLeft : ArrowUpRight;
+          const ModeIcon = row.mode === 'video' ? Video : Phone;
 
           return (
-            <div key={log.id} className="call-log-item">
+            <div key={row.key} className="call-log-item">
               <Avatar
                 name={name}
                 initials={chat?.initials ?? name.slice(0, 2).toUpperCase()}
                 color={chat?.color}
+                image={chat?.avatar}
                 online={chat?.online}
                 size="small"
               />
               <div className="call-log-details">
                 <div className="call-log-header">
-                  <strong className={missed && isIncoming ? 'call-log-missed' : ''}>{name}</strong>
-                  <span className="call-log-time">{formatViewerTimestamp(log.timestamp)}</span>
+                  <strong className={missed && isIncoming ? 'call-log-missed' : ''}>{name}{row.count > 1 && <span className="call-log-count"> ({row.count})</span>}</strong>
+                  <span className="call-log-time">{formatViewerTimestamp(row.timestamp)}</span>
                 </div>
                 <div className="call-log-meta">
                   <span className={`call-status ${missed && isIncoming ? 'call-log-missed' : ''}`}>
                     <Arrow size={12} />
                     {isIncoming ? 'Incoming' : 'Outgoing'}
                     {' · '}
-                    {answered ? describeDuration(log.duration) : isIncoming ? 'Missed' : 'No answer'}
+                    {row.answered ? describeDuration(row.duration) : isIncoming ? 'Missed' : 'No answer'}
                   </span>
                 </div>
               </div>
               <button
                 type="button"
                 className="call-action-btn"
-                onClick={() => onCall?.(log.peerId, log.mode)}
-                title={`${log.mode === 'video' ? 'Video' : 'Voice'} call ${name}`}
-                aria-label={`${log.mode === 'video' ? 'Video' : 'Voice'} call ${name}`}
+                onClick={() => onCall?.(row.peerId, row.mode)}
+                title={`${row.mode === 'video' ? 'Video' : 'Voice'} call ${name}`}
+                aria-label={`${row.mode === 'video' ? 'Video' : 'Voice'} call ${name}`}
               >
-                {log.mode === 'video' ? <Video size={16} /> : <Phone size={16} />}
+                <ModeIcon size={18} />
               </button>
             </div>
           );
