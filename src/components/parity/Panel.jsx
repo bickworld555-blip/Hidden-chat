@@ -1,7 +1,8 @@
-import { ArrowLeft, X } from 'lucide-react';
+import { ArrowLeft } from 'lucide-react';
 import { useBackHandler } from '../../backStack.js';
 
-/** A full-screen panel (like the group and account screens): back walks `onBack`, else closes. */
+/** A full-screen panel (like the group and account screens): back walks `onBack`, else closes. Only a back
+ * arrow, as in the rest of the app: nested panels step back one level at a time. */
 export default function Panel({ title, subtitle, onClose, onBack, actions, children, label, inline = false }) {
   useBackHandler(!inline || Boolean(onBack), () => (onBack ? onBack() : onClose()));
   if (inline) {
@@ -23,7 +24,6 @@ export default function Panel({ title, subtitle, onClose, onBack, actions, child
           <button type="button" className="icon-button" onClick={onBack ?? onClose} aria-label="Back"><ArrowLeft size={20} /></button>
           <span className="hm-panel-title"><h2>{title}</h2>{subtitle && <small>{subtitle}</small>}</span>
           {actions}
-          {onBack && <button type="button" className="icon-button" onClick={onClose} aria-label="Close"><X size={20} /></button>}
         </header>
         <div className="hm-panel-body">{children}</div>
       </div>

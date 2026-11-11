@@ -118,7 +118,7 @@ export default function StorageView({ onClose }) {
               <li key={row.chat.id}>
                 <span>
                   <strong>{row.chat.name ?? row.chat.username}</strong>
-                  <small>
+                  <small className="hm-storage-counts">
                     {row.count} messages · <Image size={12} aria-hidden="true" /> {row.media} · <Mic size={12} aria-hidden="true" /> {row.voice}
                     {size?.bytes !== undefined && ` · ${formatFileSize(size.bytes)}${size.partial ? '+' : ''} of media`}
                     {size?.measuring && ` · measuring ${size.done}/${size.total}…`}

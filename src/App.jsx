@@ -926,11 +926,12 @@ export default function App() {
         ) : activeTab === 'tools' ? (
           <ToolsView darkMode={darkMode} onToggleTheme={toggleTheme} onLogout={() => { logout(); }} onNotifications={() => setNotificationsOpen(true)} onAccountSettings={(section) => setAccountSettingsOpen(section === 'privacy' ? 'privacy' : 'account')} onAccounts={() => setAccountsOpen(true)} onAvatarStudio={() => setAvatarStudioOpen(true)} onGroups={() => openGroups()}
             onCommunities={() => setParitySheet('communities')} onBusinessTools={() => setParitySheet('business')} onStarred={() => setParitySheet('starred')}
-            onBackup={() => setParitySheet('backup')} onStorage={() => setParitySheet('storage')} onSheet={setParitySheet} isAdmin={isAdmin} />
+            onBackup={() => setParitySheet('backup')} onStorage={() => setParitySheet('storage')} onSheet={setParitySheet} isAdmin={isAdmin} onBack={isMobile ? () => setActiveTab('chats') : undefined} />
         ) : null}
         {activeTab === 'chats' && !isMobile && <footer className="workspace-footer"><span /><span className="workspace-footer-right"><button onClick={toggleTheme} title={`Switch to ${darkMode ? 'light' : 'dark'} theme`}>{darkMode ? <Sun size={14} /> : <Moon size={14} />}{darkMode ? 'Light' : 'Dark'}</button><ChevronRight size={13} /></span></footer>}
       </div>
-      {isMobile && !chatOpenOnMobile && <MobileBottomNav activeTab={mobileActiveTab} onTabChange={setMobileActiveTab} unreadCount={unreadChats} />}
+      {/* Settings is its own full screen on the phone (back arrow, no tab bar), like the business messenger. */}
+      {isMobile && !chatOpenOnMobile && activeTab !== 'tools' && <MobileBottomNav activeTab={mobileActiveTab} onTabChange={setMobileActiveTab} unreadCount={unreadChats} />}
       {fatalError && <div className="status-toast"><Bell size={15} /><span>{fatalError}</span><button onClick={() => setFatalError('')}>Dismiss</button></div>}
       {pairingOpen && user && <PairingModal onClose={() => setPairingOpen(false)} token={sessionToken} userId={userId} />}
       {notificationsOpen && <NotificationSettings onClose={() => setNotificationsOpen(false)} />}

@@ -97,6 +97,8 @@ export default function UpdatesView({ onOpenChannels }) {
           {mutedEntries.map((entry) => <StatusCard key={entry.user.id} token={token} entry={entry} seen muted onOpen={() => setViewing({ owner: entry.user.id, index: 0 })} />)}
         </div>
 
+        {/* Belongs to Status: shown under the cards until a contact posts. */}
+        {feed.others.length === 0 && !error && <p className="status-empty-hint">Status updates from your contacts appear here for 24 hours.</p>}
         {error && <p className="status-error" role="alert">{error}</p>}
         <section className="updates-channels" aria-label="Channels">
           <header><h3 className="status-title">Channels</h3><button type="button" className="updates-channels-find" onClick={() => onOpenChannels?.()}>Explore</button></header>
@@ -108,12 +110,6 @@ export default function UpdatesView({ onOpenChannels }) {
           ))}
           {!channels.length && <p className="updates-channels-empty">Stay up to date on topics that matter to you. Find channels to follow below.</p>}
         </section>
-        {feed.others.length === 0 && !error && (
-          <div className="status-empty">
-            <Eye size={40} strokeWidth={1.5} />
-            <p>Status updates from your contacts appear here for 24 hours.</p>
-          </div>
-        )}
       </div>
 
       <div className="status-fabs">

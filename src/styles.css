@@ -5003,3 +5003,87 @@ canvas.recording-wave { color: #5d6662; }
 .groups-message.is-waiting { opacity: .85; }
 .groups-waiting { display: flex; align-items: center; gap: 4px; margin-top: 4px; font-size: 11.5px; color: var(--wa-sub, #5b6b82); }
 .groups-waiting-cancel { margin-top: 4px; padding: 0; border: 0; background: none; color: inherit; font: inherit; font-size: 12px; text-decoration: underline; cursor: pointer; }
+
+/* ===== Front-end polish (UI audit) =====================================================================
+   Shared building blocks for every full-screen panel (broadcast lists, channels, scheduled messages, call
+   links, status privacy, catalog, admin). Content sits on the same 16px gutter as the rows around it. */
+.sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+/* Switches are spans: without a box display they collapse to nothing when wrapped (Notifications rows). */
+.wa-switch { display: inline-block; vertical-align: middle; }
+.wa-chips { overflow-x: auto; scrollbar-width: none; flex-wrap: nowrap; }
+.wa-chips::-webkit-scrollbar { display: none; }
+.wa-chips button { flex: none; white-space: nowrap; }
+.hm-channel-categories { padding: 0 16px 8px; }
+
+.hm-section { margin: 18px 16px 6px; font-size: 14px; font-weight: 600; color: var(--wa-sub, #5b6b82); }
+.hm-panel-body > p, .hm-panel-body > .hm-muted { margin: 10px 16px; line-height: 1.45; }
+.hm-panel-body > .hm-input { display: block; width: calc(100% - 32px); margin: 8px 16px; }
+.hm-row-button { display: flex; align-items: center; gap: 16px; width: 100%; padding: 12px 16px; border: 0; background: transparent; color: inherit; font: inherit; font-size: 16px; font-weight: 600; text-align: left; cursor: pointer; }
+.hm-row-button > svg { flex: none; box-sizing: content-box; padding: 11px; border-radius: 50%; background: var(--wa-green, #2563eb); color: #fff; }
+.hm-row-button:hover, button.hm-row-main:hover { background: rgba(134, 150, 160, .1); }
+.hm-row-actions .hm-row-button { width: auto; padding: 8px 14px; font-size: 14px; font-weight: 500; }
+.hm-row-actions .hm-row-button > svg { padding: 0; background: none; color: inherit; }
+.hm-panel-body > .hm-row-actions { justify-content: flex-start; padding: 4px 16px 8px; }
+.hm-row { display: flex; align-items: center; gap: 4px; padding-right: 8px; }
+.hm-row-main { display: flex; flex: 1; align-items: center; gap: 16px; min-width: 0; padding: 10px 16px; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; }
+button.hm-row-main { width: 100%; cursor: pointer; }
+.hm-row-main > svg { flex: none; box-sizing: content-box; padding: 11px; border-radius: 50%; background: var(--wa-chip, #e8eef8); color: var(--wa-green, #2563eb); }
+.hm-row-main > span:last-child { display: flex; flex: 1; flex-direction: column; gap: 2px; min-width: 0; }
+.hm-row-main strong { overflow: hidden; font-size: 16px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.hm-row-main small { overflow: hidden; color: var(--wa-sub, #5b6b82); font-size: 13.5px; text-overflow: ellipsis; white-space: nowrap; }
+.hm-field { display: flex; flex-direction: column; gap: 6px; margin: 12px 16px 0; color: var(--wa-sub, #5b6b82); font-size: 13px; }
+.hm-input { box-sizing: border-box; width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: transparent; color: var(--wa-text, inherit); font: inherit; font-size: 15px; }
+textarea.hm-input { min-height: 96px; resize: vertical; }
+.hm-input:focus { outline: 2px solid #2563eb55; border-color: #2563eb; }
+.dark-theme .hm-input { border-color: #353c44; color: #e2e6eb; }
+.dark-theme select.hm-input option { background: #1b2129; }
+.hm-primary { display: block; width: calc(100% - 32px); margin: 16px; padding: 12px 16px; border: 0; border-radius: 24px; background: #0050b8; color: #fff; font: inherit; font-size: 15px; font-weight: 600; cursor: pointer; }
+.hm-primary:disabled { opacity: .5; cursor: default; }
+.hm-checklist { display: flex; flex-direction: column; gap: 2px; margin: 12px 0 0; }
+.hm-checklist > .hm-input { width: calc(100% - 32px); margin: 0 16px 6px; }
+.hm-checklist .hm-check-row, .hm-panel-body > .hm-check-row { display: flex; padding: 8px 16px; }
+.hm-check-row > span { display: flex; flex-direction: column; min-width: 0; }
+.hm-check-row small { color: var(--wa-sub, #5b6b82); font-size: 13px; }
+.hm-list { margin: 0; padding: 0; list-style: none; }
+.hm-list li { display: flex; flex-direction: column; gap: 2px; padding: 10px 16px; }
+.hm-list li small { color: var(--wa-sub, #5b6b82); }
+.hm-compose { position: sticky; bottom: 0; display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-top: 1px solid var(--line); background: var(--paper, #fff); }
+.dark-theme .hm-compose { background: #1b2129; border-top-color: #2d343d; }
+.hm-compose .hm-input { flex: 1; border-radius: 22px; }
+.hm-compose .icon-button { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 50%; background: #0050b8; color: #fff; }
+.hm-compose .icon-button:disabled { opacity: .5; }
+.hm-chip { padding: 6px 14px; border: 1px solid var(--line); border-radius: 16px; background: transparent; color: inherit; font: inherit; font-size: 13px; cursor: pointer; }
+
+/* One title style for every sub-page: panels, settings drawers and Settings sub-pages. */
+.hm-panel-title h2, .wa-info-header h2, .app-shell .tools-header .icon-button + h2 { font-size: 19px; font-weight: 500; letter-spacing: 0; }
+/* The Communities tab is an inline panel: it takes the same header as the other tabs. */
+.hm-panel-inline > .hm-panel-header { padding: 14px 16px 10px; border-bottom: 0; }
+.hm-panel-inline > .hm-panel-header .hm-panel-title h2 { font-size: 22px; font-weight: 700; letter-spacing: -.2px; }
+
+/* Calls: favourites, "Add favourite" and recent calls share one avatar size. */
+.app-shell .call-log-item .avatar { width: 48px; height: 48px; font-size: 15px; }
+.app-shell .calls-add-icon { width: 48px; height: 48px; }
+
+/* Storage and data: the per-chat counts stay on one line. */
+.hm-storage-counts { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px; white-space: normal; }
+
+/* Settings profile card: one name, one handle, an ID that never wraps. */
+.user-info .user-handle { font-family: inherit; font-weight: 500; }
+.user-info .user-id { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Security blocks inside Account and Privacy line up with the rows around them. */
+.wa-info-section .hm-security-settings { padding: 8px 20px 12px; border-top: 0; }
+.wa-info-section > h3 + .hm-security-settings > h3 { display: none; }
+.wa-info-section .hm-security-settings > h3 { font-size: 16px; font-weight: 400; color: var(--wa-text); }
+.wa-info-section .hm-security-settings > h3 svg { display: none; }
+.wa-info-section .hm-security-settings > .groups-primary { align-self: flex-start; padding: 8px 22px; border-radius: 20px; }
+
+/* Group calls through the relay: the dock holds four controls. */
+.relay-dock { gap: 14px; }
+.status-empty-hint { margin: 4px 16px 6px; color: var(--wa-sub, #5b6b82); font-size: 13.5px; }
+.user-profile-card .user-info { flex: 1; min-width: 0; }
+.user-profile-card .account-switch-btn { flex: none; }
+/* A channel's feed fills the panel down to the compose bar, wallpaper and all. */
+.hm-panel-body:has(> .hm-channel-feed) { display: flex; flex-direction: column; padding-bottom: 0; }
+.hm-panel-body > .hm-channel-feed { flex: 1 0 auto; }
+.hm-storage-section > h4 { margin: 0; color: var(--wa-sub, #5b6b82); font-size: 14px; font-weight: 600; }

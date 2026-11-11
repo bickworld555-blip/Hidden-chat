@@ -5,7 +5,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ExternalE2EEKeyProvider, Room, RoomEvent, Track, isE2EESupported } from 'livekit-client';
-import { Lock, Mic, MicOff, PhoneOff, Users, Video, VideoOff } from 'lucide-react';
+import { Lock, Mic, MicOff, PhoneOff, SwitchCamera, Users, Video, VideoOff } from 'lucide-react';
 import E2EEWorker from 'livekit-client/e2ee-worker?worker';
 import { fetchRelayToken } from '../../groupRelayCall.js';
 
@@ -51,6 +51,7 @@ export default function GroupRelayCall({ token, groupId, groupName, call, onClos
   const [participants, setParticipants] = useState([]);
   const [micOn, setMicOn] = useState(true);
   const [cameraOn, setCameraOn] = useState(call.mode === 'video');
+  const [cameras, setCameras] = useState([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -84,6 +85,17 @@ export default function GroupRelayCall({ token, groupId, groupName, call, onClos
 
   const toggleMic = async () => { if (!room) return; await room.localParticipant.setMicrophoneEnabled(!micOn); setMicOn(!micOn); };
   const toggleCamera = async () => { if (!room) return; await room.localParticipant.setCameraEnabled(!cameraOn); setCameraOn(!cameraOn); };
+  // Front and back camera on a phone: the switch shows once the camera is on and more than one exists.
+  useEffect(() => {
+    if (!room || !cameraOn) return;
+    Room.getLocalDevices('videoinput', false).then(setCameras).catch(() => setCameras([]));
+  }, [room, cameraOn]);
+  const switchCamera = async () => {
+    if (!room || cameras.length < 2) return;
+    const current = room.getActiveDevice('videoinput');
+    const next = cameras[(cameras.findIndex((device) => device.deviceId === current) + 1) % cameras.length];
+    await room.switchActiveDevice('videoinput', next.deviceId).catch(() => {});
+  };
   const leave = () => { room?.disconnect(); onClose?.(); };
   const count = participants.length + 1;
 
@@ -101,6 +113,7 @@ export default function GroupRelayCall({ token, groupId, groupName, call, onClos
       )}
       <footer className="wa-video-bottom-dock relay-dock">
         <button type="button" className={`wa-dock-btn ${cameraOn ? '' : 'active'}`} onClick={toggleCamera} disabled={!room} aria-label={cameraOn ? 'Turn camera off' : 'Turn camera on'}>{cameraOn ? <Video size={22} /> : <VideoOff size={22} />}</button>
+        {cameraOn && cameras.length > 1 && <button type="button" className="wa-dock-btn" onClick={switchCamera} disabled={!room} aria-label="Switch camera"><SwitchCamera size={22} /></button>}
         <button type="button" className={`wa-dock-btn ${micOn ? '' : 'active'}`} onClick={toggleMic} disabled={!room} aria-label={micOn ? 'Mute microphone' : 'Unmute microphone'} aria-pressed={!micOn}>{micOn ? <Mic size={22} /> : <MicOff size={22} />}</button>
         <button type="button" className="wa-dock-btn end-call" onClick={leave} aria-label="Leave call"><PhoneOff size={22} /></button>
       </footer>

@@ -96,7 +96,7 @@ function DisplayNameEditor({ user, userId }) {
         </button>
       </span>
       {user && !hasCustomDisplayName(user) && <small className="display-name-hint">Add a display name</small>}
-      <small className="user-handle">@{user?.username ?? userId}</small>
+      {(!user || hasCustomDisplayName(user)) && <small className="user-handle">@{user?.username ?? userId}</small>}
       <span className="user-id">ID · {userId}</span>
     </div>
   );
@@ -124,7 +124,7 @@ export const HELP_CENTER_URL = 'https://hiddenmessenger.com/help';
 // Settings, in the order a business messenger uses: Business tools first, then Account, Privacy, Avatar, Chats,
 // Notifications, Storage and data, App language, Help, Invite a friend. Privacy, Avatar and Chats open their own
 // page here; the rest open their panels.
-export default function ToolsView({ darkMode, onToggleTheme, onLogout, onNotifications, onAccountSettings, onAccounts, onAvatarStudio, onGroups, onCommunities, onBusinessTools, onStarred, onBackup, onStorage, onSheet, isAdmin = false }) {
+export default function ToolsView({ darkMode, onToggleTheme, onLogout, onNotifications, onAccountSettings, onAccounts, onAvatarStudio, onGroups, onCommunities, onBusinessTools, onStarred, onBackup, onStorage, onSheet, onBack, isAdmin = false }) {
   const user = useChatStore((state) => state.user);
   const userId = useChatStore((state) => state.userId);
   const { accounts } = useAccounts();
@@ -232,10 +232,8 @@ export default function ToolsView({ darkMode, onToggleTheme, onLogout, onNotific
   return (
     <div className="tools-view-container">
       <div className="tools-header">
+        {onBack && <button type="button" className="icon-button" onClick={onBack} aria-label="Close settings"><ArrowLeft size={20} /></button>}
         <h2>Settings</h2>
-        <button type="button" className="icon-button" title="Switch account" onClick={() => onAccounts?.()} aria-label="Switch account">
-          <Users size={18} />
-        </button>
       </div>
 
       <div className="tools-content">
@@ -260,21 +258,21 @@ export default function ToolsView({ darkMode, onToggleTheme, onLogout, onNotific
         </div>
 
         <div className="tools-section">
-          <Item icon={Store} title="Business tools" detail="Business profile, catalog, hours, labels and messaging tools" onClick={onBusinessTools} />
+          <Item icon={Store} title="Business tools" detail="Profile, catalog, labels, away messages" onClick={onBusinessTools} />
         </div>
 
         <div className="tools-section">
-          <Item icon={KeyRound} title="Account" detail="Security, two-step verification, linked devices, delete account" onClick={() => onAccountSettings?.('account')} />
+          <Item icon={KeyRound} title="Account" detail="Two-step verification, linked devices" onClick={() => onAccountSettings?.('account')} />
           <Item icon={Lock} title="Privacy" detail="Last seen, read receipts, status, app lock" onClick={() => onAccountSettings?.('privacy')} />
           <Item icon={Smile} title="Avatar" detail="Create, edit, use in video calls" onClick={() => setPage('avatar')} />
-          <Item icon={ListChecks} title="Lists" detail="Manage people and groups in your own lists" onClick={() => onSheet?.('lists')} />
+          <Item icon={ListChecks} title="Lists" detail="Your own lists of people and groups" onClick={() => onSheet?.('lists')} />
           <Item icon={MessageSquare} title="Chats" detail="Theme, animations, media save, backup" onClick={() => setPage('chats')} />
           <Item icon={Bell} title="Notifications" detail="Message, group and call tones" onClick={onNotifications} />
           <Item icon={HardDrive} title="Storage and data" detail="Manage storage, photo upload quality" onClick={onStorage} />
           <Item icon={Accessibility} title="Accessibility" detail="Contrast, motion, font size" onClick={() => setPage('accessibility')} />
           <Item icon={Languages} title="App language" detail="English, বাংলা, हिन्दी, Español" onClick={() => onSheet?.('language')} />
           <Item icon={CircleHelp} title="Help" detail="Help Center, privacy" onClick={openHelp} />
-          <Item icon={UserPlus} title="Invite a friend" detail="Text an invite to someone in your contacts" onClick={() => onSheet?.('invite')} />
+          <Item icon={UserPlus} title="Invite a friend" detail="Invite someone from your contacts" onClick={() => onSheet?.('invite')} />
         </div>
 
         <div className="tools-section">
