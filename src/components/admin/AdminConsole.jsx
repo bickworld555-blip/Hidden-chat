@@ -33,6 +33,46 @@ function Bars({ series, label }) {
   );
 }
 
+// Attachments whose file is missing on the server: how many, from when, and a clean-up of their records.
+function MediaIntegrity({ token }) {
+  const [scan, setScan] = useState(null);
+  const [notice, setNotice] = useState('');
+  const [error, setError] = useState('');
+  const [confirming, setConfirming] = useState(false);
+  const load = () => request(token, '/api/v1/admin/media-integrity').then(setScan).catch((caught) => setError(caught.message));
+  useEffect(() => { load(); }, [token]);
+  const day = (ms) => (ms ? new Date(ms).toLocaleDateString() : '—');
+  async function clean() {
+    setConfirming(false);
+    try {
+      const { removed } = await request(token, '/api/v1/admin/media-integrity/clean', { method: 'POST' });
+      setNotice(`Removed ${removed} record${removed === 1 ? '' : 's'} of missing files.`);
+      await load();
+    } catch (caught) { setError(caught.message); }
+  }
+  return (
+    <section className="admin-media-integrity" aria-label="Stored media">
+      <h3 className="hm-section">Stored media</h3>
+      <Notice error={error} notice={notice} />
+      {!scan ? <p className="hm-muted">Checking files…</p> : scan.missing === 0 ? (
+        <p><span className="admin-pill is-ok">All {scan.checked.toLocaleString()} files present</span></p>
+      ) : (
+        <>
+          <p><span className="admin-pill is-warn">{scan.missing} of {scan.checked.toLocaleString()} files missing</span></p>
+          <p className="hm-muted">Missing files were uploaded between {day(scan.oldestMissingAt)} and {day(scan.newestMissingAt)}. The newest file that is present is from {day(scan.newestPresentAt)}.
+            {scan.newestMissingAt && scan.newestPresentAt && scan.newestMissingAt < scan.newestPresentAt ? ' Newer uploads are intact, so this looks like an old loss rather than an ongoing one.' : ' Recent uploads are affected: check that the data directory is persistent.'}</p>
+          {confirming ? (
+            <div className="hm-row-actions">
+              <button type="button" onClick={() => setConfirming(false)}>Cancel</button>
+              <button type="button" className="is-danger" onClick={clean}>Remove {scan.missing} records</button>
+            </div>
+          ) : <button type="button" onClick={() => setConfirming(true)}>Remove records of missing files</button>}
+        </>
+      )}
+    </section>
+  );
+}
+
 function Overview({ token }) {
   const [stats, setStats] = useState(null);
   const [error, setError] = useState('');
@@ -53,6 +93,7 @@ function Overview({ token }) {
         <span className="admin-pill">Media stored {bytes(stats.mediaBytes)}</span>
         <button type="button" className="icon-button" onClick={load} aria-label="Refresh"><RefreshCw size={16} /></button>
       </div>
+      <MediaIntegrity token={token} />
       <Bars series={stats.signups} label="New accounts" />
       <Bars series={stats.messages} label="Direct messages sent" />
     </div>

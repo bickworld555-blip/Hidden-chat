@@ -366,7 +366,7 @@ export const useChatStore = create((setState, getState) => ({
     getState().queueMessage(message);
     // Sealed per device before it leaves (src/e2e/messaging.js); the outbox resends it after a failure.
     transmitDirect(client, { id: message.id, receiverId, content, ...extras })
-      .then((accepted) => { if (!accepted) getState().updateMessage(message.id, { status: 'failed' }); });
+      .then((accepted) => { if (accepted === false) getState().updateMessage(message.id, { status: 'failed' }); });
     return message;
   },
 

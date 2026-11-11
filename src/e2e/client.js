@@ -194,12 +194,23 @@ const openedFrom = (inner, route) => ({
  * Encrypts direct-message content for the contact's devices and this account's other devices. A contact with no
  * device that has keys (an app that has not been opened since encryption arrived) gets the content as it is.
  */
-export async function sealDirect(peerId, content, extra = {}) {
+/** Thrown when a group member has no device with keys yet: the group message waits instead of going out readable. */
+export class GroupKeysMissing extends Error {
+  constructor(missing) { super('Some members haven’t opened an updated app yet.'); this.code = 'group-keys-missing'; this.missing = missing; }
+}
+
+/** Thrown when a contact has no device with keys yet (an old app): the message waits instead of going out readable. */
+export class PeerKeysMissing extends Error {
+  constructor(peerId) { super('This contact has not opened an updated app yet.'); this.code = 'peer-keys-missing'; this.peerId = peerId; }
+}
+
+// fresh: ask the server for the contact's devices now (retrying a message that waited for their keys).
+export async function sealDirect(peerId, content, extra = {}, { fresh = false } = {}) {
   const session = current;
   if (!session || typeof content !== 'string' || isEnvelope(content)) return content;
   await session.ready.catch(() => {});
-  const [peer, mine] = await Promise.all([devicesOf(peerId), devicesOf(session.userId)]);
-  if (!peer.length) return content;
+  const [peer, mine] = await Promise.all([devicesOf(peerId, { fresh }), devicesOf(session.userId)]);
+  if (!peer.length) throw new PeerKeysMissing(peerId);
   const targets = { [peerId]: peer };
   const others = mine.filter((device) => device.deviceId !== session.deviceId);
   if (others.length) targets[session.userId] = others;
@@ -212,18 +223,23 @@ export async function sealDirect(peerId, content, extra = {}) {
 
 /**
  * Seals content for a group and hands it to `send(content)` (the POST or PUT). If the server says the group's
- * devices changed, the lists are refreshed and it is sealed again. Groups where a member has no device with keys
- * yet are sent as they are (that member could not read them otherwise).
+ * devices changed, the lists are refreshed and it is sealed again. While a member has no device with keys
+ * yet, nothing is sent: GroupKeysMissing is thrown and the message waits (src/groupPending.js).
  */
 export async function sendGroupContent(groupId, content, send, extra = {}) {
   const session = current;
-  if (!session || typeof content !== 'string') return send(content);
+  // Strict end-to-end encryption: content is never sent readable. Without a running session, or while a member
+  // has no device with keys, this throws GroupKeysMissing and the caller keeps the message waiting (groupPending.js).
+  if (typeof content !== 'string') return send(content);
+  if (!session) throw new GroupKeysMissing([]);
   await session.ready.catch(() => {});
   let fresh = false;
   for (let attempt = 0; attempt < SEAL_ATTEMPTS; attempt += 1) {
     const { members, devices } = await groupDevicesOf(groupId, { fresh });
     const meListed = devices[session.userId]?.some((device) => device.deviceId === session.deviceId);
-    if (!meListed || members.some((userId) => !devices[userId]?.length)) return send(content);
+    const missing = members.filter((userId) => !devices[userId]?.length);
+    if (!meListed && !fresh) { fresh = true; continue; }
+    if (!meListed || missing.length) throw new GroupKeysMissing(missing);
     const memberDevices = Object.fromEntries(Object.entries(devices).map(([userId, list]) => [userId, list.map((device) => device.deviceId)]));
     const inner = innerOf(content, extra);
     const sealed = await session.protocol.encryptGroup(groupId, { userId: session.userId, deviceId: session.deviceId }, memberDevices, JSON.stringify(inner), {

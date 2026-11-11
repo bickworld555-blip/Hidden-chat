@@ -4998,3 +4998,8 @@ canvas.recording-wave { color: #5d6662; }
 .order-section + .order-section { margin-top: 8px; }
 .hm-add-to-cart-button { justify-self: start; margin-top: 6px; padding: 6px 14px; border: 1px solid var(--wa-green, #2563eb); border-radius: 16px; background: none; color: var(--wa-green, #2563eb); font: inherit; font-weight: 600; cursor: pointer; }
 .hm-add-to-cart { margin-top: 6px; }
+.e2e-warning.is-waiting { background: color-mix(in srgb, var(--wa-green, #2563eb) 14%, var(--wa-panel, #f2f6fb)); color: var(--wa-text, #0f1b2d); }
+.waiting-check { color: var(--wa-sub); }
+.groups-message.is-waiting { opacity: .85; }
+.groups-waiting { display: flex; align-items: center; gap: 4px; margin-top: 4px; font-size: 11.5px; color: var(--wa-sub, #5b6b82); }
+.groups-waiting-cancel { margin-top: 4px; padding: 0; border: 0; background: none; color: inherit; font: inherit; font-size: 12px; text-decoration: underline; cursor: pointer; }

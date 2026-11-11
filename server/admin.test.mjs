@@ -126,3 +126,21 @@ test('admins grant and revoke the role in the console; listed admins arrive with
   assert.equal((await api('/api/v1/admin/me', { token: helper.token })).status, 404, 'revoked from the console');
   assert.equal((await api(`/api/v1/admin/users/${admin.user.id}/unadmin`, { token: admin.token, method: 'POST' })).status, 400, 'nobody removes their own role');
 });
+
+test('admins see which stored media lost their files and can remove those records', async () => {
+  const admin = await login('shakil');
+  const member = await register('mediacheck');
+  assert.equal((await api('/api/v1/admin/media-integrity', { token: member.token })).status, 404);
+  const before = (await api('/api/v1/admin/media-integrity', { token: admin.token })).body;
+  assert.equal(typeof before.checked, 'number');
+  assert.equal(before.missing, 0, 'a fresh server has no missing files');
+  // A record whose file is gone (as after a deploy wiped an old upload folder).
+  service.db.prepare('INSERT INTO media(id, sender_id, receiver_id, filename, content_type, byte_size, disk_name, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+    .run('lost-media', member.user.id, admin.user.id, 'old.jpg', 'image/jpeg', 10, 'does-not-exist.blob', Date.now() - 86_400_000);
+  const scan = (await api('/api/v1/admin/media-integrity', { token: admin.token })).body;
+  assert.equal(scan.missing, 1);
+  assert.ok(scan.oldestMissingAt > 0);
+  assert.equal((await api('/api/v1/admin/media-integrity/clean', { token: member.token, method: 'POST' })).status, 404);
+  assert.deepEqual((await api('/api/v1/admin/media-integrity/clean', { token: admin.token, method: 'POST' })).body, { removed: 1 });
+  assert.equal((await api('/api/v1/admin/media-integrity', { token: admin.token })).body.missing, 0);
+});

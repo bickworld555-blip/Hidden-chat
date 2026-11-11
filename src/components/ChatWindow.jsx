@@ -8,7 +8,7 @@ import { isNotice, noticeText } from '../e2e/notices.js';
 import { isMediaContent } from '../media.js';
 import { LOAD_OLDER_STEP, RENDER_WINDOW, renderCountFor, windowedMessages } from '../messageWindow.js';
 import { attachmentContent, sealForUpload } from '../mediaCrypto.js';
-import { ArrowLeft, Ban, Camera, Check, CheckCheck, ChevronDown, ChevronUp, CornerUpLeft, Forward, Info, Link2, Mic, MoreVertical, Paperclip, Pencil, Phone, Pin, PinOff, Search, Send, ShoppingCart, Smile, Star, Timer, Trash2, Video, X } from 'lucide-react';
+import { ArrowLeft, Ban, Camera, Check, CheckCheck, ChevronDown, ChevronUp, Clock, CornerUpLeft, Forward, Info, Link2, Mic, MoreVertical, Paperclip, Pencil, Phone, Pin, PinOff, Search, Send, ShoppingCart, Smile, Star, Timer, Trash2, Video, X } from 'lucide-react';
 import { parseVoiceContent, voiceContent, voiceExtension } from '../voice.js';
 import { COMPOSER_EMOJIS, COMPOSER_MAX_LENGTH, composerAction, insertAtCaret } from '../composer.js';
 import { playNotificationTone } from '../sounds.js';
@@ -154,6 +154,7 @@ function MessageStatus({ status }) {
   if (status === 'read') return <CheckCheck size={12} className="read-check" aria-label="Read" />;
   if (status === 'delivered') return <CheckCheck size={12} aria-label="Delivered" />;
   if (status === 'failed') return <X size={12} aria-label="Failed" />;
+  if (status === 'waiting') return <Clock size={12} className="waiting-check" aria-label="Waiting to be sent encrypted" />;
   return <Check size={12} aria-label="Sent" />;
 }
 
@@ -1719,7 +1720,7 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
       ) : (
       <form className="composer-wrap" onSubmit={handleSubmit}>
         {encryption === false && (
-          <p className="e2e-warning" role="status">🔓 {chat?.name ?? 'This contact'} hasn’t opened an updated Hidden Messenger yet. Messages you send now are <strong>not end-to-end encrypted</strong>.</p>
+          <p className="e2e-warning is-waiting" role="status">🔒 {chat?.name ?? 'This contact'} hasn’t opened an updated Hidden Messenger yet. What you send <strong>waits on your phone</strong> and goes out end-to-end encrypted as soon as they do; nothing is ever sent unencrypted.</p>
         )}
         {editing && (
           <div className="wa-composer-reply-banner hm-edit-banner">

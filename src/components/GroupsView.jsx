@@ -1,7 +1,7 @@
 import { apiFetch } from '../api.js';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ArrowLeft, BarChart3, Bell, BellOff, CalendarClock, CalendarDays, Check, ChevronDown, Copy, Download, Flag, Link2, LockKeyhole, LogOut, Megaphone, MinusCircle, Paperclip,
+  ArrowLeft, BarChart3, Bell, BellOff, CalendarClock, CalendarDays, Check, ChevronDown, Clock, Copy, Download, Flag, Link2, LockKeyhole, LogOut, Megaphone, MinusCircle, Paperclip,
   Pencil, Phone, Pin, PinOff, Search, SendHorizontal, Star, Sticker, Timer, Trash2, UserPlus, Users, Video, X,
 } from 'lucide-react';
 import { editGroupMessage } from '../parityApi.js';
@@ -21,6 +21,9 @@ import { uploadFile } from '../upload.js';
 import { attachmentContent, sealForUpload } from '../mediaCrypto.js';
 import { groupEncryption, sendGroupContent } from '../e2e/client.js';
 import { fetchGroupMessages } from '../groupHistory.js';
+import { dropPending, enqueuePending, flushPending, pendingFor, usePending } from '../groupPending.js';
+import FormattedText from './FormattedText.jsx';
+import { useChatStore } from '../store.js';
 import { isMediaContent } from '../media.js';
 import { MAX_CALL_PARTICIPANTS } from '../callRoom.js';
 import { fetchCallTopology, newCallKey, parseRelayCall, relayCallContent, relayCallJoinable } from '../groupRelayCall.js';
@@ -46,8 +49,15 @@ async function groupRequest(token, path, options = {}) {
   if (groupId && options.method === 'POST' && typeof options.body?.content === 'string') {
     const id = decodeURIComponent(groupId);
     const plain = options.body.content;
-    const row = await sendGroupContent(id, plain, (content) => rawGroupRequest(token, path, { ...options, body: { ...options.body, content } }));
-    return row ? { ...row, content: plain } : row;
+    try {
+      const row = await sendGroupContent(id, plain, (content) => rawGroupRequest(token, path, { ...options, body: { ...options.body, content } }));
+      return row ? { ...row, content: plain } : row;
+    } catch (error) {
+      // Strict end-to-end encryption: a member has no keys yet, so the message waits on this device.
+      if (error?.code !== 'group-keys-missing') throw error;
+      enqueuePending(useChatStore.getState().userId, id, plain);
+      return { pending: true };
+    }
   }
   if (groupId && (options.method ?? 'GET') === 'GET') return fetchGroupMessages(token, decodeURIComponent(groupId), { signal: options.signal });
   return rawGroupRequest(token, path, options);
@@ -172,6 +182,7 @@ function SettingsRow({ icon: Icon, title, detail, danger = false, onClick, child
 export default function GroupsView({ token, userId, revision, onClose, onStartGroupCall, initialCreate = false, initialGroupId = '' }) {
   const [groups, setGroups] = useState([]);
   const [selected, setSelected] = useState(initialCreate ? '' : initialGroupId);
+  const pendingMessages = usePending(userId, selected);
   const [group, setGroup] = useState(null);
   const [messages, setMessages] = useState([]);
   // Whether every member can receive end-to-end encrypted messages; otherwise the group shows a warning.
@@ -241,7 +252,13 @@ export default function GroupsView({ token, userId, revision, onClose, onStartGr
     setGroups(list);
     setGroup(details);
     setMessages(history);
-    setGroupSecurity(selected ? await groupEncryption(selected) : null);
+    const security = selected ? await groupEncryption(selected, { fresh: pendingFor(userId, selected).length > 0 }) : null;
+    setGroupSecurity(security);
+    // Waiting messages go out (sealed) as soon as every member has keys.
+    if (selected && security?.encrypted && pendingFor(userId, selected).length) {
+      const sent = await flushPending(userId, selected, (content) => sendGroupContent(selected, content, (sealed) => rawGroupRequest(token, `${groupPath}/messages`, { method: 'POST', body: { content: sealed } })));
+      if (sent) setMessages(await groupRequest(token, `${groupPath}/messages`, { signal }));
+    }
   }, [token, selected, groupPath]);
 
   useEffect(() => {
@@ -249,6 +266,12 @@ export default function GroupsView({ token, userId, revision, onClose, onStartGr
     refresh(controller.signal).catch((caught) => { if (caught.name !== 'AbortError') setError(caught.message); });
     return () => controller.abort();
   }, [refresh, revision]);
+  // While messages wait for members' keys, check again every 30 s (refresh sends them once everyone has keys).
+  useEffect(() => {
+    if (!selected || !pendingMessages.length) return undefined;
+    const timer = setInterval(() => refresh(new AbortController().signal).catch(() => {}), 30_000);
+    return () => clearInterval(timer);
+  }, [selected, pendingMessages.length, refresh]);
 
   // Viewing the conversation marks it read; the list's badge comes from the server so other devices agree.
   useEffect(() => {
@@ -738,6 +761,15 @@ export default function GroupsView({ token, userId, revision, onClose, onStartGr
                   </div>
                 );
               })}
+              {pendingMessages.map((entry) => (
+                <div className="groups-message-row mine" key={entry.id}>
+                  <article className="groups-message mine is-waiting">
+                    <p className="groups-message-text">{parseRelayCall(entry.content) ? 'Group call' : <FormattedText text={entry.content} />}</p>
+                    <span className="groups-waiting"><Clock size={12} aria-hidden="true" /> Waiting until everyone has the updated app · end-to-end encrypted</span>
+                    <button type="button" className="groups-waiting-cancel" onClick={() => dropPending(userId, selected, entry.id)}>Don’t send</button>
+                  </article>
+                </div>
+              ))}
             </div>
             {!canSend ? (
               <p className="hm-admins-only" role="status"><LockKeyhole size={16} aria-hidden="true" /> Only admins can send messages</p>
@@ -755,7 +787,7 @@ export default function GroupsView({ token, userId, revision, onClose, onStartGr
             }} />}
             {stickersOpen && !editing && <StickerPalette onPick={(key) => { setStickersOpen(false); sendText(stickerContent(key)); }} />}
             {groupSecurity && !groupSecurity.encrypted && (
-              <p className="e2e-warning" role="status">🔓 {groupSecurity.missing.length === 1 ? '1 member hasn’t' : `${groupSecurity.missing.length} members haven’t`} opened an updated Hidden Messenger yet, so this group is <strong>not end-to-end encrypted</strong> until they do.</p>
+              <p className="e2e-warning" role="status">🔓 {groupSecurity.missing.length === 1 ? '1 member hasn’t' : `${groupSecurity.missing.length} members haven’t`} opened an updated Hidden Messenger yet. Messages to this group <strong>wait on your phone</strong> and go out end-to-end encrypted as soon as they do.</p>
             )}
             <form className="groups-compose" onSubmit={(event) => { event.preventDefault(); submitDraft(); }}>
               <input ref={fileInputRef} type="file" hidden onChange={(event) => { const [file] = event.target.files ?? []; event.target.value = ''; sendAttachment(file); }} />

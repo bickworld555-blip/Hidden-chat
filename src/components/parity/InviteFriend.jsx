@@ -2,7 +2,7 @@
 // text them an invite; anywhere else, share or copy the invite. Native side: android Invites.java.
 import { useEffect, useMemo, useState } from 'react';
 import { Copy, MessageSquare, Search, Share2, UserPlus } from 'lucide-react';
-import { nativeListContacts, nativeRequestInvitePermissions, nativeSendInviteSms, nativeShell } from '../../native.js';
+import { nativeListContacts, nativeOpenSmsComposer, nativeRequestInvitePermissions, nativeSendInviteSms, nativeShell } from '../../native.js';
 import Panel, { Notice } from './Panel.jsx';
 
 export const INVITE_URL = 'https://hiddenmessenger.com/download';
@@ -50,8 +50,11 @@ export default function InviteFriend({ username, onClose }) {
     const sent = await nativeSendInviteSms(number, text);
     setBusy(false);
     if (sent?.sent) { setNotice(`Invite sent to ${picked.name}.`); setPicked(null); return; }
-    // Without the SMS permission, hand the text to the phone's messages app instead.
-    window.location.href = `sms:${encodeURIComponent(number)}?body=${encodeURIComponent(text)}`;
+    // Without the SMS permission (Android keeps it from apps installed outside the Play Store), the phone's
+    // messages app opens with the number and the invite filled in; the person taps send there.
+    const opened = await nativeOpenSmsComposer(number, text);
+    if (opened?.opened) setNotice(`Your messages app opened with the invite for ${picked.name}. Tap send there.`);
+    else window.location.href = `sms:${encodeURIComponent(number)}?body=${encodeURIComponent(text)}`;
     setPicked(null);
   }
 
@@ -62,7 +65,7 @@ export default function InviteFriend({ username, onClose }) {
         <div className="invite-confirm">
           <h3>Invite {picked.name}</h3>
           <p className="invite-preview">{text}</p>
-          <p className="hm-muted">Sent as a regular text message from your phone. Your carrier may charge for it.</p>
+          <p className="hm-muted">Sent as a regular text message from your phone (your carrier may charge for it). If Android doesn’t allow this app to send texts, your messages app opens with the invite ready to send.</p>
           {picked.numbers.map((number) => (
             <button key={number} type="button" className="invite-button" disabled={busy} onClick={() => send(number)}>
               <MessageSquare size={16} /> Text {number}

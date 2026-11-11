@@ -46,7 +46,7 @@ export function adminUsernamesFrom(value) {
   return names.length ? [...new Set(names)] : ['shakil'];
 }
 
-export function registerAdmin({ app, db, requireSession, publicUser, userColumns, closeUserSessions, pushEnabled = () => false, dataDirectoryBytes = async () => null, initialAdmins = ['shakil'] }) {
+export function registerAdmin({ app, db, requireSession, publicUser, userColumns, closeUserSessions, pushEnabled = () => false, dataDirectoryBytes = async () => null, initialAdmins = ['shakil'], mediaFileExists = async () => true }) {
   const fail = (response, status, error) => response.status(status).json({ error });
 
   // The first admins (and the starter Help Center) are set up once, at start-up.
@@ -117,6 +117,34 @@ export function registerAdmin({ app, db, requireSession, publicUser, userColumns
 
   // --- Admin: overview ---
   app.get('/api/v1/admin/me', requireSession, requireAdmin, (_request, response) => response.json({ admin: true }));
+
+  // --- Admin: stored media integrity -------------------------------------------------------------------------
+  // Which attachment records have lost their file on disk (for example files saved inside an earlier release
+  // before uploads moved to the persistent data directory). Reports counts and dates only, never names.
+  const MEDIA_SCAN_LIMIT = 10_000;
+  async function scanMedia() {
+    const rows = await db.prepare('SELECT id, disk_name AS "diskName", created_at AS "createdAt" FROM media ORDER BY created_at DESC LIMIT ?').all(MEDIA_SCAN_LIMIT);
+    const missing = [];
+    for (const row of rows) if (!(await mediaFileExists(row.diskName))) missing.push(row);
+    const dates = missing.map((row) => Number(row.createdAt));
+    const present = rows.filter((row) => !missing.includes(row)).map((row) => Number(row.createdAt));
+    return {
+      scan: { checked: rows.length, missing: missing.length, complete: rows.length < MEDIA_SCAN_LIMIT,
+        oldestMissingAt: dates.length ? Math.min(...dates) : null, newestMissingAt: dates.length ? Math.max(...dates) : null,
+        newestPresentAt: present.length ? Math.max(...present) : null },
+      missing,
+    };
+  }
+  app.get('/api/v1/admin/media-integrity', requireSession, requireAdmin, async (_request, response) => {
+    response.json((await scanMedia()).scan);
+  });
+  // Removes the records of attachments whose file is gone, so chats show "no longer available" at once and the
+  // health check reflects only real problems. Files that exist are never touched.
+  app.post('/api/v1/admin/media-integrity/clean', requireSession, requireAdmin, async (_request, response) => {
+    const { missing } = await scanMedia();
+    for (const row of missing) await db.prepare('DELETE FROM media WHERE id = ?').run(row.id);
+    response.json({ removed: missing.length });
+  });
 
   app.get('/api/v1/admin/stats', requireSession, requireAdmin, async (_request, response) => {
     const now = Date.now();

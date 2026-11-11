@@ -1047,6 +1047,7 @@ export function createChatServer({
   }
   // Help Center, reports about people, and the admin console (server/admin.mjs).
   const admin = registerAdmin({
+    mediaFileExists: async (diskName) => Boolean(diskName && await stat(join(mediaDirectory, diskName)).catch(() => null)),
     app, db, requireSession, publicUser, userColumns: USER_COLUMNS, pushEnabled: () => Boolean(push), initialAdmins: adminUsernames,
     closeUserSessions,
   });

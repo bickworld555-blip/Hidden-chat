@@ -25,20 +25,32 @@ function storedMessage(id, chatId = null) {
 /**
  * Sends one direct message over the socket, sealed for the contact's devices and this account's other devices.
  * Only the id of a quoted message travels (the quote itself is shown from each device's own copy). Resolves
- * false when it could not be sealed or queued; the outbox sends it again on reconnect.
+ * false when it could not be sealed or queued (the outbox sends it again on reconnect), and "waiting" when it is
+ * held for end-to-end encryption (retried until the contact has keys).
  */
-export async function transmitDirect(client, message) {
+export async function transmitDirect(client, message, { fresh = false } = {}) {
   if (!client?.send || !message?.receiverId) return false;
   let content;
   try {
-    content = await sealDirect(message.receiverId, message.content, { linkPreview: message.linkPreview, statusReply: message.statusReply });
-  } catch {
+    content = await sealDirect(message.receiverId, message.content, { linkPreview: message.linkPreview, statusReply: message.statusReply }, { fresh: fresh || Boolean(message.awaitingKeys) });
+  } catch (error) {
+    // Strict end-to-end encryption: nothing people write is ever sent readable. When the contact has no keys yet
+    // (an old app), the message waits in the outbox and goes out encrypted once they update.
+    if (error?.code === 'peer-keys-missing') {
+      useChatStore.getState().updateMessage(message.id, { status: 'waiting', awaitingKeys: true });
+      return 'waiting';
+    }
     return false;
   }
+  // Not sealed (this device's encryption is not running yet): people's messages wait too; only call records and
+  // this device's own markers may go as they are.
+  if (!isEnvelope(content) && isUserContent(content)) {
+    useChatStore.getState().updateMessage(message.id, { status: 'waiting', awaitingKeys: true });
+    return 'waiting';
+  }
+  if (message.awaitingKeys) useChatStore.getState().updateMessage(message.id, { awaitingKeys: false, status: 'sent' });
   // The link preview only ever travels inside the encryption.
-  const { replyTo, linkPreview: _preview, statusReply: _statusReply, ...rest } = message;
-  // Sent as it is (the contact has no device with keys): the bubble says so.
-  if (!isEnvelope(content) && e2eActive() && isUserContent(content)) useChatStore.getState().updateMessage(message.id, { unencrypted: true });
+  const { replyTo, linkPreview: _preview, statusReply: _statusReply, awaitingKeys: _waiting, ...rest } = message;
   return Boolean(client.send({ type: 'message:send', message: { ...rest, content, ...(replyTo?.id ? { replyTo: { id: replyTo.id } } : {}) } }));
 }
 

@@ -334,6 +334,27 @@ public class HiddenNativePlugin extends Plugin {
         }
     }
 
+    /**
+     * Opens the phone's messages app with the number and the invite filled in, for the person to send (no SMS
+     * permission needed). Used when Android does not let this app send SMS itself (installed outside the Play Store).
+     */
+    @PluginMethod
+    public void openSmsComposer(PluginCall call) {
+        String number = call.getString("number", "");
+        String text = call.getString("text", "");
+        try {
+            Intent intent = new Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:" + Uri.encode(number)));
+            intent.putExtra("sms_body", text);
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            getContext().startActivity(intent);
+            JSObject result = new JSObject();
+            result.put("opened", true);
+            call.resolve(result);
+        } catch (Exception missing) {
+            call.reject("No messages app is available.");
+        }
+    }
+
     /** Asks for contacts and SMS again (Invite a friend), then reports the state. */
     @PluginMethod
     public void requestInvitePermissions(PluginCall call) {

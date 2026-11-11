@@ -142,6 +142,8 @@ export default function App() {
   const setTyping = useChatStore((state) => state.setTyping);
   const acknowledgeMessage = useChatStore((state) => state.acknowledgeMessage);
   const getOutbox = useChatStore((state) => state.getOutbox);
+  const waitingTimerRef = useRef(null);
+  useEffect(() => () => clearInterval(waitingTimerRef.current), []);
   const setConnection = useChatStore((state) => state.setConnection);
   const hydrateMessages = useChatStore((state) => state.hydrateMessages);
   const hydrateCallLogs = useChatStore((state) => state.hydrateCallLogs);
@@ -472,6 +474,15 @@ export default function App() {
           const outbox = await getOutbox(userId);
           for (const message of outbox) await transmitDirect(realtime, message);
         };
+        // Messages waiting for a contact's keys (strict end-to-end encryption) are retried every 30 s.
+        clearInterval(waitingTimerRef.current);
+        waitingTimerRef.current = setInterval(async () => {
+          const state = useChatStore.getState();
+          if (state.connection !== 'online') return;
+          const outbox = await state.getOutbox(userId);
+          const waiting = new Set(Object.values(state.messages).flat().filter((message) => message.awaitingKeys).map((message) => message.id));
+          for (const message of outbox) if (waiting.has(message.id)) await transmitDirect(realtime, { ...message, awaitingKeys: true });
+        }, 30_000);
         setClient(realtime);
         useChatStore.getState().setClient(realtime);
         // Connect first: messages, ticks and calls must not wait for history. The cached chats are already on
