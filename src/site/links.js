@@ -1,6 +1,6 @@
 // Where the public site sends people to get the app. The APK link is the latest release build (EAS); update it
 // with each release.
-export const ANDROID_APK_URL = 'https://expo.dev/artifacts/eas/CyfPCsIhRia3C5Qb5AgkUeGMGZ8ByZ1CGY92FJHT9g0.apk';
+export const ANDROID_APK_URL = 'https://expo.dev/artifacts/eas/-vl4M7z4raqFo-IPalj5pCU5txTBd5Gd09JJGydp5KU.apk';
 
 // Public pages (src/site/PublicSite.jsx); every other path opens the messenger.
 export const PUBLIC_PATH = /^\/(?:features|calling|messaging|privacy|business|download|help(?:\/[a-z0-9-]+)?)?\/?$/;
