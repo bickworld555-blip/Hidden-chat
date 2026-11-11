@@ -315,7 +315,7 @@ test('greeting and away messages reply automatically, without repeating', async 
   const customer = await register('aw');
   assert.equal((await api('/api/v1/business', { session: shop, method: 'PUT', body: { away: { enabled: true, text: '' } } })).status, 400, 'a message is needed to turn it on');
   const saved = (await api('/api/v1/business', { session: shop, method: 'PUT', body: { greeting: { enabled: true, text: 'Welcome to our shop!' }, away: { enabled: true, text: 'We are closed now.', schedule: 'always' } } })).body;
-  assert.deepEqual({ away: saved.away, greeting: saved.greeting }, { away: { enabled: true, text: 'We are closed now.', schedule: 'always', hours: null }, greeting: { enabled: true, text: 'Welcome to our shop!' } });
+  assert.deepEqual({ away: saved.away, greeting: saved.greeting }, { away: { enabled: true, text: 'We are closed now.', schedule: 'always', hours: null, from: null, until: null }, greeting: { enabled: true, text: 'Welcome to our shop!' } });
   const customerSocket = await connect(customer);
   await sendDirect(customerSocket, shop.user.id, 'Hello, are you open?');
   await until(() => customerSocket.events.some((event) => event.type === 'message:new' && event.message.content === 'Welcome to our shop!'), 'greeting');

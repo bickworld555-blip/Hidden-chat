@@ -1,7 +1,10 @@
 // Business tools, laid out like a business messenger's: manage the business (profile, catalog, hours, labels)
 // and messaging tools (greeting, away, quick replies). Profile, hours and auto-replies share /api/v1/business.
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { CalendarClock, ChevronRight, Clock, Hand, ImagePlus, MessageSquareText, Pencil, Plus, ShoppingBag, Store, Tag, Trash2, Zap } from 'lucide-react';
+import { CalendarClock, ChevronRight, Clock, Copy, FolderOpen, Hand, ImagePlus, Link2, MessageSquareText, Pencil, Plus, QrCode, Share2, ShoppingBag, Store, Tag, Trash2, X, Zap } from 'lucide-react';
+import { QRCodeSVG } from 'qrcode.react';
+import { useChatStore } from '../../store.js';
+import { apiFetch } from '../../api.js';
 import * as api from '../../parityApi.js';
 import { refreshLabels, refreshQuickReplies, useAccountData } from '../../accountData.js';
 import { LABEL_PALETTE, labelColor } from '../../labels.js';
@@ -14,6 +17,7 @@ const GROUPS = [
     { id: 'catalog', label: 'Catalog', detail: 'Show products and services', icon: ShoppingBag },
     { id: 'hours', label: 'Business hours', detail: 'When you’re open, shown on your profile', icon: CalendarClock },
     { id: 'labels', label: 'Labels', detail: 'Organise chats and customers', icon: Tag },
+    { id: 'link', label: 'Short link', detail: 'A link and QR code that open a chat with you', icon: QrCode },
   ]],
   ['Messaging', [
     { id: 'greeting', label: 'Greeting message', detail: 'Welcome new customers automatically', icon: Hand },
@@ -55,6 +59,7 @@ export default function BusinessTools({ token, userId, onClose, initialSection =
       ))}
       {section === 'profile' && <BusinessProfileForm token={token} {...feedback} />}
       {section === 'hours' && <BusinessHoursForm token={token} {...feedback} />}
+      {section === 'link' && <ShortLink {...feedback} />}
       {section === 'catalog' && <CatalogManager token={token} userId={userId} {...feedback} />}
       {section === 'labels' && <LabelsManager token={token} {...feedback} />}
       {section === 'quick' && <QuickRepliesManager token={token} {...feedback} />}
@@ -142,7 +147,63 @@ function CatalogManager({ token, userId, onError, onNotice }) {
           </li>
         ))}
       </ul>
+      {items?.length > 0 && <CollectionsManager token={token} userId={userId} items={items} onError={onError} onNotice={onNotice} />}
     </>
+  );
+}
+
+// Collections ("Cakes", "Bread"…): named groups of catalog items, shown to customers as sections of the catalog.
+function CollectionsManager({ token, userId, items, onError, onNotice }) {
+  const [collections, setCollections] = useState(null);
+  const [form, setForm] = useState(null);
+  const load = useCallback(() => api.listCollections(token, userId).then(setCollections).catch((caught) => onError(caught.message)), [token, userId, onError]);
+  useEffect(() => { load(); }, [load]);
+  async function save(event) {
+    event.preventDefault();
+    try {
+      if (form.id) await api.updateCollection(token, form.id, { name: form.name, itemIds: form.itemIds });
+      else await api.createCollection(token, { name: form.name, itemIds: form.itemIds });
+      setForm(null);
+      await load();
+      onNotice('Collection saved.');
+    } catch (caught) {
+      onError(caught.message);
+    }
+  }
+  const toggle = (id) => setForm((current) => ({ ...current, itemIds: current.itemIds.includes(id) ? current.itemIds.filter((item) => item !== id) : [...current.itemIds, id] }));
+  if (form) {
+    return (
+      <form className="hm-form hm-collection-form" onSubmit={save}>
+        <h3 className="hm-section">{form.id ? 'Edit collection' : 'New collection'}</h3>
+        <label>Collection name<input value={form.name} maxLength={60} onChange={(event) => setForm({ ...form, name: event.target.value })} placeholder="For example Cakes or New arrivals" autoFocus /></label>
+        <ul className="chat-list-picker">
+          {items.map((item) => (
+            <li key={item.id}><label><input type="checkbox" checked={form.itemIds.includes(item.id)} onChange={() => toggle(item.id)} /><span>{item.name}</span></label></li>
+          ))}
+        </ul>
+        <div className="hm-row-actions">
+          <button type="button" onClick={() => setForm(null)}>Cancel</button>
+          <button type="submit" className="groups-primary" disabled={!form.name.trim()}>Save</button>
+        </div>
+      </form>
+    );
+  }
+  return (
+    <section className="hm-collections">
+      <h3 className="hm-section">Collections</h3>
+      <button type="button" className="groups-new" onClick={() => setForm({ name: '', itemIds: [] })}><span className="groups-new-icon"><FolderOpen size={20} /></span><strong>Add collection</strong></button>
+      <ul className="hm-catalog-list">
+        {collections?.map((collection) => (
+          <li key={collection.id}>
+            <span className="hm-catalog-thumb hm-collection-icon" aria-hidden="true"><FolderOpen size={20} /></span>
+            <span><strong>{collection.name}</strong><small>{collection.itemIds.length} item{collection.itemIds.length === 1 ? '' : 's'}</small></span>
+            <button type="button" className="icon-button" aria-label={`Edit ${collection.name}`} onClick={() => setForm({ id: collection.id, name: collection.name, itemIds: collection.itemIds })}><Pencil size={16} /></button>
+            <button type="button" className="icon-button" aria-label={`Delete ${collection.name}`} onClick={() => api.deleteCollection(token, collection.id).then(load).then(() => onNotice('Collection deleted.')).catch((caught) => onError(caught.message))}><Trash2 size={16} /></button>
+          </li>
+        ))}
+      </ul>
+      {collections?.length === 0 && <p className="hm-muted">Group items into collections such as Cakes or New arrivals. Customers see them as sections of your catalog.</p>}
+    </section>
   );
 }
 
@@ -260,6 +321,13 @@ function AutoMessage({ kind, token, onError, onNotice }) {
         <fieldset className="hm-radio-list"><legend>Schedule</legend>
           <label><input type="radio" name="away-schedule" checked={value.schedule === 'always'} onChange={() => update({ schedule: 'always' })} /> Always send</label>
           <label><input type="radio" name="away-schedule" checked={value.schedule === 'offline'} onChange={() => update({ schedule: 'offline' })} /> Only when I’m offline (no Hidden Messenger app open)</label>
+          <label><input type="radio" name="away-schedule" checked={value.schedule === 'custom'} onChange={() => update({ schedule: 'custom', from: value.from ?? Date.now(), until: value.until ?? Date.now() + 7 * 24 * 60 * 60 * 1000 })} /> Custom schedule (for example a holiday)</label>
+          {value.schedule === 'custom' && (
+            <div className="hm-away-range">
+              <label>Starts<input type="datetime-local" value={localDateTime(value.from)} onChange={(event) => update({ from: new Date(event.target.value).getTime() })} /></label>
+              <label>Ends<input type="datetime-local" value={localDateTime(value.until)} onChange={(event) => update({ until: new Date(event.target.value).getTime() })} /></label>
+            </div>
+          )}
         </fieldset>
       )}
       {kind === 'away' && (
@@ -271,6 +339,8 @@ function AutoMessage({ kind, token, onError, onNotice }) {
     </form>
   );
 }
+
+const localDateTime = (ms) => (Number.isFinite(ms) ? new Date(ms - new Date(ms).getTimezoneOffset() * 60000).toISOString().slice(0, 16) : '');
 
 // Opening hours: shown to customers, and the away message goes out only outside them. Set in this device's time zone.
 const DAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -351,7 +421,8 @@ function BusinessProfileForm({ token, onError, onNotice }) {
     event.preventDefault();
     setBusy(true);
     try {
-      setSettings(await api.saveBusinessProfile(token, { profile }));
+      const { cover: _cover, ...editable } = profile;
+      setSettings(await api.saveBusinessProfile(token, { profile: { ...editable, links: (editable.links ?? []).filter((link) => link.url.trim()) } }));
       onNotice('Business profile saved.');
     } catch (caught) {
       onError(caught.message);
@@ -362,15 +433,89 @@ function BusinessProfileForm({ token, onError, onNotice }) {
   return (
     <form className="hm-form" onSubmit={save}>
       <p className="hm-muted">People who chat with you see this in your contact info.</p>
+      <CoverPicker token={token} cover={profile.cover} onChanged={(next) => { setSettings(next); onNotice('Cover photo updated.'); }} onError={onError} />
       <label>Category<input list="business-categories" value={profile.category} maxLength={60} onChange={(event) => update({ category: event.target.value })} placeholder="Choose or type a category" /></label>
       <datalist id="business-categories">{BUSINESS_CATEGORIES.map((name) => <option key={name} value={name} />)}</datalist>
       <label>Description<textarea value={profile.description} maxLength={512} rows={3} onChange={(event) => update({ description: event.target.value })} placeholder="What your business does" /></label>
       <label>Address<input value={profile.address} maxLength={256} onChange={(event) => update({ address: event.target.value })} placeholder="Street, city" autoComplete="street-address" /></label>
       <label>Email<input type="email" value={profile.email} maxLength={128} onChange={(event) => update({ email: event.target.value })} placeholder="name@example.com" autoComplete="email" /></label>
       <label>Website<input value={profile.website} maxLength={256} onChange={(event) => update({ website: event.target.value })} placeholder="example.com" inputMode="url" autoComplete="url" /></label>
+      <fieldset className="hm-radio-list hm-links"><legend>Links (up to {MAX_LINKS})</legend>
+        {(profile.links ?? []).map((link, index) => (
+          <div key={index} className="hm-link-row">
+            <input value={link.label} maxLength={40} placeholder="Label (Instagram, Shop…)" aria-label={`Link ${index + 1} label`} onChange={(event) => update({ links: profile.links.map((item, at) => (at === index ? { ...item, label: event.target.value } : item)) })} />
+            <input value={link.url} maxLength={256} placeholder="instagram.com/yourshop" inputMode="url" aria-label={`Link ${index + 1} address`} onChange={(event) => update({ links: profile.links.map((item, at) => (at === index ? { ...item, url: event.target.value } : item)) })} />
+            <button type="button" className="icon-button" aria-label={`Remove link ${index + 1}`} onClick={() => update({ links: profile.links.filter((_, at) => at !== index) })}><X size={16} /></button>
+          </div>
+        ))}
+        {(profile.links ?? []).length < MAX_LINKS && <button type="button" className="groups-secondary" onClick={() => update({ links: [...(profile.links ?? []), { label: '', url: '' }] })}><Link2 size={16} /> Add link</button>}
+      </fieldset>
       <p className="hm-muted">Business hours: {settings.away.hours ? hoursSummary(settings.away.hours) : 'not set'} (Business tools › Business hours)</p>
       <button type="submit" className="groups-primary" disabled={busy}>{busy ? 'Saving…' : 'Save'}</button>
     </form>
+  );
+}
+const MAX_LINKS = 4;
+
+// The cover photo across the top of the business profile (shown to customers in contact info).
+export function BusinessCover({ path, token, className = 'hm-business-cover' }) {
+  const [url, setUrl] = useState('');
+  useEffect(() => {
+    if (!path || !token) { setUrl(''); return undefined; }
+    let objectUrl = '';
+    let cancelled = false;
+    apiFetch(path, { headers: { Authorization: `Bearer ${token}` } }).then((response) => (response.ok ? response.blob() : null)).then((blob) => {
+      if (cancelled || !blob) return;
+      objectUrl = URL.createObjectURL(blob);
+      setUrl(objectUrl);
+    }).catch(() => {});
+    return () => { cancelled = true; if (objectUrl) URL.revokeObjectURL(objectUrl); };
+  }, [path, token]);
+  return url ? <img className={className} src={url} alt="" /> : null;
+}
+
+function CoverPicker({ token, cover, onChanged, onError }) {
+  const fileRef = useRef(null);
+  const [busy, setBusy] = useState(false);
+  async function upload(file) {
+    setBusy(true);
+    try { onChanged(await api.uploadBusinessCover(token, file)); } catch (caught) { onError(caught.message); } finally { setBusy(false); }
+  }
+  return (
+    <div className="hm-cover-picker">
+      {cover ? <BusinessCover path={cover} token={token} /> : <div className="hm-business-cover is-empty" aria-hidden="true"><ImagePlus size={28} /></div>}
+      <div className="hm-row-actions">
+        <button type="button" onClick={() => fileRef.current?.click()} disabled={busy}><ImagePlus size={16} /> {cover ? 'Change cover photo' : 'Add cover photo'}</button>
+        {cover && <button type="button" onClick={() => api.removeBusinessCover(token).then(onChanged).catch((caught) => onError(caught.message))} disabled={busy}><Trash2 size={16} /> Remove</button>}
+      </div>
+      <input ref={fileRef} type="file" accept="image/jpeg,image/png,image/webp,image/gif" hidden onChange={(event) => { const [file] = event.target.files ?? []; event.target.value = ''; if (file) upload(file); }} />
+    </div>
+  );
+}
+
+// Short link and QR code: anyone who opens it lands in a chat with you, optionally with a message typed for them.
+export const shortLinkFor = (username, message = '') => `https://hiddenmessenger.com/u/${encodeURIComponent(username)}${message.trim() ? `?text=${encodeURIComponent(message.trim())}` : ''}`;
+function ShortLink({ onError, onNotice }) {
+  const username = useChatStore((state) => state.user?.username ?? '');
+  const [message, setMessage] = useState('');
+  const link = shortLinkFor(username, message);
+  async function copy() {
+    try { await navigator.clipboard.writeText(link); onNotice('Link copied.'); } catch { onError('Copying isn’t allowed here. Select the link and copy it.'); }
+  }
+  async function share() {
+    try { if (navigator.share) await navigator.share({ title: 'Chat with me on Hidden Messenger', url: link }); else await copy(); } catch (caught) { if (caught?.name !== 'AbortError') onError('Sharing isn’t available here.'); }
+  }
+  return (
+    <div className="hm-form hm-short-link">
+      <p className="hm-muted">Customers who open this link or scan the code go straight to a chat with you.</p>
+      <div className="hm-qr"><QRCodeSVG value={link} size={196} level="M" bgColor="#ffffff" fgColor="#0b1628" includeMargin aria-label="QR code for your short link" /></div>
+      <p className="hm-short-url" aria-label="Your short link">{link}</p>
+      <label>Message filled in for them (optional)<input value={message} maxLength={200} onChange={(event) => setMessage(event.target.value)} placeholder="Hi! I'd like to order…" /></label>
+      <div className="hm-row-actions">
+        <button type="button" onClick={copy}><Copy size={16} /> Copy link</button>
+        <button type="button" className="groups-primary" onClick={share}><Share2 size={16} /> Share</button>
+      </div>
+    </div>
   );
 }
 

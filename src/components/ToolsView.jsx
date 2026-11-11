@@ -1,9 +1,10 @@
 import { setMediaSaveEnabled, useMediaSave } from '../mediaSave.js';
 import { nativeShell } from '../native.js';
-import { ArrowLeft, Bell, Check, ChevronRight, CornerDownLeft, ListChecks, CircleDashed, CircleHelp, Clock, DatabaseBackup, Download, EyeOff, HardDrive, Image, KeyRound, Languages, Link2, Lock, LogOut, Megaphone, MessageSquare, Moon, Pencil, Radio, ScanFace, ShieldCheck, Smile, Sparkles, Star, Store, Sun, UserPlus, Users, Video, X } from 'lucide-react';
+import { Accessibility, ArrowLeft, Bell, Check, ChevronRight, Contrast, CornerDownLeft, ListChecks, Type, CircleHelp, Clock, DatabaseBackup, Download, HardDrive, Image, KeyRound, Languages, Link2, Lock, LogOut, Megaphone, MessageSquare, Moon, Pencil, Radio, ScanFace, ShieldCheck, Smile, Sparkles, Star, Store, Sun, UserPlus, Users, Video, X } from 'lucide-react';
 import { useChatStore } from '../store.js';
 import { WALLPAPERS, setWallpaper, useWallpaper } from '../wallpaper.js';
 import { setEnterSends, useEnterSends } from '../enterSends.js';
+import { FONT_SIZES, fontSizeLabel, setFontSize, setHighContrast, useFontSize, useHighContrast } from '../displayPrefs.js';
 import ProfilePhoto from './ProfilePhoto.jsx';
 import Avatar from './Avatar.jsx';
 import { useAccounts } from '../accounts.js';
@@ -127,7 +128,11 @@ export default function ToolsView({ darkMode, onToggleTheme, onLogout, onNotific
   const user = useChatStore((state) => state.user);
   const userId = useChatStore((state) => state.userId);
   const { accounts } = useAccounts();
-  const [page, setPage] = useState(null);
+  const [page, setPageState] = useState(null);
+  const [previousPage, setPreviousPage] = useState(null);
+  const setPage = (next) => { setPreviousPage(page); setPageState(next); };
+  const fontSize = useFontSize();
+  const highContrast = useHighContrast();
   const animations = useAnimationsEnabled();
   const callAnimations = useCallAnimationsEnabled();
   const avatarCalls = useAvatarCallsEnabled();
@@ -139,11 +144,23 @@ export default function ToolsView({ darkMode, onToggleTheme, onLogout, onNotific
   const openHelp = () => { window.open(HELP_CENTER_URL, '_blank', 'noopener'); };
 
   const pages = {
-    privacy: ['Privacy', (
+    accessibility: ['Accessibility', (
       <div className="tools-section">
-        <Item icon={EyeOff} title="Last seen, profile photo and read receipts" detail="Who sees what, app lock and two-step verification" onClick={onAccountSettings} />
-        <Item icon={CircleDashed} title="Status" detail="Who sees your status, muted updates" onClick={() => onSheet?.('statusprivacy')} />
-        <Item icon={Link2} title="Call links" detail="Let people call you with a link, revoke any time" onClick={() => onSheet?.('calllinks')} />
+        <Item icon={Contrast} title="Increase contrast" checked={highContrast} detail={highContrast ? 'Stronger text and borders, plain backgrounds' : 'Standard colours'} onClick={() => setHighContrast(!highContrast)} />
+        <Item icon={Sparkles} title="Reduce motion" checked={!animations} detail={!animations ? 'Screens switch without animation' : 'Transitions and motion effects are on'} onClick={() => setAnimationsEnabled(!animations)} />
+        <Item icon={Type} title="Font size" detail={fontSizeLabel(fontSize)} onClick={() => setPage('fontsize')} />
+      </div>
+    )],
+    fontsize: ['Font size', (
+      <div className="tools-section" role="radiogroup" aria-label="Font size">
+        <p className="tools-page-note">Changes the size of messages and chat names on this device.</p>
+        {FONT_SIZES.map(([id, label]) => (
+          <button key={id} type="button" role="radio" aria-checked={fontSize === id} className={`tool-item font-size-option size-${id}`} onClick={() => setFontSize(id)}>
+            <Type size={20} />
+            <div className="tool-item-info"><strong>{label}</strong><small>The quick brown fox</small></div>
+            {fontSize === id && <Check size={18} />}
+          </button>
+        ))}
       </div>
     )],
     avatar: ['Avatar', (
@@ -166,6 +183,7 @@ export default function ToolsView({ darkMode, onToggleTheme, onLogout, onNotific
           onClick={() => setCallAnimationsEnabled(!callAnimations)} />
         <h3>Chat settings</h3>
         <Item icon={CornerDownLeft} title="Enter is send" checked={enterIsSend} detail={enterIsSend ? 'Enter sends your message; Shift+Enter starts a new line' : 'Enter starts a new line; tap the send button to send'} onClick={() => setEnterSends(!enterIsSend)} />
+        <Item icon={Type} title="Font size" detail={fontSizeLabel(fontSize)} onClick={() => setPage('fontsize')} />
         <Item icon={Download} title="Media Save" checked={mediaSave && Boolean(inApp)} disabled={!inApp}
           detail={!inApp ? 'In the Android app: save received photos, videos and files to the phone' : mediaSave ? 'On · received media is saved to Download/Hidden Messenger' : 'Off · received media stays in the chat until you tap download'}
           onClick={() => setMediaSaveEnabled(!mediaSave)} />
@@ -197,13 +215,13 @@ export default function ToolsView({ darkMode, onToggleTheme, onLogout, onNotific
     </div>
   )];
 
-  const back = page === 'wallpaper' ? 'chats' : null;
+  const back = page === 'wallpaper' ? 'chats' : page === 'fontsize' ? previousPage : null;
   if (page && pages[page]) {
     const [title, body] = pages[page];
     return (
       <div className="tools-view-container">
         <div className="tools-header">
-          <button type="button" className="icon-button" onClick={() => setPage(back)} aria-label={back ? 'Back to chats settings' : 'Back to settings'}><ArrowLeft size={18} /></button>
+          <button type="button" className="icon-button" onClick={() => setPage(back)} aria-label={back ? `Back to ${back === 'chats' ? 'chats settings' : back}` : 'Back to settings'}><ArrowLeft size={18} /></button>
           <h2>{title}</h2>
         </div>
         <div className="tools-content">{body}</div>
@@ -246,13 +264,14 @@ export default function ToolsView({ darkMode, onToggleTheme, onLogout, onNotific
         </div>
 
         <div className="tools-section">
-          <Item icon={KeyRound} title="Account" detail="Security, password, two-step verification, linked devices" onClick={onAccountSettings} />
-          <Item icon={Lock} title="Privacy" detail="Last seen, status, call links" onClick={() => setPage('privacy')} />
+          <Item icon={KeyRound} title="Account" detail="Security, two-step verification, linked devices, delete account" onClick={() => onAccountSettings?.('account')} />
+          <Item icon={Lock} title="Privacy" detail="Last seen, read receipts, status, app lock" onClick={() => onAccountSettings?.('privacy')} />
           <Item icon={Smile} title="Avatar" detail="Create, edit, use in video calls" onClick={() => setPage('avatar')} />
           <Item icon={ListChecks} title="Lists" detail="Manage people and groups in your own lists" onClick={() => onSheet?.('lists')} />
           <Item icon={MessageSquare} title="Chats" detail="Theme, animations, media save, backup" onClick={() => setPage('chats')} />
           <Item icon={Bell} title="Notifications" detail="Message, group and call tones" onClick={onNotifications} />
           <Item icon={HardDrive} title="Storage and data" detail="Manage storage, photo upload quality" onClick={onStorage} />
+          <Item icon={Accessibility} title="Accessibility" detail="Contrast, motion, font size" onClick={() => setPage('accessibility')} />
           <Item icon={Languages} title="App language" detail="English, বাংলা, हिन्दी, Español" onClick={() => onSheet?.('language')} />
           <Item icon={CircleHelp} title="Help" detail="Help Center, privacy" onClick={openHelp} />
           <Item icon={UserPlus} title="Invite a friend" detail="Text an invite to someone in your contacts" onClick={() => onSheet?.('invite')} />
@@ -264,6 +283,7 @@ export default function ToolsView({ darkMode, onToggleTheme, onLogout, onNotific
           <Item icon={Users} title="Create a community" detail="Organize groups under one space" onClick={onCommunities} />
           <Item icon={Radio} title="Channels" detail="Follow channels or start your own" onClick={() => onSheet?.('channels')} />
           <Item icon={Megaphone} title="Broadcast lists" detail="One message, sent privately to many" onClick={() => onSheet?.('broadcasts')} />
+          <Item icon={Link2} title="Call links" detail="Let people call you with a link, revoke any time" onClick={() => onSheet?.('calllinks')} />
           <Item icon={Clock} title="Scheduled messages" detail="Write now, send later (end-to-end encrypted)" onClick={() => onSheet?.('scheduled')} />
           {isAdmin && <Item icon={ShieldCheck} title="Admin console" detail="Statistics, users, reports, Help Center" onClick={() => onSheet?.('admin')} />}
         </div>

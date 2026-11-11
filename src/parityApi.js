@@ -85,6 +85,12 @@ export const updateQuickReply = (token, id, reply) => request(token, `/api/v1/qu
 export const deleteQuickReply = (token, id) => request(token, `/api/v1/quick-replies/${enc(id)}`, { method: 'DELETE' });
 export const getBusinessProfile = (token) => request(token, '/api/v1/business');
 export const saveBusinessProfile = (token, profile) => request(token, '/api/v1/business', { method: 'PUT', body: profile });
+export const uploadBusinessCover = (token, blob) => request(token, '/api/v1/business/cover', { method: 'PUT', raw: blob, contentType: blob.type || 'application/octet-stream' });
+export const removeBusinessCover = (token) => request(token, '/api/v1/business/cover', { method: 'DELETE' });
+export const listCollections = (token, userId) => request(token, `/api/v1/users/${enc(userId)}/catalog/collections`);
+export const createCollection = (token, body) => request(token, '/api/v1/catalog/collections', { method: 'POST', body });
+export const updateCollection = (token, id, body) => request(token, `/api/v1/catalog/collections/${enc(id)}`, { method: 'PUT', body });
+export const deleteCollection = (token, id) => request(token, `/api/v1/catalog/collections/${enc(id)}`, { method: 'DELETE' });
 
 // Two-step verification.
 export const getTwoStep = (token) => request(token, '/api/v1/me/two-step');

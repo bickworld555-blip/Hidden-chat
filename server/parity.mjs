@@ -86,6 +86,25 @@ const bool = (value) => (value ? 1 : 0);
 export const BUSINESS_PROFILE_FIELDS = ['category', 'description', 'address', 'email', 'website'];
 const BUSINESS_PROFILE_LIMITS = { category: 60, description: 512, address: 256, email: 128, website: 256 };
 
+export const MAX_BUSINESS_LINKS = 4;
+/** Extra links on a business profile (shop, Instagram, Facebook…): up to MAX_BUSINESS_LINKS { label, url }, or null. */
+export function parseBusinessLinks(value) {
+  if (value === undefined) return undefined;
+  if (!Array.isArray(value) || value.length > MAX_BUSINESS_LINKS) return null;
+  const links = [];
+  for (const entry of value) {
+    const label = boundedText(entry?.label ?? '', 40);
+    const raw = boundedText(entry?.url ?? '', 256);
+    if (label === undefined || !raw) return null;
+    try {
+      const url = new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`);
+      if (!url.hostname.includes('.') || !['http:', 'https:'].includes(url.protocol)) return null;
+      links.push({ label: label || url.hostname.replace(/^www\./, ''), url: url.href });
+    } catch { return null; }
+  }
+  return links;
+}
+
 /** Cleans a business profile; returns undefined with the field name in `problem` when a value is not allowed. */
 export function parseBusinessProfile(value = {}) {
   const profile = {};
@@ -216,6 +235,12 @@ export function ensureParitySchema(db) {
   // Business profile (Postgres: 014_business_profile.sql).
   const business = columns('business_profiles');
   for (const name of BUSINESS_PROFILE_FIELDS) if (!business.has(name)) db.exec(`ALTER TABLE business_profiles ADD COLUMN ${name} TEXT NOT NULL DEFAULT ''`);
+  // Links, cover photo, away date ranges, collections (Postgres: 016_business_account.sql).
+  if (!business.has('links')) db.exec("ALTER TABLE business_profiles ADD COLUMN links TEXT NOT NULL DEFAULT '[]'");
+  for (const name of ['cover_disk_name', 'cover_type']) if (!business.has(name)) db.exec(`ALTER TABLE business_profiles ADD COLUMN ${name} TEXT`);
+  for (const name of ['away_from', 'away_until']) if (!business.has(name)) db.exec(`ALTER TABLE business_profiles ADD COLUMN ${name} INTEGER`);
+  db.exec("CREATE TABLE IF NOT EXISTS catalog_collections (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, name TEXT NOT NULL, item_ids TEXT NOT NULL DEFAULT '[]', created_at INTEGER NOT NULL)");
+  if (!columns('users').has('deleted_at')) db.exec('ALTER TABLE users ADD COLUMN deleted_at INTEGER');
 }
 
 /**
@@ -921,6 +946,72 @@ export function registerParity(ctx) {
     response.send(body);
   });
 
+  // --- Business: cover photo ----------------------------------------------------------------------------------
+  app.put('/api/v1/business/cover', requireSession, express.raw({ type: () => true, limit: MAX_CATALOG_IMAGE_BYTES }), async (request, response) => {
+    const userId = request.session.user_id;
+    const image = detectImage(request.body);
+    if (!image) return response.status(415).json({ error: 'Choose a JPEG, PNG, WebP or GIF image.' });
+    const previous = (await businessRow.get(userId))?.coverDiskName;
+    const diskName = `cover-${userId}-${now()}.${image.extension}`;
+    await writeFile(join(catalogDirectory, diskName), request.body, { flag: 'wx' });
+    await db.prepare(`INSERT INTO business_profiles(user_id, updated_at, cover_disk_name, cover_type) VALUES (?, ?, ?, ?)
+      ON CONFLICT(user_id) DO UPDATE SET cover_disk_name = excluded.cover_disk_name, cover_type = excluded.cover_type, updated_at = excluded.updated_at`).run(userId, now(), diskName, image.type);
+    if (previous) await unlink(join(catalogDirectory, previous)).catch(() => {});
+    response.json(presentBusiness(await businessRow.get(userId)));
+  });
+  app.delete('/api/v1/business/cover', requireSession, async (request, response) => {
+    const userId = request.session.user_id;
+    const previous = (await businessRow.get(userId))?.coverDiskName;
+    await db.prepare('UPDATE business_profiles SET cover_disk_name = NULL, cover_type = NULL WHERE user_id = ?').run(userId);
+    if (previous) await unlink(join(catalogDirectory, previous)).catch(() => {});
+    response.json(presentBusiness(await businessRow.get(userId)));
+  });
+  app.get('/api/v1/users/:userId/business/cover', requireSession, async (request, response) => {
+    const row = await businessRow.get(request.params.userId);
+    const body = row?.coverDiskName ? await readFile(join(catalogDirectory, row.coverDiskName)).catch(() => null) : null;
+    if (!body) return response.status(404).json({ error: 'No cover photo.' });
+    response.set({ 'Content-Type': row.coverType, 'Cache-Control': 'private, max-age=86400', 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': "sandbox; default-src 'none'" });
+    response.send(body);
+  });
+
+  // --- Business: catalog collections ("Cakes", "Bread"…): named groups of catalog items, in order --------------
+  const presentCollection = (row) => { let itemIds = []; try { itemIds = JSON.parse(row.itemIds); } catch { /* none */ } return { id: row.id, name: row.name, itemIds }; };
+  async function cleanItemIds(userId, value) {
+    if (!Array.isArray(value) || value.length > 200) return null;
+    const own = new Set((await db.prepare('SELECT id FROM catalog_items WHERE user_id = ?').all(userId)).map((row) => row.id));
+    return [...new Set(value.filter((id) => typeof id === 'string' && own.has(id)))];
+  }
+  app.get('/api/v1/users/:userId/catalog/collections', requireSession, async (request, response) => {
+    const rows = await db.prepare('SELECT id, name, item_ids AS "itemIds" FROM catalog_collections WHERE user_id = ? ORDER BY created_at, id').all(request.params.userId);
+    const own = request.params.userId === request.session.user_id;
+    const visible = own ? null : new Set((await db.prepare('SELECT id FROM catalog_items WHERE user_id = ? AND hidden = 0').all(request.params.userId)).map((row) => row.id));
+    response.json(rows.map(presentCollection).map((collection) => (visible ? { ...collection, itemIds: collection.itemIds.filter((id) => visible.has(id)) } : collection)));
+  });
+  app.post('/api/v1/catalog/collections', requireSession, async (request, response) => {
+    const userId = request.session.user_id;
+    const name = boundedText(request.body?.name, 60, { required: true });
+    const itemIds = await cleanItemIds(userId, request.body?.itemIds ?? []);
+    if (!name || !itemIds) return response.status(400).json({ error: 'Name the collection (up to 60 characters).' });
+    if (Number((await db.prepare('SELECT count(*) AS "count" FROM catalog_collections WHERE user_id = ?').get(userId))?.count ?? 0) >= 50) return response.status(400).json({ error: 'You can have up to 50 collections.' });
+    const id = randomUUID();
+    await db.prepare('INSERT INTO catalog_collections(id, user_id, name, item_ids, created_at) VALUES (?, ?, ?, ?, ?)').run(id, userId, name, JSON.stringify(itemIds), now());
+    response.status(201).json({ id, name, itemIds });
+  });
+  app.put('/api/v1/catalog/collections/:id', requireSession, async (request, response) => {
+    const userId = request.session.user_id;
+    const row = await db.prepare('SELECT id, name, item_ids AS "itemIds" FROM catalog_collections WHERE id = ? AND user_id = ?').get(request.params.id, userId);
+    if (!row) return response.status(404).json({ error: 'Collection not found.' });
+    const name = request.body?.name === undefined ? row.name : boundedText(request.body.name, 60, { required: true });
+    const itemIds = request.body?.itemIds === undefined ? presentCollection(row).itemIds : await cleanItemIds(userId, request.body.itemIds);
+    if (!name || !itemIds) return response.status(400).json({ error: 'Name the collection (up to 60 characters).' });
+    await db.prepare('UPDATE catalog_collections SET name = ?, item_ids = ? WHERE id = ?').run(name, JSON.stringify(itemIds), row.id);
+    response.json({ id: row.id, name, itemIds });
+  });
+  app.delete('/api/v1/catalog/collections/:id', requireSession, async (request, response) => {
+    await db.prepare('DELETE FROM catalog_collections WHERE id = ? AND user_id = ?').run(request.params.id, request.session.user_id);
+    response.status(204).end();
+  });
+
   // --- Business: labels ---------------------------------------------------------------------------------------
   async function labelsOf(userId) {
     const labels = await db.prepare('SELECT id, name, color, created_at AS "createdAt" FROM labels WHERE user_id = ? ORDER BY created_at, id').all(userId);
@@ -1030,13 +1121,20 @@ export function registerParity(ctx) {
 
   // --- Business: away and greeting messages -------------------------------------------------------------------
   const businessRow = db.prepare(`SELECT away_enabled AS "awayEnabled", away_text AS "awayText", away_schedule AS "awaySchedule",
-    away_hours AS "awayHours", greeting_enabled AS "greetingEnabled", greeting_text AS "greetingText", ${BUSINESS_PROFILE_FIELDS.join(', ')} FROM business_profiles WHERE user_id = ?`);
+    away_hours AS "awayHours", greeting_enabled AS "greetingEnabled", greeting_text AS "greetingText", ${BUSINESS_PROFILE_FIELDS.join(', ')},
+    links, cover_disk_name AS "coverDiskName", cover_type AS "coverType", cover_disk_name AS "coverKey", away_from AS "awayFrom", away_until AS "awayUntil", user_id AS "userId" FROM business_profiles WHERE user_id = ?`);
   const hoursOf = (row) => { try { return row?.awayHours ? parseBusinessHours(JSON.parse(row.awayHours)) ?? null : null; } catch { return null; } };
   const presentBusiness = (row) => ({
     // `hours`: when set, the away message goes out only outside these business hours.
-    away: { enabled: Number(row?.awayEnabled) === 1, text: row?.awayText ?? '', schedule: row?.awaySchedule ?? 'always', hours: hoursOf(row) },
+    // schedule "custom" = only between from and until (stored as "always" plus the range).
+    away: { enabled: Number(row?.awayEnabled) === 1, text: row?.awayText ?? '', schedule: row?.awayFrom ? 'custom' : row?.awaySchedule ?? 'always', hours: hoursOf(row),
+      from: row?.awayFrom ? Number(row.awayFrom) : null, until: row?.awayUntil ? Number(row.awayUntil) : null },
     greeting: { enabled: Number(row?.greetingEnabled) === 1, text: row?.greetingText ?? '' },
-    profile: Object.fromEntries(BUSINESS_PROFILE_FIELDS.map((field) => [field, row?.[field] ?? ''])),
+    profile: {
+      ...Object.fromEntries(BUSINESS_PROFILE_FIELDS.map((field) => [field, row?.[field] ?? ''])),
+      links: (() => { try { return parseBusinessLinks(JSON.parse(row?.links ?? '[]')) ?? []; } catch { return []; } })(),
+      cover: row?.coverDiskName ? `/api/v1/users/${encodeURIComponent(row.userId)}/business/cover?v=${encodeURIComponent(row.coverDiskName)}` : null,
+    },
   });
 
   app.get('/api/v1/business', requireSession, async (request, response) => response.json(presentBusiness(await businessRow.get(request.session.user_id))));
@@ -1045,7 +1143,7 @@ export function registerParity(ctx) {
   // null when the account has filled in neither.
   app.get('/api/v1/users/:userId/business', requireSession, async (request, response) => {
     const { profile, away } = presentBusiness(await businessRow.get(request.params.userId));
-    const any = Object.values(profile).some(Boolean) || away.hours;
+    const any = Object.entries(profile).some(([key, value]) => (key === 'links' ? value.length : Boolean(value))) || away.hours;
     response.json(any ? { profile, hours: away.hours } : null);
   });
 
@@ -1056,19 +1154,28 @@ export function registerParity(ctx) {
     const greeting = { ...current.greeting, ...(request.body?.greeting ?? {}) };
     const awayText = boundedText(away.text, 1000);
     const greetingText = boundedText(greeting.text, 1000);
-    if (typeof away.enabled !== 'boolean' || typeof greeting.enabled !== 'boolean' || !['always', 'offline'].includes(away.schedule)
+    if (typeof away.enabled !== 'boolean' || typeof greeting.enabled !== 'boolean' || !['always', 'offline', 'custom'].includes(away.schedule)
       || awayText === undefined || greetingText === undefined || (away.enabled && !awayText) || (greeting.enabled && !greetingText)) {
       return response.status(400).json({ error: 'Write the message (up to 1,000 characters) before turning it on.' });
     }
     const hours = parseBusinessHours(away.hours);
     if (hours === undefined) return response.status(400).json({ error: 'Business hours need a time zone and opening times that end after they start.' });
+    const custom = away.schedule === 'custom';
+    const from = custom ? Number(away.from) : null;
+    const until = custom ? Number(away.until) : null;
+    if (custom && !(Number.isFinite(from) && Number.isFinite(until) && until > from && until - from <= 366 * 24 * 60 * 60 * 1000)) {
+      return response.status(400).json({ error: 'Choose a start and an end for the away message, ending after it starts (at most a year).' });
+    }
+    const links = request.body?.profile?.links === undefined ? current.profile.links : parseBusinessLinks(request.body.profile.links);
+    if (links === null) return response.status(400).json({ error: `Add up to ${MAX_BUSINESS_LINKS} links, each a web address like example.com.` });
     const { profile, problem } = parseBusinessProfile({ ...current.profile, ...(request.body?.profile ?? {}) });
     if (problem) return response.status(400).json({ error: problem === 'email' ? 'Enter an email address like name@example.com.' : problem === 'website' ? 'Enter a website address like example.com.' : `The ${problem} is too long.` });
     await db.prepare(`INSERT INTO business_profiles(user_id, away_enabled, away_text, away_schedule, away_hours, greeting_enabled, greeting_text, updated_at, ${BUSINESS_PROFILE_FIELDS.join(', ')})
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ${BUSINESS_PROFILE_FIELDS.map(() => '?').join(', ')}) ON CONFLICT(user_id) DO UPDATE SET away_enabled = excluded.away_enabled, away_text = excluded.away_text,
       away_schedule = excluded.away_schedule, away_hours = excluded.away_hours, greeting_enabled = excluded.greeting_enabled, greeting_text = excluded.greeting_text, updated_at = excluded.updated_at,
       ${BUSINESS_PROFILE_FIELDS.map((field) => `${field} = excluded.${field}`).join(', ')}`)
-      .run(userId, bool(away.enabled), awayText, away.schedule, hours ? JSON.stringify(hours) : null, bool(greeting.enabled), greetingText, now(), ...BUSINESS_PROFILE_FIELDS.map((field) => profile[field]));
+      .run(userId, bool(away.enabled), awayText, custom ? 'always' : away.schedule, hours ? JSON.stringify(hours) : null, bool(greeting.enabled), greetingText, now(), ...BUSINESS_PROFILE_FIELDS.map((field) => profile[field]));
+    await db.prepare('UPDATE business_profiles SET links = ?, away_from = ?, away_until = ? WHERE user_id = ?').run(JSON.stringify(links), from, until, userId);
     response.json(presentBusiness(await businessRow.get(userId)));
   });
 
@@ -1096,7 +1203,8 @@ export function registerParity(ctx) {
       }
     }
     const hours = hoursOf(profile);
-    if (Number(profile.awayEnabled) === 1 && profile.awayText && (profile.awaySchedule === 'always' || !isOnline(receiverId))
+    const inRange = !profile.awayFrom || (at >= Number(profile.awayFrom) && at < Number(profile.awayUntil));
+    if (Number(profile.awayEnabled) === 1 && profile.awayText && inRange && (profile.awaySchedule === 'always' || !isOnline(receiverId))
       && !(hours && withinBusinessHours(hours, at)) && !await sentRecently('away', AWAY_INTERVAL_MS)) {
       await record('away');
       await deliverDirectMessage({ senderId: receiverId, receiverId: senderId, content: profile.awayText });

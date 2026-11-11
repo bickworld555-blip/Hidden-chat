@@ -696,6 +696,10 @@ export const useChatStore = create((setState, getState) => ({
     getState().setPreference('lockedChatIds', (ids) => toggleId(ids ?? [], key));
   },
   // Opening a search result: the chat window scrolls to this message once it is showing that chat.
+  // A message to put in a chat's box when it opens (short links with ?text=); the chat window takes it once.
+  composerDraft: null,
+  setComposerDraft(chatId, text) { setState({ composerDraft: { chatId, text } }); },
+  takeComposerDraft(chatId) { const draft = getState().composerDraft; if (draft?.chatId !== chatId) return ''; setState({ composerDraft: null }); return draft.text; },
   requestMessageJump(chatId, messageId) { setState({ messageJump: { chatId, messageId, at: Date.now() } }); },
   clearMessageJump() { setState({ messageJump: null }); },
   saveChatList(listId, { name, keys }) {

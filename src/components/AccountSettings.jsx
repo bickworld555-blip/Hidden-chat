@@ -1,7 +1,9 @@
 import { DeviceSecuritySettings, TwoStepSettings } from './parity/SecurityViews.jsx';
 import { useBackHandler } from '../backStack.js';
 import { useCallback, useEffect, useState } from 'react';
-import { ArrowLeft, KeyRound, Laptop, Smartphone } from 'lucide-react';
+import { ArrowLeft, KeyRound, Laptop, Smartphone, Trash2 } from 'lucide-react';
+import { apiFetch } from '../api.js';
+import { saveBlob } from '../media.js';
 import { useChatStore } from '../store.js';
 import { changePassword, listDevices, signOutDevice } from '../accountApi.js';
 import { SECTIONS, SETTINGS, appSettings, optionLabel, useAccountSettingsLoaded, useSetting } from '../settings.js';
@@ -119,7 +121,45 @@ function PrivacyRow({ settingKey, loaded, onOpen, onToggle }) {
   return <Row title={definition.label} subtitle={loaded ? optionLabel(settingKey, value) : 'Loading…'} onClick={() => onOpen(settingKey)} disabled={!loaded} />;
 }
 
-export default function AccountSettings({ onClose }) {
+// Delete my account: explains what happens, then asks for the password and the username (server/account.mjs).
+function DeleteAccount({ sessionToken, username, onDeleted }) {
+  const [password, setPassword] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  async function submit(event) {
+    event.preventDefault();
+    setBusy(true);
+    setError('');
+    try {
+      const response = await apiFetch('/api/v1/me', { method: 'DELETE', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ password, confirm: confirm.trim().replace(/^@/, '') }) });
+      if (!response.ok) throw new Error((await response.json().catch(() => ({}))).error || 'The account could not be deleted.');
+      onDeleted?.();
+    } catch (failure) {
+      setError(failure.message);
+      setBusy(false);
+    }
+  }
+  return (
+    <form className="account-delete" onSubmit={submit}>
+      <p>Deleting your account will:</p>
+      <ul>
+        <li>sign you out on every device and remove your encryption keys</li>
+        <li>delete your profile, contacts list, statuses, business profile, catalog, labels and the channels you own</li>
+        <li>remove you from your groups and delete the copies of your messages kept on the server</li>
+      </ul>
+      <p className="account-hint">Messages already on other people’s phones stay with them. This can’t be undone. Save a chat backup first if you want to keep your chats.</p>
+      <label className="hm-field">Password<input className="hm-input" type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} /></label>
+      <label className="hm-field">Type your username ({username}) to confirm<input className="hm-input" autoCapitalize="none" value={confirm} onChange={(event) => setConfirm(event.target.value)} /></label>
+      {error && <p className="notif-error" role="alert">{error}</p>}
+      <button type="submit" className="account-delete-button" disabled={busy || !password || confirm.trim().replace(/^@/, '') !== username}><Trash2 size={16} /> {busy ? 'Deleting…' : 'Delete my account'}</button>
+    </form>
+  );
+}
+
+// section "account": security, linked devices, account info, deletion. section "privacy": who sees what, status, app lock.
+export default function AccountSettings({ onClose, section = 'account', onOpenSheet, onAccountDeleted }) {
+  const username = useChatStore((state) => state.user?.username ?? '');
   const [scanning, setScanning] = useState(false);
   const sessionToken = useChatStore((state) => state.sessionToken);
   const [view, setView] = useState(null);
@@ -153,6 +193,19 @@ export default function AccountSettings({ onClose }) {
     }
   }
 
+  // Account info: a JSON report, saved like any other file.
+  async function requestInfo() {
+    setError('');
+    try {
+      const response = await apiFetch('/api/v1/me/account-info', { headers: { Authorization: `Bearer ${sessionToken}` } });
+      if (!response.ok) throw new Error('Your account info could not be prepared. Try again.');
+      saveBlob(new Blob([JSON.stringify(await response.json(), null, 2)], { type: 'application/json' }), `hidden-messenger-account-info-${username || 'account'}.json`);
+      setNotice('Your account info was saved to your downloads.');
+    } catch (failure) {
+      setError(failure.message);
+    }
+  }
+
   async function removeDevice(deviceId) {
     setError('');
     try {
@@ -171,6 +224,12 @@ export default function AccountSettings({ onClose }) {
     content = (
       <SubView title="Change password" onBack={() => setView(null)}>
         <PasswordForm sessionToken={sessionToken} onDone={(message) => { setNotice(message); setView(null); loadDevices(); }} />
+      </SubView>
+    );
+  } else if (view === 'delete') {
+    content = (
+      <SubView title="Delete my account" onBack={() => setView(null)}>
+        <DeleteAccount sessionToken={sessionToken} username={username} onDeleted={onAccountDeleted} />
       </SubView>
     );
   } else if (view === 'devices') {
@@ -193,30 +252,47 @@ export default function AccountSettings({ onClose }) {
     content = (
       <div className="wa-info-subview">
         <header className="wa-info-header">
-          <button type="button" className="icon-button" onClick={onClose} aria-label="Close account settings"><ArrowLeft size={20} /></button>
-          <h2>Account & privacy</h2>
+          <button type="button" className="icon-button" onClick={onClose} aria-label={section === 'privacy' ? 'Close privacy settings' : 'Close account settings'}><ArrowLeft size={20} /></button>
+          <h2>{section === 'privacy' ? 'Privacy' : 'Account'}</h2>
         </header>
         <div className="wa-info-scroll">
           {notice && <p className="account-notice" role="status"><KeyRound size={14} /> {notice}</p>}
-          <section className="wa-info-section">
-            <h3>{SECTIONS.privacy.title}</h3>
-            <PrivacyRows onOpen={setView} onToggle={changeSetting} />
-            <p className="account-hint account-hint-padded">If you hide your last seen, people you hide it from won&apos;t see when you were last online. Online can stay visible to everyone or follow your last seen setting.</p>
-          </section>
-          <section className="wa-info-section">
-            <h3>Security</h3>
-            <Row title="Change password" subtitle="Signs you out everywhere else" onClick={() => setView('password')} />
-            <TwoStepSettings token={sessionToken} />
-            <DeviceSecuritySettings />
-          </section>
-          <section className="wa-info-section">
-            <h3>Devices</h3>
-            <Row
-              title="Linked devices"
-              subtitle={otherDevices === null ? 'Loading…' : otherDevices === 0 ? 'Only this device' : `${otherDevices} other device${otherDevices === 1 ? '' : 's'}`}
-              onClick={() => setView('devices')}
-            />
-          </section>
+          {section === 'privacy' ? (
+            <>
+              <section className="wa-info-section">
+                <h3>Who can see my personal info</h3>
+                <PrivacyRows onOpen={setView} onToggle={changeSetting} />
+                <p className="account-hint account-hint-padded">If you hide your last seen, people you hide it from won&apos;t see when you were last online. Online can stay visible to everyone or follow your last seen setting.</p>
+              </section>
+              <section className="wa-info-section">
+                <Row title="Status" subtitle="Who sees your status updates, muted updates" onClick={() => onOpenSheet?.('statusprivacy')} />
+              </section>
+              <section className="wa-info-section">
+                <h3>App lock</h3>
+                <DeviceSecuritySettings />
+              </section>
+            </>
+          ) : (
+            <>
+              <section className="wa-info-section">
+                <h3>Security</h3>
+                <Row title="Change password" subtitle="Signs you out everywhere else" onClick={() => setView('password')} />
+                <TwoStepSettings token={sessionToken} />
+              </section>
+              <section className="wa-info-section">
+                <h3>Devices</h3>
+                <Row
+                  title="Linked devices"
+                  subtitle={otherDevices === null ? 'Loading…' : otherDevices === 0 ? 'Only this device' : `${otherDevices} other device${otherDevices === 1 ? '' : 's'}`}
+                  onClick={() => setView('devices')}
+                />
+              </section>
+              <section className="wa-info-section">
+                <Row title="Request account info" subtitle="Download a report of your account and settings" onClick={requestInfo} />
+                <Row title="Delete my account" subtitle="Remove your account and its data" onClick={() => setView('delete')} />
+              </section>
+            </>
+          )}
           {error && view === null && <p className="notif-error account-hint-padded" role="alert">{error}</p>}
         </div>
       </div>
@@ -226,7 +302,7 @@ export default function AccountSettings({ onClose }) {
   return (
     <div className="wa-info-layer notif-layer">
       <div className="wa-info-backdrop" onClick={onClose} role="presentation" />
-      <div className="wa-info-drawer" role="dialog" aria-modal="true" aria-label="Account and privacy settings">
+      <div className="wa-info-drawer" role="dialog" aria-modal="true" aria-label={section === 'privacy' ? 'Privacy settings' : 'Account settings'}>
         {content}
       </div>
     </div>

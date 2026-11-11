@@ -8,7 +8,7 @@ import { DATABASE_SCHEMA_VERSION, postgresOptions } from '../server/database.mjs
 import { DEMO_USERS } from '../server/demo.mjs';
 
 export const IMPORT_TABLES = Object.freeze([
-  { name: 'users', columns: ['id', 'username', 'name', 'initials', 'color', 'dob', 'password_hash', 'created_at', 'avatar_disk_name', 'avatar_type', 'avatar_updated_at', 'last_seen_at', 'last_seen_privacy', 'online_privacy', 'photo_privacy', 'read_receipts', 'two_step_hash', 'two_step_set_at', 'status_audience', 'is_admin', 'suspended_at'], users: ['id'] },
+  { name: 'users', columns: ['id', 'username', 'name', 'initials', 'color', 'dob', 'password_hash', 'created_at', 'avatar_disk_name', 'avatar_type', 'avatar_updated_at', 'last_seen_at', 'last_seen_privacy', 'online_privacy', 'photo_privacy', 'read_receipts', 'two_step_hash', 'two_step_set_at', 'status_audience', 'is_admin', 'suspended_at', 'deleted_at'], users: ['id'] },
   { name: 'sessions', columns: ['token_hash', 'user_id', 'device_id', 'device_name', 'expires_at', 'created_at', 'last_active_at'], users: ['user_id'] },
   { name: 'contacts', columns: ['owner_id', 'contact_id', 'created_at', 'saved', 'hidden'], users: ['owner_id', 'contact_id'], key: ['owner_id', 'contact_id'] },
   // Groups precede media and uploads, whose group_id references them.
@@ -35,7 +35,7 @@ export const IMPORT_TABLES = Object.freeze([
   { name: 'message_stars', columns: ['user_id', 'message_id', 'chat_key', 'starred_at'], users: ['user_id'], key: ['user_id', 'message_id'] },
   { name: 'chat_prefs', columns: ['user_id', 'chat_key', 'archived', 'updated_at'], users: ['user_id'], key: ['user_id', 'chat_key'] },
   { name: 'pinned_messages', columns: ['chat_key', 'message_id', 'pinned_by', 'pinned_at'], users: ['pinned_by'], key: ['chat_key', 'message_id'] },
-  { name: 'business_profiles', columns: ['user_id', 'away_enabled', 'away_text', 'away_schedule', 'away_hours', 'greeting_enabled', 'greeting_text', 'updated_at', 'category', 'description', 'address', 'email', 'website'], users: ['user_id'] },
+  { name: 'business_profiles', columns: ['user_id', 'away_enabled', 'away_text', 'away_schedule', 'away_hours', 'greeting_enabled', 'greeting_text', 'updated_at', 'category', 'description', 'address', 'email', 'website', 'links', 'cover_disk_name', 'cover_type', 'away_from', 'away_until'], users: ['user_id'] },
   { name: 'business_auto_replies', columns: ['user_id', 'peer_id', 'kind', 'sent_at'], users: ['user_id', 'peer_id'], key: ['user_id', 'peer_id', 'kind'] },
   { name: 'catalog_items', columns: ['id', 'user_id', 'name', 'description', 'price', 'currency', 'link', 'hidden', 'image_disk_name', 'image_type', 'created_at', 'updated_at'], users: ['user_id'] },
   { name: 'labels', columns: ['id', 'user_id', 'name', 'color', 'created_at'], users: ['user_id'] },
@@ -49,6 +49,7 @@ export const IMPORT_TABLES = Object.freeze([
   { name: 'broadcast_lists', columns: ['id', 'owner_id', 'name', 'created_at'], users: ['owner_id'] },
   { name: 'broadcast_members', columns: ['list_id', 'user_id'], users: ['user_id'], key: ['list_id', 'user_id'] },
   { name: 'channels', columns: ['id', 'owner_id', 'name', 'description', 'created_at', 'category'], users: ['owner_id'] },
+  { name: 'catalog_collections', columns: ['id', 'user_id', 'name', 'item_ids', 'created_at'], users: ['user_id'] },
   { name: 'channel_admins', columns: ['channel_id', 'user_id', 'added_at'], users: ['user_id'], key: ['channel_id', 'user_id'] },
   { name: 'channel_followers', columns: ['channel_id', 'user_id', 'followed_at'], users: ['user_id'], key: ['channel_id', 'user_id'] },
   { name: 'channel_posts', columns: ['id', 'channel_id', 'author_id', 'content', 'created_at'], users: ['author_id'] },

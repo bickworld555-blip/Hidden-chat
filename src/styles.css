@@ -4956,3 +4956,45 @@ canvas.recording-wave { color: #5d6662; }
 .relay-tile-initial { display: grid; place-items: center; width: 72px; height: 72px; border-radius: 50%; background: #1d4ed8; font-size: 30px; font-weight: 700; }
 .relay-tile-name { position: absolute; left: 8px; bottom: 8px; display: inline-flex; align-items: center; gap: 4px; max-width: calc(100% - 16px); padding: 3px 8px; border-radius: 10px; background: rgba(4, 12, 28, .6); font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .relay-dock { position: fixed; bottom: calc(22px + env(safe-area-inset-bottom, 0px)); }
+/* ===== Display preferences (displayPrefs.js): font size and increased contrast ===== */
+.app-shell { --hm-text-scale: 1; }
+.app-shell[data-font-size="small"] { --hm-text-scale: .9; }
+.app-shell[data-font-size="large"] { --hm-text-scale: 1.15; }
+.app-shell[data-font-size="xlarge"] { --hm-text-scale: 1.3; }
+.app-shell .message-bubble p, .app-shell.is-mobile .message-bubble p { font-size: calc(15px * var(--hm-text-scale)); }
+.app-shell .wa-row strong { font-size: calc(16px * var(--hm-text-scale)); }
+.app-shell .wa-preview { font-size: calc(14px * var(--hm-text-scale)); }
+.app-shell .composer textarea.composer-input { font-size: calc(16px * var(--hm-text-scale)); }
+.font-size-option.size-small strong { font-size: 13.5px; }
+.font-size-option.size-large strong { font-size: 18px; }
+.font-size-option.size-xlarge strong { font-size: 21px; }
+.font-size-option[aria-checked="true"] { color: var(--wa-green, #2563eb); }
+/* Increased contrast: stronger text and borders, plain backgrounds, no faint greys. */
+.app-shell[data-contrast="high"] { --wa-sub: var(--wa-text); --wa-line: color-mix(in srgb, var(--wa-text) 55%, transparent); }
+.app-shell[data-contrast="high"] .message-scroll { background-image: none !important; }
+.app-shell[data-contrast="high"] .message-bubble { border: 1px solid color-mix(in srgb, var(--wa-text) 45%, transparent) !important; }
+.app-shell[data-contrast="high"] .message-meta, .app-shell[data-contrast="high"] .wa-row time { color: var(--wa-text); opacity: 1; }
+.app-shell[data-contrast="high"] :focus-visible { outline: 3px solid var(--wa-green, #2563eb); outline-offset: 2px; }
+/* Delete my account */
+.account-delete { display: grid; gap: 10px; padding: 12px 16px 20px; }
+.account-delete ul { margin: 0; padding-left: 20px; display: grid; gap: 4px; }
+.account-delete-button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 11px 16px; border: 0; border-radius: 22px; background: #c62828; color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
+.account-delete-button:disabled { opacity: .5; cursor: default; }
+/* Business profile cover, links, collections, short link */
+.wa-business-cover { display: block; width: calc(100% + 36px); margin: -14px -18px 4px; aspect-ratio: 3 / 1; object-fit: cover; }
+.hm-business-cover { display: block; width: 100%; aspect-ratio: 3 / 1; object-fit: cover; border-radius: 12px; }
+.hm-business-cover.is-empty { display: grid; place-items: center; background: color-mix(in srgb, var(--wa-green, #2563eb) 12%, transparent); color: var(--wa-sub); }
+.hm-cover-picker { display: grid; gap: 8px; }
+.hm-link-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) auto; gap: 6px; align-items: center; }
+.hm-link-row input { min-width: 0; }
+.hm-away-range { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; margin-top: 6px; }
+.hm-away-range label { display: grid; gap: 4px; font-size: 13px; }
+.hm-collection-icon { display: grid; place-items: center; color: var(--wa-green, #2563eb); }
+.hm-collections { margin-top: 12px; }
+.hm-qr { display: grid; place-items: center; padding: 12px; border-radius: 14px; background: #fff; width: max-content; margin: 4px auto; }
+.hm-short-url { margin: 0; padding: 8px 10px; border-radius: 8px; background: var(--wa-input, var(--wa-panel)); font-family: ui-monospace, Consolas, monospace; font-size: 13px; overflow-wrap: anywhere; user-select: all; }
+.conversation-cart { position: relative; }
+.conversation-cart-count { position: absolute; top: 2px; right: 0; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--wa-green, #2563eb); color: #fff; font-size: 10.5px; font-weight: 700; line-height: 16px; text-align: center; }
+.order-section + .order-section { margin-top: 8px; }
+.hm-add-to-cart-button { justify-self: start; margin-top: 6px; padding: 6px 14px; border: 1px solid var(--wa-green, #2563eb); border-radius: 16px; background: none; color: var(--wa-green, #2563eb); font: inherit; font-weight: 600; cursor: pointer; }
+.hm-add-to-cart { margin-top: 6px; }

@@ -8,7 +8,7 @@ import { isNotice, noticeText } from '../e2e/notices.js';
 import { isMediaContent } from '../media.js';
 import { LOAD_OLDER_STEP, RENDER_WINDOW, renderCountFor, windowedMessages } from '../messageWindow.js';
 import { attachmentContent, sealForUpload } from '../mediaCrypto.js';
-import { ArrowLeft, Ban, Camera, Check, CheckCheck, ChevronDown, ChevronUp, CornerUpLeft, Forward, Info, Link2, Mic, MoreVertical, Paperclip, Pencil, Phone, Pin, PinOff, Search, Send, Smile, Star, Timer, Trash2, Video, X } from 'lucide-react';
+import { ArrowLeft, Ban, Camera, Check, CheckCheck, ChevronDown, ChevronUp, CornerUpLeft, Forward, Info, Link2, Mic, MoreVertical, Paperclip, Pencil, Phone, Pin, PinOff, Search, Send, ShoppingCart, Smile, Star, Timer, Trash2, Video, X } from 'lucide-react';
 import { parseVoiceContent, voiceContent, voiceExtension } from '../voice.js';
 import { COMPOSER_EMOJIS, COMPOSER_MAX_LENGTH, composerAction, insertAtCaret } from '../composer.js';
 import { playNotificationTone } from '../sounds.js';
@@ -50,6 +50,7 @@ import ComposerMirror from './ComposerMirror.jsx';
 import { hasFormatting } from '../textFormat.js';
 import { useWallpaper } from '../wallpaper.js';
 import { enterSends } from '../enterSends.js';
+import { cartCount, useCart } from '../cart.js';
 import VoiceRecorderBar from './VoiceRecorderBar.jsx';
 import { presenceLine } from '../presence.js';
 import PendingUpload from './PendingUpload.jsx';
@@ -669,9 +670,13 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
   const blocked = useChatStore((state) => (chatId ? isBlocked(state.blockedChats[chatId]) : false));
   const chatTheme = useChatStore((state) => (chatId ? state.chatThemes[chatId] : undefined)) ?? 'default';
   const wallpaper = useWallpaper();
+  // A cart with this business (cart.js): its icon and count show in the header until the order is sent.
+  const cartItems = cartCount(useCart(chatId));
   const unblockChat = useChatStore((state) => state.unblockChat);
 
   const [text, setText] = useState('');
+  // A short link's suggested message (store composerDraft) fills the box once.
+  useEffect(() => { const draft = useChatStore.getState().takeComposerDraft(chatId); if (draft) setText(draft); }, [chatId]);
   const [menuOpen, setMenuOpen] = useState(false);
   const [picker, setPicker] = useState(null);
   const [error, setError] = useState('');
@@ -1625,6 +1630,7 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
             </span>
           </div>
           <div className="conversation-actions">
+            {cartItems > 0 && <button type="button" className="icon-button conversation-cart" onClick={() => setPicker('order')} aria-label={`Cart, ${cartItems} item${cartItems === 1 ? '' : 's'}`}><ShoppingCart size={18} /><span className="conversation-cart-count">{cartItems}</span></button>}
             <button type="button" className="icon-button" onClick={() => onStartCall?.('video')} disabled={blocked} aria-label="Video call"><Video size={18} /></button>
             <button type="button" className="icon-button" onClick={() => onStartCall?.('audio')} disabled={blocked} aria-label="Voice call"><Phone size={18} /></button>
             {/* Secondary actions collapse into the ⋮ menu on narrow screens (see .header-action-secondary). */}

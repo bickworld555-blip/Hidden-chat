@@ -29,6 +29,7 @@ import { ensureExtrasSchema, registerExtras, statusAudienceSql } from './extras.
 import { adminUsernamesFrom, ensureAdminSchema, registerAdmin } from './admin.mjs';
 import { ACCEPTED_STATUS_BACKGROUNDS } from '../src/statusColors.js';
 import { registerLinking } from './linking.mjs';
+import { registerAccount } from './account.mjs';
 import { BUNDLED_APP_ORIGIN } from '../scripts/configure-android.mjs';
 import { effectiveRouting, isEnvelope, MAX_DIRECT_ENVELOPE, parseRouting, routingFor } from '../src/e2e/envelope.js';
 import { audienceAllows, canSeePresence, deviceNameFromUserAgent, isLastSeenPrivacy, parsePrivacyPatch, presenceFor, visibleStatus } from './presence.mjs';
@@ -1038,14 +1039,16 @@ export function createChatServer({
 
   // End-to-end encryption: key directory and fan-out checks (server/e2e.mjs).
   const e2e = registerE2e({ app, db, requireSession });
+  // Signs an account out everywhere: sessions go, sockets close, push stops (suspension, account deletion).
+  async function closeUserSessions(userId, reason) {
+    const removed = await db.prepare('DELETE FROM sessions WHERE user_id = ? RETURNING token_hash AS "hash"').all(userId);
+    closeSessionSockets(new Set(removed.map((row) => row.hash)), reason);
+    await forgetPushDevicesOf(removed.map((row) => row.hash));
+  }
   // Help Center, reports about people, and the admin console (server/admin.mjs).
   const admin = registerAdmin({
     app, db, requireSession, publicUser, userColumns: USER_COLUMNS, pushEnabled: () => Boolean(push), initialAdmins: adminUsernames,
-    closeUserSessions: async (userId, reason) => {
-      const removed = await db.prepare('DELETE FROM sessions WHERE user_id = ? RETURNING token_hash AS "hash"').all(userId);
-      closeSessionSockets(new Set(removed.map((row) => row.hash)), reason);
-      await forgetPushDevicesOf(removed.map((row) => row.hash));
-    },
+    closeUserSessions,
   });
 
   // Linking a browser by scanning a QR code with the phone (server/linking.mjs).
@@ -1380,6 +1383,8 @@ export function createChatServer({
   // --- Profile photos: stored per user, served to signed-in users, announced to everyone online. ---
 
   const avatarDirectory = join(dataDirectory, 'avatars');
+  // Account information and account deletion (server/account.mjs).
+  registerAccount({ app, db, requireSession, verifyPassword, closeUserSessions, avatarDirectory, catalogDirectory: join(dataDirectory, 'catalog') });
   mkdirSync(avatarDirectory, { recursive: true });
 
   async function broadcastProfile(userId) {

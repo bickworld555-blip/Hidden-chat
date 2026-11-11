@@ -81,6 +81,14 @@ function callLinkFromLocation(location = globalThis.location) {
   return match ? match[1] : '';
 }
 
+// A business short link opened in the app: /u/<username>[?text=...] (Business tools › Short link).
+export function shortLinkFromLocation(location = globalThis.location) {
+  const match = /^\/u\/([A-Za-z0-9_]{3,24})\/?$/.exec(location?.pathname ?? '');
+  if (!match) return null;
+  const text = new URLSearchParams(location?.search ?? '').get('text') ?? '';
+  return { username: match[1].toLowerCase(), text: text.slice(0, 1000) };
+}
+
 // A group invite link opened in the app: /join/<code>.
 function inviteCodeFromLocation(location = globalThis.location) {
   const match = /^\/join\/([A-Za-z0-9_-]{16,64})\/?$/.exec(location?.pathname ?? '');
@@ -93,7 +101,8 @@ import { hiddenByBlock, isBlocked } from './blocking.js';
 import { TERMINAL_STATUSES } from './callEngine.js';
 import { isRoomOffer } from './callRoom.js';
 import { animationsAttribute, callAnimationsAttribute, useAppearance } from './appearance.js';
-import { linkContact } from './contactsApi.js';
+import { useFontSize, useHighContrast } from './displayPrefs.js';
+import { linkContact, searchPeople } from './contactsApi.js';
 
 function useIsMobile() {
   const query = '(max-width: 768px)';
@@ -119,6 +128,8 @@ async function validateAccount(account) {
 
 export default function App() {
   const isMobile = useIsMobile();
+  const fontSize = useFontSize();
+  const highContrast = useHighContrast();
   const userId = useChatStore((state) => state.userId);
   const user = useChatStore((state) => state.user);
   const sessionToken = useChatStore((state) => state.sessionToken);
@@ -155,6 +166,7 @@ export default function App() {
   // Business tools, communities, starred messages, backup and storage open as full-screen panels.
   const [paritySheet, setParitySheet] = useState(null);
   const [inviteCode, setInviteCode] = useState(() => inviteCodeFromLocation());
+  const [shortLink, setShortLink] = useState(() => shortLinkFromLocation());
   const [callLinkCode, setCallLinkCode] = useState(() => callLinkFromLocation());
   useEffect(() => {
     if (callLinkCode && globalThis.history?.replaceState) globalThis.history.replaceState(null, '', '/');
@@ -757,6 +769,26 @@ export default function App() {
     return () => { clearInterval(timer); document.removeEventListener('visibilitychange', onVisibility); };
   }, [callsSeenAt]);
 
+  // A short link: find that person, open the chat with them and put the suggested message in the box (not sent).
+  useEffect(() => {
+    if (!sessionToken || !shortLink) return undefined;
+    let cancelled = false;
+    (async () => {
+      const people = await searchPeople(sessionToken, shortLink.username);
+      const person = people.find((entry) => entry.username?.toLowerCase() === shortLink.username);
+      if (cancelled) return;
+      if (!person) { setShortLink(null); return; }
+      const existing = useChatStore.getState().chats.find((chat) => chat.id === person.id);
+      const contact = existing ?? await linkContact(sessionToken, person.id, { save: false });
+      if (!existing) await useChatStore.getState().addContact(contact);
+      if (shortLink.text) useChatStore.getState().setComposerDraft(contact.id, shortLink.text);
+      openChat(contact);
+      setShortLink(null);
+      globalThis.history?.replaceState?.(null, '', '/app');
+    })().catch(() => setShortLink(null));
+    return () => { cancelled = true; };
+  }, [sessionToken, shortLink]); // eslint-disable-line react-hooks/exhaustive-deps
+
   function openChat(contact) {
     useChatStore.getState().setActiveChat(contact.id);
     setMobileListOpen(false);
@@ -866,9 +898,9 @@ export default function App() {
   }, [appearance]);
 
   return (
-    <main className={`app-shell ${darkMode ? 'dark-theme' : ''} ${isMobile ? 'is-mobile' : ''} ${chatOpenOnMobile ? 'chat-open' : ''}`} data-animations={animationsAttribute(appearance)} data-call-animations={callAnimationsAttribute(appearance)}>
+    <main className={`app-shell ${darkMode ? 'dark-theme' : ''} ${isMobile ? 'is-mobile' : ''} ${chatOpenOnMobile ? 'chat-open' : ''}`} data-animations={animationsAttribute(appearance)} data-call-animations={callAnimationsAttribute(appearance)} data-font-size={fontSize} data-contrast={highContrast ? 'high' : undefined}>
       {!isMobile && <DesktopRail activeTab={desktopTab} onTab={setDesktopTab} onSheet={setParitySheet} unreadCount={unreadChats} darkMode={darkMode} onToggleTheme={toggleTheme} />}
-      <Sidebar onPair={() => setPairingOpen(true)} onSounds={() => setNotificationsOpen(true)} onNotifications={() => setNotificationsOpen(true)} onAccountSettings={() => setAccountSettingsOpen(true)} onSelectChat={() => setMobileListOpen(false)} onOpenAuth={() => setAuthOpen(true)} onAuthenticated={acceptSession} onLogout={logout} onAccounts={() => setAccountsOpen(true)} onGroups={() => openGroups()} groups={groupRows} onOpenGroup={(id) => openGroups(false, id)} />
+      <Sidebar onPair={() => setPairingOpen(true)} onSounds={() => setNotificationsOpen(true)} onNotifications={() => setNotificationsOpen(true)} onAccountSettings={() => setAccountSettingsOpen('account')} onSelectChat={() => setMobileListOpen(false)} onOpenAuth={() => setAuthOpen(true)} onAuthenticated={acceptSession} onLogout={logout} onAccounts={() => setAccountsOpen(true)} onGroups={() => openGroups()} groups={groupRows} onOpenGroup={(id) => openGroups(false, id)} />
       <div className="workspace">
         {activeTab === 'chats' ? (
           showMobileList || !chat
@@ -881,7 +913,7 @@ export default function App() {
         ) : activeTab === 'communities' && sessionToken ? (
           <CommunitiesView inline token={sessionToken} revision={groupRevision} onClose={() => setActiveTab('chats')} onOpenGroup={(id) => openGroups(false, id)} />
         ) : activeTab === 'tools' ? (
-          <ToolsView darkMode={darkMode} onToggleTheme={toggleTheme} onLogout={() => { logout(); }} onNotifications={() => setNotificationsOpen(true)} onAccountSettings={() => setAccountSettingsOpen(true)} onAccounts={() => setAccountsOpen(true)} onAvatarStudio={() => setAvatarStudioOpen(true)} onGroups={() => openGroups()}
+          <ToolsView darkMode={darkMode} onToggleTheme={toggleTheme} onLogout={() => { logout(); }} onNotifications={() => setNotificationsOpen(true)} onAccountSettings={(section) => setAccountSettingsOpen(section === 'privacy' ? 'privacy' : 'account')} onAccounts={() => setAccountsOpen(true)} onAvatarStudio={() => setAvatarStudioOpen(true)} onGroups={() => openGroups()}
             onCommunities={() => setParitySheet('communities')} onBusinessTools={() => setParitySheet('business')} onStarred={() => setParitySheet('starred')}
             onBackup={() => setParitySheet('backup')} onStorage={() => setParitySheet('storage')} onSheet={setParitySheet} isAdmin={isAdmin} />
         ) : null}
@@ -891,7 +923,8 @@ export default function App() {
       {fatalError && <div className="status-toast"><Bell size={15} /><span>{fatalError}</span><button onClick={() => setFatalError('')}>Dismiss</button></div>}
       {pairingOpen && user && <PairingModal onClose={() => setPairingOpen(false)} token={sessionToken} userId={userId} />}
       {notificationsOpen && <NotificationSettings onClose={() => setNotificationsOpen(false)} />}
-      {accountSettingsOpen && <AccountSettings onClose={() => setAccountSettingsOpen(false)} />}
+      {accountSettingsOpen && <AccountSettings section={accountSettingsOpen === 'privacy' ? 'privacy' : 'account'} onClose={() => setAccountSettingsOpen(false)}
+        onOpenSheet={(id) => { setAccountSettingsOpen(false); setParitySheet(id); }} onAccountDeleted={() => { setAccountSettingsOpen(false); logout(); }} />}
       {accountsOpen && <AccountSwitcher busyId={switchingId} onSwitch={switchAccount} onRemove={removeAccountFromDevice} onAdd={() => { setAccountsOpen(false); setAuthOpen(true); }} onClose={() => setAccountsOpen(false)} />}
       {avatarStudioOpen && <AvatarStudio onClose={() => setAvatarStudioOpen(false)} />}
       {sessionToken && paritySheet === 'communities' && <CommunitiesView token={sessionToken} revision={groupRevision} onClose={() => setParitySheet(null)} onOpenGroup={(id) => { setParitySheet(null); openGroups(false, id); }} />}
