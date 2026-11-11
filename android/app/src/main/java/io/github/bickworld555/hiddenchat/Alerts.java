@@ -8,6 +8,7 @@ import android.os.Build;
 import androidx.core.app.NotificationCompat;
 import androidx.core.app.NotificationManagerCompat;
 import androidx.core.app.Person;
+import androidx.core.app.RemoteInput;
 
 /**
  * Message and incoming-call notifications, shared by the web app (through HiddenNativePlugin) and the
@@ -83,6 +84,7 @@ final class Alerts {
         builder.setNumber(unread);
         synchronized (Alerts.class) { counts.put(key, unread); }
         if (unread > 1) builder.setSubText(unread + " new messages");
+        addMessageActions(context, builder, key, open);
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
             builder.setSound(NotificationChannels.soundOf(context, channelId));
             builder.setDefaults(NotificationCompat.DEFAULT_VIBRATE);
@@ -159,6 +161,57 @@ final class Alerts {
     }
 
     /** The chat was read: its notification (and its share of the icon badge) goes away. */
+    // "Reply" (typed right in the notification) for one-to-one chats and "Mark as read" for every conversation.
+    private static void addMessageActions(Context context, NotificationCompat.Builder builder, String tag, String open) {
+        if (open == null || open.isEmpty()) return;
+        if (open.startsWith("chat:")) {
+            Intent reply = new Intent(context, MessageActionReceiver.class)
+                .setAction(MessageActionReceiver.ACTION_REPLY)
+                .putExtra(EXTRA_OPEN, open)
+                .putExtra(MessageActionReceiver.EXTRA_TAG, tag);
+            // Mutable: Android writes the typed text into it.
+            int mutable = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S ? PendingIntent.FLAG_MUTABLE : 0;
+            PendingIntent replyIntent = PendingIntent.getBroadcast(context, tag.hashCode() * 31 + 1, reply, mutable | PendingIntent.FLAG_UPDATE_CURRENT);
+            RemoteInput input = new RemoteInput.Builder(MessageActionReceiver.KEY_TEXT).setLabel("Reply").build();
+            builder.addAction(new NotificationCompat.Action.Builder(R.drawable.ic_stat_hidden, "Reply", replyIntent)
+                .addRemoteInput(input)
+                .setAllowGeneratedReplies(true)
+                .setSemanticAction(NotificationCompat.Action.SEMANTIC_ACTION_REPLY)
+                .setShowsUserInterface(false)
+                .build());
+        }
+        Intent read = new Intent(context, MessageActionReceiver.class)
+            .setAction(MessageActionReceiver.ACTION_READ)
+            .putExtra(EXTRA_OPEN, open)
+            .putExtra(MessageActionReceiver.EXTRA_TAG, tag);
+        PendingIntent readIntent = PendingIntent.getBroadcast(context, tag.hashCode() * 31 + 2, read, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+        builder.addAction(new NotificationCompat.Action.Builder(R.drawable.ic_stat_hidden, "Mark as read", readIntent)
+            .setSemanticAction(NotificationCompat.Action.SEMANTIC_ACTION_MARK_AS_READ)
+            .setShowsUserInterface(false)
+            .build());
+    }
+
+    /** A reply typed in a notification while the app was closed: it is end-to-end encrypted by the app, so it waits. */
+    static void showReplyWaiting(Context context, String tag, String open, String text) {
+        if (tag == null || tag.isEmpty()) return;
+        synchronized (Alerts.class) { counts.remove(tag); }
+        NotificationCompat.Builder builder = new NotificationCompat.Builder(context, NotificationChannels.UPLOADS)
+            .setSmallIcon(R.drawable.ic_stat_hidden)
+            .setContentTitle("Reply not sent yet")
+            .setContentText("Open Hidden Messenger to send it: " + text)
+            .setStyle(new NotificationCompat.BigTextStyle().bigText("Open Hidden Messenger to send it securely:\n" + text))
+            .setContentIntent(openIntent(context, open, tag.hashCode()))
+            .setAutoCancel(true)
+            .setOnlyAlertOnce(true)
+            .setSilent(true)
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE);
+        try {
+            NotificationManagerCompat.from(context).notify(tag, 1, builder.build());
+        } catch (SecurityException missingPermission) {
+            // Notifications were turned off meanwhile: the reply still waits in the queue.
+        }
+    }
+
     static void cancelMessage(Context context, String tag) {
         if (tag == null || tag.isEmpty()) return;
         synchronized (Alerts.class) { counts.remove(tag); }

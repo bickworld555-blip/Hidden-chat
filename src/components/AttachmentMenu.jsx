@@ -1,21 +1,23 @@
 import { FileText, Camera, Image, Music, MapPin, User, BarChart3, Calendar, Sticker, ShoppingBag, X, Eye, Video, Smile, ShoppingCart } from 'lucide-react';
 import { appSettings, useSetting } from '../settings.js';
 
+// Sharing first (files, camera, photos, audio, places, people), then planning (poll, event), then selling and
+// Hidden Messenger extras. `tone` is the glyph colour; the tile behind it is a soft tint of the same colour.
 const attachmentOptions = [
-  { id: 'document', icon: FileText, label: 'Document', color: 'bg-blue-100 text-blue-600' },
-  { id: 'camera', icon: Camera, label: 'Camera', color: 'bg-purple-100 text-purple-600' },
-  { id: 'gallery', icon: Image, label: 'Gallery', color: 'bg-pink-100 text-pink-600' },
-  { id: 'viewonce', icon: Eye, label: 'View once', color: 'bg-rose-100 text-rose-600' },
-  { id: 'videonote', icon: Video, label: 'Video note', color: 'bg-sky-100 text-sky-600' },
-  { id: 'mysticker', icon: Smile, label: 'Make sticker', color: 'bg-lime-100 text-lime-700' },
-  { id: 'audio', icon: Music, label: 'Audio', color: 'bg-orange-100 text-orange-600' },
-  { id: 'location', icon: MapPin, label: 'Location', color: 'bg-yellow-100 text-yellow-600' },
-  { id: 'contact', icon: User, label: 'Contact', color: 'bg-indigo-100 text-indigo-600' },
-  { id: 'poll', icon: BarChart3, label: 'Poll', color: 'bg-violet-100 text-violet-600' },
-  { id: 'event', icon: Calendar, label: 'Event', color: 'bg-emerald-100 text-emerald-600' },
-  { id: 'sticker', icon: Sticker, label: 'Sticker', color: 'bg-amber-100 text-amber-600' },
-  { id: 'catalog', icon: ShoppingBag, label: 'Catalog', color: 'bg-teal-100 text-teal-600' },
-  { id: 'order', icon: ShoppingCart, label: 'Order', color: 'bg-cyan-100 text-cyan-700' },
+  { id: 'document', icon: FileText, label: 'Document', tone: '#5b5fd6' },
+  { id: 'camera', icon: Camera, label: 'Camera', tone: '#d6386b' },
+  { id: 'gallery', icon: Image, label: 'Gallery', tone: '#2f7de1' },
+  { id: 'audio', icon: Music, label: 'Audio', tone: '#e2731b' },
+  { id: 'location', icon: MapPin, label: 'Location', tone: '#1c9b5c' },
+  { id: 'contact', icon: User, label: 'Contact', tone: '#1597b8' },
+  { id: 'poll', icon: BarChart3, label: 'Poll', tone: '#c9921a' },
+  { id: 'event', icon: Calendar, label: 'Event', tone: '#d1435b' },
+  { id: 'catalog', icon: ShoppingBag, label: 'Catalog', tone: '#7a55c7' },
+  { id: 'order', icon: ShoppingCart, label: 'Order', tone: '#0f8a7e' },
+  { id: 'viewonce', icon: Eye, label: 'View once', tone: '#b0457e' },
+  { id: 'videonote', icon: Video, label: 'Video note', tone: '#3a6fc4' },
+  { id: 'mysticker', icon: Smile, label: 'Make sticker', tone: '#5f8f1f' },
+  { id: 'sticker', icon: Sticker, label: 'Sticker', tone: '#b86a16' },
 ];
 
 export default function AttachmentMenu({ onSelect, onClose, isOpen, options = null }) {
@@ -35,9 +37,9 @@ export default function AttachmentMenu({ onSelect, onClose, isOpen, options = nu
       <div className="attachment-menu-backdrop" onClick={onClose} />
       
       {/* Menu Panel */}
-      <div className="attachment-menu-panel">
+      <div className="attachment-menu-panel" role="dialog" aria-label="Share">
         <div className="attachment-menu-header">
-          <h3>Share with</h3>
+          <span className="attachment-menu-handle" aria-hidden="true" />
           <button 
             className="attachment-menu-close" 
             onClick={onClose}
@@ -57,8 +59,8 @@ export default function AttachmentMenu({ onSelect, onClose, isOpen, options = nu
                 onClick={() => handleOptionClick(option.id)}
                 title={option.label}
               >
-                <div className={`attachment-menu-icon ${option.color}`}>
-                  <IconComponent size={24} />
+                <div className="attachment-menu-icon" style={{ '--tile': option.tone }}>
+                  <IconComponent size={24} strokeWidth={2.1} />
                 </div>
                 <span className="attachment-menu-label">{option.label}</span>
               </button>

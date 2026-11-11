@@ -11,7 +11,7 @@ import { initialTabFromUrl } from './pwa.js';
 import { countUnreadConversations, groupRow } from './groupRows.js';
 import { getViewingGroup, readMutedGroups, useMutedGroups } from './groupPrefs.js';
 import { classifyIncoming, groupNotificationText, parseConversationOpenParam, shouldAlertGroup } from './notificationChannels.js';
-import { nativeClearSession, nativeSetSession, nativeShell, nativeStartBackground, nativeState, nativeStopBackground, nativeTakePendingCall, nativeMoveToBackground, nativeClearShare, nativeSetCallActive, onNative } from './native.js';
+import { nativeClearSession, nativeSetSession, nativeShell, nativeStartBackground, nativeState, nativeStopBackground, nativeTakePendingCall, nativeMoveToBackground, nativeClearShare, nativeSetCallActive, nativeClearMessageNotifications, nativeTakeMessageActions, onNative } from './native.js';
 import { parseShare } from './shareTarget.js';
 import { onE2eEvent, startE2e, stopE2e } from './e2e/client.js';
 import { SECURITY_NOTICE } from './e2e/notices.js';
@@ -843,6 +843,25 @@ export default function App() {
       navigator.serviceWorker?.removeEventListener?.('message', onMessage);
       stopNative();
     };
+  }, [userId]);
+
+  // "Reply" and "Mark as read" on an Android message notification: the reply is sent (encrypted) like any message
+  // and the chat counts as read; actions taken while the app was closed waited in a queue.
+  useEffect(() => {
+    if (!nativeShell() || !userId) return undefined;
+    const handle = (event) => {
+      const target = parseConversationOpenParam(event?.open);
+      if (target?.kind !== 'chat') return;
+      const store = useChatStore.getState();
+      const text = typeof event.text === 'string' ? event.text.trim().slice(0, 4000) : '';
+      if (event.action === 'reply' && text) store.sendMessage(target.id, text);
+      store.readChat(target.id);
+      nativeClearMessageNotifications(`chat:${target.id}`);
+    };
+    let live = true;
+    nativeTakeMessageActions().then((queued) => { if (live) queued.forEach(handle); }).catch(() => {});
+    const stop = onNative('messageAction', handle);
+    return () => { live = false; stop(); };
   }, [userId]);
 
   // Android app: hand the account (and current mutes) to the background service, which keeps the phone reachable

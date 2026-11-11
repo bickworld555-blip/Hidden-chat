@@ -118,6 +118,30 @@ public class HiddenNativePlugin extends Plugin {
         }
     }
 
+    /** "reply" (with `text`) or "read" from a message notification; false when the app's screen is gone. */
+    static boolean emitMessageAction(String action, String open, String text) {
+        HiddenNativePlugin plugin = instance;
+        if (plugin == null) return false;
+        JSObject data = new JSObject();
+        data.put("action", action);
+        data.put("open", open);
+        data.put("text", text);
+        plugin.notifyListeners("messageAction", data, true);
+        return true;
+    }
+
+    /** Notification actions taken while the app's screen was gone: { actions: [{ action, open, text }] }. */
+    @PluginMethod
+    public void takeMessageActions(PluginCall call) {
+        JSObject result = new JSObject();
+        try {
+            result.put("actions", new JSArray(MessageActionReceiver.take(getContext()).toString()));
+        } catch (JSONException broken) {
+            result.put("actions", new JSArray());
+        }
+        call.resolve(result);
+    }
+
     /** Returns false when no WebView is listening (the app's screen is gone). */
     static boolean emitCallAction(String action, String callId) {
         return emitCallAction(action, callId, null);

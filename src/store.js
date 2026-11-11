@@ -238,6 +238,9 @@ function ensureLiveTracking(send) {
   );
 }
 
+// Read receipts already sent this session (a message's status can be overwritten by a later server echo).
+const readReceiptsSent = new Set();
+
 export const useChatStore = create((setState, getState) => ({
   userId: '',
   user: null,
@@ -463,6 +466,21 @@ export const useChatStore = create((setState, getState) => ({
     setState((state) => ({
       chats: state.chats.map((chat) => chat.id === chatId ? { ...chat, unread: 0 } : chat),
     }));
+  },
+  // The person has read this chat (on screen, or "Mark as read" on its notification): blue ticks for the sender's
+  // unread messages, once each, and the unread count cleared.
+  readChat(chatId) {
+    const { client, messages } = getState();
+    if (!chatId) return;
+    // Not connected yet (an app just opened from a notification): the receipts go once the chat is next read.
+    for (const message of client?.send ? messages[chatId] ?? [] : []) {
+      if (message?.senderId === chatId && message.status !== 'read' && !readReceiptsSent.has(message.id)) {
+        readReceiptsSent.add(message.id);
+        client.send({ type: 'message:read', messageId: message.id });
+        getState().updateMessage(message.id, { status: 'read' });
+      }
+    }
+    getState().markRead(chatId);
   },
   addMessage(message) {
     let addedContact = false;

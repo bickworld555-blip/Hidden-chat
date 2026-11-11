@@ -102,6 +102,8 @@ export const nativeStartBackground = async () => {
 export const nativeStopBackground = () => invoke('stopBackground');
 export const nativeNotify = (options) => invoke('notify', options);
 export const nativeShowIncomingCall = (options) => invoke('showIncomingCall', options);
+// "Reply" / "Mark as read" taken on a notification while the app's screen was gone: [{ action, open, text }].
+export const nativeTakeMessageActions = async () => (await invoke('takeMessageActions'))?.actions ?? [];
 export const nativeCancelIncomingCall = () => invoke('cancelIncomingCall');
 export const nativeEndCallWindow = () => invoke('endCallWindow');
 // An incoming call rings inside the app: keeps it over the lock screen after the call notification is withdrawn.

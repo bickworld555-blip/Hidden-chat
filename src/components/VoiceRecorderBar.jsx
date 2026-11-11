@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react';
-import { Pause, Play, Send, Square, Trash2 } from 'lucide-react';
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import { ChevronLeft, ChevronUp, Lock, Mic, Pause, Play, Send, Square, Trash2 } from 'lucide-react';
 import { formatClock } from '../voice.js';
 import { createRecordingClock, voiceAudioConstraints, voiceRecorderOptions } from '../voiceRecording.js';
 import { levelFromSamples } from '../audioLevel.js';
@@ -8,7 +8,9 @@ import { drawWaveform } from '../waveformCanvas.js';
 const SAMPLE_MS = 90;
 const MAX_BARS = 36;
 
-export default function VoiceRecorderBar({ onSend, onCancel, onError, allowViewOnce = false }) {
+// `hold`: while the mic is held, how far the finger has moved ({ x, y } in px, both <= 0); null once locked.
+// The parent tracks the gesture and calls the ref's send() (released) or discard() (slid left).
+const VoiceRecorderBar = forwardRef(function VoiceRecorderBar({ onSend, onCancel, onError, allowViewOnce = false, hold = null }, ref) {
   const [seconds, setSeconds] = useState(0);
   const [paused, setPaused] = useState(false);
   const [previewing, setPreviewing] = useState(false);
@@ -144,11 +146,15 @@ export default function VoiceRecorderBar({ onSend, onCancel, onError, allowViewO
   function send() {
     const session = sessionRef.current;
     const recorder = session?.recorder;
-    if (!recorder || recorder.state === 'inactive') return;
+    // Released before the microphone opened: nothing was recorded.
+    if (!recorder) return discard();
+    if (recorder.state === 'inactive') return;
     session.clock.pause();
     session.mode = 'send';
     recorder.stop();
   }
+
+  useImperativeHandle(ref, () => ({ send, discard }));
 
   function togglePause() {
     const session = sessionRef.current;
@@ -197,6 +203,26 @@ export default function VoiceRecorderBar({ onSend, onCancel, onError, allowViewO
     audio.play().then(() => setPreviewing(true)).catch(() => session.stopPreview());
   }
 
+  if (hold) {
+    // Held: only the clock, "slide to cancel" (following the finger) and the lock above the mic.
+    return (
+      <div className="composer recording-mode is-held" role="group" aria-label="Recording voice message: release to send, slide left to cancel, slide up to lock">
+        <span className="recording-indicator" aria-live="off">
+          <i className="recording-dot" />
+          {formatClock(seconds)}
+        </span>
+        <span className="recording-slide" style={{ transform: `translateX(${hold.x}px)`, opacity: Math.max(0.2, 1 + hold.x / 160) }}>
+          <ChevronLeft size={16} aria-hidden="true" /> Slide to cancel
+        </span>
+        <span className="recording-lock" style={{ transform: `translateY(${hold.y}px)` }} aria-hidden="true">
+          <Lock size={16} />
+          <ChevronUp size={14} />
+        </span>
+        <span className="recording-held-mic" aria-hidden="true"><Mic size={24} /></span>
+      </div>
+    );
+  }
+
   return (
     <div className="composer recording-mode" role="group" aria-label="Recording voice message">
       <button type="button" className="recording-trash" onClick={discard} aria-label="Discard voice message"><Trash2 size={20} /></button>
@@ -227,4 +253,6 @@ export default function VoiceRecorderBar({ onSend, onCancel, onError, allowViewO
       {toast && <span className="recording-toast" role="status">{toast}</span>}
     </div>
   );
-}
+});
+
+export default VoiceRecorderBar;

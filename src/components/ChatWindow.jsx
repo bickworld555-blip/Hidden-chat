@@ -649,6 +649,12 @@ function ContactSharePicker({ contacts, onSelect, onClose }) {
 // Older messages are added when the user scrolls within this distance of the top (see src/messageWindow.js).
 const LOAD_OLDER_THRESHOLD_PX = 600;
 
+// Voice-note mic gesture (px / ms).
+const VOICE_LOCK_PX = 90;
+const VOICE_CANCEL_PX = 130;
+const VOICE_TAP_MS = 300;
+const VOICE_MIN_HOLD_MS = 1000;
+
 export default function ChatWindow({ chat, connection, client, onPair, onBack, onStartCall, onGroups }) {
   const chatId = chat?.id;
   const userId = useChatStore((state) => state.userId);
@@ -662,7 +668,7 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
   const typing = useChatStore((state) => (chatId ? state.typing?.[chatId] : false));
   const addMessage = useChatStore((state) => state.addMessage);
   const updateMessage = useChatStore((state) => state.updateMessage);
-  const markRead = useChatStore((state) => state.markRead);
+  const readChat = useChatStore((state) => state.readChat);
   const queueMessage = useChatStore((state) => state.queueMessage);
 
   const deleteMessage = useChatStore((state) => state.deleteMessage);
@@ -686,6 +692,11 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
   const [uploadProgress, setUploadProgress] = useState(null);
   const uploadAbortRef = useRef(null);
   const [recording, setRecording] = useState(false);
+  // While the mic is held: the finger's offset ({ x, y }); null when not held (tapped, or slid up to lock).
+  const [voiceHold, setVoiceHold] = useState(null);
+  const recorderRef = useRef(null);
+  const holdCleanupRef = useRef(null);
+  useEffect(() => () => holdCleanupRef.current?.(), []);
 
   // Multi-selection drives the contextual header; the reaction tray belongs to a single long-pressed selection.
   const [selectedIds, setSelectedIds] = useState([]);
@@ -734,7 +745,6 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
   const messageScrollRef = useRef(null);
   const messageStackRef = useRef(null);
   const messagesEndRef = useRef(null);
-  const readSentRef = useRef(new Set());
   const typingTimerRef = useRef(null);
 
   // Auto-scroll state: the feed stays pinned to the newest message unless the user scrolls up to read history.
@@ -924,17 +934,10 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
   const pageVisible = usePageVisible();
   useEffect(() => {
     if (!chatId || !pageVisible) return;
-    for (const message of messages) {
-      if (message?.senderId === chatId && message.status !== 'read' && !readSentRef.current.has(message.id)) {
-        readSentRef.current.add(message.id);
-        client?.send?.({ type: 'message:read', messageId: message.id });
-        updateMessage(message.id, { status: 'read' });
-      }
-    }
-    markRead(chatId);
+    readChat(chatId);
     // Read on screen: its Android notification (and its share of the icon badge) goes away.
     if (nativeShell()) nativeClearMessageNotifications(`chat:${chatId}`);
-  }, [messages, chatId, client, markRead, updateMessage, pageVisible]);
+  }, [messages, chatId, readChat, pageVisible]);
 
   useEffect(() => () => clearTimeout(typingTimerRef.current), []);
 
@@ -1201,10 +1204,49 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
 
   function handleVoiceSend(blob, seconds, type, { viewOnce = false } = {}) {
     setRecording(false);
+    setVoiceHold(null);
     uploadAndSend(blob, `voice-note.${voiceExtension(type)}`, viewOnce ? 'voice-once' : 'voice', seconds);
   }
 
-  const handleVoiceCancel = useCallback(() => setRecording(false), []);
+  const handleVoiceCancel = useCallback(() => { setRecording(false); setVoiceHold(null); }, []);
+
+  // The mic: a quick tap starts a locked recording (trash / pause / send); holding records while held — release to
+  // send, slide up to lock, slide left to cancel. Too short a hold is discarded with a hint.
+  function startVoiceGesture(event) {
+    if (busy || event.button > 0) return;
+    event.preventDefault();
+    const start = { x: event.clientX, y: event.clientY, at: Date.now() };
+    setError('');
+    setEmojiOpen(false);
+    setRecording(true);
+    setVoiceHold({ x: 0, y: 0 });
+    const finish = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', release);
+      window.removeEventListener('pointercancel', lock);
+      holdCleanupRef.current = null;
+    };
+    const lock = () => { finish(); setVoiceHold(null); };
+    function move(moved) {
+      const x = Math.min(0, moved.clientX - start.x);
+      const y = Math.min(0, moved.clientY - start.y);
+      if (y < -VOICE_LOCK_PX) return lock();
+      if (x < -VOICE_CANCEL_PX) { finish(); recorderRef.current?.discard(); return undefined; }
+      setVoiceHold({ x, y });
+      return undefined;
+    }
+    function release() {
+      finish();
+      const held = Date.now() - start.at;
+      if (held < VOICE_TAP_MS) { setVoiceHold(null); return; }
+      if (held < VOICE_MIN_HOLD_MS) { recorderRef.current?.discard(); setError('Hold to record, release to send'); return; }
+      recorderRef.current?.send();
+    }
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', release);
+    window.addEventListener('pointercancel', lock);
+    holdCleanupRef.current = finish;
+  }
 
   function handleTextChange(event) {
     setText(event.target.value);
@@ -1763,7 +1805,7 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
           );
         })()}
         {recording ? (
-          <VoiceRecorderBar onSend={handleVoiceSend} onCancel={handleVoiceCancel} onError={setError} allowViewOnce />
+          <VoiceRecorderBar ref={recorderRef} hold={voiceHold} onSend={handleVoiceSend} onCancel={handleVoiceCancel} onError={setError} allowViewOnce />
         ) : (
           <div className="composer-row">
             <div className="composer">
@@ -1786,7 +1828,7 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
             ) : action === 'send' ? (
               <button type="submit" className="composer-fab" aria-label="Send"><Send size={20} /></button>
             ) : (
-              <button type="button" className="composer-fab" onClick={() => { setError(''); setEmojiOpen(false); setRecording(true); }} aria-label="Record voice note" disabled={busy}><Mic size={20} /></button>
+              <button type="button" className="composer-fab composer-mic" onPointerDown={startVoiceGesture} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setError(''); setEmojiOpen(false); setRecording(true); } }} onContextMenu={(event) => event.preventDefault()} aria-label="Record voice note" title="Tap to record, or hold: release to send, slide up to lock" disabled={busy}><Mic size={20} /></button>
             )}
           </div>
         )}
