@@ -181,6 +181,7 @@ function Privacy({ go }) {
     ['Link previews', 'Made on the sender’s phone', 'Nothing'],
     ['Who talks to whom, and when', 'Needed to deliver messages', 'Yes'],
     ['Your phone number or email', 'Never asked for', 'Nothing'],
+    ['Your country (from your phone’s time zone)', 'Counted in totals per country', 'The country only: no IP address or location'],
   ];
   return (
     <div className="site-wrap site-page">

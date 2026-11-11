@@ -8,7 +8,7 @@ import { DATABASE_SCHEMA_VERSION, postgresOptions } from '../server/database.mjs
 import { DEMO_USERS } from '../server/demo.mjs';
 
 export const IMPORT_TABLES = Object.freeze([
-  { name: 'users', columns: ['id', 'username', 'name', 'initials', 'color', 'dob', 'password_hash', 'created_at', 'avatar_disk_name', 'avatar_type', 'avatar_updated_at', 'last_seen_at', 'last_seen_privacy', 'online_privacy', 'photo_privacy', 'read_receipts', 'two_step_hash', 'two_step_set_at', 'status_audience', 'is_admin', 'suspended_at', 'deleted_at'], users: ['id'] },
+  { name: 'users', columns: ['id', 'username', 'name', 'initials', 'color', 'dob', 'password_hash', 'created_at', 'avatar_disk_name', 'avatar_type', 'avatar_updated_at', 'last_seen_at', 'last_seen_privacy', 'online_privacy', 'photo_privacy', 'read_receipts', 'two_step_hash', 'two_step_set_at', 'status_audience', 'is_admin', 'suspended_at', 'deleted_at', 'country', 'country_updated_at'], users: ['id'] },
   { name: 'sessions', columns: ['token_hash', 'user_id', 'device_id', 'device_name', 'expires_at', 'created_at', 'last_active_at'], users: ['user_id'] },
   { name: 'contacts', columns: ['owner_id', 'contact_id', 'created_at', 'saved', 'hidden'], users: ['owner_id', 'contact_id'], key: ['owner_id', 'contact_id'] },
   // Groups precede media and uploads, whose group_id references them.
@@ -52,6 +52,8 @@ export const IMPORT_TABLES = Object.freeze([
   { name: 'catalog_collections', columns: ['id', 'user_id', 'name', 'item_ids', 'created_at'], users: ['user_id'] },
   { name: 'verified_accounts', columns: ['user_id', 'verified_at', 'granted_by'], users: ['user_id'], key: ['user_id'] },
   { name: 'verification_requests', columns: ['user_id', 'note', 'status', 'created_at', 'decided_at'], users: ['user_id'], key: ['user_id'] },
+  { name: 'verified_channels', columns: ['channel_id', 'verified_at', 'granted_by'], users: [], key: ['channel_id'] },
+  { name: 'verification_tickets', columns: ['id', 'kind', 'subject_id', 'requester_id', 'note', 'status', 'created_at', 'decided_at', 'decided_by', 'decision_note'], users: ['requester_id'] },
   { name: 'channel_admins', columns: ['channel_id', 'user_id', 'added_at'], users: ['user_id'], key: ['channel_id', 'user_id'] },
   { name: 'channel_followers', columns: ['channel_id', 'user_id', 'followed_at'], users: ['user_id'], key: ['channel_id', 'user_id'] },
   { name: 'channel_posts', columns: ['id', 'channel_id', 'author_id', 'content', 'created_at'], users: ['author_id'] },

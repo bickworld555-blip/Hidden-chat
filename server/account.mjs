@@ -35,6 +35,7 @@ export const PERSONAL_ROWS = [
   ['catalog_collections', 'user_id = ?'],
   ['verified_accounts', 'user_id = ?'],
   ['verification_requests', 'user_id = ?'],
+  ['verification_tickets', 'requester_id = ?'],
   ['catalog_items', 'user_id = ?'],
   ['label_chats', 'label_id IN (SELECT id FROM labels WHERE user_id = ?)'],
   ['labels', 'user_id = ?'],
@@ -59,7 +60,7 @@ export function registerAccount({ app, db, requireSession, verifyPassword, close
   app.get('/api/v1/me/account-info', requireSession, async (request, response) => {
     const userId = request.session.user_id;
     const user = await db.prepare(`SELECT id, username, name, dob, created_at AS "createdAt", last_seen_privacy AS "lastSeen", online_privacy AS "online",
-      photo_privacy AS "profilePhoto", read_receipts AS "readReceipts", status_audience AS "statusAudience", two_step_set_at AS "twoStepSince" FROM users WHERE id = ?`).get(userId);
+      photo_privacy AS "profilePhoto", read_receipts AS "readReceipts", status_audience AS "statusAudience", two_step_set_at AS "twoStepSince", country FROM users WHERE id = ?`).get(userId);
     const safe = async (sql) => { try { return await db.prepare(sql).all(userId); } catch { return []; } };
     const report = {
       generatedAt: new Date().toISOString(),
@@ -100,7 +101,7 @@ export function registerAccount({ app, db, requireSession, verifyPassword, close
     // A placeholder keeps other people's groups and chats consistent; the username is freed.
     const tombstone = `deleted_${randomUUID().replace(/-/g, '').slice(0, 12)}`;
     await db.prepare(`UPDATE users SET username = ?, name = 'Deleted account', initials = '?', dob = NULL, password_hash = NULL, two_step_hash = NULL,
-      avatar_disk_name = NULL, avatar_type = NULL, is_admin = 0, deleted_at = ? WHERE id = ?`).run(tombstone, Date.now(), userId);
+      avatar_disk_name = NULL, avatar_type = NULL, is_admin = 0, country = NULL, country_updated_at = NULL, deleted_at = ? WHERE id = ?`).run(tombstone, Date.now(), userId);
     if (row.avatar) await unlink(join(avatarDirectory, row.avatar)).catch(() => {});
     for (const file of [...catalogFiles.map((item) => item.file), cover?.file].filter(Boolean)) await unlink(join(catalogDirectory, file)).catch(() => {});
     response.status(204).end();

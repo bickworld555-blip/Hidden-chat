@@ -23,7 +23,9 @@ import { pdfPageCountOfFile } from './pdfPages.mjs';
 import { createLinkPreviews } from './linkPreview.mjs';
 import { createPushSender, encryptForDevice, loadServiceAccount, validDeviceKey } from './push.mjs';
 import { createLoginThrottle, ensureParitySchema, registerParity } from './parity.mjs';
-import { createVerifiedAccounts, ensureVerificationSchema, registerVerification } from './verification.mjs';
+import { createVerifiedAccounts, createVerifiedChannels, ensureVerificationSchema, registerVerification } from './verification.mjs';
+import { ensureRegionSchema, registerRegions } from './regions.mjs';
+import { registerBilling } from './billing.mjs';
 import { ensureE2eSchema, registerE2e } from './e2e.mjs';
 import { registerSfu } from './sfu.mjs';
 import { ensureExtrasSchema, registerExtras, statusAudienceSql } from './extras.mjs';
@@ -401,9 +403,11 @@ export function createChatServer({
   ensureExtrasSchema(db);
   ensureAdminSchema(db);
   ensureVerificationSchema(db);
+  ensureRegionSchema(db);
   }
   // Verified business badges (server/verification.mjs), read into memory for public user records.
   const verifiedAccounts = createVerifiedAccounts(db);
+  const verifiedChannels = createVerifiedChannels(db);
   const upsertLink = db.prepare(`INSERT INTO contacts(owner_id, contact_id, created_at, saved, hidden) VALUES (?, ?, ?, ?, 0)
     ON CONFLICT(owner_id, contact_id) DO UPDATE SET saved = CASE WHEN contacts.saved > excluded.saved THEN contacts.saved ELSE excluded.saved END, hidden = 0`);
   // Links `peerId` into `ownerId`'s chat list (un-hiding a deleted thread); `save` also puts them in the contact book.
@@ -1055,18 +1059,23 @@ export function createChatServer({
   const adminAuth = createAdminAuth({ app, credentials: adminCredentials });
   const admin = registerAdmin({
     requireAdmin: adminAuth.requireAdmin,
+    onlineNow: () => connections.size,
     mediaFileExists: async (diskName) => Boolean(diskName && await stat(join(mediaDirectory, diskName)).catch(() => null)),
     app, db, requireSession, publicUser, userColumns: USER_COLUMNS, pushEnabled: () => Boolean(push),
     closeUserSessions,
   });
 
-  registerVerification({ app, db, requireSession, requireAdmin: adminAuth.requireAdmin, verified: verifiedAccounts, publicUser, userColumns: USER_COLUMNS });
+  registerVerification({ app, db, requireSession, requireAdmin: adminAuth.requireAdmin, verified: verifiedAccounts, verifiedChannels, publicUser, userColumns: USER_COLUMNS });
+  // Approximate country for the admin world map (server/regions.mjs) and the prepared billing structure.
+  registerRegions({ app, db, requireSession, requireAdmin: adminAuth.requireAdmin });
+  registerBilling({ app, requireAdmin: adminAuth.requireAdmin });
 
   // Linking a browser by scanning a QR code with the phone (server/linking.mjs).
   const linking = registerLinking({ app, requireSession, issueSession: (userId, name) => issueSession(userId, name), suspended: (userId) => admin.suspended(userId) });
 
   // Broadcast lists, channels, scheduled messages, status privacy and call links (server/extras.mjs).
   const extras = registerExtras({
+    verifiedChannels,
     app, db, requireSession, broadcastUser, publicUser, userColumns: USER_COLUMNS, linkUsers: (a, b) => linkUsers(a, b),
     deliverDirectMessage: (message) => deliverDirectMessage(message),
   });

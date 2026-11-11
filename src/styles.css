@@ -5160,3 +5160,6 @@ textarea.hm-input { min-height: 96px; resize: vertical; }
 .tab-menu { margin-left: auto; }
 .hm-panel-inline > .hm-panel-header .tab-menu { margin-left: 0; }
 .verified-points li { list-style: disc; }
+.hm-channel-info h2 { display: inline-flex; align-items: center; justify-content: center; gap: 4px; }
+.hm-channel-verify { display: flex; flex-direction: column; align-items: center; gap: 4px; margin-top: 4px; color: var(--wa-sub, #5b6b82); }
+.hm-channel-verify-error { color: #c4002f; }

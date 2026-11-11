@@ -695,6 +695,18 @@ export default function App() {
     return () => { cancelled = true; clearTimeout(timer); };
   }, [sessionToken, userId]);
   // The admin console is its own page at /admin (admin.html, src/admin/), not part of the chat app.
+  // Approximate country for aggregate statistics: the device's time zone, at most once a day (server/regions.mjs).
+  useEffect(() => {
+    if (!sessionToken || !userId) return;
+    const key = `hm:region-sent:${userId}`;
+    const today = new Date().toISOString().slice(0, 10);
+    try { if (localStorage.getItem(key) === today) return; } catch { /* send anyway */ }
+    const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    if (!timeZone) return;
+    apiFetch('/api/v1/me/region', { method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ timeZone }) })
+      .then((response) => { if (response.ok) try { localStorage.setItem(key, today); } catch { /* next time */ } })
+      .catch(() => {});
+  }, [sessionToken, userId]);
   const activeTab = isMobile ? mobileActiveTab : desktopTab;
   const setActiveTab = isMobile ? setMobileActiveTab : setDesktopTab;
   const [channelToOpen, setChannelToOpen] = useState('');

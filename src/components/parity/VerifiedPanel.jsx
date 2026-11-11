@@ -43,12 +43,12 @@ export default function VerifiedPanel({ token, onClose, onOpenBusinessProfile })
         <div className="verified-status is-on"><VerifiedBadge size={20} /><span><strong>Your business is verified</strong><small>Since {day(state.verifiedAt)}</small></span></div>
       ) : state.status === 'pending' ? (
         <>
-          <div className="verified-status"><span><strong>Waiting for review</strong><small>Requested {day(state.requestedAt)}. We’ll add the badge once it’s approved.</small></span></div>
+          <div className="verified-status"><span><strong>Waiting for review</strong><small>Request {state.requestId} · {day(state.requestedAt)}. We’ll add the badge once it’s approved.</small></span></div>
           <button type="button" className="hm-primary is-quiet" disabled={busy} onClick={() => run(() => call(token, '/api/v1/me/verification', { method: 'DELETE' }))}>Cancel request</button>
         </>
       ) : (
         <>
-          {state.status === 'declined' && <div className="verified-status is-declined"><span><strong>Not approved this time</strong><small>Check your business profile is complete, then ask again.</small></span></div>}
+          {state.status === 'rejected' && <div className="verified-status is-declined"><span><strong>Not approved this time</strong><small>{state.decisionNote || 'Check your business profile is complete, then ask again.'} · Request {state.requestId}</small></span></div>}
           <ul className="verified-points">
             <li>Your business profile needs a category (Tools › Business profile).</li>
             <li>A Hidden Messenger admin checks the request, usually within a few days.</li>

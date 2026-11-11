@@ -8,6 +8,7 @@ import { useWallpaper } from '../../wallpaper.js';
 import FormattedText from '../FormattedText.jsx';
 import { openContent, sealDirect } from '../../e2e/client.js';
 import { publicOrigin } from '../../api.js';
+import VerifiedBadge from '../VerifiedBadge.jsx';
 
 const CHANNEL_REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
 const directContacts = (chats) => chats.filter((chat) => chat.kind !== 'group' && chat.id && chat.username);
@@ -157,6 +158,25 @@ function ChannelAdmins({ token, channel, onBack, onClose, onChanged }) {
   );
 }
 
+// The owner asks for the channel's verified badge (reviewed in the admin console; server/verification.mjs).
+function ChannelVerification({ token, channelId }) {
+  const [state, setState] = useState(null);
+  const [error, setError] = useState('');
+  const path = `/api/v1/channels/${channelId}/verification`;
+  useEffect(() => { request(token, path).then(setState).catch(() => setState(null)); }, [token, channelId]);
+  const ask = () => request(token, path, { method: 'POST', body: {} }).then(setState).catch((caught) => setError(caught.message));
+  if (!state) return null;
+  return (
+    <div className="hm-channel-verify">
+      {state.status === 'pending'
+        ? <small>Verification requested · {state.requestId}</small>
+        : <button type="button" className="hm-channel-follow is-following" onClick={ask}>{state.status === 'rejected' ? 'Ask for verification again' : 'Request verification'}</button>}
+      {state.status === 'rejected' && state.decisionNote && <small>{state.decisionNote}</small>}
+      {error && <small className="hm-channel-verify-error">{error}</small>}
+    </div>
+  );
+}
+
 export function Channels({ token, onClose, initialChannelId = '' }) {
   const viewerId = useChatStore((state) => state.userId);
   const [category, setCategory] = useState('');
@@ -221,12 +241,13 @@ export function Channels({ token, onClose, initialChannelId = '' }) {
         <div className="hm-channel-feed message-scroll" data-chat-theme="default" data-wallpaper={wallpaper}>
           <section className="hm-channel-info" aria-label="About this channel">
             <span className="hm-channel-avatar is-large" aria-hidden="true">{channel.name.slice(0, 1).toUpperCase()}</span>
-            <h2>{channel.name}</h2>
+            <h2>{channel.name}{channel.verified && <VerifiedBadge size={22} />}</h2>
             <p className="hm-channel-meta">Channel · {followerCount(channel.followers)}</p>
             <p className="hm-channel-tags"><span>{CHANNEL_CATEGORY_LABELS[channel.category] ?? 'Other'}</span>{channel.role && <span>{channel.role === 'owner' ? 'Owner' : 'Admin'}</span>}</p>
             {channel.description && <p className="hm-channel-description">{channel.description}</p>}
             {!channel.mine && <button type="button" className={`hm-channel-follow${channel.following ? ' is-following' : ''}`} onClick={toggleFollow}>{channel.following ? 'Following' : 'Follow'}</button>}
             {channel.canPost && <button type="button" className="hm-channel-follow is-following" onClick={() => setManagingAdmins(true)}>Admins</button>}
+            {channel.mine && !channel.verified && <ChannelVerification token={token} channelId={channel.id} />}
           </section>
           {channel.posts.map((item) => {
             const day = new Date(item.createdAt).toDateString();
@@ -273,7 +294,7 @@ export function Channels({ token, onClose, initialChannelId = '' }) {
       <Notice error={error} />
       <button type="button" className="hm-row-button" onClick={() => setCreating({ name: '', description: '', category: 'other' })}><Plus size={18} /> Create channel</button>
       {mine.length > 0 && <h3 className="hm-section">Your channels</h3>}
-      {mine.map((item) => <button key={item.id} type="button" className="hm-row-main hm-channel-row" onClick={() => setOpenId(item.id)}><span className="hm-channel-avatar" aria-hidden="true">{item.name.slice(0, 1).toUpperCase()}</span><span><strong>{item.name}</strong><small>{item.mine ? 'Your channel' : item.role === 'admin' ? 'Admin' : 'Following'} · {followerCount(item.followers)}</small></span></button>)}
+      {mine.map((item) => <button key={item.id} type="button" className="hm-row-main hm-channel-row" onClick={() => setOpenId(item.id)}><span className="hm-channel-avatar" aria-hidden="true">{item.name.slice(0, 1).toUpperCase()}</span><span><strong>{item.name}{item.verified && <VerifiedBadge size={14} />}</strong><small>{item.mine ? 'Your channel' : item.role === 'admin' ? 'Admin' : 'Following'} · {followerCount(item.followers)}</small></span></button>)}
       <h3 className="hm-section">Find channels</h3>
       <div className="wa-chips hm-channel-categories" role="tablist" aria-label="Categories">
         <button type="button" role="tab" aria-selected={!category} className={!category ? 'active' : ''} onClick={() => setCategory('')}>All</button>
@@ -283,7 +304,7 @@ export function Channels({ token, onClose, initialChannelId = '' }) {
       </div>
       <input className="hm-input" placeholder="Search channels" value={query} onChange={(event) => setQuery(event.target.value)} />
       {found.filter((item) => !mine.some((own) => own.id === item.id)).map((item) => (
-        <button key={item.id} type="button" className="hm-row-main hm-channel-row" onClick={() => setOpenId(item.id)}><span className="hm-channel-avatar" aria-hidden="true">{item.name.slice(0, 1).toUpperCase()}</span><span><strong>{item.name}</strong><small>{CHANNEL_CATEGORY_LABELS[item.category] ?? 'Other'} · {followerCount(item.followers)}</small></span></button>
+        <button key={item.id} type="button" className="hm-row-main hm-channel-row" onClick={() => setOpenId(item.id)}><span className="hm-channel-avatar" aria-hidden="true">{item.name.slice(0, 1).toUpperCase()}</span><span><strong>{item.name}{item.verified && <VerifiedBadge size={14} />}</strong><small>{CHANNEL_CATEGORY_LABELS[item.category] ?? 'Other'} · {followerCount(item.followers)}</small></span></button>
       ))}
     </Panel>
   );

@@ -37,7 +37,7 @@ export function ensureAdminSchema(db) {
 const clean = (value, limit) => (typeof value === 'string' ? value.trim().slice(0, limit) : '');
 const day = 24 * 60 * 60 * 1000;
 
-export function registerAdmin({ app, db, requireSession, requireAdmin, publicUser, userColumns, closeUserSessions, pushEnabled = () => false, dataDirectoryBytes = async () => null, mediaFileExists = async () => true }) {
+export function registerAdmin({ app, db, requireSession, requireAdmin, publicUser, userColumns, closeUserSessions, pushEnabled = () => false, dataDirectoryBytes = async () => null, mediaFileExists = async () => true, onlineNow = () => 0 }) {
   const fail = (response, status, error) => response.status(status).json({ error });
 
   // The starter Help Center is set up once, at start-up.
@@ -124,6 +124,23 @@ export function registerAdmin({ app, db, requireSession, requireAdmin, publicUse
     response.json({ removed: missing.length });
   });
 
+  // Live tickers for the console header (polled every few seconds). Counts only: no names, no content.
+  app.get('/api/admin/v1/live', requireAdmin, async (_request, response) => {
+    const now = Date.now();
+    const count = async (sql, ...values) => Number((await db.prepare(sql).get(...values))?.count ?? 0);
+    const startOfDay = new Date(now); startOfDay.setUTCHours(0, 0, 0, 0);
+    const createdIso = typeof (await db.prepare('SELECT created_at AS "at" FROM users LIMIT 1').get())?.at === 'string';
+    response.json({
+      at: now,
+      online: onlineNow(),
+      activeLastHour: await count('SELECT count(DISTINCT user_id) AS "count" FROM sessions WHERE last_active_at >= ?', now - 60 * 60 * 1000),
+      messagesLastHour: await count('SELECT count(*) AS "count" FROM messages WHERE created_at >= ?', new Date(now - 60 * 60 * 1000).toISOString()),
+      signupsToday: await count('SELECT count(*) AS "count" FROM users WHERE created_at >= ?', createdIso ? startOfDay.toISOString() : startOfDay.getTime()),
+      openReports: await count("SELECT count(*) AS \"count\" FROM user_reports WHERE status = 'open'") + await count("SELECT count(*) AS \"count\" FROM group_reports WHERE status = 'open'"),
+      pendingVerifications: await count("SELECT count(*) AS \"count\" FROM verification_tickets WHERE status = 'pending'"),
+    });
+  });
+
   app.get('/api/admin/v1/stats', requireAdmin, async (_request, response) => {
     const now = Date.now();
     const count = async (sql, ...values) => Number((await db.prepare(sql).get(...values))?.count ?? 0);
@@ -151,6 +168,9 @@ export function registerAdmin({ app, db, requireSession, requireAdmin, publicUse
       channels: await count('SELECT count(*) AS "count" FROM channels'),
       openReports: await count("SELECT count(*) AS \"count\" FROM user_reports WHERE status = 'open'") + await count("SELECT count(*) AS \"count\" FROM group_reports WHERE status = 'open'"),
       encryptedDevices: await count('SELECT count(*) AS "count" FROM e2e_devices'),
+      verifiedBusinesses: await count('SELECT count(*) AS "count" FROM verified_accounts'),
+      verifiedChannels: await count('SELECT count(*) AS "count" FROM verified_channels'),
+      pendingVerifications: await count("SELECT count(*) AS \"count\" FROM verification_tickets WHERE status = 'pending'"),
       mediaBytes: Number((await db.prepare('SELECT COALESCE(sum(byte_size), 0) AS "bytes" FROM media').get())?.bytes ?? 0),
       diskBytes: await dataDirectoryBytes(),
       push: pushEnabled(),

@@ -52,7 +52,7 @@ export function statusAudienceSql(owner, viewer) {
 
 const cleanText = (value, limit) => (typeof value === 'string' ? value.trim().slice(0, limit) : '');
 
-export function registerExtras({ app, db, requireSession, broadcastUser, publicUser, userColumns, deliverDirectMessage, linkUsers, appOrigin = () => '' }) {
+export function registerExtras({ verifiedChannels = { has: () => false }, app, db, requireSession, broadcastUser, publicUser, userColumns, deliverDirectMessage, linkUsers, appOrigin = () => '' }) {
   const userRow = db.prepare(`SELECT ${userColumns} FROM users WHERE id = ?`);
   const fail = (response, status, error) => response.status(status).json({ error });
 
@@ -125,7 +125,8 @@ export function registerExtras({ app, db, requireSession, broadcastUser, publicU
     // mine = owner (edits, deletes, manages admins); admins post and delete updates too.
     const { admin: _admin, ...rest } = channel;
     return { ...rest, category: CHANNEL_CATEGORIES.includes(channel.category) ? channel.category : 'other', createdAt: Number(channel.createdAt), followers: Number(channel.followers),
-      following: Boolean(Number(channel.following)) || channel.following === true, mine, role: mine ? 'owner' : admin ? 'admin' : null, canPost: mine || admin };
+      following: Boolean(Number(channel.following)) || channel.following === true, mine, role: mine ? 'owner' : admin ? 'admin' : null, canPost: mine || admin,
+      ...(verifiedChannels.has(channel.id) ? { verified: true } : {}) };
   }
 
   async function postsOf(channelId, viewerId) {

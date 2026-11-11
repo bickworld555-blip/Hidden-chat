@@ -9,6 +9,7 @@ import { loadMediaBlob } from '../media.js';
 import { presentName } from '../profile.js';
 import { useBackHandler } from '../backStack.js';
 import { followerCount, mutedStatusUsers, setStatusMuted } from './extras/ExtrasPanels.jsx';
+import VerifiedBadge from './VerifiedBadge.jsx';
 const HIDDEN_SUGGESTIONS_KEY = 'hm:hidden-channel-suggestions';
 import {
   STATUS_BACKGROUNDS, deleteStatus, fetchStatuses, markStatusSeen, postMediaStatus, postTextStatus, statusKind, statusTime, statusViewers,
@@ -135,7 +136,7 @@ export default function UpdatesView({ onOpenChannels, onSheet, onSettings }) {
           {channels.map((channel) => (
             <button key={channel.id} type="button" className="status-row-main updates-channel" onClick={() => onOpenChannels?.(channel.id)}>
               <span className="updates-channel-icon" aria-hidden="true">{channel.name.slice(0, 1).toUpperCase()}</span>
-              <span className="status-row-text"><strong>{channel.name}</strong><small>{channel.mine ? 'Your channel' : followerCount(channel.followers)}</small></span>
+              <span className="status-row-text"><strong>{channel.name}{channel.verified && <VerifiedBadge size={14} />}</strong><small>{channel.mine ? 'Your channel' : followerCount(channel.followers)}</small></span>
             </button>
           ))}
           {!channels.length && <p className="updates-channels-empty">Stay up to date on topics that matter to you. Find channels to follow below.</p>}
@@ -146,7 +147,7 @@ export default function UpdatesView({ onOpenChannels, onSheet, onSettings }) {
                 <div key={channel.id} className="updates-suggest-row">
                   <button type="button" className="status-row-main updates-channel" onClick={() => onOpenChannels?.(channel.id)}>
                     <span className="updates-channel-icon" aria-hidden="true">{channel.name.slice(0, 1).toUpperCase()}</span>
-                    <span className="status-row-text"><strong>{channel.name}</strong><small>{followerCount(channel.followers)}</small></span>
+                    <span className="status-row-text"><strong>{channel.name}{channel.verified && <VerifiedBadge size={14} />}</strong><small>{followerCount(channel.followers)}</small></span>
                   </button>
                   <button type="button" className="updates-follow" onClick={() => follow(channel.id)}>Follow</button>
                   <button type="button" className="updates-suggest-hide" onClick={() => hideSuggestion(channel.id)} aria-label={`Hide ${channel.name}`}><X size={16} /></button>

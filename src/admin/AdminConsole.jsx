@@ -1,40 +1,15 @@
-// Admin console (server/admin.mjs): overview, users, reports and the Help Center editor, on the standalone /admin
-// page. Requests use the admin session (adminApi.js); chat content is end-to-end encrypted and never shown here.
+// Admin console sections reused by the dashboard (Dashboard.jsx): users, reports, the Help Center editor and the
+// stored-media check. Requests use the admin session (adminApi.js); chat content is never shown here.
 import { useEffect, useState } from 'react';
-import { BarChart3, FileText, Flag, RefreshCw, Users } from 'lucide-react';
 import { Notice } from '../components/parity/Panel.jsx';
 import { adminRequest } from './adminApi.js';
 
-const TABS = [
-  { id: 'overview', label: 'Overview', icon: BarChart3 },
-  { id: 'users', label: 'Users', icon: Users },
-  { id: 'reports', label: 'Reports', icon: Flag },
-  { id: 'help', label: 'Help Center', icon: FileText },
-];
 const CATEGORIES = { 'getting-started': 'Getting started', chats: 'Chats', calls: 'Calls', 'groups-communities': 'Groups & communities', 'privacy-security': 'Privacy & security', account: 'Account', business: 'Business' };
-const bytes = (value) => (value === null || value === undefined ? '—' : value < 1024 ** 2 ? `${Math.round(value / 1024)} KB` : value < 1024 ** 3 ? `${(value / 1024 ** 2).toFixed(1)} MB` : `${(value / 1024 ** 3).toFixed(2)} GB`);
 const when = (value) => (value ? new Date(value).toLocaleString() : '—');
 
 
-function Bars({ series, label }) {
-  const max = Math.max(1, ...series.map((point) => point.value));
-  return (
-    <figure className="admin-bars" aria-label={label}>
-      <figcaption>{label} · last 14 days</figcaption>
-      <div className="admin-bars-row">
-        {series.map((point) => (
-          <span key={point.day} className="admin-bar" title={`${point.day}: ${point.value}`}>
-            <i style={{ height: `${Math.max(2, (point.value / max) * 100)}%` }} />
-          </span>
-        ))}
-      </div>
-      <div className="admin-bars-axis"><span>{series[0]?.day.slice(5)}</span><span>{series.at(-1)?.day.slice(5)}</span></div>
-    </figure>
-  );
-}
-
 // Attachments whose file is missing on the server: how many, from when, and a clean-up of their records.
-function MediaIntegrity() {
+export function MediaIntegrity() {
   const [scan, setScan] = useState(null);
   const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
@@ -73,77 +48,7 @@ function MediaIntegrity() {
   );
 }
 
-// Verified business badges: approve or decline requests, and remove a badge (server/verification.mjs).
-function VerificationQueue() {
-  const [data, setData] = useState(null);
-  const [error, setError] = useState('');
-  const [notice, setNotice] = useState('');
-  const load = () => adminRequest('/api/admin/v1/verification').then(setData).catch((caught) => setError(caught.message));
-  useEffect(() => { load(); }, []);
-  async function decide(user, verified) {
-    setError(''); setNotice('');
-    try {
-      await adminRequest(`/api/admin/v1/users/${user.id}/verified`, { method: 'PUT', body: { verified } });
-      setNotice(verified ? `@${user.username} is verified.` : `@${user.username} isn’t verified.`);
-      await load();
-    } catch (caught) { setError(caught.message); }
-  }
-  return (
-    <section className="admin-verification" aria-label="Verified businesses">
-      <h3 className="hm-section">Verified businesses</h3>
-      <Notice error={error} notice={notice} />
-      {!data ? <p className="hm-muted">Loading…</p> : (
-        <>
-          {data.pending.length === 0 && <p className="hm-muted">No requests waiting.</p>}
-          {data.pending.map((item) => (
-            <div key={item.user.id} className="hm-row">
-              <span className="hm-row-main"><span><strong>@{item.user.username}</strong><small>{item.note || 'No note'} · {new Date(item.requestedAt).toLocaleDateString()}</small></span></span>
-              <button type="button" className="hm-chip" onClick={() => decide(item.user, false)}>Decline</button>
-              <button type="button" className="hm-chip is-primary" onClick={() => decide(item.user, true)}>Approve</button>
-            </div>
-          ))}
-          {data.verified.length > 0 && <p className="hm-muted">Verified: {data.verified.length}</p>}
-          {data.verified.map((item) => (
-            <div key={item.user.id} className="hm-row">
-              <span className="hm-row-main"><span><strong>@{item.user.username}</strong><small>Since {new Date(item.verifiedAt).toLocaleDateString()}</small></span></span>
-              <button type="button" className="hm-chip" onClick={() => decide(item.user, false)}>Remove</button>
-            </div>
-          ))}
-        </>
-      )}
-    </section>
-  );
-}
-
-function Overview() {
-  const [stats, setStats] = useState(null);
-  const [error, setError] = useState('');
-  const load = () => adminRequest('/api/admin/v1/stats').then(setStats).catch((caught) => setError(caught.message));
-  useEffect(() => { load(); }, []);
-  if (!stats) return <Notice error={error} />;
-  const tiles = [
-    ['Accounts', stats.users], ['Active today', stats.activeToday], ['Active this week', stats.activeWeek], ['Open reports', stats.openReports],
-    ['Groups', stats.groups], ['Channels', stats.channels], ['Encrypted devices', stats.encryptedDevices], ['Suspended', stats.suspended],
-  ];
-  return (
-    <div className="admin-overview">
-      <div className="admin-tiles">
-        {tiles.map(([label, value]) => <div key={label} className="admin-tile"><span>{label}</span><strong>{Number(value).toLocaleString()}</strong></div>)}
-      </div>
-      <div className="admin-status">
-        <span className={`admin-pill ${stats.push ? 'is-ok' : 'is-warn'}`}>Push notifications {stats.push ? 'on' : 'off'}</span>
-        <span className="admin-pill">Media stored {bytes(stats.mediaBytes)}</span>
-        <button type="button" className="icon-button" onClick={load} aria-label="Refresh"><RefreshCw size={16} /></button>
-      </div>
-      <VerificationQueue />
-      <MediaIntegrity />
-      <Bars series={stats.signups} label="New accounts" />
-      <Bars series={stats.messages} label="Direct messages sent" />
-    </div>
-  );
-}
-
-function UsersTab() {
+export function UsersTab() {
   const [query, setQuery] = useState('');
   const [rows, setRows] = useState([]);
   const [error, setError] = useState('');
@@ -181,7 +86,7 @@ function UsersTab() {
   );
 }
 
-function ReportsTab() {
+export function ReportsTab() {
   const [status, setStatus] = useState('open');
   const [rows, setRows] = useState([]);
   const [error, setError] = useState('');
@@ -216,7 +121,7 @@ function ReportsTab() {
 
 const EMPTY_ARTICLE = { slug: '', category: 'getting-started', title: '', body: '', published: true };
 
-function HelpTab() {
+export function HelpTab() {
   const [articles, setArticles] = useState([]);
   const [editing, setEditing] = useState(null);
   const [error, setError] = useState('');
@@ -272,24 +177,5 @@ function HelpTab() {
         );
       })}
     </div>
-  );
-}
-
-export default function AdminConsole() {
-  const [tab, setTab] = useState('overview');
-  return (
-    <>
-      <nav className="admin-tabs" role="tablist">
-        {TABS.map(({ id, label, icon: Icon }) => (
-          <button key={id} type="button" role="tab" aria-selected={tab === id} className={tab === id ? 'is-on' : ''} onClick={() => setTab(id)}><Icon size={16} /> {label}</button>
-        ))}
-      </nav>
-      <div className="admin-tab-body">
-        {tab === 'overview' && <Overview />}
-        {tab === 'users' && <UsersTab />}
-        {tab === 'reports' && <ReportsTab />}
-        {tab === 'help' && <HelpTab />}
-      </div>
-    </>
   );
 }

@@ -1,21 +1,9 @@
 // The standalone admin page: sign in with the server's admin credentials (ADMIN_USERNAME / ADMIN_PASSWORD),
 // then the console. Separate from chat accounts and chat sessions.
 import { useEffect, useState } from 'react';
-import { Lock, LogOut, ShieldCheck } from 'lucide-react';
-import AdminConsole from './AdminConsole.jsx';
+import { Lock, ShieldCheck } from 'lucide-react';
+import Dashboard from './Dashboard.jsx';
 import { SIGNED_OUT_EVENT, adminSession, adminSignIn, adminSignOut } from './adminApi.js';
-
-function useDarkPreference() {
-  const query = typeof window !== 'undefined' ? window.matchMedia?.('(prefers-color-scheme: dark)') : null;
-  const [dark, setDark] = useState(Boolean(query?.matches));
-  useEffect(() => {
-    if (!query) return undefined;
-    const change = (event) => setDark(event.matches);
-    query.addEventListener('change', change);
-    return () => query.removeEventListener('change', change);
-  }, []);
-  return dark;
-}
 
 function SignIn({ configured, onSignedIn }) {
   const [username, setUsername] = useState('');
@@ -52,8 +40,8 @@ function SignIn({ configured, onSignedIn }) {
   );
 }
 
+// Dark only: the console is a high-density navy workspace.
 export default function AdminApp() {
-  const dark = useDarkPreference();
   const [state, setState] = useState({ loading: true, configured: true, username: null });
   useEffect(() => {
     adminSession()
@@ -63,7 +51,7 @@ export default function AdminApp() {
     window.addEventListener(SIGNED_OUT_EVENT, signedOut);
     return () => window.removeEventListener(SIGNED_OUT_EVENT, signedOut);
   }, []);
-  useEffect(() => { document.documentElement.classList.toggle('admin-dark', dark); }, [dark]);
+  useEffect(() => { document.documentElement.classList.add('admin-dark'); }, []);
 
   const signOut = async () => {
     await adminSignOut().catch(() => {});
@@ -71,19 +59,10 @@ export default function AdminApp() {
   };
 
   return (
-    <div className={`admin-page ${dark ? 'dark-theme' : ''}`}>
-      {state.loading ? <main className="admin-gate"><p className="hm-muted">Loading…</p></main>
+    <div className="admin-page dark-theme">
+      {state.loading ? <main className="admin-gate"><p className="ad-muted">Loading…</p></main>
         : !state.username ? <SignIn configured={state.configured} onSignedIn={(username) => setState((current) => ({ ...current, username }))} />
-          : (
-            <div className="admin-shell">
-              <header className="admin-topbar">
-                <span className="admin-topbar-brand"><ShieldCheck size={20} aria-hidden="true" /> Hidden Messenger admin</span>
-                <span className="admin-topbar-user">{state.username}</span>
-                <button type="button" onClick={signOut}><LogOut size={16} /> Sign out</button>
-              </header>
-              <main className="admin-main"><AdminConsole /></main>
-            </div>
-          )}
+          : <Dashboard username={state.username} onSignOut={signOut} />}
     </div>
   );
 }
