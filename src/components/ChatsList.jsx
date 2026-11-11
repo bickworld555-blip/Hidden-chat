@@ -416,15 +416,15 @@ export default function ChatsList({ onOpenChat, onStartCall, onGroups, groups = 
           <span className="wa-list-header-actions">
             <button type="button" className="wa-icon-btn" onClick={() => onGroups?.()} disabled={!sessionToken} aria-label="Groups"><Users size={20} /></button>
             <button type="button" className="wa-icon-btn" onClick={() => { setCameraError(''); cameraInputRef.current?.click(); }} aria-label="Camera" title="Take a photo and send it"><Camera size={20} /></button>
-            <button type="button" className="wa-icon-btn" onClick={() => searchRef.current?.focus()} aria-label="Search"><Search size={20} /></button>
             <span className="wa-header-menu-wrap">
               <button type="button" className="wa-icon-btn" onClick={() => setHeaderMenu((open) => !open)} aria-label="Menu" aria-expanded={headerMenu}><MoreVertical size={20} /></button>
               {headerMenu && (
                 <div className="wa-sel-dropdown wa-header-dropdown" role="menu" onClick={() => setHeaderMenu(false)}>
                   <button type="button" role="menuitem" onClick={() => onGroups?.(true)}>New group</button>
-                  <button type="button" role="menuitem" onClick={() => onGroups?.()}>Groups</button>
                   <button type="button" role="menuitem" onClick={() => onSheet?.('broadcasts')}>{t('Broadcast lists')}</button>
-                  <button type="button" role="menuitem" onClick={() => onSheet?.('channels')}>{t('Channels')}</button>
+                  <button type="button" role="menuitem" onClick={() => onSheet?.('communities')}>{t('Communities')}</button>
+                  <button type="button" role="menuitem" onClick={() => onSheet?.('lists')}>{t('Lists')}</button>
+                  <button type="button" role="menuitem" onClick={() => onSheet?.('linked')}>{t('Linked devices')}</button>
                   <button type="button" role="menuitem" onClick={() => onSheet?.('starred')}>Starred messages</button>
                   <button type="button" role="menuitem" onClick={() => onSettings?.()}>Settings</button>
                 </div>

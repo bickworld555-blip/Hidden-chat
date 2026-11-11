@@ -8,6 +8,7 @@ import { loadMediaBlob } from '../media.js';
 import { presentName } from '../profile.js';
 import { useBackHandler } from '../backStack.js';
 import { followerCount, mutedStatusUsers, setStatusMuted } from './extras/ExtrasPanels.jsx';
+const HIDDEN_SUGGESTIONS_KEY = 'hm:hidden-channel-suggestions';
 import {
   STATUS_BACKGROUNDS, deleteStatus, fetchStatuses, markStatusSeen, postMediaStatus, postTextStatus, statusKind, statusTime, statusViewers,
 } from '../statusApi.js';
@@ -72,6 +73,28 @@ export default function UpdatesView({ onOpenChannels }) {
     apiFetch('/api/v1/channels', { headers: { Authorization: `Bearer ${token}` } })
       .then((response) => (response.ok ? response.json() : [])).then(setChannels).catch(() => {});
   }, [token, revision]);
+  // Suggested channels to follow (the directory, minus channels already followed and ones hidden here).
+  const [suggested, setSuggested] = useState([]);
+  const [hiddenSuggestions, setHiddenSuggestions] = useState(() => { try { return JSON.parse(localStorage.getItem(HIDDEN_SUGGESTIONS_KEY) ?? '[]'); } catch { return []; } });
+  const [channelsRevision, setChannelsRevision] = useState(0);
+  useEffect(() => {
+    if (!token) return;
+    apiFetch('/api/v1/channels/discover?q=', { headers: { Authorization: `Bearer ${token}` } })
+      .then((response) => (response.ok ? response.json() : [])).then(setSuggested).catch(() => {});
+  }, [token, revision, channelsRevision]);
+  const suggestions = suggested.filter((item) => !channels.some((own) => own.id === item.id) && !hiddenSuggestions.includes(item.id)).slice(0, 5);
+  const hideSuggestion = (id) => setHiddenSuggestions((current) => {
+    const next = [...current, id];
+    try { localStorage.setItem(HIDDEN_SUGGESTIONS_KEY, JSON.stringify(next)); } catch { /* hidden for this session */ }
+    return next;
+  });
+  async function follow(id) {
+    const response = await apiFetch(`/api/v1/channels/${id}/follow`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } }).catch(() => null);
+    if (!response?.ok) return;
+    const followed = suggested.find((item) => item.id === id);
+    if (followed) setChannels((current) => [...current, { ...followed, followers: (followed.followers ?? 0) + 1 }]);
+    setChannelsRevision((value) => value + 1);
+  }
 
   return (
     <div className="updates-view-container">
@@ -101,7 +124,7 @@ export default function UpdatesView({ onOpenChannels }) {
         {feed.others.length === 0 && !error && <p className="status-empty-hint">Status updates from your contacts appear here for 24 hours.</p>}
         {error && <p className="status-error" role="alert">{error}</p>}
         <section className="updates-channels" aria-label="Channels">
-          <header><h3 className="status-title">Channels</h3><button type="button" className="updates-channels-find" onClick={() => onOpenChannels?.()}>Explore</button></header>
+          <header><h3 className="status-title">Channels</h3></header>
           {channels.map((channel) => (
             <button key={channel.id} type="button" className="status-row-main updates-channel" onClick={() => onOpenChannels?.(channel.id)}>
               <span className="updates-channel-icon" aria-hidden="true">{channel.name.slice(0, 1).toUpperCase()}</span>
@@ -109,6 +132,23 @@ export default function UpdatesView({ onOpenChannels }) {
             </button>
           ))}
           {!channels.length && <p className="updates-channels-empty">Stay up to date on topics that matter to you. Find channels to follow below.</p>}
+          {suggestions.length > 0 && (
+            <>
+              <h4 className="updates-suggest-title">Find channels to follow</h4>
+              {suggestions.map((channel) => (
+                <div key={channel.id} className="updates-suggest-row">
+                  <button type="button" className="status-row-main updates-channel" onClick={() => onOpenChannels?.(channel.id)}>
+                    <span className="updates-channel-icon" aria-hidden="true">{channel.name.slice(0, 1).toUpperCase()}</span>
+                    <span className="status-row-text"><strong>{channel.name}</strong><small>{followerCount(channel.followers)}</small></span>
+                  </button>
+                  <button type="button" className="updates-follow" onClick={() => follow(channel.id)}>Follow</button>
+                  <button type="button" className="updates-suggest-hide" onClick={() => hideSuggestion(channel.id)} aria-label={`Hide ${channel.name}`}><X size={16} /></button>
+                </div>
+              ))}
+            </>
+          )}
+          <button type="button" className="updates-channels-find updates-channels-button" onClick={() => onOpenChannels?.()}>Explore more</button>
+          <button type="button" className="updates-channels-button is-quiet" onClick={() => onOpenChannels?.(':create')}>Create channel</button>
         </section>
       </div>
 

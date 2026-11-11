@@ -1,7 +1,7 @@
 // Business tools, laid out like a business messenger's: manage the business (profile, catalog, hours, labels)
 // and messaging tools (greeting, away, quick replies). Profile, hours and auto-replies share /api/v1/business.
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { CalendarClock, ChevronRight, Clock, Copy, FolderOpen, Hand, ImagePlus, Link2, MessageSquareText, Pencil, Plus, QrCode, Share2, ShoppingBag, Store, Tag, Trash2, X, Zap } from 'lucide-react';
+import { CalendarClock, ChevronRight, Clock, Copy, FolderOpen, Hand, ImagePlus, Link2, Megaphone, MessageSquareText, Pencil, Plus, QrCode, Share2, ShoppingBag, Store, Tag, Trash2, X, Zap } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { useChatStore } from '../../store.js';
 import { apiFetch } from '../../api.js';
@@ -11,23 +11,28 @@ import { LABEL_PALETTE, labelColor } from '../../labels.js';
 import { CatalogImage, formatPrice } from './ProductCard.jsx';
 import Panel, { Notice } from './Panel.jsx';
 
+// Grouped the way a business messenger's Tools tab is: selling, organising chats, then the business itself.
 const GROUPS = [
-  ['Manage your business', [
-    { id: 'profile', label: 'Business profile', detail: 'Category, description, address, email and website', icon: Store },
+  ['Sell and promote', [
     { id: 'catalog', label: 'Catalog', detail: 'Show products and services', icon: ShoppingBag },
-    { id: 'hours', label: 'Business hours', detail: 'When you’re open, shown on your profile', icon: CalendarClock },
-    { id: 'labels', label: 'Labels', detail: 'Organise chats and customers', icon: Tag },
-    { id: 'link', label: 'Short link', detail: 'A link and QR code that open a chat with you', icon: QrCode },
+    { id: 'broadcasts', label: 'Broadcast lists', detail: 'One message to many customers', icon: Megaphone, sheet: 'broadcasts' },
   ]],
-  ['Messaging', [
+  ['Organise chats', [
+    { id: 'labels', label: 'Labels', detail: 'Organise chats and customers', icon: Tag },
     { id: 'greeting', label: 'Greeting message', detail: 'Welcome new customers automatically', icon: Hand },
     { id: 'away', label: 'Away message', detail: 'Reply automatically when you’re away', icon: Clock },
     { id: 'quick', label: 'Quick replies', detail: 'Type / in a chat to reuse messages', icon: Zap },
   ]],
+  ['Your business', [
+    { id: 'profile', label: 'Business profile', detail: 'Category, description, address, email and website', icon: Store },
+    { id: 'hours', label: 'Business hours', detail: 'When you’re open, shown on your profile', icon: CalendarClock },
+    { id: 'link', label: 'Short link', detail: 'A link and QR code that open a chat with you', icon: QrCode },
+  ]],
 ];
-export const BUSINESS_SECTIONS = GROUPS.flatMap(([, items]) => items);
+export const BUSINESS_SECTIONS = GROUPS.flatMap(([, items]) => items).filter((item) => !item.sheet);
 
-export default function BusinessTools({ token, userId, onClose, initialSection = null }) {
+// inline: the Tools tab (the menu sits in the tab; each tool opens full screen over it).
+export default function BusinessTools({ token, userId, onClose, onSheet, initialSection = null, inline = false }) {
   const [section, setSection] = useState(initialSection);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -39,7 +44,7 @@ export default function BusinessTools({ token, userId, onClose, initialSection =
   const current = BUSINESS_SECTIONS.find((item) => item.id === section);
   const feedback = { onError: (message) => { setNotice(''); setError(message); }, onNotice: (message) => { setError(''); setNotice(message); } };
   return (
-    <Panel title={current?.label ?? 'Business tools'} onClose={onClose} onBack={section ? () => { setSection(null); setError(''); } : undefined}>
+    <Panel inline={inline && !section} title={current?.label ?? (inline ? 'Tools' : 'Business tools')} onClose={onClose} onBack={section && !initialSection ? () => { setSection(null); setError(''); } : undefined}>
       <Notice error={error} notice={notice} />
       {!section && GROUPS.map(([title, items]) => (
         <section key={title} className="hm-menu-group">
@@ -47,7 +52,7 @@ export default function BusinessTools({ token, userId, onClose, initialSection =
           <ul className="hm-menu-list">
             {items.map((item) => (
               <li key={item.id}>
-                <button type="button" onClick={() => setSection(item.id)}>
+                <button type="button" onClick={() => (item.sheet ? onSheet?.(item.sheet) : setSection(item.id))}>
                   <item.icon size={22} aria-hidden="true" />
                   <span><strong>{item.label}</strong><small>{item.detail}</small></span>
                   <ChevronRight size={16} aria-hidden="true" />

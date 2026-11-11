@@ -158,11 +158,11 @@ function DeleteAccount({ sessionToken, username, onDeleted }) {
 }
 
 // section "account": security, linked devices, account info, deletion. section "privacy": who sees what, status, app lock.
-export default function AccountSettings({ onClose, section = 'account', onOpenSheet, onAccountDeleted }) {
+export default function AccountSettings({ onClose, section = 'account', initialView = null, onOpenSheet, onAccountDeleted }) {
   const username = useChatStore((state) => state.user?.username ?? '');
   const [scanning, setScanning] = useState(false);
   const sessionToken = useChatStore((state) => state.sessionToken);
-  const [view, setView] = useState(null);
+  const [view, setView] = useState(initialView);
   // Android Back leaves a sub-screen first; the screen itself is closed by its opener.
   useBackHandler(Boolean(view), () => setView(null));
   const [devices, setDevices] = useState(null);

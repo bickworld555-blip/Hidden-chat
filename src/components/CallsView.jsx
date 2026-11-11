@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Phone, Video, ArrowDownLeft, ArrowUpRight, Heart, PhoneCall, Search, X } from 'lucide-react';
+import { Phone, Video, ArrowDownLeft, ArrowUpRight, Heart, Link2, PhoneCall, Search, X } from 'lucide-react';
 import { useChatStore } from '../store.js';
 import { formatViewerTimestamp } from '../time.js';
 import { groupCallLogs } from '../callLogGroups.js';
@@ -54,9 +54,9 @@ function ContactPicker({ title, chats, onClose, onPick, onCall }) {
   );
 }
 
-// Calls tab: Favourites (shared with the Favourites chat filter) with one-tap voice and video, the Recent list
+// Calls tab: shortcuts (new call, call links, favourites), Favourites (shared with the Favourites chat filter) with one-tap voice and video, the Recent list
 // (back-to-back calls with the same person are one row with a count), and a new-call button.
-export default function CallsView({ onCall }) {
+export default function CallsView({ onCall, onSheet }) {
   const callLogs = useChatStore((state) => state.callLogs);
   const chats = useChatStore((state) => state.chats);
   const favouriteChatIds = useChatStore((state) => state.favouriteChatIds ?? []);
@@ -71,7 +71,13 @@ export default function CallsView({ onCall }) {
     <div className="calls-view-container">
       <div className="calls-header"><h2>Calls</h2></div>
       <div className="calls-list-content">
-        <h3 className="calls-section">Favourites</h3>
+        {/* Shortcuts in a row of round buttons, as on a business messenger's Calls tab. */}
+        <div className="calls-quick" role="toolbar" aria-label="Call shortcuts">
+          <button type="button" onClick={() => setPicker('call')}><span className="calls-quick-icon" aria-hidden="true"><Phone size={22} /></span>Call</button>
+          <button type="button" onClick={() => onSheet?.('calllinks')}><span className="calls-quick-icon" aria-hidden="true"><Link2 size={22} /></span>Link</button>
+          <button type="button" className="calls-add-favourite" onClick={() => setPicker('favourite')}><span className="calls-quick-icon" aria-hidden="true"><Heart size={22} /></span>Favourites</button>
+        </div>
+        {favourites.length > 0 && <h3 className="calls-section">Favourites</h3>}
         {favourites.map((chat) => {
           const name = nameOf(chat);
           return (
@@ -85,10 +91,6 @@ export default function CallsView({ onCall }) {
             </div>
           );
         })}
-        <button type="button" className="call-log-item calls-add-favourite" onClick={() => setPicker('favourite')}>
-          <span className="calls-add-icon" aria-hidden="true"><Heart size={20} /></span>
-          <span className="call-log-details"><strong>Add favourite</strong></span>
-        </button>
 
         <h3 className="calls-section">Recent</h3>
         {rows.length === 0 && (

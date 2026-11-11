@@ -1,6 +1,6 @@
 import { setMediaSaveEnabled, useMediaSave } from '../mediaSave.js';
 import { nativeShell } from '../native.js';
-import { Accessibility, ArrowLeft, Bell, Check, ChevronRight, Contrast, CornerDownLeft, ListChecks, Type, CircleHelp, Clock, DatabaseBackup, Download, HardDrive, Image, KeyRound, Languages, Link2, Lock, LogOut, Megaphone, MessageSquare, Moon, Pencil, Radio, ScanFace, ShieldCheck, Smile, Sparkles, Star, Store, Sun, UserPlus, Users, Video, X } from 'lucide-react';
+import { Accessibility, ArrowLeft, MonitorSmartphone, QrCode, Bell, Check, ChevronRight, Contrast, CornerDownLeft, ListChecks, Type, CircleHelp, Clock, DatabaseBackup, Download, HardDrive, Image, KeyRound, Languages, Link2, Lock, LogOut, Megaphone, MessageSquare, Moon, Pencil, Radio, ScanFace, ShieldCheck, Smile, Sparkles, Star, Store, Sun, UserPlus, Users, Video, X } from 'lucide-react';
 import { useChatStore } from '../store.js';
 import { WALLPAPERS, setWallpaper, useWallpaper } from '../wallpaper.js';
 import { setEnterSends, useEnterSends } from '../enterSends.js';
@@ -241,6 +241,7 @@ export default function ToolsView({ darkMode, onToggleTheme, onLogout, onNotific
           <div className="user-profile-card">
             <ProfilePhoto size="large" />
             <DisplayNameEditor user={user} userId={userId} />
+            <button type="button" className="profile-qr-btn" onClick={() => onSheet?.('shortlink')} aria-label="QR code" title="Your QR code and short link"><QrCode size={20} /></button>
             <button type="button" className="account-switch-btn" onClick={() => onAccounts?.()} aria-label="Switch account" title="Switch account">
               <Users size={18} />
               {accounts.length > 1 && <span className="account-switch-count">{accounts.length}</span>}
@@ -257,12 +258,16 @@ export default function ToolsView({ darkMode, onToggleTheme, onLogout, onNotific
           )}
         </div>
 
-        <div className="tools-section">
-          <Item icon={Store} title="Business tools" detail="Profile, catalog, labels, away messages" onClick={onBusinessTools} />
-        </div>
+        {/* On the phone, business tools are their own tab (Tools); on a computer they stay here. */}
+        {!onBack && (
+          <div className="tools-section">
+            <Item icon={Store} title="Business tools" detail="Profile, catalog, labels, away messages" onClick={onBusinessTools} />
+          </div>
+        )}
 
         <div className="tools-section">
-          <Item icon={KeyRound} title="Account" detail="Two-step verification, linked devices" onClick={() => onAccountSettings?.('account')} />
+          <Item icon={MonitorSmartphone} title="Linked devices" detail="Use your account on a computer" onClick={() => onAccountSettings?.('devices')} />
+          <Item icon={KeyRound} title="Account" detail="Security, two-step, delete account" onClick={() => onAccountSettings?.('account')} />
           <Item icon={Lock} title="Privacy" detail="Last seen, read receipts, status, app lock" onClick={() => onAccountSettings?.('privacy')} />
           <Item icon={Smile} title="Avatar" detail="Create, edit, use in video calls" onClick={() => setPage('avatar')} />
           <Item icon={ListChecks} title="Lists" detail="Your own lists of people and groups" onClick={() => onSheet?.('lists')} />

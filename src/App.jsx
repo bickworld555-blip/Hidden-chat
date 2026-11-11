@@ -915,16 +915,19 @@ export default function App() {
       <div className="workspace">
         {activeTab === 'chats' ? (
           showMobileList || !chat
-            ? <ChatsList onOpenChat={openChat} onStartCall={initiateCall} onGroups={openGroups} groups={groupRows} onOpenGroup={(id) => openGroups(false, id)} onSettings={() => setActiveTab('tools')} onSheet={setParitySheet} />
+            ? <ChatsList onOpenChat={openChat} onStartCall={initiateCall} onGroups={openGroups} groups={groupRows} onOpenGroup={(id) => openGroups(false, id)} onSettings={() => setActiveTab('tools')}
+              onSheet={(id) => (id === 'linked' ? setAccountSettingsOpen('devices') : setParitySheet(id))} />
             : <ChatWindow key={chat.id} chat={chat} connection={connection} client={client} onPair={() => setPairingOpen(true)} onBack={() => setMobileListOpen(true)} onStartCall={(mode) => initiateCall(chat.id, mode)} onGroups={openGroups} />
         ) : activeTab === 'calls' ? (
-          <CallsView onCall={initiateCall} />
+          <CallsView onCall={initiateCall} onSheet={setParitySheet} />
         ) : activeTab === 'updates' ? (
           <UpdatesView onOpenChannels={(id) => { setChannelToOpen(id ?? ''); setParitySheet('channels'); }} />
+        ) : activeTab === 'business' && sessionToken ? (
+          <BusinessTools inline token={sessionToken} userId={userId} onSheet={setParitySheet} onClose={() => setActiveTab('chats')} />
         ) : activeTab === 'communities' && sessionToken ? (
           <CommunitiesView inline token={sessionToken} revision={groupRevision} onClose={() => setActiveTab('chats')} onOpenGroup={(id) => openGroups(false, id)} />
         ) : activeTab === 'tools' ? (
-          <ToolsView darkMode={darkMode} onToggleTheme={toggleTheme} onLogout={() => { logout(); }} onNotifications={() => setNotificationsOpen(true)} onAccountSettings={(section) => setAccountSettingsOpen(section === 'privacy' ? 'privacy' : 'account')} onAccounts={() => setAccountsOpen(true)} onAvatarStudio={() => setAvatarStudioOpen(true)} onGroups={() => openGroups()}
+          <ToolsView darkMode={darkMode} onToggleTheme={toggleTheme} onLogout={() => { logout(); }} onNotifications={() => setNotificationsOpen(true)} onAccountSettings={(section) => setAccountSettingsOpen(section === 'privacy' || section === 'devices' ? section : 'account')} onAccounts={() => setAccountsOpen(true)} onAvatarStudio={() => setAvatarStudioOpen(true)} onGroups={() => openGroups()}
             onCommunities={() => setParitySheet('communities')} onBusinessTools={() => setParitySheet('business')} onStarred={() => setParitySheet('starred')}
             onBackup={() => setParitySheet('backup')} onStorage={() => setParitySheet('storage')} onSheet={setParitySheet} isAdmin={isAdmin} onBack={isMobile ? () => setActiveTab('chats') : undefined} />
         ) : null}
@@ -935,12 +938,13 @@ export default function App() {
       {fatalError && <div className="status-toast"><Bell size={15} /><span>{fatalError}</span><button onClick={() => setFatalError('')}>Dismiss</button></div>}
       {pairingOpen && user && <PairingModal onClose={() => setPairingOpen(false)} token={sessionToken} userId={userId} />}
       {notificationsOpen && <NotificationSettings onClose={() => setNotificationsOpen(false)} />}
-      {accountSettingsOpen && <AccountSettings section={accountSettingsOpen === 'privacy' ? 'privacy' : 'account'} onClose={() => setAccountSettingsOpen(false)}
+      {accountSettingsOpen && <AccountSettings section={accountSettingsOpen === 'privacy' ? 'privacy' : 'account'} initialView={accountSettingsOpen === 'devices' ? 'devices' : null} onClose={() => setAccountSettingsOpen(false)}
         onOpenSheet={(id) => { setAccountSettingsOpen(false); setParitySheet(id); }} onAccountDeleted={() => { setAccountSettingsOpen(false); logout(); }} />}
       {accountsOpen && <AccountSwitcher busyId={switchingId} onSwitch={switchAccount} onRemove={removeAccountFromDevice} onAdd={() => { setAccountsOpen(false); setAuthOpen(true); }} onClose={() => setAccountsOpen(false)} />}
       {avatarStudioOpen && <AvatarStudio onClose={() => setAvatarStudioOpen(false)} />}
       {sessionToken && paritySheet === 'communities' && <CommunitiesView token={sessionToken} revision={groupRevision} onClose={() => setParitySheet(null)} onOpenGroup={(id) => { setParitySheet(null); openGroups(false, id); }} />}
-      {sessionToken && paritySheet === 'business' && <BusinessTools token={sessionToken} userId={userId} onClose={() => setParitySheet(null)} />}
+      {sessionToken && paritySheet === 'shortlink' && <BusinessTools token={sessionToken} userId={userId} initialSection="link" onClose={() => setParitySheet(null)} />}
+      {sessionToken && paritySheet === 'business' && <BusinessTools token={sessionToken} userId={userId} onSheet={setParitySheet} onClose={() => setParitySheet(null)} />}
       {sessionToken && paritySheet === 'starred' && <StarredMessages token={sessionToken} userId={userId} onClose={() => setParitySheet(null)}
         onOpenChat={(id) => { setParitySheet(null); openChat({ id }); }} onOpenGroup={(id) => { setParitySheet(null); openGroups(false, id); }} />}
       {sessionToken && paritySheet === 'backup' && <BackupView token={sessionToken} onClose={() => setParitySheet(null)} />}

@@ -5087,3 +5087,38 @@ textarea.hm-input { min-height: 96px; resize: vertical; }
 .hm-panel-body:has(> .hm-channel-feed) { display: flex; flex-direction: column; padding-bottom: 0; }
 .hm-panel-body > .hm-channel-feed { flex: 1 0 auto; }
 .hm-storage-section > h4 { margin: 0; color: var(--wa-sub, #5b6b82); font-size: 14px; font-weight: 600; }
+
+/* ===== Layout measured on the business messenger (structure only; our own colours and icons) ============
+   Rows: 72-76px, icon column 72px, title 16px, subtitle 14px, no dividers. Text-only settings rows sit on a
+   24px inset; round shortcuts are 56px with a 12px label. */
+.app-shell .user-profile-section, .dark-theme .user-profile-section { padding: 8px 16px 12px; background: transparent; border-bottom: 0; }
+.app-shell .user-profile-card, .dark-theme .user-profile-card { gap: 16px; padding: 4px 0; border: 0; border-radius: 0; background: transparent; }
+.profile-qr-btn { display: grid; place-items: center; flex: none; width: 44px; height: 44px; border: 0; border-radius: 50%; background: transparent; color: var(--wa-green, #2563eb); cursor: pointer; }
+.profile-qr-btn:hover { background: rgba(134, 150, 160, .12); }
+.app-shell .user-profile-card .account-switch-btn { width: 36px; height: 36px; background: transparent; color: var(--wa-sub); }
+.app-shell .tools-section, .app-shell.dark-theme .tools-section { border-bottom: 0; }
+.app-shell .tools-section + .tools-section { border-top: 1px solid var(--line); }
+.app-shell.dark-theme .tools-section + .tools-section { border-top-color: #2d343d; }
+.app-shell .tool-item, .app-shell.dark-theme .tool-item { min-height: 72px; gap: 0; padding: 10px 16px; border-bottom: 0; }
+.app-shell .tool-item > svg:first-child { flex: none; width: 24px; margin: 0 32px 0 4px; color: var(--wa-sub); }
+.app-shell .tool-item-info strong { font-size: 16px; font-weight: 500; }
+.app-shell .tool-item-info small { font-size: 14px; }
+.wa-info-section > h3 { margin: 12px 24px 6px; }
+.wa-info-row { padding: 12px 24px; }
+
+/* Calls: a row of round shortcuts above the list. */
+.calls-quick { display: flex; justify-content: space-evenly; gap: 8px; padding: 8px 12px 14px; }
+.calls-quick button { display: flex; flex-direction: column; align-items: center; gap: 8px; width: 76px; padding: 0; border: 0; background: transparent; color: var(--wa-text); font: inherit; font-size: 12.5px; cursor: pointer; }
+.calls-quick-icon { display: grid; place-items: center; width: 56px; height: 56px; border-radius: 50%; background: var(--wa-chip, #e8eef8); color: var(--wa-green, #2563eb); }
+.calls-quick button:hover .calls-quick-icon { filter: brightness(.96); }
+
+/* Updates: channel suggestions with a Follow pill, then Explore more / Create channel. */
+.updates-suggest-title { margin: 14px 16px 4px; color: var(--wa-text); font-size: 15px; font-weight: 600; }
+.updates-suggest-row { display: flex; align-items: center; gap: 6px; padding-right: 12px; }
+.updates-suggest-row .updates-channel { flex: 1; min-width: 0; }
+.updates-follow { flex: none; min-width: 84px; height: 36px; padding: 0 16px; border: 0; border-radius: 18px; background: var(--wa-chip-active, #d6e4ff); color: var(--wa-chip-active-text, #0b4bb3); font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; }
+.updates-suggest-hide { display: grid; place-items: center; flex: none; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--wa-sub); cursor: pointer; }
+.updates-channels-button { display: block; width: calc(100% - 32px); margin: 10px 16px 0; padding: 11px 16px; border: 1px solid var(--line); border-radius: 22px; background: transparent; color: var(--wa-green, #2563eb); font: inherit; font-size: 15px; font-weight: 600; cursor: pointer; }
+.updates-channels-button.is-quiet { border-color: transparent; }
+.dark-theme .updates-channels-button { border-color: #353c44; }
+.dark-theme .updates-channels-button.is-quiet { border-color: transparent; }

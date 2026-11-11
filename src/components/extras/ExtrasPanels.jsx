@@ -165,9 +165,10 @@ export function Channels({ token, onClose, initialChannelId = '' }) {
   const [mine, setMine] = useState([]);
   const [found, setFound] = useState([]);
   const [query, setQuery] = useState('');
-  const [openId, setOpenId] = useState(initialChannelId);
+  // ':create' opens straight on the new-channel form (Updates › Create channel).
+  const [openId, setOpenId] = useState(initialChannelId === ':create' ? '' : initialChannelId);
   const [channel, setChannel] = useState(null);
-  const [creating, setCreating] = useState(null);
+  const [creating, setCreating] = useState(initialChannelId === ':create' ? { name: '', description: '', category: 'other' } : null);
   const [post, setPost] = useState('');
   const [error, setError] = useState('');
 
