@@ -210,6 +210,8 @@ const PREFERENCES = {
   chatThemes: 'themes',
   // Locked chats (src/chatLock.js): row keys (peer id or "group:<id>"), kept on this device.
   lockedChatIds: 'locked',
+  // Custom chat lists ("Customers", "VIP"…): { [listId]: { name, keys: [peer id or "group:<id>"], createdAt } }.
+  chatLists: 'lists',
 };
 
 function toggleId(ids, id) {
@@ -251,6 +253,8 @@ export const useChatStore = create((setState, getState) => ({
   // Saved contacts whose thread was deleted from the chat list; they stay available in the contact picker.
   hiddenContacts: [],
   messages: {},
+  messageJump: null,
+  chatLists: {},
   callLogs: [],
   pinnedChatIds: [],
   mutedChatIds: [],
@@ -689,6 +693,24 @@ export const useChatStore = create((setState, getState) => ({
   },
   toggleLockedChat(key) {
     getState().setPreference('lockedChatIds', (ids) => toggleId(ids ?? [], key));
+  },
+  // Opening a search result: the chat window scrolls to this message once it is showing that chat.
+  requestMessageJump(chatId, messageId) { setState({ messageJump: { chatId, messageId, at: Date.now() } }); },
+  clearMessageJump() { setState({ messageJump: null }); },
+  saveChatList(listId, { name, keys }) {
+    const id = listId || `list-${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+    getState().setPreference('chatLists', (lists) => ({ ...(lists ?? {}), [id]: { name: String(name).trim().slice(0, 40), keys: [...new Set(keys)], createdAt: lists?.[id]?.createdAt ?? Date.now() } }));
+    return id;
+  },
+  deleteChatList(listId) {
+    getState().setPreference('chatLists', (lists) => Object.fromEntries(Object.entries(lists ?? {}).filter(([id]) => id !== listId)));
+  },
+  toggleChatInList(listId, key) {
+    getState().setPreference('chatLists', (lists) => {
+      const list = lists?.[listId];
+      if (!list) return lists;
+      return { ...lists, [listId]: { ...list, keys: list.keys.includes(key) ? list.keys.filter((item) => item !== key) : [...list.keys, key] } };
+    });
   },
   toggleFavouriteChat(chatId) {
     getState().setPreference('favouriteChatIds', (ids) => toggleId(ids, chatId));

@@ -18,6 +18,9 @@ export const MAX_SCHEDULED_PER_USER = 100;
 export const MAX_SCHEDULE_AHEAD_MS = 366 * 24 * 60 * 60 * 1000;
 export const STATUS_AUDIENCES = ['contacts', 'except', 'only'];
 export const CHANNEL_REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
+/** Directory categories (the owner picks one; "other" when unset). */
+export const CHANNEL_CATEGORIES = ['business', 'news', 'entertainment', 'sports', 'lifestyle', 'education', 'technology', 'community', 'other'];
+export const MAX_CHANNEL_ADMINS = 16;
 
 export function ensureExtrasSchema(db) {
   db.exec(`CREATE TABLE IF NOT EXISTS broadcast_lists (id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, name TEXT NOT NULL, created_at INTEGER NOT NULL)`);
@@ -26,6 +29,9 @@ export function ensureExtrasSchema(db) {
   db.exec(`CREATE TABLE IF NOT EXISTS channel_followers (channel_id TEXT NOT NULL, user_id TEXT NOT NULL, followed_at INTEGER NOT NULL, PRIMARY KEY (channel_id, user_id))`);
   db.exec(`CREATE TABLE IF NOT EXISTS channel_posts (id TEXT PRIMARY KEY, channel_id TEXT NOT NULL, author_id TEXT NOT NULL, content TEXT NOT NULL, created_at INTEGER NOT NULL)`);
   db.exec(`CREATE TABLE IF NOT EXISTS channel_reactions (post_id TEXT NOT NULL, user_id TEXT NOT NULL, emoji TEXT NOT NULL, PRIMARY KEY (post_id, user_id))`);
+  // Directory categories and admins (Postgres: 015_channel_directory.sql).
+  db.exec(`CREATE TABLE IF NOT EXISTS channel_admins (channel_id TEXT NOT NULL, user_id TEXT NOT NULL, added_at INTEGER NOT NULL, PRIMARY KEY (channel_id, user_id))`);
+  if (!new Set(db.prepare('PRAGMA table_info(channels)').all().map((column) => column.name)).has('category')) db.exec("ALTER TABLE channels ADD COLUMN category TEXT NOT NULL DEFAULT 'other'");
   db.exec(`CREATE TABLE IF NOT EXISTS scheduled_messages (id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, receiver_id TEXT NOT NULL, content TEXT NOT NULL, send_at INTEGER NOT NULL, created_at INTEGER NOT NULL)`);
   db.exec(`CREATE TABLE IF NOT EXISTS status_audience_members (owner_id TEXT NOT NULL, user_id TEXT NOT NULL, PRIMARY KEY (owner_id, user_id))`);
   db.exec(`CREATE TABLE IF NOT EXISTS call_links (code TEXT PRIMARY KEY, owner_id TEXT NOT NULL, mode TEXT NOT NULL, created_at INTEGER NOT NULL, revoked_at INTEGER)`);
@@ -108,12 +114,18 @@ export function registerExtras({ app, db, requireSession, broadcastUser, publicU
 
   // --- Channels ---------------------------------------------------------------------------------------------
   async function channelView(channelId, viewerId) {
-    const channel = await db.prepare(`SELECT c.id, c.owner_id AS "ownerId", c.name, c.description, c.created_at AS "createdAt",
+    const channel = await db.prepare(`SELECT c.id, c.owner_id AS "ownerId", c.name, c.description, c.category, c.created_at AS "createdAt",
         (SELECT count(*) FROM channel_followers f WHERE f.channel_id = c.id) AS "followers",
-        EXISTS (SELECT 1 FROM channel_followers f WHERE f.channel_id = c.id AND f.user_id = ?) AS "following"
-      FROM channels c WHERE c.id = ?`).get(viewerId, channelId);
+        EXISTS (SELECT 1 FROM channel_followers f WHERE f.channel_id = c.id AND f.user_id = ?) AS "following",
+        EXISTS (SELECT 1 FROM channel_admins a WHERE a.channel_id = c.id AND a.user_id = ?) AS "admin"
+      FROM channels c WHERE c.id = ?`).get(viewerId, viewerId, channelId);
     if (!channel) return null;
-    return { ...channel, createdAt: Number(channel.createdAt), followers: Number(channel.followers), following: Boolean(Number(channel.following)) || channel.following === true, mine: channel.ownerId === viewerId };
+    const mine = channel.ownerId === viewerId;
+    const admin = !mine && (Boolean(Number(channel.admin)) || channel.admin === true);
+    // mine = owner (edits, deletes, manages admins); admins post and delete updates too.
+    const { admin: _admin, ...rest } = channel;
+    return { ...rest, category: CHANNEL_CATEGORIES.includes(channel.category) ? channel.category : 'other', createdAt: Number(channel.createdAt), followers: Number(channel.followers),
+      following: Boolean(Number(channel.following)) || channel.following === true, mine, role: mine ? 'owner' : admin ? 'admin' : null, canPost: mine || admin };
   }
 
   async function postsOf(channelId, viewerId) {
@@ -130,13 +142,15 @@ export function registerExtras({ app, db, requireSession, broadcastUser, publicU
   async function notifyFollowers(channelId, event) {
     const followers = await db.prepare('SELECT user_id AS "userId" FROM channel_followers WHERE channel_id = ?').all(channelId);
     const owner = await db.prepare('SELECT owner_id AS "ownerId" FROM channels WHERE id = ?').get(channelId);
-    for (const id of new Set([...followers.map((row) => row.userId), owner?.ownerId].filter(Boolean))) broadcastUser(id, event);
+    const admins = await db.prepare('SELECT user_id AS "userId" FROM channel_admins WHERE channel_id = ?').all(channelId);
+    for (const id of new Set([...followers.map((row) => row.userId), ...admins.map((row) => row.userId), owner?.ownerId].filter(Boolean))) broadcastUser(id, event);
   }
 
   app.get('/api/v1/channels', requireSession, async (request, response) => {
     const userId = request.session.user_id;
     const rows = await db.prepare(`SELECT c.id FROM channels c WHERE c.owner_id = ?
-      OR EXISTS (SELECT 1 FROM channel_followers f WHERE f.channel_id = c.id AND f.user_id = ?) ORDER BY c.created_at DESC`).all(userId, userId);
+      OR EXISTS (SELECT 1 FROM channel_admins a WHERE a.channel_id = c.id AND a.user_id = ?)
+      OR EXISTS (SELECT 1 FROM channel_followers f WHERE f.channel_id = c.id AND f.user_id = ?) ORDER BY c.created_at DESC`).all(userId, userId, userId);
     const out = [];
     for (const row of rows) out.push(await channelView(row.id, userId));
     response.json(out);
@@ -144,8 +158,10 @@ export function registerExtras({ app, db, requireSession, broadcastUser, publicU
 
   app.get('/api/v1/channels/discover', requireSession, async (request, response) => {
     const query = cleanText(String(request.query.q ?? ''), 60).toLowerCase();
-    const rows = await db.prepare(`SELECT c.id FROM channels c WHERE lower(c.name) LIKE ? ORDER BY
-      (SELECT count(*) FROM channel_followers f WHERE f.channel_id = c.id) DESC, c.created_at DESC LIMIT 30`).all(`%${query.replace(/[%_]/g, '')}%`);
+    const category = CHANNEL_CATEGORIES.includes(request.query.category) ? request.query.category : '';
+    const rows = await db.prepare(`SELECT c.id FROM channels c WHERE (lower(c.name) LIKE ? OR lower(c.description) LIKE ?)${category ? ' AND c.category = ?' : ''} ORDER BY
+      (SELECT count(*) FROM channel_followers f WHERE f.channel_id = c.id) DESC, c.created_at DESC LIMIT 50`)
+      .all(...[`%${query.replace(/[%_]/g, '')}%`, `%${query.replace(/[%_]/g, '')}%`, ...(category ? [category] : [])]);
     const out = [];
     for (const row of rows) out.push(await channelView(row.id, request.session.user_id));
     response.json(out);
@@ -155,8 +171,9 @@ export function registerExtras({ app, db, requireSession, broadcastUser, publicU
     const name = cleanText(request.body?.name, 80);
     if (!name) return fail(response, 400, 'Give the channel a name.');
     const id = randomUUID();
-    await db.prepare('INSERT INTO channels(id, owner_id, name, description, created_at) VALUES (?, ?, ?, ?, ?)')
-      .run(id, request.session.user_id, name, cleanText(request.body?.description, 500), Date.now());
+    const category = CHANNEL_CATEGORIES.includes(request.body?.category) ? request.body.category : 'other';
+    await db.prepare('INSERT INTO channels(id, owner_id, name, description, category, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(id, request.session.user_id, name, cleanText(request.body?.description, 500), category, Date.now());
     response.status(201).json(await channelView(id, request.session.user_id));
   });
 
@@ -171,7 +188,9 @@ export function registerExtras({ app, db, requireSession, broadcastUser, publicU
     if (!channel?.mine) return fail(response, channel ? 403 : 404, channel ? 'Only the channel owner can edit it.' : 'Channel not found.');
     const name = cleanText(request.body?.name, 80) || channel.name;
     const description = request.body?.description === undefined ? channel.description : cleanText(request.body.description, 500);
-    await db.prepare('UPDATE channels SET name = ?, description = ? WHERE id = ?').run(name, description, channel.id);
+    const category = request.body?.category === undefined ? channel.category : CHANNEL_CATEGORIES.includes(request.body.category) ? request.body.category : null;
+    if (!category) return fail(response, 400, 'Choose one of the channel categories.');
+    await db.prepare('UPDATE channels SET name = ?, description = ?, category = ? WHERE id = ?').run(name, description, category, channel.id);
     response.json(await channelView(channel.id, request.session.user_id));
   });
 
@@ -181,7 +200,39 @@ export function registerExtras({ app, db, requireSession, broadcastUser, publicU
     await db.prepare('DELETE FROM channel_reactions WHERE post_id IN (SELECT id FROM channel_posts WHERE channel_id = ?)').run(channel.id);
     await db.prepare('DELETE FROM channel_posts WHERE channel_id = ?').run(channel.id);
     await db.prepare('DELETE FROM channel_followers WHERE channel_id = ?').run(channel.id);
+    await db.prepare('DELETE FROM channel_admins WHERE channel_id = ?').run(channel.id);
     await db.prepare('DELETE FROM channels WHERE id = ?').run(channel.id);
+    response.status(204).end();
+  });
+
+  app.get('/api/v1/channels/:id/admins', requireSession, async (request, response) => {
+    const channel = await channelView(request.params.id, request.session.user_id);
+    if (!channel?.canPost) return fail(response, channel ? 403 : 404, channel ? 'Only the channel owner and admins can see this.' : 'Channel not found.');
+    const rows = await db.prepare(`SELECT u.id, u.username, u.name, u.initials, u.color FROM channel_admins a JOIN users u ON u.id = a.user_id
+      WHERE a.channel_id = ? ORDER BY a.added_at`).all(channel.id);
+    const owner = await db.prepare('SELECT id, username, name, initials, color FROM users WHERE id = ?').get(channel.ownerId);
+    response.json({ owner, admins: rows });
+  });
+
+  app.post('/api/v1/channels/:id/admins', requireSession, async (request, response) => {
+    const channel = await channelView(request.params.id, request.session.user_id);
+    if (!channel?.mine) return fail(response, channel ? 403 : 404, channel ? 'Only the channel owner can add admins.' : 'Channel not found.');
+    const username = cleanText(String(request.body?.username ?? ''), 40).replace(/^@/, '').toLowerCase();
+    const user = username && await db.prepare('SELECT id FROM users WHERE lower(username) = ?').get(username);
+    if (!user) return fail(response, 404, `No one is called @${username || '…'}.`);
+    if (user.id === channel.ownerId) return fail(response, 400, 'The owner already manages this channel.');
+    const count = Number((await db.prepare('SELECT count(*) AS "count" FROM channel_admins WHERE channel_id = ?').get(channel.id))?.count ?? 0);
+    if (count >= MAX_CHANNEL_ADMINS) return fail(response, 400, `A channel can have up to ${MAX_CHANNEL_ADMINS} admins.`);
+    await db.prepare('INSERT INTO channel_admins(channel_id, user_id, added_at) VALUES (?, ?, ?) ON CONFLICT DO NOTHING').run(channel.id, user.id, Date.now());
+    broadcastUser(user.id, { type: 'channel:admin', channelId: channel.id, channelName: channel.name });
+    response.status(201).json({ ok: true });
+  });
+
+  app.delete('/api/v1/channels/:id/admins/:userId', requireSession, async (request, response) => {
+    const channel = await channelView(request.params.id, request.session.user_id);
+    const self = request.params.userId === request.session.user_id;
+    if (!channel || (!channel.mine && !(self && channel.role === 'admin'))) return fail(response, channel ? 403 : 404, channel ? 'Only the channel owner can remove admins.' : 'Channel not found.');
+    await db.prepare('DELETE FROM channel_admins WHERE channel_id = ? AND user_id = ?').run(channel.id, request.params.userId);
     response.status(204).end();
   });
 
@@ -198,7 +249,7 @@ export function registerExtras({ app, db, requireSession, broadcastUser, publicU
 
   app.post('/api/v1/channels/:id/posts', requireSession, async (request, response) => {
     const channel = await channelView(request.params.id, request.session.user_id);
-    if (!channel?.mine) return fail(response, channel ? 403 : 404, channel ? 'Only the channel owner can post.' : 'Channel not found.');
+    if (!channel?.canPost) return fail(response, channel ? 403 : 404, channel ? 'Only the channel owner and admins can post.' : 'Channel not found.');
     const content = typeof request.body?.content === 'string' ? request.body.content.trim() : '';
     if (!content || content.length > MAX_CHANNEL_POST || isEnvelope(content)) return fail(response, 400, `Write up to ${MAX_CHANNEL_POST} characters.`);
     const post = { id: randomUUID(), content, createdAt: Date.now() };
@@ -209,7 +260,7 @@ export function registerExtras({ app, db, requireSession, broadcastUser, publicU
 
   app.delete('/api/v1/channels/:id/posts/:postId', requireSession, async (request, response) => {
     const channel = await channelView(request.params.id, request.session.user_id);
-    if (!channel?.mine) return fail(response, channel ? 403 : 404, channel ? 'Only the channel owner can delete posts.' : 'Channel not found.');
+    if (!channel?.canPost) return fail(response, channel ? 403 : 404, channel ? 'Only the channel owner and admins can delete updates.' : 'Channel not found.');
     await db.prepare('DELETE FROM channel_reactions WHERE post_id = ?').run(request.params.postId);
     const removed = await db.prepare('DELETE FROM channel_posts WHERE id = ? AND channel_id = ? RETURNING id').get(request.params.postId, channel.id);
     if (!removed) return fail(response, 404, 'Post not found.');

@@ -149,19 +149,36 @@ export default function UpdatesView({ onOpenChannels }) {
 }
 
 // A reply goes to the author's chat, end-to-end encrypted, quoting the status (src/e2e/client.js statusReply).
+// One tap sends a reaction to the author's chat (quoting the status, end-to-end encrypted, like a reply).
+export const STATUS_REACTIONS = ['😍', '😂', '😮', '😢', '👏', '🙏', '🔥', '❤️'];
+
 function StatusReply({ status, authorId, onFocus, onBlur, onSent }) {
   const [text, setText] = useState('');
+  const [sent, setSent] = useState('');
   const sendMessage = useChatStore((state) => state.sendMessage);
   const quote = statusKind(status.content);
+  const statusReply = (extra = {}) => ({ statusReply: { kind: quote.kind, text: quote.kind === 'text' ? quote.text.slice(0, 200) : '', ...extra } });
   function send(event) {
     event.preventDefault();
     if (!text.trim() || !authorId) return;
-    sendMessage(authorId, text.trim(), { statusReply: { kind: quote.kind, text: quote.kind === 'text' ? quote.text.slice(0, 200) : '' } });
+    sendMessage(authorId, text.trim(), statusReply());
     setText('');
     onSent?.();
   }
+  function react(emoji) {
+    if (!authorId) return;
+    sendMessage(authorId, emoji, statusReply({ reaction: true }));
+    setSent(emoji);
+  }
+  useEffect(() => { setSent(''); }, [status.id]);
   return (
     <form className="status-reply" onSubmit={send} onPointerDown={(event) => event.stopPropagation()}>
+      <div className="status-reactions" role="group" aria-label="Quick reactions">
+        {STATUS_REACTIONS.map((emoji) => (
+          <button key={emoji} type="button" className={sent === emoji ? 'is-sent' : ''} onClick={() => react(emoji)} aria-label={`React ${emoji}`} aria-pressed={sent === emoji}>{emoji}</button>
+        ))}
+      </div>
+      {sent && <p className="status-reaction-sent" role="status">Reaction sent</p>}
       <input value={text} maxLength={4000} placeholder="Reply" onFocus={onFocus} onBlur={onBlur} onChange={(event) => setText(event.target.value)} aria-label="Reply to this status" />
       <button type="submit" disabled={!text.trim()} aria-label="Send reply"><Send size={18} /></button>
     </form>

@@ -129,9 +129,9 @@ test('chat export: one line per message, edits marked, deleted messages left out
 });
 
 test('chat rows: archive and label actions; group rows use "group:<id>" keys', () => {
-  assert.deepEqual(chatRowActions({ id: 'p' }, { archived: true }).map((action) => action.id), ['open', 'pin', 'mute', 'favourite', 'archive', 'label', 'lock', 'select', 'delete']);
+  assert.deepEqual(chatRowActions({ id: 'p' }, { archived: true }).map((action) => action.id), ['open', 'pin', 'mute', 'favourite', 'archive', 'label', 'list', 'lock', 'select', 'delete']);
   assert.equal(chatRowActions({ id: 'p' }, { archived: true }).find((action) => action.id === 'archive').label, 'Unarchive chat');
-  assert.deepEqual(chatRowActions({ kind: 'group', id: 'g' }).map((action) => action.id), ['open', 'archive', 'label', 'lock']);
+  assert.deepEqual(chatRowActions({ kind: 'group', id: 'g' }).map((action) => action.id), ['open', 'archive', 'label', 'list', 'lock']);
   assert.equal(rowChatKey({ kind: 'group', id: 'g' }), 'group:g');
   assert.equal(rowChatKey({ id: 'p' }), 'p');
   assert.equal(LABEL_PALETTE.length, 20, 'matches the server limit of 20 colours');

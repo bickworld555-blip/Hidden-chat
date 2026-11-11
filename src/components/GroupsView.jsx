@@ -19,7 +19,8 @@ import { GroupAdminSettings, JoinGroupSheet, MemberAdminActions, inviteCodeFrom 
 import { searchPeople } from '../contactsApi.js';
 import { uploadFile } from '../upload.js';
 import { attachmentContent, sealForUpload } from '../mediaCrypto.js';
-import { groupEncryption, openGroupMessages, sendGroupContent } from '../e2e/client.js';
+import { groupEncryption, sendGroupContent } from '../e2e/client.js';
+import { fetchGroupMessages } from '../groupHistory.js';
 import { isMediaContent } from '../media.js';
 import { MAX_CALL_PARTICIPANTS } from '../callRoom.js';
 import { groupPreviewText, unreadBadge } from '../groupRows.js';
@@ -45,9 +46,8 @@ async function groupRequest(token, path, options = {}) {
     const row = await sendGroupContent(id, plain, (content) => rawGroupRequest(token, path, { ...options, body: { ...options.body, content } }));
     return row ? { ...row, content: plain } : row;
   }
-  const result = await rawGroupRequest(token, path, options);
-  if (groupId && (options.method ?? 'GET') === 'GET' && Array.isArray(result)) return openGroupMessages(decodeURIComponent(groupId), result);
-  return result;
+  if (groupId && (options.method ?? 'GET') === 'GET') return fetchGroupMessages(token, decodeURIComponent(groupId), { signal: options.signal });
+  return rawGroupRequest(token, path, options);
 }
 
 async function rawGroupRequest(token, path, { method = 'GET', body, signal } = {}) {

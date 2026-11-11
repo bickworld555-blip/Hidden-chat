@@ -195,7 +195,7 @@ test('contact-book helpers: split, suggestions and exact handle matching', () =>
 });
 
 test('row actions and delete wording follow the saved/unsaved distinction', () => {
-  assert.deepEqual(chatRowActions({ id: 'x' }, { pinned: true, muted: false, favourite: true }).map((a) => a.label), ['Open chat', 'Unpin chat', 'Mute notifications', 'Remove from favourites', 'Archive chat', 'Label chat', 'Lock chat', 'Select chats', 'Delete chat']);
+  assert.deepEqual(chatRowActions({ id: 'x' }, { pinned: true, muted: false, favourite: true }).map((a) => a.label), ['Open chat', 'Unpin chat', 'Mute notifications', 'Remove from favourites', 'Archive chat', 'Label chat', 'Add to list', 'Lock chat', 'Select chats', 'Delete chat']);
   assert.equal(chatRowActions({ id: 'x' }).find((a) => a.id === 'delete').danger, true);
   assert.match(deleteChatPrompt({ name: 'Sam', saved: true }).body, /stays in your contacts/);
   assert.match(deleteChatPrompt({ name: 'Dee', saved: false }).body, /not in your contacts/);

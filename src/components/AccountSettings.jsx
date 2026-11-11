@@ -178,7 +178,7 @@ export default function AccountSettings({ onClose }) {
       <SubView title="Linked devices" onBack={() => { setScanning(false); setView(null); }}>
         {scanning ? (
           <LinkScanner token={sessionToken} onCancel={() => setScanning(false)}
-            onDone={(name) => { setScanning(false); setNotice(`${name} is linked. Your recent chats were sent to it end-to-end encrypted.`); loadDevices(); }} />
+            onDone={(name, result) => { setScanning(false); setNotice(result?.historySent ? `${name} is linked. All your chats were sent to it end-to-end encrypted.` : `${name} is linked. Your chat history was not sent; new messages will show on both.`); loadDevices(); }} />
         ) : (
           <>
             <button type="button" className="link-device-button" onClick={() => setScanning(true)}>Link a device</button>

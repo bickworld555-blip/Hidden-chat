@@ -49,6 +49,7 @@ import FormattedText from './FormattedText.jsx';
 import ComposerMirror from './ComposerMirror.jsx';
 import { hasFormatting } from '../textFormat.js';
 import { useWallpaper } from '../wallpaper.js';
+import { enterSends } from '../enterSends.js';
 import VoiceRecorderBar from './VoiceRecorderBar.jsx';
 import { presenceLine } from '../presence.js';
 import PendingUpload from './PendingUpload.jsx';
@@ -124,7 +125,7 @@ function TextWithPreview({ content, sessionToken, meta, message }) {
   const card = href ? <LinkPreview href={href} sessionToken={sessionToken} preview={message?.linkPreview ?? null} fetchAllowed={!message?.e2e} /> : null;
   // A reply to a status quotes it (the quote travels inside the encryption).
   const reply = message?.statusReply;
-  const quote = reply ? <p className="status-reply-quote"><strong>Status</strong> · {reply.kind === 'text' ? reply.text : reply.kind === 'video' ? '🎥 Video' : '📷 Photo'}</p> : null;
+  const quote = reply ? <p className="status-reply-quote"><strong>{reply.reaction ? 'Reacted to a status' : 'Status'}</strong> · {reply.kind === 'text' ? reply.text : reply.kind === 'video' ? '🎥 Video' : '📷 Photo'}</p> : null;
   const onlyLink = Boolean(href) && bareLink(content) === bareLink(href);
   if (onlyLink) {
     return (
@@ -1223,6 +1224,15 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
     });
   }
 
+  // The message box grows with its text up to six lines, then scrolls.
+  useLayoutEffect(() => {
+    const box = composerInputRef.current;
+    if (!box || box.tagName !== 'TEXTAREA') return;
+    box.style.height = 'auto';
+    const line = parseFloat(getComputedStyle(box).lineHeight) || 22;
+    box.style.height = `${Math.min(box.scrollHeight, line * 6 + 8)}px`;
+  }, [text]);
+
   function handleSubmit(event) {
     event.preventDefault();
     const content = text.trim();
@@ -1249,6 +1259,16 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
   handlersRef.current = { reactTo, startReply, showInChat };
   const stableStartReply = useCallback((target) => handlersRef.current.startReply(target), []);
   const stableShowInChat = useCallback((messageId) => handlersRef.current.showInChat(messageId), []);
+  // A search result opened this chat: scroll to that message (after the first paint of the chat).
+  const messageJump = useChatStore((state) => state.messageJump);
+  useEffect(() => {
+    if (!messageJump || messageJump.chatId !== chatId) return undefined;
+    const timer = setTimeout(() => {
+      handlersRef.current.showInChat(messageJump.messageId);
+      useChatStore.getState().clearMessageJump();
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [messageJump, chatId]);
   const messageList = useMemo(() => {
     if (!chat) return null;
     let lastDay = '';
@@ -1740,8 +1760,12 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
             <div className="composer">
               <button type="button" className={`composer-icon${emojiOpen ? ' toggled' : ''}`} onClick={() => setEmojiOpen((open) => !open)} aria-label="Emoji" aria-expanded={emojiOpen} disabled={busy}><Smile size={20} /></button>
               {hasFormatting(text) && <ComposerMirror inputRef={composerInputRef} text={text} />}
-              <input ref={composerInputRef} className={hasFormatting(text) ? 'has-mirror' : undefined} value={text} onChange={(event) => { setCaret(event.target.selectionStart ?? event.target.value.length); handleTextChange(event); }}
-                onSelect={(event) => setCaret(event.target.selectionStart ?? 0)} onKeyDown={(event) => { if (event.key === 'Escape' && editing) { event.preventDefault(); cancelEdit(); } }}
+              <textarea ref={composerInputRef} rows={1} className={`composer-input${hasFormatting(text) ? ' has-mirror' : ''}`} value={text} onChange={(event) => { setCaret(event.target.selectionStart ?? event.target.value.length); handleTextChange(event); }}
+                onSelect={(event) => setCaret(event.target.selectionStart ?? 0)} onKeyDown={(event) => {
+                  if (event.key === 'Escape' && editing) { event.preventDefault(); cancelEdit(); return; }
+                  // Computers: Enter sends, Shift+Enter starts a new line. Phones: Enter is a new line; the button sends.
+                  if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && enterSends()) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); }
+                }}
                 placeholder={translate(editing ? 'Edit message' : 'Message', language)} maxLength={COMPOSER_MAX_LENGTH} />
               <button type="button" className="composer-icon" onClick={() => setMenuOpen(true)} aria-label="Attach" disabled={busy}><Paperclip size={20} /></button>
               {action === 'voice' && (

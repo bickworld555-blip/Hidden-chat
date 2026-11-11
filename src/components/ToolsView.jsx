@@ -1,8 +1,9 @@
 import { setMediaSaveEnabled, useMediaSave } from '../mediaSave.js';
 import { nativeShell } from '../native.js';
-import { ArrowLeft, Bell, Check, ChevronRight, CircleDashed, CircleHelp, Clock, DatabaseBackup, Download, EyeOff, HardDrive, Image, KeyRound, Languages, Link2, Lock, LogOut, Megaphone, MessageSquare, Moon, Pencil, Radio, ScanFace, ShieldCheck, Smile, Sparkles, Star, Store, Sun, UserPlus, Users, Video, X } from 'lucide-react';
+import { ArrowLeft, Bell, Check, ChevronRight, CornerDownLeft, ListChecks, CircleDashed, CircleHelp, Clock, DatabaseBackup, Download, EyeOff, HardDrive, Image, KeyRound, Languages, Link2, Lock, LogOut, Megaphone, MessageSquare, Moon, Pencil, Radio, ScanFace, ShieldCheck, Smile, Sparkles, Star, Store, Sun, UserPlus, Users, Video, X } from 'lucide-react';
 import { useChatStore } from '../store.js';
 import { WALLPAPERS, setWallpaper, useWallpaper } from '../wallpaper.js';
+import { setEnterSends, useEnterSends } from '../enterSends.js';
 import ProfilePhoto from './ProfilePhoto.jsx';
 import Avatar from './Avatar.jsx';
 import { useAccounts } from '../accounts.js';
@@ -134,6 +135,7 @@ export default function ToolsView({ darkMode, onToggleTheme, onLogout, onNotific
   const mediaSave = useMediaSave();
   const inApp = nativeShell();
   const wallpaper = useWallpaper();
+  const enterIsSend = useEnterSends();
   const openHelp = () => { window.open(HELP_CENTER_URL, '_blank', 'noopener'); };
 
   const pages = {
@@ -163,6 +165,7 @@ export default function ToolsView({ darkMode, onToggleTheme, onLogout, onNotific
           detail={!animations ? 'Off while Animation is off' : callAnimations ? 'Ringing pulse, connect and picture-in-picture transitions during calls' : 'Call screens switch instantly, without motion'}
           onClick={() => setCallAnimationsEnabled(!callAnimations)} />
         <h3>Chat settings</h3>
+        <Item icon={CornerDownLeft} title="Enter is send" checked={enterIsSend} detail={enterIsSend ? 'Enter sends your message; Shift+Enter starts a new line' : 'Enter starts a new line; tap the send button to send'} onClick={() => setEnterSends(!enterIsSend)} />
         <Item icon={Download} title="Media Save" checked={mediaSave && Boolean(inApp)} disabled={!inApp}
           detail={!inApp ? 'In the Android app: save received photos, videos and files to the phone' : mediaSave ? 'On · received media is saved to Download/Hidden Messenger' : 'Off · received media stays in the chat until you tap download'}
           onClick={() => setMediaSaveEnabled(!mediaSave)} />
@@ -246,6 +249,7 @@ export default function ToolsView({ darkMode, onToggleTheme, onLogout, onNotific
           <Item icon={KeyRound} title="Account" detail="Security, password, two-step verification, linked devices" onClick={onAccountSettings} />
           <Item icon={Lock} title="Privacy" detail="Last seen, status, call links" onClick={() => setPage('privacy')} />
           <Item icon={Smile} title="Avatar" detail="Create, edit, use in video calls" onClick={() => setPage('avatar')} />
+          <Item icon={ListChecks} title="Lists" detail="Manage people and groups in your own lists" onClick={() => onSheet?.('lists')} />
           <Item icon={MessageSquare} title="Chats" detail="Theme, animations, media save, backup" onClick={() => setPage('chats')} />
           <Item icon={Bell} title="Notifications" detail="Message, group and call tones" onClick={onNotifications} />
           <Item icon={HardDrive} title="Storage and data" detail="Manage storage, photo upload quality" onClick={onStorage} />

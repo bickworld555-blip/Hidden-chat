@@ -30,7 +30,16 @@ export default function FormattedText({ text = '', inline = false, markers = fal
   if (!text) return null;
   if (!hasFormatting(text)) return links ? <LinkText text={text} /> : text;
   if (markers) return <Nodes nodes={parseInline(text)} markers />;
-  if (inline) return <Nodes nodes={parseInline(text.replace(/\s*\n\s*/g, ' '))} links={false} />;
+  if (inline) {
+    // One line: quotes lose their "> ", list items get "•", lines are joined with spaces.
+    return parseBlocks(text).map((line, index) => (
+      <Fragment key={index}>
+        {index > 0 && ' '}
+        {line.kind === 'code' ? line.text.replace(/\s+/g, ' ')
+          : <>{line.kind === 'bullet' ? '• ' : line.kind === 'number' ? `${line.number}. ` : ''}<Nodes nodes={line.nodes} links={false} /></>}
+      </Fragment>
+    ));
+  }
   const lines = parseBlocks(text);
   return lines.map((line, index) => {
     const last = index === lines.length - 1;

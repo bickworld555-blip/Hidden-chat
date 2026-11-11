@@ -179,3 +179,35 @@ test('poll votes and reactions travel sealed: the server stores ciphertext, devi
   sa.close();
   sb.close();
 });
+
+test('channel directory browses by category; the owner adds admins who can post, others cannot', async () => {
+  const owner = await user('chown');
+  const helper = await user('chadmin');
+  const reader = await user('chread');
+  const made = (await api('/api/v1/channels', { token: owner.token, method: 'POST', body: { name: 'Dhaka Football', description: 'Match day news', category: 'sports' } })).body;
+  assert.deepEqual([made.category, made.role, made.canPost], ['sports', 'owner', true]);
+  assert.equal((await api('/api/v1/channels', { token: owner.token, method: 'POST', body: { name: 'No Category' } })).body.category, 'other', 'unknown or missing category is "other"');
+  const sports = (await api('/api/v1/channels/discover?category=sports', { token: reader.token })).body;
+  assert.ok(sports.some((item) => item.id === made.id) && sports.every((item) => item.category === 'sports'));
+  assert.equal((await api('/api/v1/channels/discover?category=news', { token: reader.token })).body.some((item) => item.id === made.id), false);
+  assert.ok((await api('/api/v1/channels/discover?q=match', { token: reader.token })).body.some((item) => item.id === made.id), 'descriptions are searched too');
+  assert.equal((await api(`/api/v1/channels/${made.id}`, { token: owner.token, method: 'PUT', body: { category: 'nonsense' } })).status, 400);
+
+  // Only the owner adds admins; admins post and delete updates but cannot manage admins or delete the channel.
+  assert.equal((await api(`/api/v1/channels/${made.id}/admins`, { token: reader.token, method: 'POST', body: { username: reader.user.username } })).status, 403);
+  assert.equal((await api(`/api/v1/channels/${made.id}/admins`, { token: owner.token, method: 'POST', body: { username: 'nobody_here_x' } })).status, 404);
+  assert.equal((await api(`/api/v1/channels/${made.id}/admins`, { token: owner.token, method: 'POST', body: { username: `@${helper.user.username}` } })).status, 201);
+  const asAdmin = (await api(`/api/v1/channels/${made.id}`, { token: helper.token })).body;
+  assert.deepEqual([asAdmin.role, asAdmin.canPost, asAdmin.mine], ['admin', true, false]);
+  assert.ok((await api('/api/v1/channels', { token: helper.token })).body.some((item) => item.id === made.id), 'admins see the channel in their list');
+  const post = await api(`/api/v1/channels/${made.id}/posts`, { token: helper.token, method: 'POST', body: { content: 'Kick-off at 7' } });
+  assert.equal(post.status, 201);
+  assert.equal((await api(`/api/v1/channels/${made.id}/posts`, { token: reader.token, method: 'POST', body: { content: 'spam' } })).status, 403);
+  assert.equal((await api(`/api/v1/channels/${made.id}/admins`, { token: helper.token, method: 'POST', body: { username: reader.user.username } })).status, 403);
+  assert.equal((await api(`/api/v1/channels/${made.id}`, { token: helper.token, method: 'DELETE' })).status, 403);
+  const listed = (await api(`/api/v1/channels/${made.id}/admins`, { token: owner.token })).body;
+  assert.deepEqual([listed.owner.id, listed.admins.map((item) => item.id)], [owner.user.id, [helper.user.id]]);
+  // An admin can step down; then they can no longer post.
+  assert.equal((await api(`/api/v1/channels/${made.id}/admins/${helper.user.id}`, { token: helper.token, method: 'DELETE' })).status, 204);
+  assert.equal((await api(`/api/v1/channels/${made.id}/posts`, { token: helper.token, method: 'POST', body: { content: 'again' } })).status, 403);
+});

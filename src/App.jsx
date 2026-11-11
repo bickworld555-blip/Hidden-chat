@@ -62,6 +62,7 @@ const Channels = lazyComponent(extrasPanels, (module) => module.Channels);
 const ScheduledMessages = lazyComponent(extrasPanels, (module) => module.ScheduledMessages);
 const CallLinks = lazyComponent(extrasPanels, (module) => module.CallLinks);
 const InviteFriend = lazyComponent(() => import('./components/parity/InviteFriend.jsx'));
+const ListsManager = lazyComponent(() => import('./components/ChatLists.jsx'), (module) => module.ListsManager);
 const JoinCallLink = lazyComponent(extrasPanels, (module) => module.JoinCallLink);
 const StatusPrivacy = lazyComponent(extrasPanels, (module) => module.StatusPrivacy);
 const LanguageSettings = lazyComponent(() => import('./components/extras/LanguageSettings.jsx'));
@@ -660,11 +661,13 @@ export default function App() {
     if (!sessionToken || !userId) return undefined;
     let cancelled = false;
     const timer = setTimeout(() => {
-      takePendingHistory().then((data) => {
-        if (cancelled || !data) return;
-        // Throws when the snapshot is damaged or belongs to another account (then nothing is merged).
-        validateBackupData(data, userId);
-        useChatStore.getState().restoreBackup(data);
+      // Parts arrive newest first; each is merged as it comes (a damaged or foreign part is skipped).
+      takePendingHistory(async (data) => {
+        if (cancelled) return;
+        try {
+          validateBackupData(data, userId);
+          useChatStore.getState().restoreBackup(data);
+        } catch { /* skip this part */ }
       }).catch(() => { /* the chats still arrive as new messages come in */ });
     }, 1500);
     return () => { cancelled = true; clearTimeout(timer); };
@@ -910,6 +913,7 @@ export default function App() {
       {sessionToken && paritySheet === 'broadcasts' && <BroadcastLists token={sessionToken} onClose={() => setParitySheet(null)} />}
       {sessionToken && paritySheet === 'channels' && <Channels token={sessionToken} initialChannelId={channelToOpen} onClose={() => { setParitySheet(null); setChannelToOpen(''); }} />}
       {sessionToken && paritySheet === 'scheduled' && <ScheduledMessages token={sessionToken} userId={userId} onClose={() => setParitySheet(null)} />}
+      {sessionToken && paritySheet === 'lists' && <ListsManager groups={groupRows} onClose={() => setParitySheet(null)} />}
       {sessionToken && paritySheet === 'invite' && <InviteFriend username={useChatStore.getState().user?.username} onClose={() => setParitySheet(null)} />}
       {sessionToken && paritySheet === 'calllinks' && <CallLinks token={sessionToken} onClose={() => setParitySheet(null)} />}
       {sessionToken && paritySheet === 'statusprivacy' && <StatusPrivacy token={sessionToken} onClose={() => setParitySheet(null)} />}

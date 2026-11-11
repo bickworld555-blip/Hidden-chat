@@ -4882,3 +4882,58 @@ canvas.recording-wave { color: #5d6662; }
 /* Chat header: long names end in an ellipsis (the name line was a flex box, which ignores text-overflow). */
 .app-shell .conversation-person > span:not(.avatar) { flex: 1; min-width: 0; }
 .app-shell .conversation-person strong { display: block; max-width: 100%; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Message box: a growing textarea (up to six lines). */
+.composer textarea.composer-input { flex: 1; min-width: 0; max-height: calc(6 * 1.4em + 8px); margin: 0; padding: 9px 4px; border: 0; outline: 0; resize: none; overflow-y: auto; background: transparent; color: var(--wa-text, var(--ink)); font: inherit; font-size: 15px; line-height: 1.4; }
+.app-shell.is-mobile .composer textarea.composer-input { font-size: 16px; padding: 12px 4px; }
+.composer { align-items: flex-end; }
+.composer > .composer-icon { align-self: flex-end; }
+.composer-mirror.is-multiline { align-items: flex-start; white-space: pre-wrap; overflow-wrap: break-word; }
+.composer textarea.has-mirror { position: relative; z-index: 1; color: transparent; -webkit-text-fill-color: transparent; caret-color: var(--wa-text, var(--ink)); }
+.composer textarea.composer-input { scrollbar-width: none; } .composer textarea.composer-input::-webkit-scrollbar { display: none; }
+/* Status quick reactions: a row above the reply box (UpdatesView StatusReply). */
+.status-reply { flex-wrap: wrap; bottom: calc(18px + env(safe-area-inset-bottom, 0px)); }
+.status-reactions { display: flex; justify-content: space-between; gap: 4px; flex-basis: 100%; }
+.status-reactions button { flex: 1; max-width: 48px; aspect-ratio: 1; display: grid; place-items: center; border: 0; border-radius: 50%; background: rgba(4, 12, 28, .45); font-size: 22px; cursor: pointer; transition: transform .15s ease; }
+.status-reactions button:active, .status-reactions button.is-sent { transform: scale(1.25); background: rgba(37, 99, 235, .55); }
+@media (prefers-reduced-motion: reduce) { .status-reactions button { transition: none; } }
+.status-reaction-sent { flex-basis: 100%; margin: 0; text-align: center; color: #fff; font-size: 13px; text-shadow: 0 1px 2px #000a; }
+/* Search across chats (MessageSearch.jsx) */
+.wa-search-filters button { display: inline-flex; align-items: center; gap: 6px; }
+.wa-message-result { width: 100%; border: 0; background: none; text-align: left; font: inherit; color: inherit; cursor: pointer; }
+.wa-message-result .wa-row-body { padding-left: 4px; }
+.wa-message-result mark { background: color-mix(in srgb, var(--wa-green, #2563eb) 30%, transparent); color: inherit; border-radius: 3px; padding: 0 1px; }
+.wa-result-you { color: var(--wa-sub); }
+.wa-result-kind { vertical-align: -2px; margin-right: 4px; color: var(--wa-sub); }
+/* Custom chat lists (ChatLists.jsx) */
+.wa-chips .wa-chip-add { display: grid; place-items: center; width: 34px; padding: 0; }
+.chat-list-picker { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.chat-list-picker label, .chat-list-pick { display: flex; align-items: center; gap: 12px; width: 100%; padding: 8px 4px; border: 0; background: none; color: var(--wa-text); font: inherit; text-align: left; cursor: pointer; }
+.chat-list-picker label input { width: 18px; height: 18px; accent-color: var(--wa-green, #2563eb); }
+.chat-list-picker label span:last-child, .chat-list-pick span:nth-child(2) { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-list-pick small { color: var(--wa-sub); }
+.chat-list-check { display: grid; place-items: center; width: 22px; height: 22px; border: 2px solid var(--wa-sub); border-radius: 6px; color: #fff; }
+.chat-list-check.is-on { border-color: var(--wa-green, #2563eb); background: var(--wa-green, #2563eb); }
+.chat-list-new { display: flex; align-items: flex-end; gap: 8px; margin-top: 12px; }
+.chat-list-new label { flex: 1; }
+.wa-group-avatar.small { width: 36px; height: 36px; }
+.groups-secondary { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 10px 16px; border: 1px solid var(--wa-line); border-radius: 8px; background: none; color: var(--wa-text); font: inherit; cursor: pointer; }
+/* Channel directory categories and admins */
+.hm-channel-categories { padding: 0 0 8px; }
+.hm-channel-admins { list-style: none; margin: 8px 0; padding: 0; display: grid; gap: 8px; }
+.hm-channel-admins li { display: flex; align-items: center; gap: 12px; }
+.hm-channel-admins li > span:nth-child(2) { flex: 1; min-width: 0; display: grid; }
+.hm-channel-admins small { color: var(--wa-sub); }
+.hm-channel-info .hm-channel-follow + .hm-channel-follow { margin-top: 6px; }
+/* Linking: security code for the typed-code path, and history progress */
+.link-fingerprint { margin: 4px 0 0; font-size: 13px; color: var(--muted, #5b6b82); }
+.link-fingerprint strong { font-family: ui-monospace, Consolas, monospace; letter-spacing: .04em; color: inherit; }
+.link-verify { display: grid; gap: 8px; margin: 8px 0; padding: 12px; border-radius: 10px; background: color-mix(in srgb, var(--wa-green, #2563eb) 10%, transparent); }
+.link-verify p { margin: 0; font-size: 13.5px; }
+.link-fingerprint-big { font-family: ui-monospace, Consolas, monospace; font-size: 20px; letter-spacing: .06em; text-align: center; }
+.link-verify label { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+.link-progress { margin: 6px 0; font-weight: 600; color: var(--wa-green, #2563eb); }
+.hm-channel-tags { display: flex; gap: 6px; margin: 2px 0 0; }
+.hm-channel-tags span { padding: 2px 8px; border-radius: 10px; background: color-mix(in srgb, var(--wa-green, #2563eb) 14%, transparent); color: var(--wa-text); font-size: 12px; font-weight: 600; }
+
+.composer-mirror.is-multiline { display: block; box-sizing: border-box; }
+.composer-mirror-text { white-space: inherit; }

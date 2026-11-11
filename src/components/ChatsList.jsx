@@ -16,6 +16,8 @@ import Avatar from './Avatar.jsx';
 import SelectContactModal from './SelectContactModal.jsx';
 import ShieldMark from './ShieldMark.jsx';
 import FormattedText from './FormattedText.jsx';
+import MessageSearch, { SearchFilterChips } from './MessageSearch.jsx';
+import { ListEditor, ListPicker, listEntries } from './ChatLists.jsx';
 import { countUnreadConversations, mergeGroupRows, unreadBadge } from '../groupRows.js';
 
 function GroupListRow({ row, onOpen, pressHandlers, labels = [], consumeLongPress = () => false }) {
@@ -84,6 +86,13 @@ export default function ChatsList({ onOpenChat, onStartCall, onGroups, groups = 
   const [cameraError, setCameraError] = useState('');
   const cameraInputRef = useRef(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const chatLists = useChatStore((state) => state.chatLists);
+  const [listTarget, setListTarget] = useState(null);
+  const [listEditor, setListEditor] = useState(null);
+  // Search across chats: kind filters show while the search box is in use (MessageSearch.jsx).
+  const [searchFilter, setSearchFilter] = useState('');
+  const [searchFocus, setSearchFocus] = useState(false);
+  const searching = Boolean(searchFocus || searchQuery.trim() || searchFilter);
   const [searchResults, setSearchResults] = useState([]);
   const [searchError, setSearchError] = useState('');
   const [isSearching, setIsSearching] = useState(false);
@@ -95,7 +104,8 @@ export default function ChatsList({ onOpenChat, onStartCall, onGroups, groups = 
   const isSelectionMode = selectedChatIds.length > 0;
   useEffect(() => {
     if (filterTab.startsWith('label:') && !labels.some((label) => `label:${label.id}` === filterTab)) setFilterTab('all');
-  }, [filterTab, labels]);
+    if (filterTab.startsWith('list:') && !chatLists?.[filterTab.slice(5)]) setFilterTab('all');
+  }, [filterTab, labels, chatLists]);
 
   const normalizedQuery = searchQuery.trim().toLowerCase();
   const chats = useMemo(
@@ -188,6 +198,7 @@ export default function ChatsList({ onOpenChat, onStartCall, onGroups, groups = 
     else if (actionId === 'archive') archiveRows([chat], !archivedSet.has(rowChatKey(chat)));
     else if (actionId === 'lock') lockRow(chat);
     else if (actionId === 'label') setLabelTarget(chat);
+    else if (actionId === 'list') setListTarget({ key: chat.kind === 'group' ? `group:${chat.id}` : chat.id, name: chat.name });
     else if (actionId === 'delete') setPendingDelete([chat]);
   }
 
@@ -287,7 +298,8 @@ export default function ChatsList({ onOpenChat, onStartCall, onGroups, groups = 
 
   const inFolder = (key) => (showLocked ? lockedSet.has(key) : !lockedSet.has(key) && (showArchived ? archivedSet.has(key) : !archivedSet.has(key)));
   const activeLabel = filterTab.startsWith('label:') ? labels.find((label) => label.id === filterTab.slice(6)) : null;
-  const labelled = (key) => !activeLabel || activeLabel.chatKeys.includes(key);
+  const activeList = filterTab.startsWith('list:') ? chatLists?.[filterTab.slice(5)] : null;
+  const labelled = (key) => (!activeLabel || activeLabel.chatKeys.includes(key)) && (!activeList || activeList.keys.includes(key));
   // Search never reveals a locked chat unless the locked folder is open.
   const searchable = (key) => (showLocked ? lockedSet.has(key) : !lockedSet.has(key));
   const folderChats = normalizedQuery ? sortedChats.filter((chat) => searchable(chat.id)) : sortedChats.filter((chat) => inFolder(chat.id) && labelled(chat.id));
@@ -442,14 +454,17 @@ export default function ChatsList({ onOpenChat, onStartCall, onGroups, groups = 
             type="text"
             value={searchQuery}
             onChange={(event) => setSearchQuery(event.target.value)}
+            onFocus={() => setSearchFocus(true)}
+            onBlur={() => setTimeout(() => setSearchFocus(false), 150)}
             placeholder={t('Search or start new chat')}
             aria-label="Search chats or find people"
           />
-          {searchQuery && <button type="button" className="wa-icon-btn" onClick={() => setSearchQuery('')} aria-label="Clear search"><X size={16} /></button>}
+          {(searchQuery || searchFilter) && <button type="button" className="wa-icon-btn" onClick={() => { setSearchQuery(''); setSearchFilter(''); }} aria-label="Clear search"><X size={16} /></button>}
         </div>
       )}
+      {!isSelectionMode && searching && <SearchFilterChips filter={searchFilter} onChange={setSearchFilter} />}
 
-      {!isSelectionMode && !normalizedQuery && (
+      {!isSelectionMode && !normalizedQuery && !searching && (
         <div className="wa-chips" role="tablist">
           <button type="button" role="tab" aria-selected={filterTab === 'all'} className={filterTab === 'all' ? 'active' : ''} onClick={() => setFilterTab('all')}>All</button>
           <button type="button" role="tab" aria-selected={filterTab === 'unread'} className={filterTab === 'unread' ? 'active' : ''} onClick={() => setFilterTab('unread')}>
@@ -457,6 +472,11 @@ export default function ChatsList({ onOpenChat, onStartCall, onGroups, groups = 
           </button>
           <button type="button" role="tab" aria-selected={filterTab === 'favourites'} className={filterTab === 'favourites' ? 'active' : ''} onClick={() => setFilterTab('favourites')}>Favourites</button>
           <button type="button" role="tab" aria-selected={filterTab === 'groups'} className={filterTab === 'groups' ? 'active' : ''} onClick={() => setFilterTab('groups')}>Groups</button>
+          {listEntries(chatLists).map(([id, list]) => (
+            <button type="button" role="tab" key={id} aria-selected={filterTab === `list:${id}`} className={filterTab === `list:${id}` ? 'active' : ''}
+              onClick={() => setFilterTab(filterTab === `list:${id}` ? 'all' : `list:${id}`)} onContextMenu={(event) => { event.preventDefault(); setListEditor(id); }}>{list.name}</button>
+          ))}
+          <button type="button" className="wa-chip-add" onClick={() => setListEditor('')} aria-label="New list" title="New list"><Plus size={16} /></button>
           {labels.map((label) => (
             <button type="button" role="tab" key={label.id} aria-selected={filterTab === `label:${label.id}`} className={`wa-label-chip ${filterTab === `label:${label.id}` ? 'active' : ''}`}
               onClick={() => setFilterTab(filterTab === `label:${label.id}` ? 'all' : `label:${label.id}`)}>
@@ -492,7 +512,7 @@ export default function ChatsList({ onOpenChat, onStartCall, onGroups, groups = 
           </button>
         )}
         {showArchived && !normalizedQuery && <p className="wa-note">These chats stay archived when new messages arrive.</p>}
-        {visibleRows.map((chat) => {
+        {!searchFilter && visibleRows.map((chat) => {
           if (chat.kind === 'group') return <GroupListRow key={`group-${chat.id}`} row={chat} onOpen={onOpenGroup} labels={labelsFor(chat)} pressHandlers={rowPressHandlers(chat)} consumeLongPress={() => longPress.consumeFired()} />;
           const online = presence?.[chat.id] === 'online';
           const isSelected = selectedChatIds.includes(chat.id);
@@ -567,7 +587,11 @@ export default function ChatsList({ onOpenChat, onStartCall, onGroups, groups = 
           );
         })}
 
-        {normalizedQuery && (
+        <MessageSearch query={searchQuery} filter={searchFilter} groups={groups}
+          onOpenChat={(chatId, messageId) => { const target = chats.find((chat) => chat.id === chatId); if (!target) return; useChatStore.getState().requestMessageJump(chatId, messageId); onOpenChat?.(target); }}
+          onOpenGroup={(groupId) => onOpenGroup?.(groupId)} />
+
+        {normalizedQuery && !searchFilter && (
           <>
             <div className="wa-section-label">Find people on Hidden Messenger</div>
             {isSearching && <div className="wa-note">Searching…</div>}
@@ -626,6 +650,8 @@ export default function ChatsList({ onOpenChat, onStartCall, onGroups, groups = 
       )}
       {deleting && <div className="wa-list-toast" role="status">Deleting…</div>}
       {listNotice && <div className="wa-list-toast" role="status">{listNotice}</div>}
+      {listTarget && <ListPicker chatKey={listTarget.key} chatName={listTarget.name} groups={groups} onClose={() => setListTarget(null)} />}
+      {listEditor !== null && <ListEditor listId={listEditor} groups={groups} onClose={() => setListEditor(null)} onSaved={(id) => setFilterTab(`list:${id}`)} />}
       {labelTarget && (
         <div className="wa-sheet-backdrop" onClick={() => setLabelTarget(null)} role="presentation">
           <div className="wa-action-sheet" role="dialog" aria-label={`Labels for ${labelTarget.name}`} onClick={(event) => event.stopPropagation()}>

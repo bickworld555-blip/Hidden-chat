@@ -19,7 +19,7 @@ import { sanitizePreview } from '../linkPreviewParse.js';
 // What travels inside the encryption: { c: content, lp?: link preview made by the sender }.
 // A reply to a status carries a small quote of it: { kind: 'text' | 'image' | 'video', text }.
 const cleanStatusReply = (value) => (value && typeof value === 'object' && ['text', 'image', 'video', 'file'].includes(value.kind)
-  ? { kind: value.kind, text: typeof value.text === 'string' ? value.text.slice(0, 200) : '' } : null);
+  ? { kind: value.kind, text: typeof value.text === 'string' ? value.text.slice(0, 200) : '', ...(value.reaction === true ? { reaction: true } : {}) } : null);
 const innerOf = (content, extra = {}) => {
   const linkPreview = sanitizePreview(extra.linkPreview);
   const statusReply = cleanStatusReply(extra.statusReply);

@@ -6,7 +6,8 @@ export function chatRowActions(chat, { pinned = false, muted = false, favourite 
   const label = { id: 'label', label: 'Label chat' };
   const lock = { id: 'lock', label: locked ? 'Unlock chat' : 'Lock chat' };
   // Group rows: the group screen owns mute, delete and the rest.
-  if (chat?.kind === 'group') return [{ id: 'open', label: 'Open group' }, archive, label, lock];
+  const list = { id: 'list', label: 'Add to list' };
+  if (chat?.kind === 'group') return [{ id: 'open', label: 'Open group' }, archive, label, list, lock];
   return [
     { id: 'open', label: 'Open chat' },
     { id: 'pin', label: pinned ? 'Unpin chat' : 'Pin chat' },
@@ -14,6 +15,7 @@ export function chatRowActions(chat, { pinned = false, muted = false, favourite 
     { id: 'favourite', label: favourite ? 'Remove from favourites' : 'Add to favourites' },
     archive,
     label,
+    list,
     lock,
     { id: 'select', label: 'Select chats' },
     { id: 'delete', label: 'Delete chat', danger: true },

@@ -114,7 +114,53 @@ export function followerCount(count = 0) {
   return `${short} follower${n === 1 ? '' : 's'}`;
 }
 
+export const CHANNEL_CATEGORY_LABELS = { business: 'Business', news: 'News', entertainment: 'Entertainment', sports: 'Sports', lifestyle: 'Lifestyle', education: 'Education', technology: 'Technology', community: 'Community', other: 'Other' };
+
+// Owner: add admins by @username, remove them. Admin: step down. Admins post and delete updates.
+function ChannelAdmins({ token, channel, onBack, onClose, onChanged }) {
+  const [data, setData] = useState(null);
+  const [username, setUsername] = useState('');
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  const load = () => request(token, `/api/v1/channels/${channel.id}/admins`).then(setData).catch((caught) => setError(caught.message));
+  useEffect(() => { load(); }, [channel.id]);
+  async function run(task, done) {
+    setError(''); setNotice('');
+    try { await task(); setNotice(done); await load(); onChanged?.(); } catch (caught) { setError(caught.message); }
+  }
+  return (
+    <Panel title="Channel admins" subtitle={channel.name} onBack={onBack} onClose={onClose}>
+      <Notice error={error} notice={notice} />
+      <p className="hm-muted">Admins can post and delete updates. Only the owner can add or remove admins, edit the channel or delete it.</p>
+      {data && (
+        <ul className="hm-channel-admins">
+          <li><span className="hm-channel-avatar" aria-hidden="true">{(data.owner?.name || data.owner?.username || '?').slice(0, 1).toUpperCase()}</span><span><strong>{data.owner?.name || data.owner?.username}</strong><small>@{data.owner?.username} · Owner</small></span></li>
+          {data.admins.map((admin) => (
+            <li key={admin.id}>
+              <span className="hm-channel-avatar" aria-hidden="true">{(admin.name || admin.username).slice(0, 1).toUpperCase()}</span>
+              <span><strong>{admin.name || admin.username}</strong><small>@{admin.username} · Admin</small></span>
+              {channel.mine && <button type="button" className="groups-secondary" onClick={() => run(() => request(token, `/api/v1/channels/${channel.id}/admins/${admin.id}`, { method: 'DELETE' }), `@${admin.username} is no longer an admin.`)}>Remove</button>}
+            </li>
+          ))}
+        </ul>
+      )}
+      {channel.mine && (
+        <form className="hm-form chat-list-new" onSubmit={(event) => { event.preventDefault(); run(async () => { await request(token, `/api/v1/channels/${channel.id}/admins`, { method: 'POST', body: { username } }); setUsername(''); }, `@${username.replace(/^@/, '')} is now an admin.`); }}>
+          <label>Add admin<input value={username} maxLength={40} onChange={(event) => setUsername(event.target.value)} placeholder="@username" autoCapitalize="none" /></label>
+          <button type="submit" className="groups-primary" disabled={!username.trim()}>Add</button>
+        </form>
+      )}
+      {channel.role === 'admin' && (
+        <button type="button" className="groups-secondary" onClick={() => run(() => request(token, `/api/v1/channels/${channel.id}/admins/${channel.viewerId}`, { method: 'DELETE' }), 'You are no longer an admin.')}>Step down as admin</button>
+      )}
+    </Panel>
+  );
+}
+
 export function Channels({ token, onClose, initialChannelId = '' }) {
+  const viewerId = useChatStore((state) => state.userId);
+  const [category, setCategory] = useState('');
+  const [managingAdmins, setManagingAdmins] = useState(false);
   const wallpaper = useWallpaper();
   const [mine, setMine] = useState([]);
   const [found, setFound] = useState([]);
@@ -128,9 +174,9 @@ export function Channels({ token, onClose, initialChannelId = '' }) {
   const loadMine = () => request(token, '/api/v1/channels').then(setMine).catch((caught) => setError(caught.message));
   useEffect(() => { loadMine(); }, [token]);
   useEffect(() => {
-    const timer = setTimeout(() => request(token, `/api/v1/channels/discover?q=${encodeURIComponent(query)}`).then(setFound).catch(() => {}), 250);
+    const timer = setTimeout(() => request(token, `/api/v1/channels/discover?q=${encodeURIComponent(query)}${category ? `&category=${category}` : ''}`).then(setFound).catch(() => {}), 250);
     return () => clearTimeout(timer);
-  }, [token, query]);
+  }, [token, query, category]);
   const loadChannel = (id) => request(token, `/api/v1/channels/${id}`).then(setChannel).catch((caught) => setError(caught.message));
   useEffect(() => { if (openId) loadChannel(openId); else setChannel(null); }, [openId, token]);
 
@@ -146,6 +192,9 @@ export function Channels({ token, onClose, initialChannelId = '' }) {
         <p className="hm-muted">Channels are one-way broadcasts anyone can follow. Unlike chats, channel posts are public and not end-to-end encrypted.</p>
         <label className="hm-field">Name<input className="hm-input" maxLength={80} value={creating.name} onChange={(event) => setCreating({ ...creating, name: event.target.value })} /></label>
         <label className="hm-field">Description<textarea className="hm-input" maxLength={500} value={creating.description} onChange={(event) => setCreating({ ...creating, description: event.target.value })} /></label>
+        <label className="hm-field">Category<select className="hm-input" value={creating.category ?? 'other'} onChange={(event) => setCreating({ ...creating, category: event.target.value })}>
+          {Object.entries(CHANNEL_CATEGORY_LABELS).map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+        </select></label>
         <button type="button" className="hm-primary" disabled={!creating.name.trim()} onClick={() => act(async () => {
           const made = await request(token, '/api/v1/channels', { method: 'POST', body: creating });
           setCreating(null);
@@ -154,6 +203,9 @@ export function Channels({ token, onClose, initialChannelId = '' }) {
         })}>Create channel</button>
       </Panel>
     );
+  }
+  if (openId && channel && managingAdmins) {
+    return <ChannelAdmins token={token} channel={{ ...channel, viewerId }} onBack={() => setManagingAdmins(false)} onClose={onClose} onChanged={() => { loadChannel(channel.id); loadMine(); }} />;
   }
   if (openId && channel) {
     const toggleFollow = () => act(async () => {
@@ -170,8 +222,10 @@ export function Channels({ token, onClose, initialChannelId = '' }) {
             <span className="hm-channel-avatar is-large" aria-hidden="true">{channel.name.slice(0, 1).toUpperCase()}</span>
             <h2>{channel.name}</h2>
             <p className="hm-channel-meta">Channel · {followerCount(channel.followers)}</p>
+            <p className="hm-channel-tags"><span>{CHANNEL_CATEGORY_LABELS[channel.category] ?? 'Other'}</span>{channel.role && <span>{channel.role === 'owner' ? 'Owner' : 'Admin'}</span>}</p>
             {channel.description && <p className="hm-channel-description">{channel.description}</p>}
             {!channel.mine && <button type="button" className={`hm-channel-follow${channel.following ? ' is-following' : ''}`} onClick={toggleFollow}>{channel.following ? 'Following' : 'Follow'}</button>}
+            {channel.canPost && <button type="button" className="hm-channel-follow is-following" onClick={() => setManagingAdmins(true)}>Admins</button>}
           </section>
           {channel.posts.map((item) => {
             const day = new Date(item.createdAt).toDateString();
@@ -185,7 +239,7 @@ export function Channels({ token, onClose, initialChannelId = '' }) {
                   <p><FormattedText text={item.content} /></p>
                   <footer>
                     <time>{new Date(item.createdAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</time>
-                    {channel.mine && <button type="button" className="hm-channel-delete" aria-label="Delete post" onClick={() => act(async () => { await request(token, `/api/v1/channels/${channel.id}/posts/${item.id}`, { method: 'DELETE' }); await loadChannel(channel.id); })}><Trash2 size={13} /></button>}
+                    {channel.canPost && <button type="button" className="hm-channel-delete" aria-label="Delete post" onClick={() => act(async () => { await request(token, `/api/v1/channels/${channel.id}/posts/${item.id}`, { method: 'DELETE' }); await loadChannel(channel.id); })}><Trash2 size={13} /></button>}
                   </footer>
                 </article>
                 <div className="hm-channel-reactions" aria-label="Reactions">
@@ -202,7 +256,7 @@ export function Channels({ token, onClose, initialChannelId = '' }) {
           })}
           {!channel.posts.length && <p className="hm-channel-empty">No updates yet.</p>}
         </div>
-        {channel.mine ? (
+        {channel.canPost ? (
           <form className="hm-compose" onSubmit={(event) => { event.preventDefault(); act(async () => { await request(token, `/api/v1/channels/${channel.id}/posts`, { method: 'POST', body: { content: post } }); setPost(''); await loadChannel(channel.id); }); }}>
             <input className="hm-input" value={post} maxLength={4000} placeholder="Post an update" onChange={(event) => setPost(event.target.value)} />
             <button type="submit" className="icon-button" aria-label="Post" disabled={!post.trim()}><Send size={18} /></button>
@@ -216,13 +270,19 @@ export function Channels({ token, onClose, initialChannelId = '' }) {
   return (
     <Panel title="Channels" onClose={onClose}>
       <Notice error={error} />
-      <button type="button" className="hm-row-button" onClick={() => setCreating({ name: '', description: '' })}><Plus size={18} /> Create channel</button>
+      <button type="button" className="hm-row-button" onClick={() => setCreating({ name: '', description: '', category: 'other' })}><Plus size={18} /> Create channel</button>
       {mine.length > 0 && <h3 className="hm-section">Your channels</h3>}
-      {mine.map((item) => <button key={item.id} type="button" className="hm-row-main hm-channel-row" onClick={() => setOpenId(item.id)}><span className="hm-channel-avatar" aria-hidden="true">{item.name.slice(0, 1).toUpperCase()}</span><span><strong>{item.name}</strong><small>{item.mine ? 'Your channel' : 'Following'} · {followerCount(item.followers)}</small></span></button>)}
+      {mine.map((item) => <button key={item.id} type="button" className="hm-row-main hm-channel-row" onClick={() => setOpenId(item.id)}><span className="hm-channel-avatar" aria-hidden="true">{item.name.slice(0, 1).toUpperCase()}</span><span><strong>{item.name}</strong><small>{item.mine ? 'Your channel' : item.role === 'admin' ? 'Admin' : 'Following'} · {followerCount(item.followers)}</small></span></button>)}
       <h3 className="hm-section">Find channels</h3>
+      <div className="wa-chips hm-channel-categories" role="tablist" aria-label="Categories">
+        <button type="button" role="tab" aria-selected={!category} className={!category ? 'active' : ''} onClick={() => setCategory('')}>All</button>
+        {Object.entries(CHANNEL_CATEGORY_LABELS).map(([id, label]) => (
+          <button key={id} type="button" role="tab" aria-selected={category === id} className={category === id ? 'active' : ''} onClick={() => setCategory(category === id ? '' : id)}>{label}</button>
+        ))}
+      </div>
       <input className="hm-input" placeholder="Search channels" value={query} onChange={(event) => setQuery(event.target.value)} />
       {found.filter((item) => !mine.some((own) => own.id === item.id)).map((item) => (
-        <button key={item.id} type="button" className="hm-row-main hm-channel-row" onClick={() => setOpenId(item.id)}><span className="hm-channel-avatar" aria-hidden="true">{item.name.slice(0, 1).toUpperCase()}</span><span><strong>{item.name}</strong><small>{followerCount(item.followers)}</small></span></button>
+        <button key={item.id} type="button" className="hm-row-main hm-channel-row" onClick={() => setOpenId(item.id)}><span className="hm-channel-avatar" aria-hidden="true">{item.name.slice(0, 1).toUpperCase()}</span><span><strong>{item.name}</strong><small>{CHANNEL_CATEGORY_LABELS[item.category] ?? 'Other'} · {followerCount(item.followers)}</small></span></button>
       ))}
     </Panel>
   );
