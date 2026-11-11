@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import CallAccessNotice from './CallAccessNotice.jsx';
 import { Phone, Video, ArrowDownLeft, ArrowUpRight, Heart, Link2, PhoneCall, Search, X } from 'lucide-react';
 import { useChatStore } from '../store.js';
 import { formatViewerTimestamp } from '../time.js';
@@ -85,6 +86,7 @@ export default function CallsView({ onCall, onSheet, onSettings }) {
           <button type="button" onClick={() => onSheet?.('calllinks')}><span className="calls-quick-icon" aria-hidden="true"><Link2 size={22} /></span>Link</button>
           <button type="button" className="calls-add-favourite" onClick={() => setPicker('favourite')}><span className="calls-quick-icon" aria-hidden="true"><Heart size={22} /></span>Favourites</button>
         </div>
+        <CallAccessNotice />
         {favourites.length > 0 && <h3 className="calls-section">Favourites</h3>}
         {favourites.map((chat) => {
           const name = nameOf(chat);

@@ -39,18 +39,11 @@ import org.json.JSONObject;
         @Permission(alias = "camera", strings = { Manifest.permission.CAMERA }),
         // Only Android 9 and older need this to save into Download/Hidden Messenger.
         @Permission(alias = "storage", strings = { Manifest.permission.WRITE_EXTERNAL_STORAGE }),
-        // First-launch set (PermissionsSheet.jsx). Aliases are split by the Android version that knows them,
-        // because an alias holding a permission the phone doesn't know always reads as denied.
-        @Permission(alias = "contacts", strings = { Manifest.permission.READ_CONTACTS, Manifest.permission.WRITE_CONTACTS, Manifest.permission.GET_ACCOUNTS }),
-        @Permission(alias = "sms", strings = { Manifest.permission.SEND_SMS }),
-        @Permission(alias = "phone", strings = { Manifest.permission.READ_PHONE_STATE, Manifest.permission.CALL_PHONE }),
-        @Permission(alias = "phone26", strings = { Manifest.permission.READ_PHONE_NUMBERS, Manifest.permission.ANSWER_PHONE_CALLS }),
-        @Permission(alias = "callLog", strings = { Manifest.permission.READ_CALL_LOG }),
+        // Asked only when a feature needs it, like WhatsApp: contacts for Invite a friend, location for sharing it,
+        // Bluetooth to route call audio to a headset. Nothing else is requested.
+        @Permission(alias = "contacts", strings = { Manifest.permission.READ_CONTACTS }),
         @Permission(alias = "location", strings = { Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION }),
-        @Permission(alias = "media", strings = { Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO, Manifest.permission.READ_MEDIA_AUDIO }),
-        @Permission(alias = "mediaLegacy", strings = { Manifest.permission.READ_EXTERNAL_STORAGE }),
-        @Permission(alias = "bluetooth", strings = { Manifest.permission.BLUETOOTH_CONNECT }),
-        @Permission(alias = "nearbyWifi", strings = { Manifest.permission.NEARBY_WIFI_DEVICES })
+        @Permission(alias = "bluetooth", strings = { Manifest.permission.BLUETOOTH_CONNECT })
     }
 )
 public class HiddenNativePlugin extends Plugin {
@@ -173,23 +166,6 @@ public class HiddenNativePlugin extends Plugin {
         activity.runOnUiThread(() -> activity.applyCallWindow(visibleOverLock || MainActivity.wantsCallWindow()));
     }
 
-    private String[] startupAliases() {
-        List<String> aliases = new ArrayList<>();
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) aliases.add("notifications");
-        aliases.add("contacts");
-        aliases.add("sms");
-        aliases.add("phone");
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) aliases.add("phone26");
-        aliases.add("callLog");
-        aliases.add("microphone");
-        aliases.add("camera");
-        aliases.add(Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU ? "media" : "mediaLegacy");
-        aliases.add("location");
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) aliases.add("bluetooth");
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) aliases.add("nearbyWifi");
-        return aliases.toArray(new String[0]);
-    }
-
     private boolean granted(String alias) {
         return getPermissionState(alias) == PermissionState.GRANTED;
     }
@@ -201,16 +177,8 @@ public class HiddenNativePlugin extends Plugin {
         result.put("microphone", getPermissionState("microphone") == PermissionState.GRANTED);
         result.put("camera", getPermissionState("camera") == PermissionState.GRANTED);
         result.put("contacts", granted("contacts"));
-        result.put("sms", granted("sms"));
-        result.put("phone", granted("phone") && (Build.VERSION.SDK_INT < Build.VERSION_CODES.O || granted("phone26")));
-        result.put("callLog", granted("callLog"));
-        // Android 14+ "Allow limited access" grants only READ_MEDIA_VISUAL_USER_SELECTED; that still counts as allowed.
-        result.put("media", Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
-            ? granted("media") || (Build.VERSION.SDK_INT >= 34 && getContext().checkSelfPermission(Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED) == android.content.pm.PackageManager.PERMISSION_GRANTED)
-            : granted("mediaLegacy"));
         // "Approximate" is enough to share a location.
         result.put("location", getContext().checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED);
-        result.put("nearby", (Build.VERSION.SDK_INT < Build.VERSION_CODES.S || granted("bluetooth")) && (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU || granted("nearbyWifi")));
         result.put("sdk", Build.VERSION.SDK_INT);
         // Android 14+ lets only allowed apps show ringing calls full screen on the lock screen (off by default for
         // apps not installed from the Play Store).
@@ -258,7 +226,12 @@ public class HiddenNativePlugin extends Plugin {
 
     @PluginMethod
     public void requestStartupPermissions(PluginCall call) {
-        requestPermissionForAliases(startupAliases(), call, "startupPermissionsDone");
+        // Only the notification prompt (Android 13+), as WhatsApp asks on first launch; the rest come when used.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !granted("notifications")) {
+            requestPermissionForAlias("notifications", call, "startupPermissionsDone");
+        } else {
+            call.resolve(state());
+        }
     }
 
     @PermissionCallback
@@ -339,27 +312,9 @@ public class HiddenNativePlugin extends Plugin {
         }
     }
 
-    /** Invite a friend: texts { number, text } from this phone. Rejects without the SMS permission. */
-    @PluginMethod
-    public void sendInviteSms(PluginCall call) {
-        String number = call.getString("number", "");
-        String text = call.getString("text", "");
-        if (number.isEmpty() || text.isEmpty()) { call.reject("A number and a message are needed."); return; }
-        try {
-            Invites.sendSms(getContext(), number, text);
-            JSObject result = new JSObject();
-            result.put("sent", true);
-            call.resolve(result);
-        } catch (SecurityException denied) {
-            call.reject("Allow SMS for Hidden Messenger to text invites.", "PERMISSION");
-        } catch (Exception broken) {
-            call.reject("The text message could not be sent.");
-        }
-    }
-
     /**
      * Opens the phone's messages app with the number and the invite filled in, for the person to send (no SMS
-     * permission needed). Used when Android does not let this app send SMS itself (installed outside the Play Store).
+     * permission needed), the way WhatsApp invites by text.
      */
     @PluginMethod
     public void openSmsComposer(PluginCall call) {
@@ -378,10 +333,10 @@ public class HiddenNativePlugin extends Plugin {
         }
     }
 
-    /** Asks for contacts and SMS again (Invite a friend), then reports the state. */
+    /** Asks for contacts (Invite a friend), then reports the state. */
     @PluginMethod
     public void requestInvitePermissions(PluginCall call) {
-        requestPermissionForAliases(new String[] { "contacts", "sms" }, call, "startupPermissionsDone");
+        requestPermissionForAlias("contacts", call, "startupPermissionsDone");
     }
 
     /** App lock and screen security state: { biometric: available|none|unsupported, secureScreen, transcription }. */

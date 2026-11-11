@@ -1,6 +1,5 @@
-// Android switches that calls depend on, as reported by the native shell's state(). Asked about once, after the
-// first sign-in, like a standard app: "Later" is respected; the switches stay reachable from Android's app settings.
-export const CALL_ACCESS_ASKED_KEY = 'hm:call-access-asked-v3';
+// Android switches that add to calls (full-screen ring on the lock screen, the floating video window), as reported
+// by the native shell's state(). Shown as a quiet row in the Calls tab (CallAccessNotice), never as a popup.
 
 // What the phone still blocks for calls: [] when everything is allowed (or the state is unknown).
 export function missingCallAccess(state) {
@@ -11,7 +10,3 @@ export function missingCallAccess(state) {
   ];
 }
 
-// Whether to show the sheet now: something is blocked and it has never been shown on this phone.
-export function shouldAskCallAccess(state, askedBefore) {
-  return missingCallAccess(state).length > 0 && !askedBefore;
-}

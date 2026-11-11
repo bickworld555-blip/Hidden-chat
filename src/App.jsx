@@ -11,7 +11,7 @@ import { initialTabFromUrl } from './pwa.js';
 import { countUnreadConversations, groupRow } from './groupRows.js';
 import { getViewingGroup, readMutedGroups, useMutedGroups } from './groupPrefs.js';
 import { classifyIncoming, groupNotificationText, parseConversationOpenParam, shouldAlertGroup } from './notificationChannels.js';
-import { nativeClearSession, nativeSetSession, nativeShell, nativeStartBackground, nativeState, nativeStopBackground, nativeTakePendingCall, nativeMoveToBackground, nativeClearShare, nativeSetCallActive, nativeClearMessageNotifications, nativeTakeMessageActions, onNative } from './native.js';
+import { nativeClearSession, nativeRequestStartupPermissions, nativeSetSession, nativeShell, nativeStartBackground, nativeState, nativeStopBackground, nativeTakePendingCall, nativeMoveToBackground, nativeClearShare, nativeSetCallActive, nativeClearMessageNotifications, nativeTakeMessageActions, onNative } from './native.js';
 import { parseShare } from './shareTarget.js';
 import { onE2eEvent, startE2e, stopE2e } from './e2e/client.js';
 import { SECURITY_NOTICE } from './e2e/notices.js';
@@ -20,9 +20,7 @@ import { handleReactionError, handleRejected, needsOpening, openEvent, openHisto
 import { connectAccountSettings } from './settings.js';
 import { getPrivacy, setPrivacy } from './accountApi.js';
 import ShareSheet from './components/ShareSheet.jsx';
-import CallAccessSheet from './components/CallAccessSheet.jsx';
 import { publishShareShortcuts } from './shareShortcuts.js';
-import { CALL_ACCESS_ASKED_KEY, shouldAskCallAccess } from './callAccess.js';
 import { permissionsAskedKey } from './permissionsKey.js';
 import Sidebar from './components/Sidebar.jsx';
 import ChatWindow from './components/ChatWindow.jsx';
@@ -177,7 +175,6 @@ export default function App() {
   // Something shared to Hidden Messenger from another app's share sheet, waiting for the user to pick chats.
   const [incomingShare, setIncomingShare] = useState(null);
   // Android blocks lock-screen calls or the floating video window for this app: the native state, to ask once.
-  const [callAccess, setCallAccess] = useState(null);
   const [switchingId, setSwitchingId] = useState(null);
   const [callsSeenAt, setCallsSeenAt] = useState(() => Number(localStorage.getItem('relay:calls-seen-at')) || 0);
   const openChatRef = useRef(null);
@@ -877,8 +874,9 @@ export default function App() {
     return () => document.removeEventListener('visibilitychange', onHide);
   }, [userId, sessionToken, mutedChatIds, mutedGroupIds, notificationSettings]);
 
-  // Signed in: offer the permission walkthrough once per device; in the Android app keep the
-  // background connection running (and stop it on sign-out). Native state is re-read on resume.
+  // Signed in: like WhatsApp, the Android app asks only for notifications on first launch (Android's own prompt,
+  // no list of its own); microphone, camera, location and contacts are asked by Android when a feature first needs
+  // them. Browsers get a one-line notifications prompt. The background connection keeps running until sign-out.
   useEffect(() => {
     if (!userId) {
       nativeClearSession();
@@ -888,11 +886,13 @@ export default function App() {
     let asked = false;
     try { asked = localStorage.getItem(permissionsAskedKey()) === '1'; } catch { /* private mode */ }
     const needsWebPrompt = !nativeShell() && typeof Notification !== 'undefined' && Notification.permission === 'default';
-    if (!asked && (nativeShell() || needsWebPrompt)) setPermissionsOpen(true);
-    else if (nativeShell()) {
-      nativeStartBackground();
-      checkCallAccess();
-    }
+    if (nativeShell()) {
+      if (asked) nativeStartBackground();
+      else {
+        try { localStorage.setItem(permissionsAskedKey(), '1'); } catch { /* private mode */ }
+        nativeRequestStartupPermissions().catch(() => null).finally(() => nativeStartBackground());
+      }
+    } else if (!asked && needsWebPrompt) setPermissionsOpen(true);
     nativeState();
     const refresh = () => { if (document.visibilityState === 'visible') nativeState(); };
     document.addEventListener('visibilitychange', refresh);
@@ -905,15 +905,6 @@ export default function App() {
     const timer = setTimeout(() => publishShareShortcuts({ chats, groups: groupRows, userId, sessionToken }), 1500);
     return () => clearTimeout(timer);
   }, [chats, groupRows, userId, sessionToken]);
-
-  // Lock-screen calls and the floating video window need Android switches: asked about once, like a standard app.
-  async function checkCallAccess() {
-    if (!nativeShell()) return;
-    let askedBefore = false;
-    try { askedBefore = localStorage.getItem(CALL_ACCESS_ASKED_KEY) === '1'; } catch { /* private mode */ }
-    const state = await nativeState();
-    if (shouldAskCallAccess(state, askedBefore)) setCallAccess(state);
-  }
 
   // Motion preference goes on <html> so overlays rendered outside the shell follow it too.
   const appearance = useAppearance();
@@ -995,8 +986,7 @@ export default function App() {
           }}
         />
       )}
-      {permissionsOpen && userId && <PermissionsSheet onDone={() => { setPermissionsOpen(false); checkCallAccess(); }} />}
-      {callAccess && !permissionsOpen && userId && <CallAccessSheet initial={callAccess} onDone={() => setCallAccess(null)} />}
+      {permissionsOpen && userId && <PermissionsSheet onDone={() => setPermissionsOpen(false)} />}
       {authReady && (!userId || authOpen) && <UsernameGate onAuthenticated={acceptSession} onClose={userId ? () => setAuthOpen(false) : undefined} />}
       {call && callPeer && <CallOverlay
         key={call.id}

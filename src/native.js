@@ -37,7 +37,6 @@ function remember(state) {
 export const nativeState = async () => remember(await invoke('getState'));
 // Invite a friend (android Invites.java): contacts stay on the phone; invites go out as a text from it.
 export const nativeListContacts = () => invoke('listContacts');
-export const nativeSendInviteSms = (number, text) => invoke('sendInviteSms', { number, text });
 export const nativeOpenSmsComposer = (number, text) => invoke('openSmsComposer', { number, text });
 export const nativeRequestInvitePermissions = async () => remember(await invoke('requestInvitePermissions'));
 export const nativeRequestStartupPermissions = async () => remember(await invoke('requestStartupPermissions'));

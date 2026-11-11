@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 import { VIDEO_MAX_BITRATE, VIDEO_MAX_FRAMERATE, mediaConstraints, videoConstraints } from '../src/rtc.js';
-import { missingCallAccess, shouldAskCallAccess } from '../src/callAccess.js';
+import { missingCallAccess } from '../src/callAccess.js';
 
 const root = new URL('../', import.meta.url);
 const source = (path) => readFile(new URL(path, root), 'utf8');
@@ -24,18 +24,27 @@ test('video calls ask the camera for Full HD at 30 fps with a bitrate that can c
   assert.ok(engine.includes("params.degradationPreference = 'balanced'"), 'congestion does not drop straight to a blurry resolution');
 });
 
-test('the app asks for the Android switches calls need, only when they are off', () => {
+test('call switches that are off show as a quiet Calls-tab row, never a popup', async () => {
   assert.deepEqual(missingCallAccess(null), []);
   assert.deepEqual(missingCallAccess({ fullScreenCalls: true, pictureInPicture: true }), []);
   assert.deepEqual(missingCallAccess({ fullScreenCalls: false, pictureInPicture: true }), ['fullScreen']);
   assert.deepEqual(missingCallAccess({ fullScreenCalls: false, pictureInPicture: false }), ['fullScreen', 'pictureInPicture']);
   assert.deepEqual(missingCallAccess({ sdk: 30 }), [], 'older shells that do not report the switches are not nagged');
   assert.deepEqual(missingCallAccess({ fullScreenCalls: false, overlay: false, pictureInPicture: true }), ['fullScreen'], 'no "Display over other apps" prompt');
-  // Asked about once, like a standard app: 'Later' is respected.
-  const blocked = { fullScreenCalls: false };
-  assert.equal(shouldAskCallAccess(blocked, false), true);
-  assert.equal(shouldAskCallAccess(blocked, true), false);
-  assert.equal(shouldAskCallAccess({ fullScreenCalls: true, pictureInPicture: true }, false), false);
+  const app = await source('src/App.jsx');
+  assert.ok(!app.includes('CallAccessSheet'), 'no call-settings popup at startup');
+  assert.ok((await source('src/components/CallsView.jsx')).includes('<CallAccessNotice />'));
+});
+
+test('Android asks only for what a feature uses, when it is used (WhatsApp-style)', async () => {
+  const manifest = await source('android/app/src/main/AndroidManifest.xml');
+  for (const unused of ['SEND_SMS', 'READ_CALL_LOG', 'READ_PHONE_STATE', 'READ_PHONE_NUMBERS', 'CALL_PHONE', 'ANSWER_PHONE_CALLS', 'GET_ACCOUNTS', 'READ_PROFILE', 'WRITE_CONTACTS', 'READ_MEDIA_IMAGES', 'READ_MEDIA_VIDEO', 'READ_MEDIA_AUDIO', 'NEARBY_WIFI_DEVICES']) {
+    assert.ok(!manifest.includes(`android.permission.${unused}"`), `${unused} is not declared`);
+  }
+  const plugin = await source('android/app/src/main/java/io/github/bickworld555/hiddenchat/HiddenNativePlugin.java');
+  const startup = plugin.slice(plugin.indexOf('void requestStartupPermissions'), plugin.indexOf('startupPermissionsDone(PluginCall'));
+  assert.ok(startup.includes('requestPermissionForAlias("notifications"') && !startup.includes('requestPermissionForAliases'), 'first launch: the notification prompt only');
+  assert.ok(!(await source('src/components/PermissionsSheet.jsx')).includes('nativeRequestStartupPermissions'), 'no custom permission list in the app');
 });
 
 test('Android: ringing calls show over the lock screen at once and stay there while the call lasts', async () => {

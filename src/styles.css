@@ -4131,7 +4131,6 @@ html.native-pip .wa-video-tile.is-pip { width: 30% !important; height: auto !imp
 .dark-theme .message-link { color: #5395eb; }
 /* "Calls on this phone": an Allow button beside each blocked switch. */
 .permissions-list li > span { flex: 1; min-width: 0; }
-.permissions-list .call-access-open { flex: none; align-self: center; padding: 8px 16px; min-height: 0; }
 
 /* Share sheet: one tap on a recent chat sends straight to it. */
 .wa-share-recents { display: flex; gap: 6px; overflow-x: auto; padding: 12px 10px 10px; border-bottom: 1px solid var(--wa-border, rgba(0, 0, 0, .08)); scrollbar-width: none; }
@@ -5214,3 +5213,14 @@ textarea.hm-input { min-height: 96px; resize: vertical; }
 @keyframes attach-pop { from { opacity: 0; transform: translateY(16px) scale(.98); } }
 @media (min-width: 900px) { .attachment-menu-panel { left: auto; right: 24px; bottom: 84px; width: 380px; } }
 @media (prefers-reduced-motion: reduce) { .attachment-menu-panel { animation: none; } }
+
+/* Calls tab: an Android switch that is off, as a quiet tappable row (opens the exact settings page). */
+.call-access-notices { display: flex; flex-direction: column; gap: 8px; margin: 4px 16px 12px; }
+.call-access-notice { display: flex; align-items: center; gap: 14px; width: 100%; padding: 12px 14px; border: 1px solid var(--wa-line, #e9edef); border-radius: 14px; background: transparent; color: inherit; text-align: left; cursor: pointer; }
+.call-access-notice svg { flex: none; color: #256dca; }
+.call-access-notice span { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.call-access-notice strong { font-size: 15px; font-weight: 500; }
+.call-access-notice small { color: #667781; font-size: 13px; }
+.call-access-notice:hover { background: rgba(37, 109, 202, .06); }
+.dark-theme .call-access-notice { border-color: #2a3540; }
+.dark-theme .call-access-notice small { color: #8696a0; }

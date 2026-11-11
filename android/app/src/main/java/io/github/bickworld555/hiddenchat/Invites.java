@@ -5,9 +5,7 @@ import android.content.ContentResolver;
 import android.content.Context;
 import android.content.pm.PackageManager;
 import android.database.Cursor;
-import android.os.Build;
 import android.provider.ContactsContract;
-import android.telephony.SmsManager;
 import com.getcapacitor.JSArray;
 import com.getcapacitor.JSObject;
 import java.util.ArrayList;
@@ -15,7 +13,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * "Invite a friend": reads the phone's contacts on the device (nothing is uploaded) and texts an invite link.
+ * "Invite a friend": reads the phone's contacts on the device (nothing is uploaded); the invite is sent from the messages app.
  * Contacts with a phone number only; one entry per person, with all of their numbers.
  */
 final class Invites {
@@ -64,13 +62,4 @@ final class Invites {
         return list;
     }
 
-    /** Sends the invite as a regular text message from this phone (the carrier may charge for it). */
-    static void sendSms(Context context, String number, String text) {
-        if (!allowed(context, Manifest.permission.SEND_SMS)) throw new SecurityException("SMS permission not granted");
-        SmsManager sms = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
-            ? context.getSystemService(SmsManager.class)
-            : SmsManager.getDefault();
-        ArrayList<String> parts = sms.divideMessage(text);
-        sms.sendMultipartTextMessage(number, null, parts, null, null);
-    }
 }
