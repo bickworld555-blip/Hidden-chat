@@ -1,3 +1,4 @@
+import { acknowledgeEvents } from './deliveryAck.js';
 import { apiFetch, apiUrl } from './api.js';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { activateAccount, addOrActivateAccount, getAccountsState, loadAccounts, removeAccount, updateAccountUser } from './accounts.js';
@@ -469,6 +470,25 @@ export default function App() {
         realtime.onReady = async () => {
           const outbox = await getOutbox(userId);
           for (const message of outbox) await transmitDirect(realtime, message);
+          // What waited on the server for this device while it was away (src/deliveryAck.js): messages are opened
+          // and saved like history (then acknowledged once saved); receipts and other changes are applied.
+          try {
+            const response = await apiFetch('/api/v1/queue', { headers: { Authorization: `Bearer ${sessionToken}` } });
+            if (!response.ok || cancelled) return;
+            const queued = await response.json();
+            const byChat = new Map();
+            for (const message of queued.messages ?? []) {
+              const chatId = message.senderId === userId ? message.receiverId : message.senderId;
+              if (!byChat.has(chatId)) byChat.set(chatId, []);
+              byChat.get(chatId).push(message);
+            }
+            for (const [chatId, rows] of byChat) mergeHistory(chatId, await openHistory(chatId, rows));
+            const events = (queued.events ?? []).filter((event) => event?.id && event.type);
+            for (const event of events) handleEvent(needsOpening(event) ? await openEvent(event) : event);
+            if (events.length) await acknowledgeEvents(events.map((event) => event.id), { client: realtime, sessionToken });
+          } catch (error) {
+            console.error('Could not read the delivery queue:', error);
+          }
         };
         // Messages waiting for a contact's keys (strict end-to-end encryption) are retried every 30 s.
         clearInterval(waitingTimerRef.current);

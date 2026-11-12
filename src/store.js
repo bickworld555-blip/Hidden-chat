@@ -1,3 +1,4 @@
+import { acknowledgeSaved } from './deliveryAck.js';
 import { pollSummary } from './polls.js';
 import { eventSummary } from './calendarEvents.js';
 import { create } from 'zustand';
@@ -69,8 +70,15 @@ export function flushPersistedMessages() {
     const cleared = new Set(clearedChats);
     clearedChats.clear();
     try {
-      await messageStore().apply(userId, diffMessages(saved.chats, current, cleared));
+      const diff = diffMessages(saved.chats, current, cleared);
+      await messageStore().apply(userId, diff);
       if (saved.owner === userId) saved = { owner: userId, chats: snapshotOf(current) };
+      // Saved here: the server may now delete them once every device has its copy (src/deliveryAck.js).
+      if (diff.puts.length > 0) {
+        const latest = useChatStore.getState();
+        acknowledgeSaved(diff.puts.map((put) => put.message), { client: latest.client, sessionToken: latest.sessionToken })
+          .catch((error) => console.error('Could not acknowledge saved messages:', error));
+      }
     } catch (error) {
       for (const chat of cleared) clearedChats.add(chat);
       console.error('Could not save messages:', error);

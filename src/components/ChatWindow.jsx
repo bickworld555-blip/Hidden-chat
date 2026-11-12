@@ -1,3 +1,4 @@
+import { storeMedia } from '../mediaVault.js';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { isEnvelope, STRUCTURED } from '../e2e/envelope.js';
 import { transmitDirect, transmitReaction } from '../e2e/messaging.js';
@@ -1082,6 +1083,9 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
         kind: kind === 'voice' || kind === 'voice-once' ? 'voice' : undefined,
         onProgress: (sent, total) => setUploadProgress({ ...pending, sent, total }),
       });
+      // This device keeps its own copy (the server deletes the file once every device has it); a view once item is
+      // not kept by its sender, as on WhatsApp.
+      if (kind !== 'voice-once' && kind !== 'viewonce') await storeMedia(data.id, file, { contentType: file.type || 'application/octet-stream', size: file.size });
       const attachment = attachmentContent(data.id, descriptor ? filename : data.filename || filename, descriptor);
       // View once photos/videos, video notes and made stickers wrap the attachment (src/mediaExtras.js).
       const wrapped = { viewonce: VIEW_ONCE_PREFIX, vnote: VIDEO_NOTE_PREFIX, csticker: CUSTOM_STICKER_PREFIX }[kind];

@@ -25,6 +25,8 @@ import { createPushSender, encryptForDevice, loadServiceAccount, validDeviceKey 
 import { createLoginThrottle, ensureParitySchema, registerParity } from './parity.mjs';
 import { createVerifiedAccounts, createVerifiedChannels, ensureVerificationSchema, registerVerification } from './verification.mjs';
 import { ensureRegionSchema, registerRegions } from './regions.mjs';
+import { createDeliveryQueue, ensureDeliveryQueueSchema } from './deliveryQueue.mjs';
+import { clientGate, minimumClientProtocol, socketClientAllowed, updateRequiredBody } from './clientGate.mjs';
 import { registerBilling } from './billing.mjs';
 import { ensureE2eSchema, registerE2e } from './e2e.mjs';
 import { registerSfu } from './sfu.mjs';
@@ -132,6 +134,8 @@ export function createChatServer({
   pushSender = undefined,
   // The standalone admin console's sign-in (ADMIN_USERNAME / ADMIN_PASSWORD); null turns admin sign-in off.
   adminCredentials = adminCredentialsFrom(process.env),
+  // Oldest app version still served (server/clientGate.mjs): the current one in production, none locally.
+  minClientProtocol = minimumClientProtocol(process.env),
 } = {}) {
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('PORT must be an integer from 0 to 65535.');
   if (process.env.NODE_ENV === 'production' && port === 0) throw new Error('Production requires a fixed nonzero PORT.');
@@ -404,6 +408,7 @@ export function createChatServer({
   ensureAdminSchema(db);
   ensureVerificationSchema(db);
   ensureRegionSchema(db);
+  ensureDeliveryQueueSchema(db);
   }
   // Verified business badges (server/verification.mjs), read into memory for public user records.
   const verifiedAccounts = createVerifiedAccounts(db);
@@ -509,6 +514,7 @@ export function createChatServer({
     };
     await db.prepare(`INSERT INTO messages(id, sender_id, receiver_id, created_at, content, status, reply_to_id, forwarded, expires_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(message.id, senderId, receiverId, message.timestamp, content, 'sent', null, 0, message.expiresAt);
+    await deliveryQueue.trackDirect({ messageId: message.id, senderId, receiverId });
     await linkUsers(senderId, receiverId);
     await linkUsers(receiverId, senderId);
     const delivered = await presentMessage(message);
@@ -564,7 +570,7 @@ export function createChatServer({
     response.vary('Origin');
     if (request.method === 'OPTIONS') {
       response.set('Access-Control-Allow-Methods', 'GET,HEAD,POST,PUT,PATCH,DELETE,OPTIONS');
-      response.set('Access-Control-Allow-Headers', 'Authorization,Content-Type,X-File-Name,X-Upload-Offset,ngrok-skip-browser-warning');
+      response.set('Access-Control-Allow-Headers', 'Authorization,Content-Type,X-File-Name,X-Upload-Offset,X-HM-Client,ngrok-skip-browser-warning');
       return response.status(204).end();
     }
     return next();
@@ -705,6 +711,44 @@ export function createChatServer({
     return delivered;
   }
 
+  // --- The server as a short-lived queue (server/deliveryQueue.mjs): messages leave once every device stored them. ---
+  const deliveryQueue = createDeliveryQueue({
+    db,
+    onlineDevices: (userId) => [...userSockets(userId)].map((socket) => socket.deviceId).filter(Boolean),
+    removeMessage: removeQueuedMessage,
+  });
+
+  /**
+   * A message every target device has stored (or one past the 30-day limit): its row, reactions, hidden marks and
+   * media go. Kept on purpose until then: open polls (people still vote) and unopened view once notes (the audio or
+   * photo is handed out once). Group messages stay until groups keep their history on the device.
+   */
+  async function removeQueuedMessage(kind, messageId, { force = false } = {}) {
+    if (kind !== 'direct') return false;
+    const row = await db.prepare('SELECT content FROM messages WHERE id = ?').get(messageId);
+    if (!row) return false;
+    const route = parseRouting(routingOf(row.content));
+    if (!force && (route?.kind === 'poll' || route?.once)) return false;
+    await db.prepare('DELETE FROM message_reactions WHERE message_id = ?').run(messageId);
+    await db.prepare('DELETE FROM message_hidden WHERE message_id = ?').run(messageId);
+    await db.prepare('DELETE FROM poll_votes WHERE message_id = ?').run(messageId);
+    await db.prepare('DELETE FROM messages WHERE id = ?').run(messageId);
+    await purgeUnreferencedMedia(row.content);
+    return true;
+  }
+
+  // The route stands in only for a message that has left the server (an existing row that did not change means
+  // the receipt was already handled).
+  async function messageRowExists(messageId) {
+    return Boolean(await db.prepare('SELECT 1 AS "found" FROM messages WHERE id = ?').get(messageId));
+  }
+
+  /** A change to a message (receipt, played, reaction, deletion): live to open devices, queued for the others. */
+  async function notifyUser(userId, event, except) {
+    broadcastUser(userId, event, except);
+    await deliveryQueue.queueEvent(userId, event).catch((error) => console.error('Queueing an event failed:', error.code ?? error.name));
+  }
+
   // --- Firebase push: wakes phones that have no app on screen (WhatsApp-style; no always-on socket needed). ---
   let push = pushSender;
   if (push === undefined) {
@@ -762,7 +806,7 @@ export function createChatServer({
       if (!updated) continue;
       changed += 1;
       const statusEvent = { type: 'message:status', messageId, status: 'delivered' };
-      broadcastUser(updated.senderId, statusEvent);
+      await notifyUser(updated.senderId, statusEvent);
       broadcastUser(userId, statusEvent, exceptSocket);
     }
     return changed;
@@ -857,6 +901,9 @@ export function createChatServer({
     }
     return rows.length;
   }
+
+  // Apps older than the current version can no longer send or receive (server/clientGate.mjs).
+  app.use('/api/v1', clientGate(minClientProtocol));
 
   app.get('/api/v1/groups', requireSession, async (request, response) => {
     const now = Date.now();
@@ -1019,6 +1066,7 @@ export function createChatServer({
       RETURNING id, group_id AS "groupId", sender_id AS "senderId", created_at AS "createdAt", content, expires_at AS "expiresAt"`)
       .get(id, now, content, now + deleteForEveryoneWindowMs, groupId, userId);
     if (!row) return response.status(404).json({ error: 'Group not found.' });
+    await deliveryQueue.trackGroup({ messageId: row.id, groupId, senderId: userId, senderDeviceId: request.session.device_id });
     // The sender has seen their own message; it must not count as unread for them.
     await db.prepare('UPDATE group_members SET last_read_at = ? WHERE group_id = ? AND user_id = ? AND last_read_at < ?').run(now, groupId, userId, now);
     // Names travel with the event so clients can title notifications without another request.
@@ -1075,6 +1123,10 @@ export function createChatServer({
   // Approximate country for the admin world map (server/regions.mjs) and the prepared billing structure.
   registerRegions({ app, db, requireSession, requireAdmin: adminAuth.requireAdmin });
   registerBilling({ app, requireAdmin: adminAuth.requireAdmin });
+  // The delivery queue for the dashboard: how much waits, for how many devices, since when (counts only).
+  app.get('/api/admin/v1/queue', adminAuth.requireAdmin, async (request, response) => {
+    response.json(await deliveryQueue.stats());
+  });
 
   // Linking a browser by scanning a QR code with the phone (server/linking.mjs).
   const linking = registerLinking({ app, requireSession, issueSession: (userId, name) => issueSession(userId, name), suspended: (userId) => admin.suspended(userId) });
@@ -1846,6 +1898,26 @@ export function createChatServer({
     response.status(204).end();
   });
 
+  // What this device still has to store (its queue), and its acknowledgements: a message every target device has
+  // stored is deleted from the server. Group messages come as ids (the group screen loads them), direct ones whole.
+  app.get('/api/v1/queue', requireSession, async (request, response) => {
+    const { user_id: userId, device_id: deviceId } = request.session;
+    const pending = await deliveryQueue.pending(userId, deviceId);
+    const rows = [];
+    for (const id of pending.direct.slice(0, 500)) {
+      const row = await db.prepare(`SELECT id, sender_id AS "senderId", receiver_id AS "receiverId", created_at AS "timestamp", content, status,
+        reply_to_id AS "replyToId", forwarded, expires_at AS "expiresAt", played_at AS "playedAt", edited_at AS "editedAt"
+        FROM messages WHERE id = ? AND deleted_at IS NULL`).get(id);
+      if (row) rows.push(await presentMessage(row));
+    }
+    response.json({ messages: await maskReceipts(userId, rows), groupMessageIds: pending.group, events: pending.events });
+  });
+  app.post('/api/v1/queue/ack', requireSession, async (request, response) => {
+    const { user_id: userId, device_id: deviceId } = request.session;
+    const removed = await deliveryQueue.ack(userId, deviceId, { messageIds: request.body?.messageIds, eventIds: request.body?.eventIds });
+    response.json({ removed: removed.length });
+  });
+
   // The phone confirms messages it showed from a push (two ticks) without opening a socket.
   app.post('/api/v1/messages/delivered', requireSession, async (request, response) => {
     const count = await markDelivered(request.session.user_id, request.body?.messageIds);
@@ -2156,6 +2228,12 @@ export function createChatServer({
       socket.destroy();
       return;
     }
+    if (!socketClientAllowed(offered, minClientProtocol)) {
+      const body = JSON.stringify(updateRequiredBody(minClientProtocol));
+      socket.write(`HTTP/1.1 426 Upgrade Required\r\nContent-Type: application/json\r\nContent-Length: ${Buffer.byteLength(body)}\r\nConnection: close\r\n\r\n${body}`);
+      socket.destroy();
+      return;
+    }
     request.session = session;
     request.relayBackground = offered.includes('relay.background');
     if (socket.destroyed || closing) {
@@ -2434,9 +2512,13 @@ export function createChatServer({
 
       if (event.type === 'message:reaction') {
         const { messageId, emoji } = event;
-        const row = typeof messageId === 'string'
+        const stored = typeof messageId === 'string'
           ? (await db.prepare("SELECT sender_id, receiver_id FROM messages WHERE id = ? AND deleted_at IS NULL").get(messageId))
           : null;
+        // A message already delivered to every device has left the server: its route says whose it was, and the
+        // reaction is passed on (not stored; each device keeps its own copy of the chat).
+        const route = stored || typeof messageId !== 'string' || await messageRowExists(messageId) ? null : await deliveryQueue.routeOf(messageId);
+        const row = stored ?? (route?.kind === 'direct' ? { sender_id: route.senderId, receiver_id: route.receiverId, gone: true } : null);
         // A reaction is an emoji, or end-to-end encrypted ("e2e2:…", sealed for the same devices as a message).
         const sealedReaction = isEnvelope(emoji);
         const validEmoji = emoji === null || (typeof emoji === 'string' && emoji.length > 0 && emoji.length <= (sealedReaction ? MAX_DIRECT_ENVELOPE : 16));
@@ -2447,7 +2529,8 @@ export function createChatServer({
           const problem = await e2e.checkDirectEnvelope(emoji, { senderId: userId, senderDeviceId: socket.deviceId, receiverId: row.sender_id === userId ? row.receiver_id : row.sender_id });
           if (problem) return json(socket, { type: 'message:reaction:error', messageId, ...problem, message: problem.error });
         }
-        if (emoji === null) (await db.prepare("DELETE FROM message_reactions WHERE message_id = ? AND user_id = ?").run(messageId, userId));
+        if (row.gone) { /* nothing stored for a message that has left the server */ }
+        else if (emoji === null) (await db.prepare("DELETE FROM message_reactions WHERE message_id = ? AND user_id = ?").run(messageId, userId));
         else (await db.prepare(`INSERT INTO message_reactions(message_id, user_id, emoji) VALUES (?, ?, ?)
           ON CONFLICT(message_id, user_id) DO UPDATE SET emoji = excluded.emoji`).run(messageId, userId, emoji));
         const reactionEvent = { type: 'message:reaction', messageId, userId, emoji };
@@ -2459,27 +2542,32 @@ export function createChatServer({
           const reacted = await db.prepare('SELECT content FROM messages WHERE id = ?').get(messageId);
           // Never ciphertext in a notice: the phone has the message itself; an encrypted emoji is only opened there.
           const quoted = isEnvelope(reacted?.content) ? '' : String(reacted?.content ?? '').slice(0, 200);
-          broadcastUser(peerId, { ...reactionEvent, messageSenderId: row.sender_id, reactorName: reactor?.name || `@${reactor?.username ?? 'someone'}`, messageContent: quoted });
+          await notifyUser(peerId, { ...reactionEvent, messageSenderId: row.sender_id, reactorName: reactor?.name || `@${reactor?.username ?? 'someone'}`, messageContent: quoted });
           if (needsPush(peerId)) {
             pushInBackground(peerId, { t: 'react', id: messageId, from: userId, emoji: sealedReaction ? '' : emoji, reactorName: reactor?.name || `@${reactor?.username ?? 'someone'}`, content: quoted });
           }
-        } else broadcastUser(peerId, reactionEvent);
-        broadcastUser(userId, reactionEvent);
+        } else await notifyUser(peerId, reactionEvent);
+        await notifyUser(userId, reactionEvent);
         return;
       }
 
       if (event.type === 'message:delete') {
         const { messageId, scope } = event;
-        const row = typeof messageId === 'string'
+        const stored = typeof messageId === 'string'
           ? (await db.prepare("SELECT id, sender_id, receiver_id, created_at, content FROM messages WHERE id = ?").get(messageId))
           : null;
+        // Delivered and gone from the server: the deletion still reaches every device of both people.
+        const route = stored || typeof messageId !== 'string' ? null : await deliveryQueue.routeOf(messageId);
+        const row = stored ?? (route?.kind === 'direct'
+          ? { id: messageId, sender_id: route.senderId, receiver_id: route.receiverId, created_at: Number(route.createdAt), content: '', gone: true }
+          : null);
         if (!row || (row.sender_id !== userId && row.receiver_id !== userId)) {
           return json(socket, { type: 'message:delete:error', messageId, message: 'Message not found.' });
         }
         if (scope === 'me') {
-          (await db.prepare("INSERT INTO message_hidden(user_id, message_id) VALUES (?, ?) ON CONFLICT DO NOTHING").run(userId, messageId));
+          if (!row.gone) (await db.prepare("INSERT INTO message_hidden(user_id, message_id) VALUES (?, ?) ON CONFLICT DO NOTHING").run(userId, messageId));
           json(socket, { type: 'message:deleted', messageId, scope: 'me' });
-          broadcastUser(userId, { type: 'message:deleted', messageId, scope: 'me' }, socket);
+          await notifyUser(userId, { type: 'message:deleted', messageId, scope: 'me' }, socket);
           return;
         }
         if (scope !== 'everyone') {
@@ -2488,7 +2576,10 @@ export function createChatServer({
         if (row.sender_id !== userId) {
           return json(socket, { type: 'message:delete:error', messageId, message: 'Only the sender can delete for everyone.' });
         }
-        if (Date.now() - row.created_at > deleteForEveryoneWindowMs) {
+        // Stored as an ISO time, or as epoch milliseconds (rows from the queue's routes and some older rows).
+        const numericSentAt = Number(row.created_at);
+        const sentAt = Number.isFinite(numericSentAt) ? numericSentAt : Date.parse(row.created_at);
+        if (Date.now() - sentAt > deleteForEveryoneWindowMs) {
           return json(socket, { type: 'message:delete:error', messageId, message: 'This message is too old to delete for everyone.' });
         }
         const mediaRef = mediaIdOf(row.content);
@@ -2501,8 +2592,8 @@ export function createChatServer({
           await purgeUnreferencedMedia(row.content);
         }
         const deletedEvent = { type: 'message:deleted', messageId, scope: 'everyone' };
-        broadcastUser(row.receiver_id, deletedEvent);
-        broadcastUser(userId, deletedEvent);
+        await notifyUser(row.receiver_id, deletedEvent);
+        await notifyUser(userId, deletedEvent);
         return;
       }
 
@@ -2528,16 +2619,27 @@ export function createChatServer({
         return;
       }
 
+      // This device stored these messages (media included) / handled these queued events.
+      if (event.type === 'queue:ack') {
+        await deliveryQueue.ack(userId, socket.deviceId, { messageIds: event.messageIds, eventIds: event.eventIds });
+        return;
+      }
+
       if (event.type === 'message:read') {
         const { messageId } = event;
+        if (typeof messageId !== 'string' || messageId.length >= 120) return;
         const result = (await db.prepare(`UPDATE messages SET status = 'read'
           WHERE id = ? AND receiver_id = ? AND status <> 'read'`).run(messageId, userId));
-        if (result.changes) {
-          const message = (await db.prepare("SELECT sender_id FROM messages WHERE id = ?").get(messageId));
+        // Delivered messages leave the server; their route (no content) still says whose they were.
+        const route = result.changes || await messageRowExists(messageId) ? null : await deliveryQueue.routeOf(messageId);
+        const senderId = result.changes
+          ? (await db.prepare("SELECT sender_id FROM messages WHERE id = ?").get(messageId))?.sender_id
+          : route?.kind === 'direct' && route.receiverId === userId ? route.senderId : null;
+        if (senderId) {
           const statusEvent = { type: 'message:status', messageId, status: 'read' };
           // The reader's own devices always learn it (their unread counts); the sender only with receipts on both sides.
-          if (await receiptsBetween(message.sender_id, userId)) broadcastUser(message.sender_id, statusEvent);
-          broadcastUser(userId, statusEvent, socket);
+          if (await receiptsBetween(senderId, userId)) await notifyUser(senderId, statusEvent);
+          await notifyUser(userId, statusEvent, socket);
         }
         return;
       }
@@ -2549,10 +2651,12 @@ export function createChatServer({
         const played = await db.prepare(`UPDATE messages SET played_at = ?, status = 'read'
           WHERE id = ? AND receiver_id = ? AND played_at IS NULL AND deleted_at IS NULL AND (content LIKE 'voice:%' OR content LIKE 'e2e2:voice:%')
           RETURNING sender_id AS "senderId"`).get(Date.now(), messageId, userId);
-        if (!played) return;
+        const route = played || await messageRowExists(messageId) ? null : await deliveryQueue.routeOf(messageId);
+        const senderId = played?.senderId ?? (route?.kind === 'direct' && route.receiverId === userId ? route.senderId : null);
+        if (!senderId) return;
         for (const update of [{ type: 'message:status', messageId, status: 'read' }, { type: 'message:played', messageId }]) {
-          broadcastUser(played.senderId, update);
-          broadcastUser(userId, update, socket);
+          await notifyUser(senderId, update);
+          await notifyUser(userId, update, socket);
         }
         return;
       }
@@ -2654,6 +2758,7 @@ export function createChatServer({
         if (stored.senderId !== userId) return json(socket, { type: 'error', message: 'Message ID is already in use.' });
         return json(socket, { type: 'message:ack', message: await presentMessage(stored) });
       }
+      await deliveryQueue.trackDirect({ messageId: message.id, senderId: userId, senderDeviceId: socket.deviceId, receiverId });
       // A message keeps the thread in both chat lists (and brings a deleted thread back) without saving a contact.
       (await linkUsers(userId, receiverId));
       (await linkUsers(receiverId, userId));
@@ -2762,6 +2867,8 @@ export function createChatServer({
         await db.ready?.();
         await seedDemoUsers();
         await discardStaleUploads();
+        // History from before the queue (delivered messages, anything past 30 days) leaves the server at start.
+        await deliveryQueue.sweep();
       } catch (error) {
         await new Promise((resolve) => server.close(resolve));
         throw error;
@@ -2771,6 +2878,7 @@ export function createChatServer({
         sweep(expireMessages);
         sweep(expireGroupMessages);
         sweep(expireStatuses);
+        sweep(() => deliveryQueue.sweep());
       }, EXPIRY_SWEEP_MS);
       expiryTimer.unref();
       uploadSweep = setInterval(() => {

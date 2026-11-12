@@ -158,7 +158,7 @@ final class NativeRelay extends WebSocketListener {
         }
         Request request = new Request.Builder()
             .url(session.websocketUrl())
-            .header("Sec-WebSocket-Protocol", "relay.auth." + session.token + ", relay.v1, relay.background")
+            .header("Sec-WebSocket-Protocol", "relay.auth." + session.token + ", relay.v1, relay.background, " + ClientVersion.SUBPROTOCOL)
             .build();
         socket = client.newWebSocket(request, this);
     }

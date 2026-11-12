@@ -3,6 +3,7 @@
 import { MAX_TRANSFER_BYTES, PREVIEW_LIMIT_BYTES } from './transfer.js';
 import { decryptMedia, parseEncryptedMediaRef } from './mediaCrypto.js';
 import { apiFetch, apiUrl } from './api.js';
+import { PREFETCH_LIMIT_BYTES, readStoredMedia, storeMedia, storeMediaInfo } from './mediaVault.js';
 
 export const MAX_UPLOAD_BYTES = MAX_TRANSFER_BYTES;
 
@@ -188,7 +189,10 @@ export function peekMediaBlob(id, sessionToken) {
 export async function loadMediaInfo(id, sessionToken, signal) {
   const cached = peekMediaInfo(id, sessionToken);
   if (cached) return cached;
-  const fetched = await fetchMediaInfo(id, sessionToken, signal);
+  // Kept on this device (the server may already have deleted it): its info came with it.
+  const stored = await readStoredMedia(id);
+  const fetched = stored?.info ?? await fetchMediaInfo(id, sessionToken, signal);
+  if (!stored?.info) storeMediaInfo(id, fetched);
   // The server only knows the ciphertext: an encrypted attachment's real type and size come from its descriptor.
   const descriptor = encryptedDescriptors.get(id);
   const info = descriptor ? { ...fetched, contentType: descriptor.type || fetched.contentType, size: descriptor.size } : fetched;
@@ -203,7 +207,11 @@ export async function loadMediaBlob(id, sessionToken, options = {}) {
     options.onProgress?.(1);
     return cached;
   }
-  const fetched = await fetchMediaBlob(id, sessionToken, options);
+  // This device's own copy first; a file fetched from the server is kept, as the server deletes it once every
+  // device has its copy.
+  const stored = await readStoredMedia(id);
+  const fetched = stored?.blob ?? await fetchMediaBlob(id, sessionToken, options);
+  if (!stored?.blob) await storeMedia(id, fetched, peekMediaInfo(id, sessionToken));
   const descriptor = encryptedDescriptors.get(id);
   const blob = descriptor ? await decryptMedia(fetched, descriptor) : fetched;
   const key = cacheKey(id, sessionToken);
@@ -217,6 +225,23 @@ export async function loadMediaBlob(id, sessionToken, options = {}) {
     }
   }
   return blob;
+}
+
+/**
+ * Fetches an attachment into this device's store ahead of time (a message is acknowledged to the server only once
+ * its attachment is kept here). True when it is kept; big files are left until opened.
+ */
+export async function storeMediaLocally(id, sessionToken) {
+  if (!id || !sessionToken) return false;
+  if ((await readStoredMedia(id))?.blob) return true;
+  try {
+    const info = await fetchMediaInfo(id, sessionToken);
+    if (Number(info?.size ?? 0) > PREFETCH_LIMIT_BYTES) return false;
+    const blob = await fetchMediaBlob(id, sessionToken);
+    return storeMedia(id, blob, info);
+  } catch {
+    return false;
+  }
 }
 
 /** What the in-memory media cache holds (Storage and data). */

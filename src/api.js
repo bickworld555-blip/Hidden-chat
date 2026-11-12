@@ -1,3 +1,4 @@
+import { CLIENT_HEADER, CLIENT_PROTOCOL } from './clientVersion.js';
 export function normalizeApiBaseUrl(value = '') {
   if (typeof value !== 'string') throw new TypeError('VITE_API_BASE_URL must be a string.');
   if (!value.trim()) return '';
@@ -34,10 +35,9 @@ export function websocketUrl(baseUrl = apiBaseUrl, pageUrl = globalThis.location
 export function apiFetch(path, options = {}) {
   const url = apiUrl(path);
   const target = url.startsWith('/') ? globalThis.location : new URL(url);
-  if (target?.protocol === 'https:' && target.hostname.endsWith('.ngrok-free.app')) {
-    const headers = new Headers(options.headers);
-    headers.set('ngrok-skip-browser-warning', 'true');
-    return globalThis.fetch(url, { ...options, headers });
-  }
-  return globalThis.fetch(url, options);
+  // Every request says which app version sends it; the server refuses versions it no longer supports.
+  const headers = new Headers(options.headers);
+  headers.set(CLIENT_HEADER, String(CLIENT_PROTOCOL));
+  if (target?.protocol === 'https:' && target.hostname.endsWith('.ngrok-free.app')) headers.set('ngrok-skip-browser-warning', 'true');
+  return globalThis.fetch(url, { ...options, headers });
 }

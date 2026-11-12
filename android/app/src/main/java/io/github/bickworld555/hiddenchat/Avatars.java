@@ -66,6 +66,7 @@ final class Avatars {
             connection.setConnectTimeout(3000);
             connection.setReadTimeout(3000);
             connection.setRequestProperty("Authorization", "Bearer " + session.token);
+            connection.setRequestProperty(ClientVersion.HEADER, String.valueOf(ClientVersion.PROTOCOL));
             if (connection.getResponseCode() != 200) return null;
             Bitmap source;
             try (InputStream input = connection.getInputStream()) {

@@ -185,6 +185,7 @@ public class IncomingCallActivity extends Activity {
                 connection.setConnectTimeout(5000);
                 connection.setReadTimeout(5000);
                 connection.setRequestProperty("Authorization", "Bearer " + token);
+                connection.setRequestProperty(ClientVersion.HEADER, String.valueOf(ClientVersion.PROTOCOL));
                 if (connection.getResponseCode() != 200) return;
                 android.graphics.Bitmap bitmap;
                 try (java.io.InputStream input = connection.getInputStream()) {

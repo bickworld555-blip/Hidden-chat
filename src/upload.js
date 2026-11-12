@@ -1,3 +1,4 @@
+import { CLIENT_HEADER, CLIENT_PROTOCOL } from './clientVersion.js';
 import { apiFetch, apiUrl } from './api.js';
 // Browser upload client. Small files go in one request; larger ones are sliced from the File on disk
 // (never read into memory as a whole) and sent as resumable chunks with retry.
@@ -28,6 +29,7 @@ function send(path, { sessionToken, signal, method, body, headers = {}, onBytes 
     const xhr = new XMLHttpRequest();
     xhr.open(method, apiUrl(path));
     xhr.setRequestHeader('Authorization', 'Bearer ' + sessionToken);
+    xhr.setRequestHeader(CLIENT_HEADER, String(CLIENT_PROTOCOL));
     for (const [name, value] of Object.entries(headers)) xhr.setRequestHeader(name, value);
     xhr.upload.onprogress = (event) => { if (event.lengthComputable) onBytes(event.loaded); };
     const abort = () => xhr.abort();

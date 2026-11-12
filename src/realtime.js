@@ -1,3 +1,4 @@
+import { CLIENT_SUBPROTOCOL } from './clientVersion.js';
 import { websocketUrl } from './api.js';
 
 export class RealtimeClient {
@@ -38,7 +39,7 @@ export class RealtimeClient {
     window.clearTimeout(this.retryTimer);
     if (this.socket?.readyState === WebSocket.CONNECTING || this.socket?.readyState === WebSocket.OPEN) return;
     if (!this.listenersAttached) this.attachLifecycleListeners();
-    const socket = new WebSocket(websocketUrl(), [`relay.auth.${this.token}`, 'relay.v1']);
+    const socket = new WebSocket(websocketUrl(), [`relay.auth.${this.token}`, 'relay.v1', CLIENT_SUBPROTOCOL]);
     this.socket = socket;
     this.onState('connecting');
     socket.addEventListener('open', () => {

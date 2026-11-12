@@ -54,6 +54,12 @@ export const IMPORT_TABLES = Object.freeze([
   { name: 'verification_requests', columns: ['user_id', 'note', 'status', 'created_at', 'decided_at'], users: ['user_id'], key: ['user_id'] },
   { name: 'verified_channels', columns: ['channel_id', 'verified_at', 'granted_by'], users: [], key: ['channel_id'] },
   { name: 'verification_tickets', columns: ['id', 'kind', 'subject_id', 'requester_id', 'note', 'status', 'created_at', 'decided_at', 'decided_by', 'decision_note'], users: ['requester_id'] },
+  // The delivery queue (server/deliveryQueue.mjs): pending per-device deliveries, routes and queued events.
+  { name: 'message_deliveries', columns: ['message_id', 'kind', 'user_id', 'device_id', 'created_at', 'delivered_at'], users: ['user_id'], key: ['message_id', 'device_id'] },
+  { name: 'message_routes', columns: ['message_id', 'kind', 'sender_id', 'receiver_id', 'group_id', 'created_at'], users: ['sender_id'], key: ['message_id'] },
+  { name: 'device_events', columns: ['id', 'user_id', 'device_id', 'payload', 'created_at'], users: ['user_id'] },
+  // End-to-end encrypted backups: the opaque file stays on disk; this row says whose it is.
+  { name: 'backups', columns: ['user_id', 'disk_name', 'byte_size', 'kdf', 'updated_at'], users: ['user_id'], key: ['user_id'] },
   { name: 'channel_admins', columns: ['channel_id', 'user_id', 'added_at'], users: ['user_id'], key: ['channel_id', 'user_id'] },
   { name: 'channel_followers', columns: ['channel_id', 'user_id', 'followed_at'], users: ['user_id'], key: ['channel_id', 'user_id'] },
   { name: 'channel_posts', columns: ['id', 'channel_id', 'author_id', 'content', 'created_at'], users: ['author_id'] },

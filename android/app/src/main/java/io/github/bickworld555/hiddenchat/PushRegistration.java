@@ -117,6 +117,7 @@ final class PushRegistration {
                 Request request = new Request.Builder()
                     .url(session.origin + "/api/v1/push/devices")
                     .header("Authorization", "Bearer " + session.token)
+                    .header(ClientVersion.HEADER, String.valueOf(ClientVersion.PROTOCOL))
                     .post(RequestBody.create(body.toString(), JSON))
                     .build();
                 try (Response response = http.newCall(request).execute()) {
@@ -148,6 +149,7 @@ final class PushRegistration {
                 Request request = new Request.Builder()
                     .url(session.origin + "/api/v1/push/devices")
                     .header("Authorization", "Bearer " + session.token)
+                    .header(ClientVersion.HEADER, String.valueOf(ClientVersion.PROTOCOL))
                     .delete(RequestBody.create(new JSONObject().put("token", token).toString(), JSON))
                     .build();
                 http.newCall(request).execute().close();
@@ -197,6 +199,7 @@ final class PushRegistration {
         Request request = new Request.Builder()
             .url(session.origin + path)
             .header("Authorization", "Bearer " + session.token)
+                    .header(ClientVersion.HEADER, String.valueOf(ClientVersion.PROTOCOL))
             .post(RequestBody.create(body.toString(), JSON))
             .build();
         try (Response response = http.newCall(request).execute()) {

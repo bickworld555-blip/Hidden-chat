@@ -1,7 +1,7 @@
 // Dashboard overview: headline numbers, where people use the app, the last two weeks, and system health.
 // Everything here is a count; no account, message or file is shown.
 import { useEffect, useState } from 'react';
-import { BadgeCheck, Flag, Globe2, HardDrive, RefreshCw, ShieldCheck, Users } from 'lucide-react';
+import { BadgeCheck, Flag, Globe2, HardDrive, Inbox, RefreshCw, ShieldCheck, Users } from 'lucide-react';
 import { adminRequest } from './adminApi.js';
 import { MediaIntegrity } from './AdminConsole.jsx';
 import WorldMap, { MAP_STEPS } from './WorldMap.jsx';
@@ -23,6 +23,7 @@ function Tile({ label, value, hint, tone = '', onClick, icon: Icon }) {
 
 export default function Overview({ onNavigate }) {
   const [stats, setStats] = useState(null);
+  const [queue, setQueue] = useState(null);
   const [geo, setGeo] = useState(null);
   const [metric, setMetric] = useState('active');
   const [error, setError] = useState('');
@@ -30,6 +31,7 @@ export default function Overview({ onNavigate }) {
     setError('');
     adminRequest('/api/admin/v1/stats').then(setStats).catch((caught) => setError(caught.message));
     adminRequest('/api/admin/v1/geo').then(setGeo).catch((caught) => setError(caught.message));
+    adminRequest('/api/admin/v1/queue').then(setQueue).catch(() => {});
   };
   useEffect(() => { load(); }, []);
 
@@ -48,6 +50,9 @@ export default function Overview({ onNavigate }) {
         <Tile tone="is-gold" icon={BadgeCheck} label="Verified channels" value={stats ? n(stats.verifiedChannels) : '…'} hint={stats ? `of ${n(stats.channels)} channels` : ''} onClick={() => onNavigate('verification')} />
         <Tile tone={stats?.pendingVerifications ? 'is-attention' : ''} icon={ShieldCheck} label="Pending verifications" value={stats ? n(stats.pendingVerifications) : '…'} onClick={() => onNavigate('verification')} />
         <Tile tone={stats?.openReports ? 'is-alert' : ''} icon={Flag} label="Open reports" value={stats ? n(stats.openReports) : '…'} onClick={() => onNavigate('reports')} />
+        {/* The server keeps messages only until every device has them (30 days at most). */}
+        <Tile icon={Inbox} label="Waiting for delivery" value={queue ? n(queue.pendingMessages) : '…'}
+          hint={queue ? `${n(queue.waitingDevices)} devices · ${n(queue.queuedEvents)} receipts${queue.oldestPendingAt ? ` · oldest ${Math.max(0, Math.round((Date.now() - queue.oldestPendingAt) / 86400000))} d` : ''}` : ''} />
       </section>
 
       <section className="ad-card ad-geo" aria-label="Where people use Hidden Messenger">
