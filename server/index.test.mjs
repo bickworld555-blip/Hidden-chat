@@ -701,6 +701,8 @@ test('development Ngrok origins pass CORS preflight and authenticated WebSocket 
   assert.equal(response.headers.get('access-control-allow-origin'), origin);
   assert.equal(response.headers.get('access-control-allow-methods'), 'GET,HEAD,POST,PUT,PATCH,DELETE,OPTIONS');
   assert.match(response.headers.get('access-control-allow-headers'), /X-Upload-Offset/);
+  // The account backup upload (src/cloudBackup.js) names its key type in a header; the app's origin must be allowed to send it.
+  assert.match(response.headers.get('access-control-allow-headers'), /X-Backup-Kdf/);
   assert.match(response.headers.get('vary'), /Origin/);
   const account = await createSession('ngrokuser');
   const socket = new WebSocket(baseUrl.replace('http:', 'ws:') + '/ws', ['relay.auth.' + account.token, 'relay.v1'], { headers: { Origin: origin } });

@@ -571,7 +571,7 @@ export function createChatServer({
     response.vary('Origin');
     if (request.method === 'OPTIONS') {
       response.set('Access-Control-Allow-Methods', 'GET,HEAD,POST,PUT,PATCH,DELETE,OPTIONS');
-      response.set('Access-Control-Allow-Headers', 'Authorization,Content-Type,X-File-Name,X-Upload-Offset,X-HM-Client,ngrok-skip-browser-warning');
+      response.set('Access-Control-Allow-Headers', 'Authorization,Content-Type,X-File-Name,X-Upload-Offset,X-HM-Client,X-Backup-Kdf,ngrok-skip-browser-warning');
       return response.status(204).end();
     }
     return next();
