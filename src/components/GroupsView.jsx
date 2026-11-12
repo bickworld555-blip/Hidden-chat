@@ -24,6 +24,7 @@ import { fetchGroupMessages } from '../groupHistory.js';
 import { dropPending, enqueuePending, flushPending, pendingFor, usePending } from '../groupPending.js';
 import FormattedText from './FormattedText.jsx';
 import { useChatStore } from '../store.js';
+import { formatMessageTime } from '../time.js';
 import { cachedGroupDetails, cachedGroups, offlineGroupDetails, saveGroupDetails, saveGroups } from '../groupCache.js';
 import { isMediaContent } from '../media.js';
 import { MAX_CALL_PARTICIPANTS } from '../callRoom.js';
@@ -90,7 +91,7 @@ function formatWhen(timestamp) {
 }
 
 function formatTime(timestamp) {
-  return new Date(timestamp).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+  return formatMessageTime(timestamp); // the same clock as one-to-one chats
 }
 
 function formatSchedule(timestamp) {

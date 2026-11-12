@@ -1566,9 +1566,11 @@ html, body { overflow-x: hidden; }
 
 .wa-list { flex: 1; min-height: 0; display: flex; flex-direction: column; position: relative; background: var(--wa-bg); color: var(--wa-text); }
 .wa-list-header { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px 6px; }
-.wa-list-brand { min-width: 0; display: flex; align-items: center; gap: 7px; }
+.wa-list-brand { min-width: 0; flex: 1 1 auto; display: flex; align-items: center; gap: 7px; }
 .wa-list-brand-mark { width: 29px; height: 33px; flex: none; filter: drop-shadow(0 2px 2px #001e4555); }
-.wa-list-header-actions { display: flex; align-items: center; gap: 4px; }
+/* With very large text (Android font size up to 200%) the title ends in an ellipsis instead of running under the icons. */
+.wa-list-brand h1 { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wa-list-header-actions { display: flex; align-items: center; gap: 4px; flex: none; }
 .wa-camera-error { margin: 0 16px 8px; }
 
 /* Long-press / right-click action sheet on a chat row, and the delete confirmation. */
@@ -3814,7 +3816,7 @@ button.groups-row { cursor: pointer; }
 .groups-row small { color: #8696a0; }
 
 /* Conversation */
-.groups-messages { gap: 2px; padding: 12px 10px; background-color: #efeae2; }
+.groups-messages { gap: 2px; padding: 12px 10px; background-color: var(--wa-chat-bg, #efeae2); }
 .dark-theme .groups-messages { background-color: #0b1628; }
 .groups-day { align-self: center; margin: 10px 0 6px; padding: 5px 12px; border-radius: 8px; background: #fff; color: #54656f; font-size: 12.5px; box-shadow: 0 1px .5px rgba(11, 20, 26, .13); }
 .dark-theme .groups-day { background: #182229; color: #8696a0; }

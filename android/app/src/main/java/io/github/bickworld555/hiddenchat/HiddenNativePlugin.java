@@ -234,6 +234,20 @@ public class HiddenNativePlugin extends Plugin {
         call.resolve(state());
     }
 
+    /** The app's theme: dark icons on the status and navigation bars for the light theme, light icons for dark. */
+    @PluginMethod
+    public void setSystemBarsTheme(PluginCall call) {
+        boolean light = "light".equals(call.getString("theme", "dark"));
+        getActivity().runOnUiThread(() -> {
+            android.view.Window window = getActivity().getWindow();
+            androidx.core.view.WindowInsetsControllerCompat controller =
+                androidx.core.view.WindowCompat.getInsetsController(window, window.getDecorView());
+            controller.setAppearanceLightStatusBars(light);
+            controller.setAppearanceLightNavigationBars(light);
+            call.resolve();
+        });
+    }
+
     @PluginMethod
     public void requestStartupPermissions(PluginCall call) {
         // Only the notification prompt (Android 13+), as WhatsApp asks on first launch; the rest come when used.

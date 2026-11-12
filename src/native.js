@@ -35,6 +35,8 @@ function remember(state) {
 }
 
 export const nativeState = async () => remember(await invoke('getState'));
+// Status and navigation bar icons follow the app's theme (dark icons on the light theme).
+export const nativeSetSystemBarsTheme = (theme) => invoke('setSystemBarsTheme', { theme });
 // Invite a friend (android Invites.java): contacts stay on the phone; invites go out as a text from it.
 export const nativeListContacts = () => invoke('listContacts');
 export const nativeOpenSmsComposer = (number, text) => invoke('openSmsComposer', { number, text });

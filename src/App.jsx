@@ -15,7 +15,7 @@ import { initialTabFromUrl } from './pwa.js';
 import { countUnreadConversations, groupRow } from './groupRows.js';
 import { getViewingGroup, readMutedGroups, setGroupMuted, useMutedGroups } from './groupPrefs.js';
 import { classifyIncoming, groupNotificationText, parseConversationOpenParam, shouldAlertGroup } from './notificationChannels.js';
-import { nativeClearSession, nativeRequestStartupPermissions, nativeSetSession, nativeShell, nativeStartBackground, nativeState, nativeStopBackground, nativeTakePendingCall, nativeMoveToBackground, nativeClearShare, nativeSetCallActive, nativeClearMessageNotifications, nativeClearMissedCalls, nativeTakeMessageActions, onNative } from './native.js';
+import { nativeClearSession, nativeRequestStartupPermissions, nativeSetSession, nativeShell, nativeStartBackground, nativeState, nativeStopBackground, nativeTakePendingCall, nativeMoveToBackground, nativeClearShare, nativeSetCallActive, nativeClearMessageNotifications, nativeClearMissedCalls, nativeTakeMessageActions, nativeSetSystemBarsTheme, onNative } from './native.js';
 import { parseShare } from './shareTarget.js';
 import { onE2eEvent, startE2e, stopE2e } from './e2e/client.js';
 import { fetchGroupMessages } from './groupHistory.js';
@@ -660,6 +660,9 @@ export default function App() {
     setCallSignals([]);
     setGroupsOpen(false);
   }
+
+  // The phone's status and navigation bar icons follow the theme (white icons vanish on the light theme).
+  useEffect(() => { nativeSetSystemBarsTheme(darkMode ? 'dark' : 'light'); }, [darkMode]);
 
   function toggleTheme() {
     const next = !darkMode;
