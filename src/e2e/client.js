@@ -34,6 +34,24 @@ export const innerOf = (content, extra = {}) => {
   return { c: content, ...(linkPreview ? { lp: linkPreview } : {}), ...(statusReply ? { sr: statusReply } : {}), ...(replyToId ? { r: replyToId } : {}), ...(extra.forwarded ? { fw: 1 } : {}) };
 };
 
+/**
+ * The reader for innerOf's payload, the one place a decrypted payload is parsed: everything the sender put inside the
+ * encryption that this app understands (text, link preview, status reply, the quoted message's id, forwarded), checked,
+ * and nothing else. Null when it carries no text.
+ */
+export const innerFrom = (value) => {
+  if (typeof value?.c !== 'string') return null;
+  const linkPreview = value.lp ? sanitizePreview(value.lp) : null;
+  const statusReply = value.sr ? cleanStatusReply(value.sr) : null;
+  return {
+    c: value.c,
+    ...(linkPreview ? { lp: linkPreview } : {}),
+    ...(statusReply ? { sr: statusReply } : {}),
+    ...(typeof value.r === 'string' && value.r.length > 0 && value.r.length < 120 ? { r: value.r } : {}),
+    ...(value.fw === 1 ? { fw: 1 } : {}),
+  };
+};
+
 export const DEVICE_LIST_TTL_MS = 5 * 60 * 1000;
 export const GROUP_DEVICE_TTL_MS = 60 * 1000;
 export const KEY_REFRESH_MS = 6 * 60 * 60 * 1000;
@@ -182,19 +200,20 @@ async function remember(hash, inner) {
 async function recall(hash) {
   if (plainMemory.has(hash)) return plainMemory.get(hash);
   const stored = await secureGet(plainKey(hash)).catch(() => null);
-  const inner = typeof stored === 'string' ? { c: stored } : stored && typeof stored.c === 'string' ? stored : null;
+  const inner = typeof stored === 'string' ? { c: stored } : innerFrom(stored);
   if (!inner) return null;
   plainMemory.set(hash, inner);
   return inner;
 }
 
-// The opened form callers get: { content, linkPreview? } with the routed attachment id.
+// The opened form callers get: { content, linkPreview?, statusReply?, replyTo?, forwarded? } with the routed attachment
+// id; `inner` comes from innerFrom (checked there).
 export const openedFrom = (inner, route) => ({
   content: withRoutedMedia(inner.c, route),
   e2e: true,
-  ...(inner.lp ? { linkPreview: sanitizePreview(inner.lp) } : {}),
-  ...(inner.sr ? { statusReply: cleanStatusReply(inner.sr) } : {}),
-  ...(typeof inner.r === 'string' && inner.r.length < 120 ? { replyTo: { id: inner.r } } : {}),
+  ...(inner.lp ? { linkPreview: inner.lp } : {}),
+  ...(inner.sr ? { statusReply: inner.sr } : {}),
+  ...(inner.r ? { replyTo: { id: inner.r } } : {}),
   ...(inner.fw === 1 ? { forwarded: true } : {}),
 });
 
@@ -311,9 +330,8 @@ export async function openContent(content, { senderId, groupId = null } = {}) {
       const plaintext = groupId
         ? await session.protocol.decryptGroup(groupId, me, senderId, parsed.body.sd, parsed.body)
         : await session.protocol.decryptFromDevice(senderId, parsed.body.sd, parsed.body.d?.[session.userId]?.[session.deviceId]);
-      const parsedInner = JSON.parse(plaintext);
-      if (typeof parsedInner?.c !== 'string') return { content: '', e2eError: 'invalid' };
-      const inner = { c: parsedInner.c, ...(parsedInner.lp ? { lp: sanitizePreview(parsedInner.lp) } : {}), ...(parsedInner.sr ? { sr: cleanStatusReply(parsedInner.sr) } : {}) };
+      const inner = innerFrom(JSON.parse(plaintext));
+      if (!inner) return { content: '', e2eError: 'invalid' };
       if (current === session) await remember(hash, inner);
       return openedFrom(inner, parsed.route);
     } catch (error) {
