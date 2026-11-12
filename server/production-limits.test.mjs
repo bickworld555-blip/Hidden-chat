@@ -7,7 +7,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import WebSocket from 'ws';
 import { createChatServer } from './index.mjs';
-import { abuseLimitsFromEnv, clientAddress, createRateLimiter } from './abuse.mjs';
+import { DatabaseSync } from 'node:sqlite';
+import { abuseLimitsFromEnv, clientAddress, createSharedRateLimiter, ensureRateLimitSchema } from './abuse.mjs';
 import { alertWebhookFromEnv, createAlerts, serverErrorWatch } from './monitoring.mjs';
 import { innerOf, openedFrom } from '../src/e2e/client.js';
 import { resolveQuote } from '../src/replies.js';
@@ -61,16 +62,24 @@ test("the client's address is counted from the right of X-Forwarded-For, past th
   assert.equal(clientAddress(request(''), 0), '10.0.0.9');
 });
 
-test('a rate limiter counts per key and window and says how long to wait', () => {
+test('the counters are shared through the database, by window, under a hashed key', async () => {
+  const db = new DatabaseSync(':memory:');
+  ensureRateLimitSchema(db);
   let at = 0;
-  const limiter = createRateLimiter({ now: () => at });
+  const limiter = createSharedRateLimiter({ db, secret: 'test-secret', now: () => at });
+  const other = createSharedRateLimiter({ db, secret: 'test-secret', now: () => at }); // another server process
   const rules = [{ limit: 2, windowMs: 1000 }];
-  assert.equal(limiter.hit('a', rules), 0);
-  assert.equal(limiter.hit('a', rules), 0);
-  assert.equal(limiter.hit('a', rules), 1000);
-  assert.equal(limiter.hit('b', rules), 0, 'another key has its own count');
+  assert.equal(await limiter.hit('signups:203.0.113.9', rules), 0);
+  assert.equal(await other.hit('signups:203.0.113.9', rules), 0);
+  assert.equal(await limiter.hit('signups:203.0.113.9', rules), 1000, 'the third, counted across both');
+  assert.equal(await limiter.hit('signups:198.51.100.1', rules), 0, 'another key has its own count');
+  const keys = db.prepare('SELECT key FROM rate_limit_hits').all().map((row) => row.key).join(' ');
+  assert.equal(keys.includes('203.0.113.9'), false, 'no address is stored');
   at = 1000;
-  assert.equal(limiter.hit('a', rules), 0, 'a new window');
+  assert.equal(await limiter.hit('signups:203.0.113.9', rules), 0, 'a new window');
+  at = 3 * 24 * 60 * 60 * 1000;
+  await limiter.sweep();
+  assert.equal(db.prepare('SELECT count(*) AS count FROM rate_limit_hits').get().count, 0, 'ended windows are deleted');
 });
 
 test('one network address can create only so many accounts; another address is not affected', async () => {

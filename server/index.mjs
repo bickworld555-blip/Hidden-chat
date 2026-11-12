@@ -33,7 +33,7 @@ import { ensureE2eSchema, registerE2e } from './e2e.mjs';
 import { registerSfu } from './sfu.mjs';
 import { gifConfigFromEnv, registerGifs } from './gifs.mjs';
 import { alertWebhookFromEnv, createAlerts, serverErrorWatch } from './monitoring.mjs';
-import { abuseLimitsFromEnv, clientAddress, createRateLimiter, tooManyMessages, tooManySignups } from './abuse.mjs';
+import { abuseLimitsFromEnv, clientAddress, createSharedRateLimiter, ensureRateLimitSchema, tooManyMessages, tooManySignups } from './abuse.mjs';
 import { ensureExtrasSchema, registerExtras, statusAudienceSql } from './extras.mjs';
 import { ensureAdminSchema, registerAdmin } from './admin.mjs';
 import { adminCredentialsFrom, createAdminAuth } from './adminAuth.mjs';
@@ -416,6 +416,7 @@ export function createChatServer({
   ensureVerificationSchema(db);
   ensureRegionSchema(db);
   ensureDeliveryQueueSchema(db);
+  ensureRateLimitSchema(db);
   }
   // Verified business badges (server/verification.mjs), read into memory for public user records.
   const verifiedAccounts = createVerifiedAccounts(db);
@@ -1057,7 +1058,7 @@ export function createChatServer({
   app.post('/api/v1/groups/:groupId/messages', requireSession, async (request, response) => {
     const { groupId } = request.params;
     const userId = request.session.user_id;
-    const sendWait = messageWait(userId);
+    const sendWait = await messageWait(userId);
     if (sendWait) return response.status(429).set('Retry-After', String(Math.ceil(sendWait / 1000))).json(tooManyMessages(sendWait));
     const content = request.body?.content;
     if (typeof content !== 'string' || !content.trim() || (!isEnvelope(content) && content.length > 10000) || content.startsWith('voice:') || routingOf(content).startsWith('voice:')
@@ -1320,12 +1321,14 @@ export function createChatServer({
   // Browsers and the desktop app sign in by linking with the phone only (server/clientGate.mjs).
   const phoneOnly = phoneOnlySignIn({ allowed: webPasswordSignIn, appOrigin: BUNDLED_APP_ORIGIN });
   // Abuse limits (server/abuse.mjs): new accounts per client address, messages per account. Off in tests.
-  const rateLimiter = createRateLimiter();
-  const messageWait = (userId) => (abuseLimits ? rateLimiter.hit(`messages:${userId}`, abuseLimits.messages) : 0);
+  // Counters live in the database so every process and every restart shares them; keys are an HMAC under a secret
+  // that is not in the database (RELAY_RATE_LIMIT_SECRET, else derived from the database address).
+  const rateLimiter = createSharedRateLimiter({ db, secret: process.env.RELAY_RATE_LIMIT_SECRET || digest(`hm-rate-limits:${databaseUrl ?? databasePath ?? 'local'}`) });
+  const messageWait = async (userId) => (abuseLimits ? rateLimiter.hit(`messages:${userId}`, abuseLimits.messages) : 0);
   app.post('/api/v1/auth/register', phoneOnly, async (request, response) => {
     if (abuseLimits) {
       const address = clientAddress(request, abuseLimits.trustProxyHops);
-      const wait = address ? rateLimiter.hit(`signups:${address}`, abuseLimits.signups) : 0;
+      const wait = address ? await rateLimiter.hit(`signups:${address}`, abuseLimits.signups) : 0;
       if (wait) return response.status(429).set('Retry-After', String(Math.ceil(wait / 1000))).json(tooManySignups(wait));
     }
     const username = normalizeUsername(request.body?.username);
@@ -2689,7 +2692,7 @@ export function createChatServer({
 
       if (event.type !== 'message:send') return;
       const payload = event.message ?? {};
-      const sendWait = messageWait(userId);
+      const sendWait = await messageWait(userId);
       if (sendWait) return json(socket, { type: 'error', messageId: typeof payload.id === 'string' ? payload.id : null, message: tooManyMessages(sendWait).error, code: 'rate_limited', retryAfterMs: sendWait });
       const receiverId = payload.receiverId;
       const content = typeof payload.content === 'string' ? payload.content.trim() : '';
@@ -2917,6 +2920,7 @@ export function createChatServer({
         sweep(discardStaleUploads);
         sweep(removeOrphanedMedia);
         sweep(() => backups.removeOrphanedBackups());
+        sweep(() => rateLimiter.sweep());
       }, 60 * 60 * 1000);
       uploadSweep.unref();
       await eventPilot.publish('server:listening', server.address());

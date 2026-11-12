@@ -6,6 +6,8 @@
 // the left of those entries was written by the client and could be forged. RELAY_TRUST_PROXY_HOPS = the number of
 // proxies in front of the app.
 
+import { createHmac } from 'node:crypto';
+
 const SECOND = 1000;
 const MINUTE = 60 * SECOND;
 const HOUR = 60 * MINUTE;
@@ -64,27 +66,37 @@ export function clientAddress(request, hops) {
   return index >= 0 ? forwarded[index] || null : null;
 }
 
-/** Fixed-window counters by key. `hit` counts one event and returns the wait in ms when a limit is exceeded, else 0. */
-export function createRateLimiter({ now = () => Date.now(), maxKeys = 50_000 } = {}) {
-  const windows = new Map();
-  function prune(at) {
-    for (const [key, entry] of windows) if (entry.until <= at) windows.delete(key);
-  }
+/** SQLite side of the shared counters (Postgres: supabase/migrations/021_rate_limits.sql). */
+export function ensureRateLimitSchema(db) {
+  db.exec(`CREATE TABLE IF NOT EXISTS rate_limit_hits (
+    key TEXT NOT NULL, window_start INTEGER NOT NULL, count INTEGER NOT NULL, PRIMARY KEY (key, window_start)
+  )`);
+}
+
+/**
+ * Fixed-window counters kept in the database, so every server process and every restart sees the same counts
+ * (counters in memory reset on each deploy and are split between processes). Keys are stored as an HMAC under
+ * `secret`, never as the address or account id. `hit` resolves to the wait in ms when a limit is exceeded, else 0.
+ */
+export function createSharedRateLimiter({ db, secret, now = () => Date.now() }) {
+  const keyOf = (key) => createHmac('sha256', secret).update(key).digest('hex').slice(0, 40);
   return {
-    hit(key, rules) {
+    async hit(key, rules) {
       const at = now();
-      if (windows.size > maxKeys) prune(at);
+      const hashed = keyOf(key);
       let wait = 0;
       for (const { limit, windowMs } of rules) {
-        const slot = `${key}|${windowMs}`;
-        let entry = windows.get(slot);
-        if (!entry || entry.until <= at) { entry = { count: 0, until: at + windowMs }; windows.set(slot, entry); }
-        entry.count += 1;
-        if (entry.count > limit) wait = Math.max(wait, entry.until - at);
+        const start = Math.floor(at / windowMs) * windowMs;
+        const row = await db.prepare(`INSERT INTO rate_limit_hits(key, window_start, count) VALUES (?, ?, 1)
+          ON CONFLICT(key, window_start) DO UPDATE SET count = rate_limit_hits.count + 1 RETURNING count`).get(`${hashed}|${windowMs}`, start);
+        if (Number(row?.count ?? 0) > limit) wait = Math.max(wait, start + windowMs - at);
       }
       return wait;
     },
-    size: () => windows.size,
+    /** Deletes windows that have ended (run with the server's other housekeeping). */
+    async sweep(maxWindowMs = 24 * 60 * 60 * 1000) {
+      await db.prepare('DELETE FROM rate_limit_hits WHERE window_start < ?').run(now() - maxWindowMs);
+    },
   };
 }
 

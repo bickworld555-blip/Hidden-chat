@@ -59,6 +59,7 @@ export const IMPORT_TABLES = Object.freeze([
   { name: 'device_events', columns: ['id', 'user_id', 'device_id', 'payload', 'created_at'], users: ['user_id'] },
   // End-to-end encrypted backups: the opaque file stays on disk; this row says whose it is.
   { name: 'backups', columns: ['user_id', 'disk_name', 'byte_size', 'kdf', 'updated_at'], users: ['user_id'], key: ['user_id'] },
+  { name: 'rate_limit_hits', columns: ['key', 'window_start', 'count'], users: [], key: ['key', 'window_start'], numeric: ['window_start'] },
   { name: 'channel_admins', columns: ['channel_id', 'user_id', 'added_at'], users: ['user_id'], key: ['channel_id', 'user_id'] },
   { name: 'channel_followers', columns: ['channel_id', 'user_id', 'followed_at'], users: ['user_id'], key: ['channel_id', 'user_id'] },
   { name: 'channel_posts', columns: ['id', 'channel_id', 'author_id', 'content', 'created_at'], users: ['author_id'] },
