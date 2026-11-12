@@ -4136,6 +4136,7 @@ html.native-pip .wa-video-tile.is-pip { width: 30% !important; height: auto !imp
 .status-fab { display: grid; place-items: center; width: 56px; height: 56px; border: 0; border-radius: 16px; background: #2674d9; color: #0b1628; box-shadow: 0 3px 10px rgba(0, 0, 0, .3); cursor: pointer; }
 .status-fab.small { width: 44px; height: 44px; border-radius: 12px; background: var(--wa-panel, #1a2738); color: var(--wa-text, #e9ecef); }
 .status-fab:disabled { opacity: .5; }
+.status-add-overlay { align-items: flex-end; padding: 0; }
 .status-add-sheet { align-self: flex-end; width: 100%; max-width: 480px; margin: 0 auto; padding: 8px 0 calc(8px + env(safe-area-inset-bottom, 0px)); border-radius: 16px 16px 0 0; background: var(--wa-panel, #1a2738); color: var(--wa-text, #e9ecef); }
 .status-add-sheet button { display: flex; align-items: center; gap: 16px; width: 100%; padding: 16px 22px; border: 0; background: transparent; color: inherit; font-size: 16px; cursor: pointer; }
 .status-compose { position: fixed; inset: 0; z-index: 200; display: flex; flex-direction: column; padding: calc(8px + var(--hm-safe-top, 0px)) 12px 16px; color: #fff; transition: background .2s; }
@@ -5232,8 +5233,8 @@ textarea.hm-input { min-height: 96px; resize: vertical; }
 
 /* Touch targets on phones: Android asks for 48dp. These controls stay their size on screen; an invisible layer around
    each one takes the touch (vertical only for chips and tabs that sit side by side). */
-.app-shell.is-mobile :is(.icon-button, .wa-icon-btn, .composer-icon, .display-name-pencil, .wa-chip, .wa-chip-add, .composer-tray-tabs button, .status-add-sheet) { position: relative; }
-.app-shell.is-mobile :is(.icon-button, .wa-icon-btn, .composer-icon, .display-name-pencil, .account-switch-btn, .profile-photo-edit, .status-add-sheet)::after { content: ""; position: absolute; inset: -6px; }
+.app-shell.is-mobile :is(.icon-button, .wa-icon-btn, .composer-icon, .display-name-pencil, .wa-chip, .wa-chip-add, .composer-tray-tabs button) { position: relative; }
+.app-shell.is-mobile :is(.icon-button, .wa-icon-btn, .composer-icon, .display-name-pencil, .account-switch-btn, .profile-photo-edit)::after { content: ""; position: absolute; inset: -6px; }
 .app-shell.is-mobile :is(.wa-chip, .wa-chip-add, .composer-tray-tabs button)::after { content: ""; position: absolute; inset: -8px 0; }
 
 /* Tablets and unfolded foldables (two panes): the chat list gives the conversation room on medium widths. */

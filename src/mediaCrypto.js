@@ -65,7 +65,9 @@ export async function encryptMedia(file, { mediaKey = generateMediaKey(), api } 
     parts.push(new Uint8Array(await subtle.encrypt({ name: 'AES-GCM', iv: chunkNonce(nonce, index), additionalData: lastFlag(index, chunks) }, key, plain)));
   }
   const blob = new Blob(parts, { type: 'application/octet-stream' });
-  const [sha256, encSha256] = await Promise.all([digestBlob(file, api), digestBlob(blob, api)]);
+  // One after the other: each digest reads its whole blob into memory, so together they doubled the peak.
+  const sha256 = await digestBlob(file, api);
+  const encSha256 = await digestBlob(blob, api);
   return { blob, descriptor: { v: MEDIA_CRYPTO_VERSION, key: mediaKey, size: file.size, chunk: MEDIA_CHUNK_BYTES, sha256, encSha256, type: file.type || '' } };
 }
 

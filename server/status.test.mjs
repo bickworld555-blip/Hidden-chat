@@ -163,3 +163,33 @@ test('the ring round a photo: blue for an unseen status, grey when all are seen,
   assert.equal(nextStatusExpiry(feed, now + 24 * 3600_000), null);
   assert.deepEqual(statusRingsFrom(null), {});
 });
+
+test('a status photo or video is checked and prepared before anything is read into memory', async () => {
+  const { prepareStatusMedia, STATUS_VIDEO_MAX_BYTES } = await import('../src/statusApi.js');
+  const video = (bytes, type = 'video/mp4') => ({ name: 'clip.mp4', type, size: bytes });
+  // Too large: refused before its length is even read.
+  let asked = false;
+  await assert.rejects(prepareStatusMedia(video(STATUS_VIDEO_MAX_BYTES + 1), { durationOf: async () => { asked = true; return 10; } }), /too large for a status/);
+  assert.equal(asked, false);
+  // Too long: refused with a way out.
+  await assert.rejects(prepareStatusMedia(video(5_000_000), { durationOf: async () => 95 }), /up to 1 minute/);
+  // A minute (and a frame) is fine; an unreadable length does not block it (the server and viewer still apply).
+  const ok = video(5_000_000);
+  assert.equal(await prepareStatusMedia(ok, { durationOf: async () => 60.3 }), ok);
+  assert.equal(await prepareStatusMedia(ok, { durationOf: async () => { throw new Error('unreadable'); } }), ok);
+  // A photo goes through the chat's Standard quality (here, with no image decoder, it passes as it is).
+  const photo = { name: 'p.jpg', type: 'image/jpeg', size: 100 };
+  assert.equal(await prepareStatusMedia(photo), photo);
+  await assert.rejects(prepareStatusMedia({ name: 'x.pdf', type: 'application/pdf', size: 10 }), /photo or a video/);
+  await assert.rejects(prepareStatusMedia(null), /Choose a photo or video/);
+});
+
+test('the Add status sheet takes taps: no tap-target layer covers its buttons, and it sits over the tab bar', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const css = await readFile(new URL('../src/styles.css', import.meta.url), 'utf8');
+  // The enlarged-tap-target ::after layer is for single buttons; on a sheet it covered both options.
+  const enlarger = css.split('\n').find((line) => line.includes('::after { content: ""; position: absolute; inset: -6px; }'));
+  assert.ok(enlarger && !enlarger.includes('status-add-sheet'));
+  const view = await readFile(new URL('../src/components/UpdatesView.jsx', import.meta.url), 'utf8');
+  assert.ok(view.includes("{adding && createPortal(") && view.includes("document.querySelector('.app-shell') ?? document.body"), 'rendered over the whole app, in its theme');
+});

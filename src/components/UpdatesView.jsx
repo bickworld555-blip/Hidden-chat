@@ -6,6 +6,7 @@ import { apiFetch } from '../api.js';
 import Avatar from './Avatar.jsx';
 import TabMenu from './TabMenu.jsx';
 import { loadMediaBlob } from '../media.js';
+import { statusThumbnail } from '../statusThumbs.js';
 import { presentName } from '../profile.js';
 import { useBackHandler } from '../backStack.js';
 import { followerCount, mutedStatusUsers, setStatusMuted } from './extras/ExtrasPanels.jsx';
@@ -49,9 +50,14 @@ export default function UpdatesView({ onOpenChannels, onSheet, onSettings }) {
   async function postFile(file) {
     if (!file) return;
     setAdding(false);
-    setPosting('Posting…');
+    setError('');
+    // Feedback at once: the photo is resized and everything is encrypted before the upload starts.
+    setPosting('Preparing…');
     try {
-      await postMediaStatus(token, userId, file, { onProgress: (sent, total) => setPosting(`Posting… ${Math.round((sent / Math.max(1, total)) * 100)}%`) });
+      await postMediaStatus(token, userId, file, {
+        onStage: (stage) => setPosting(stage === 'encrypting' ? 'Encrypting…' : stage === 'uploading' ? 'Posting… 0%' : 'Preparing…'),
+        onProgress: (sent, total) => setPosting(`Posting… ${Math.round((sent / Math.max(1, total)) * 100)}%`),
+      });
       await refresh();
     } catch (caught) {
       setError(caught.message);
@@ -166,13 +172,16 @@ export default function UpdatesView({ onOpenChannels, onSheet, onSettings }) {
       </div>
       <input ref={fileRef} type="file" accept="image/*,video/*" hidden onChange={(event) => { postFile(event.target.files?.[0]); event.target.value = ''; }} />
 
-      {adding && (
-        <div className="modal-overlay" onClick={() => setAdding(false)}>
+      {/* Over the whole screen (not inside the Updates panel, where the buttons and tab bar sat on top of it). */}
+      {adding && createPortal(
+        <div className="modal-overlay status-add-overlay" onClick={() => setAdding(false)}>
           <div className="status-add-sheet" role="dialog" aria-label="Add status" onClick={(event) => event.stopPropagation()}>
             <button type="button" onClick={() => { setAdding(false); fileRef.current?.click(); }}><Camera size={22} /><span>Photo or video</span></button>
             <button type="button" onClick={() => { setAdding(false); setComposing(true); }}><Type size={22} /><span>Text</span></button>
           </div>
-        </div>
+        </div>,
+        // Inside the app shell, so it keeps the theme's colours.
+        document.querySelector('.app-shell') ?? document.body,
       )}
       {/* Full screen over everything, the tab bar included (inside the Updates panel they were clipped to it). */}
       {composing && createPortal(<TextStatusComposer onClose={() => setComposing(false)} onPost={async (text, background) => { await postTextStatus(token, text, background); setComposing(false); refresh(); }} />, document.body)}
@@ -251,21 +260,16 @@ function StatusCard({ token, entry, seen = false, muted = false, onOpen }) {
 function StatusCardPreview({ token, status }) {
   const { kind, mediaId, text } = statusKind(status.content);
   const [url, setUrl] = useState('');
+  // A small still (src/statusThumbs.js, cached and owned there), never the full photo or a live <video>.
   useEffect(() => {
     if (!mediaId || kind === 'file') return undefined;
     let cancelled = false;
-    let objectUrl = '';
-    loadMediaBlob(mediaId, token).then((blob) => {
-      if (cancelled) return;
-      objectUrl = URL.createObjectURL(blob);
-      setUrl(objectUrl);
-    }).catch(() => {});
-    return () => { cancelled = true; if (objectUrl) URL.revokeObjectURL(objectUrl); };
+    statusThumbnail(mediaId, kind, () => loadMediaBlob(mediaId, token)).then((still) => { if (!cancelled) setUrl(still ?? ''); }).catch(() => {});
+    return () => { cancelled = true; };
   }, [mediaId, kind, token]);
   if (kind === 'text') return <span className="status-card-text" style={{ background: status.background ?? '#005ad1' }}><span>{text}</span></span>;
   if (!url) return <span className="status-card-media is-loading" aria-hidden="true" />;
-  if (kind === 'video') return <video className="status-card-media" src={`${url}#t=0.1`} muted playsInline preload="metadata" aria-hidden="true" />;
-  return <img className="status-card-media" src={url} alt="" />;
+  return <img className="status-card-media" src={url} alt="" decoding="async" />;
 }
 
 function TextStatusComposer({ onClose, onPost }) {
@@ -299,6 +303,9 @@ function TextStatusComposer({ onClose, onPost }) {
 
 function StatusMedia({ status, token, onReady, videoRef }) {
   const { kind, mediaId } = statusKind(status.content);
+  // Kept here too (the parent's ref is cleared before effect clean-ups run), so the decoder can be released.
+  const playerRef = useRef(null);
+  const attachVideo = useCallback((node) => { if (node) playerRef.current = node; if (videoRef) videoRef.current = node; }, [videoRef]);
   const [url, setUrl] = useState('');
   const [failed, setFailed] = useState(false);
   useEffect(() => {
@@ -312,14 +319,21 @@ function StatusMedia({ status, token, onReady, videoRef }) {
       objectUrl = URL.createObjectURL(blob);
       setUrl(objectUrl);
     }).catch(() => { if (!cancelled) { setFailed(true); onReady?.(IMAGE_SECONDS); } });
-    return () => { cancelled = true; if (objectUrl) URL.revokeObjectURL(objectUrl); };
+    return () => {
+      cancelled = true;
+      // Next status or viewer closed: the video lets go of its hardware decoder now, not whenever it is collected.
+      const video = playerRef.current;
+      if (video) { video.pause(); video.removeAttribute('src'); video.load(); }
+      playerRef.current = null;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
   }, [mediaId, token]); // eslint-disable-line react-hooks/exhaustive-deps
   if (kind === 'text') {
     return <div className="status-text-slide" style={{ background: status.background ?? '#005ad1' }}><p>{statusKind(status.content).text}</p></div>;
   }
   if (failed) return <div className="status-text-slide"><p>This status is no longer available.</p></div>;
   if (!url) return <div className="status-loading" />;
-  if (kind === 'video') return <video ref={videoRef} className="status-media" src={url} autoPlay playsInline onLoadedMetadata={(event) => onReady?.(event.currentTarget.duration || IMAGE_SECONDS)} />;
+  if (kind === 'video') return <video ref={attachVideo} className="status-media" src={url} autoPlay playsInline onLoadedMetadata={(event) => onReady?.(event.currentTarget.duration || IMAGE_SECONDS)} />;
   return <img className="status-media" src={url} alt="" onLoad={() => onReady?.(IMAGE_SECONDS)} />;
 }
 
