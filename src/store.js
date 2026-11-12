@@ -73,10 +73,13 @@ function localFirstStore(indexed) {
         })());
       }
       await migrated.get(owner);
+      storeKind = 'sqlite';
       return sqlite;
     } catch (error) {
       console.error('Local SQLite store unavailable; using IndexedDB:', error);
       failed = true;
+      storeKind = 'indexeddb-fallback';
+      storeError = String(error?.message ?? error).slice(0, 160);
       return indexed;
     }
   }
@@ -92,6 +95,17 @@ function localFirstStore(indexed) {
     },
     close() {},
   };
+}
+
+let storeKind = null;
+let storeError = '';
+/**
+ * Which local store holds this account's history and how many messages it has: 'sqlite' (the phone's encrypted
+ * SQLite), 'indexeddb' (the web app) or 'indexeddb-fallback' (the phone, SQLite unavailable; `error` says why).
+ */
+export async function localStoreStatus(userId) {
+  const messages = await savedMessageCount(userId);
+  return { kind: nativeShell() ? storeKind ?? 'sqlite' : 'indexeddb', messages, error: storeError };
 }
 
 /** Saved messages matching a search, newest first, from the device's own store (null where it has no index). */

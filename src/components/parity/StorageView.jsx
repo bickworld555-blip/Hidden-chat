@@ -2,7 +2,7 @@
 // the media cache, and the photo upload quality.
 import { useEffect, useState } from 'react';
 import { HardDrive, Image, Mic, RefreshCw, Trash2 } from 'lucide-react';
-import { useChatStore } from '../../store.js';
+import { localStoreStatus, useChatStore } from '../../store.js';
 import { clearMediaCache, formatFileSize, isMediaContent, loadMediaInfo, mediaCacheStats, parseMediaRef } from '../../media.js';
 import { parseVoiceContent } from '../../voice.js';
 import { SETTINGS, appSettings, useSetting } from '../../settings.js';
@@ -58,6 +58,10 @@ export default function StorageView({ onClose }) {
   const [estimate, setEstimate] = useState(null);
   const [persisted, setPersisted] = useState(null);
   const [cache, setCache] = useState(() => mediaCacheStats());
+  // Which store keeps this account's history here (the phone: encrypted SQLite), with its message count.
+  const [local, setLocal] = useState(null);
+  const ownerId = useChatStore((state) => state.userId);
+  useEffect(() => { if (ownerId) localStoreStatus(ownerId).then(setLocal).catch(() => {}); }, [ownerId]);
   const [sizes, setSizes] = useState({});
   const [notice, setNotice] = useState('');
 
@@ -86,12 +90,19 @@ export default function StorageView({ onClose }) {
         <div>
           <strong>{usage === null ? 'Storage use unavailable' : `${formatFileSize(usage)} used on this device`}</strong>
           {quota !== null && <div className="hm-storage-bar" role="meter" aria-valuemin={0} aria-valuemax={quota} aria-valuenow={usage ?? 0} aria-label="Storage used"><span style={{ width: `${Math.min(100, ((usage ?? 0) / quota) * 100)}%` }} /></div>}
-          <small>{quota !== null ? `${formatFileSize(Math.max(0, quota - (usage ?? 0)))} available to Hidden Messenger. ` : ''}Messages, contacts and settings are stored here encrypted; photos and files stay on the server until you open them.</small>
+          <small>{quota !== null ? `${formatFileSize(Math.max(0, quota - (usage ?? 0)))} available to Hidden Messenger. ` : ''}Messages, contacts, settings, photos and files are kept here, encrypted. The server deletes each message once your devices have it, so a backup is the only other copy.</small>
           {persisted === false && (
             <button type="button" onClick={() => navigator.storage.persist().then((granted) => { setPersisted(granted); setNotice(granted ? 'Your chats will be kept even when the device is low on storage.' : 'The browser didn’t allow it.'); })}>Keep my chats when storage is low</button>
           )}
         </div>
       </section>
+
+      {local && (
+        <p className="hm-muted hm-local-store" data-store={local.kind}>
+          Chat history on this device: {local.kind === 'sqlite' ? 'encrypted SQLite (SQLCipher)' : local.kind === 'indexeddb' ? 'encrypted browser storage' : 'encrypted browser storage (SQLite unavailable)'} · {local.messages.toLocaleString()} messages
+          {local.error ? ` · ${local.error}` : ''}
+        </p>
+      )}
 
       <section className="hm-storage-section" aria-label="Media cache">
         <h4>Media cache</h4>
