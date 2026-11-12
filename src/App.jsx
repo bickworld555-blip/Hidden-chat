@@ -1,7 +1,7 @@
 import { acknowledgeEvents } from './deliveryAck.js';
 import { apiFetch, apiUrl } from './api.js';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { activateAccount, addOrActivateAccount, getAccountsState, loadAccounts, removeAccount, updateAccountUser } from './accounts.js';
+import { activateAccount, addOrActivateAccount, getAccountsState, loadAccounts, removeAccount, sessionFromAccount, updateAccountUser } from './accounts.js';
 import { Bell, ChevronRight, MessageSquarePlus, Moon, Sun } from 'lucide-react';
 import { notificationPreview, savedMessageCount, useChatStore } from './store.js';
 import { runScheduledBackup, shouldOfferRestore } from './cloudBackup.js';
@@ -251,7 +251,15 @@ export default function App() {
         const { accounts, activeId } = await loadAccounts();
         const account = accounts.find((item) => item.id === activeId);
         if (!account) return;
-        const session = await validateAccount(account);
+        let session;
+        try {
+          session = await validateAccount(account);
+        } catch {
+          // Offline (or the server is unreachable): local-first, so the saved account opens with its chats from this
+          // device; the token is checked again once the connection is back.
+          session = account.user?.id ? sessionFromAccount(account) : undefined;
+          if (!session) throw new Error('offline without a saved profile');
+        }
         if (!active) return;
         if (!session) {
           await removeAccount(account.id);
