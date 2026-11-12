@@ -235,7 +235,7 @@ test('database outages during requests are logged with their reason and reported
   assert.equal((await fetch(`${url}/api/v1/ready`)).status, 200);
 });
 
-test('PostgreSQL public login, profile, contacts, one-use pairing and logout preserve the protocol', async (t) => {
+test('PostgreSQL public login, profile, contacts and logout preserve the protocol', async (t) => {
   const { api, register } = await startServer(t);
   const owner = await register('mixed_owner');
   const peer = await register('peer_person');
@@ -249,9 +249,6 @@ test('PostgreSQL public login, profile, contacts, one-use pairing and logout pre
   const linked = await api('/api/v1/contacts', { session: owner, method: 'POST', body: { userId: peer.user.id } });
   assert.equal(linked.data.saved, true);
   assert.equal((await api('/api/v1/contacts', { session: owner })).data[0].disappearSeconds, 0);
-  const code = (await api('/api/v1/pairing', { session: owner, method: 'POST', body: {} })).data.code;
-  const claims = await Promise.all([1, 2].map(() => api(`/api/v1/pairing/${code}/claim`, { method: 'POST', body: {} })));
-  assert.deepEqual(claims.map((item) => item.status).sort(), [200, 410]);
   assert.equal((await api('/api/v1/auth/logout', { session: owner, method: 'POST' })).status, 204);
   assert.equal((await api('/api/v1/me', { session: owner })).status, 401);
 });

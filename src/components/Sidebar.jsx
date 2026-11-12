@@ -90,7 +90,7 @@ export default function Sidebar({ onPair, onSounds, onNotifications, onAccountSe
         <ShieldMark className="brand-mark" />
         <div className="brand-copy"><strong>Hidden Messenger</strong><span>No Email. No Number. Only Privacy.</span></div>
         <div className="top-actions">
-          <button className="icon-button" title="Pair a device" onClick={onPair}><Settings2 size={18} /></button>
+          <button className="icon-button" title="Linked devices" onClick={onPair}><Settings2 size={18} /></button>
           <button className="icon-button" title="Notification sounds" onClick={onSounds}><Volume2 size={18} /></button>
           <button className="icon-button" title="Notifications" onClick={onNotifications}><Bell size={18} /></button>
           <button className="icon-button" title="More options"><MoreHorizontal size={20} /></button>

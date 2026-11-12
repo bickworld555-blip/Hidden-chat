@@ -26,7 +26,7 @@ import { createLoginThrottle, ensureParitySchema, registerParity } from './parit
 import { createVerifiedAccounts, createVerifiedChannels, ensureVerificationSchema, registerVerification } from './verification.mjs';
 import { ensureRegionSchema, registerRegions } from './regions.mjs';
 import { createDeliveryQueue, ensureDeliveryQueueSchema } from './deliveryQueue.mjs';
-import { clientGate, minimumClientProtocol, socketClientAllowed, updateRequiredBody } from './clientGate.mjs';
+import { clientGate, minimumClientProtocol, phoneOnlySignIn, socketClientAllowed, updateRequiredBody, webPasswordSignInAllowed } from './clientGate.mjs';
 import { registerBackups } from './backups.mjs';
 import { registerBilling } from './billing.mjs';
 import { ensureE2eSchema, registerE2e } from './e2e.mjs';
@@ -57,7 +57,6 @@ export function defaultDataDirectory(env = process.env, home = homedir()) {
   }
   return join(directory, '..', '.data');
 }
-const PAIRING_TTL_MS = 1000 * 60 * 2;
 const deleteForEveryoneWindowMs = 24 * 60 * 60 * 1000;
 const EXPIRY_SWEEP_MS = 30 * 1000;
 // How often an API request refreshes its session's last activity (see requireSession).
@@ -139,6 +138,7 @@ export function createChatServer({
   adminCredentials = adminCredentialsFrom(process.env),
   // Oldest app version still served (server/clientGate.mjs): the current one in production, none locally.
   minClientProtocol = minimumClientProtocol(process.env),
+  webPasswordSignIn = webPasswordSignInAllowed(process.env),
 } = {}) {
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('PORT must be an integer from 0 to 65535.');
   if (process.env.NODE_ENV === 'production' && port === 0) throw new Error('Production requires a fixed nonzero PORT.');
@@ -219,11 +219,8 @@ export function createChatServer({
     );
     CREATE INDEX IF NOT EXISTS messages_conversation
       ON messages(sender_id, receiver_id, created_at);
-    CREATE TABLE IF NOT EXISTS pairing_codes (
-      code_hash TEXT PRIMARY KEY,
-      user_id TEXT NOT NULL,
-      expires_at INTEGER NOT NULL
-    );
+    -- One-use pairing codes were replaced by QR linking (src/linking.js).
+    DROP TABLE IF EXISTS pairing_codes;
   `);
   const sessionExpiry = db.prepare("PRAGMA table_info(sessions)").all().find((column) => column.name === 'expires_at');
   if (sessionExpiry?.notnull) {
@@ -1301,7 +1298,9 @@ export function createChatServer({
     response.json({ valid: true, available: !exists, username });
   });
 
-  app.post('/api/v1/auth/register', async (request, response) => {
+  // Browsers and the desktop app sign in by linking with the phone only (server/clientGate.mjs).
+  const phoneOnly = phoneOnlySignIn({ allowed: webPasswordSignIn, appOrigin: BUNDLED_APP_ORIGIN });
+  app.post('/api/v1/auth/register', phoneOnly, async (request, response) => {
     const username = normalizeUsername(request.body?.username);
     if (!USERNAME_PATTERN.test(username)) {
       return response.status(400).json({ error: 'Use 3–24 letters, numbers, or underscores.' });
@@ -1331,7 +1330,7 @@ export function createChatServer({
   });
 
   const loginThrottle = createLoginThrottle();
-  app.post('/api/v1/auth/login', async (request, response) => {
+  app.post('/api/v1/auth/login', phoneOnly, async (request, response) => {
     const identity = typeof request.body?.identity === 'string' ? request.body.identity.trim() : '';
     const password = request.body?.password;
     if (!identity || typeof password !== 'string' || password.length > 128) {
@@ -2136,22 +2135,6 @@ export function createChatServer({
     response.status(200).json({ ...publicUser(contact), saved: Boolean(link?.saved), hidden: false });
   });
 
-  app.post('/api/v1/pairing', requireSession, async (request, response) => {
-    const code = randomBytes(18).toString('base64url');
-    (await db.prepare("INSERT INTO pairing_codes(code_hash, user_id, expires_at) VALUES (?, ?, ?)")
-      .run(digest(code), request.session.user_id, Date.now() + PAIRING_TTL_MS));
-    response.status(201).json({ code, expiresAt: Date.now() + PAIRING_TTL_MS });
-  });
-
-  app.post('/api/v1/pairing/:code/claim', async (request, response) => {
-    const code = request.params.code;
-    if (typeof code !== 'string' || code.length > 64) return response.status(404).json({ error: 'Pairing code not found.' });
-    const row = (await db.prepare("DELETE FROM pairing_codes WHERE code_hash = ? AND expires_at > ? RETURNING user_id")
-      .get(digest(code), Date.now()));
-    if (!row) return response.status(410).json({ error: 'This pairing code has expired or was already used.' });
-    if (await admin.suspended(row.user_id)) return response.status(403).json({ error: 'This account is suspended.' });
-    response.json((await issueSession(row.user_id, deviceNameFromUserAgent(request.get('user-agent'), 'Linked device'))));
-  });
 
   // Catch-up after a dropped connection: every direct message to or from me newer than `after`, plus my own
   // recent messages (their ticks may have moved while I was away). Ordered oldest first, capped at 500.

@@ -54,7 +54,7 @@ export function registerAdmin({ app, db, requireSession, requireAdmin, publicUse
   // Admin routes live under /api/admin/v1 and take only an admin session (server/adminAuth.mjs), never a chat
   // session: chat accounts have no admin powers.
 
-  /** Sign-in and pairing refuse suspended accounts (index.mjs calls this before issuing a session). */
+  /** Sign-in and device linking refuse suspended accounts (index.mjs calls this before issuing a session). */
   async function suspended(userId) {
     return Boolean((await db.prepare('SELECT suspended_at AS "at" FROM users WHERE id = ?').get(userId))?.at);
   }

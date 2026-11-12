@@ -43,3 +43,28 @@ export function socketClientAllowed(offered, minimum) {
   if (!minimum) return true;
   return offered.some((protocol) => protocol.startsWith('relay.client.') && clientProtocolOf(protocol.slice('relay.client.'.length)) >= minimum);
 }
+
+// --- Web and desktop companions sign in only by linking with the phone (QR code), like WhatsApp Web. ---
+// A browser (the website, or the desktop app that loads it) always sends an Origin header; the Android app sends its
+// bundled origin. Password sign-in and new accounts are refused for any other origin. Scripts and tests without an
+// Origin header are not browsers and keep the API. On in production; RELAY_WEB_PASSWORD_SIGNIN=1 turns it off (e.g.
+// a developer's browser), =0 turns it on elsewhere.
+export function webPasswordSignInAllowed(env = process.env, { production = env.NODE_ENV === 'production' || Boolean(env.DATABASE_URL) } = {}) {
+  if (env.RELAY_WEB_PASSWORD_SIGNIN === '1') return true;
+  if (env.RELAY_WEB_PASSWORD_SIGNIN === '0') return false;
+  return !production;
+}
+
+export const LINK_WITH_PHONE_BODY = Object.freeze({
+  error: 'On a computer, Hidden Messenger opens by linking with your phone. In the app on your phone, go to Settings › Linked devices › Link a device and scan the QR code.',
+  code: 'link_with_phone',
+});
+
+/** Express middleware for the password sign-in and sign-up routes. */
+export function phoneOnlySignIn({ allowed, appOrigin }) {
+  return (request, response, next) => {
+    const origin = request.get('origin');
+    if (allowed || !origin || origin === appOrigin) return next();
+    return response.status(403).json(LINK_WITH_PHONE_BODY);
+  };
+}

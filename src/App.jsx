@@ -45,7 +45,6 @@ import { autoSaveIncoming } from './mediaSave.js';
 const AccountSwitcher = lazyComponent(() => import('./components/AccountSwitcher.jsx'));
 const AvatarStudio = lazyComponent(() => import('./components/AvatarStudio.jsx'));
 const PermissionsSheet = lazyComponent(() => import('./components/PermissionsSheet.jsx'));
-const PairingModal = lazyComponent(() => import('./components/PairingModal.jsx'));
 const NotificationSettings = lazyComponent(() => import('./components/NotificationSettings.jsx'));
 const AccountSettings = lazyComponent(() => import('./components/AccountSettings.jsx'));
 const CallsView = lazyComponent(() => import('./components/CallsView.jsx'));
@@ -157,7 +156,6 @@ export default function App() {
   const logCall = useChatStore((state) => state.logCall);
   const messages = useChatStore((state) => state.messages);
   const [client, setClient] = useState(null);
-  const [pairingOpen, setPairingOpen] = useState(false);
   const [notificationsOpen, setNotificationsOpen] = useState(false);
   const [accountSettingsOpen, setAccountSettingsOpen] = useState(false);
   const [accountsOpen, setAccountsOpen] = useState(false);
@@ -645,7 +643,6 @@ export default function App() {
     clearAvatarCache();
     useChatStore.getState().setUserId(session.user.id);
     setSession(session);
-    setPairingOpen(false);
     setAuthOpen(false);
     setMobileListOpen(true);
     setAccountsOpen(false);
@@ -680,7 +677,6 @@ export default function App() {
     useChatStore.getState().setUserId('');
     useChatStore.getState().setSession({ user: null, deviceId: null, deviceName: null, token: null });
     setAuthOpen(false);
-    setPairingOpen(false);
     setMobileListOpen(true);
     setGroupsOpen(false);
   }
@@ -763,7 +759,6 @@ export default function App() {
   useBackHandler(accountSettingsOpen, () => setAccountSettingsOpen(false));
   useBackHandler(accountsOpen, () => setAccountsOpen(false));
   useBackHandler(avatarStudioOpen, () => setAvatarStudioOpen(false));
-  useBackHandler(pairingOpen, () => setPairingOpen(false));
   useEffect(() => onNative('backButton', () => { if (!handleBack()) nativeMoveToBackground(); }), []);
   // Shared from another app (Android share sheet): pick chats to send it to.
   useEffect(() => onNative('shareReceived', (raw) => setIncomingShare(parseShare(raw))), []);
@@ -998,13 +993,13 @@ export default function App() {
   return (
     <main className={`app-shell ${darkMode ? 'dark-theme' : ''} ${isMobile ? 'is-mobile' : ''} ${chatOpenOnMobile ? 'chat-open' : ''}`} data-animations={animationsAttribute(appearance)} data-call-animations={callAnimationsAttribute(appearance)} data-font-size={fontSize} data-contrast={highContrast ? 'high' : undefined}>
       {!isMobile && <DesktopRail activeTab={desktopTab} onTab={setDesktopTab} onSheet={setParitySheet} unreadCount={unreadChats} darkMode={darkMode} onToggleTheme={toggleTheme} />}
-      <Sidebar onPair={() => setPairingOpen(true)} onSounds={() => setNotificationsOpen(true)} onNotifications={() => setNotificationsOpen(true)} onAccountSettings={() => setAccountSettingsOpen('account')} onSelectChat={() => setMobileListOpen(false)} onOpenAuth={() => setAuthOpen(true)} onAuthenticated={acceptSession} onLogout={logout} onAccounts={() => setAccountsOpen(true)} onGroups={() => openGroups()} groups={groupRows} onOpenGroup={(id) => openGroups(false, id)} />
+      <Sidebar onPair={() => setAccountSettingsOpen('devices')} onSounds={() => setNotificationsOpen(true)} onNotifications={() => setNotificationsOpen(true)} onAccountSettings={() => setAccountSettingsOpen('account')} onSelectChat={() => setMobileListOpen(false)} onOpenAuth={() => setAuthOpen(true)} onAuthenticated={acceptSession} onLogout={logout} onAccounts={() => setAccountsOpen(true)} onGroups={() => openGroups()} groups={groupRows} onOpenGroup={(id) => openGroups(false, id)} />
       <div className="workspace">
         {activeTab === 'chats' ? (
           showMobileList || !chat
             ? <ChatsList onOpenChat={openChat} onStartCall={initiateCall} onGroups={openGroups} groups={groupRows} onOpenGroup={(id) => openGroups(false, id)} onSettings={() => setActiveTab('tools')}
               onSheet={(id) => (id === 'linked' ? setAccountSettingsOpen('devices') : setParitySheet(id))} />
-            : <ChatWindow key={chat.id} chat={chat} connection={connection} client={client} onPair={() => setPairingOpen(true)} onBack={() => setMobileListOpen(true)} onStartCall={(mode) => initiateCall(chat.id, mode)} onGroups={openGroups} />
+            : <ChatWindow key={chat.id} chat={chat} connection={connection} client={client} onPair={() => setAccountSettingsOpen('devices')} onBack={() => setMobileListOpen(true)} onStartCall={(mode) => initiateCall(chat.id, mode)} onGroups={openGroups} />
         ) : activeTab === 'calls' ? (
           <CallsView onCall={initiateCall} onSheet={setParitySheet} onSettings={() => setActiveTab('tools')} />
         ) : activeTab === 'updates' ? (
@@ -1023,7 +1018,6 @@ export default function App() {
       {/* Settings is its own full screen on the phone (back arrow, no tab bar), like the business messenger. */}
       {isMobile && !chatOpenOnMobile && activeTab !== 'tools' && <MobileBottomNav activeTab={mobileActiveTab} onTabChange={setMobileActiveTab} unreadCount={unreadChats} missedCalls={activeTab === 'calls' ? 0 : missedCallsUnseen} />}
       {fatalError && <div className="status-toast"><Bell size={15} /><span>{fatalError}</span><button onClick={() => setFatalError('')}>Dismiss</button></div>}
-      {pairingOpen && user && <PairingModal onClose={() => setPairingOpen(false)} token={sessionToken} userId={userId} />}
       {notificationsOpen && <NotificationSettings onClose={() => setNotificationsOpen(false)} />}
       {accountSettingsOpen && <AccountSettings section={accountSettingsOpen === 'privacy' ? 'privacy' : 'account'} initialView={accountSettingsOpen === 'devices' ? 'devices' : null} onClose={() => setAccountSettingsOpen(false)}
         onOpenSheet={(id) => { setAccountSettingsOpen(false); setParitySheet(id); }} onAccountDeleted={() => { setAccountSettingsOpen(false); logout(); }} />}

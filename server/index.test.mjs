@@ -363,19 +363,11 @@ test('searches discoverable handles and persists selected contacts', async () =>
   assert.equal(new Set(savedContacts).size, savedContacts.length);
 });
 
-test('issues a one-use pairing session for the authenticated account', async () => {
+test('the old pairing code endpoints are gone: devices link by QR code (src/linking.js)', async () => {
   const primary = await createSession('pairowner');
   const created = await fetch(`${baseUrl}/api/v1/pairing`, { method: 'POST', headers: { Authorization: `Bearer ${primary.token}` } });
-  assert.equal(created.status, 201);
-  const { code } = await created.json();
-  const claim = await fetch(`${baseUrl}/api/v1/pairing/${code}/claim`, { method: 'POST' });
-  assert.equal(claim.status, 200);
-  const linked = await claim.json();
-  const profile = await fetch(`${baseUrl}/api/v1/me`, { headers: { Authorization: `Bearer ${linked.token}` } });
-  assert.equal(profile.status, 200);
-  assert.equal((await profile.json()).user.id, primary.user.id);
-  const replay = await fetch(`${baseUrl}/api/v1/pairing/${code}/claim`, { method: 'POST' });
-  assert.equal(replay.status, 410);
+  assert.equal(created.status, 404);
+  assert.equal((await fetch(`${baseUrl}/api/v1/pairing/anything/claim`, { method: 'POST' })).status, 404);
 });
 
 test('authenticates sockets, delivers messages, and persists read status', async () => {

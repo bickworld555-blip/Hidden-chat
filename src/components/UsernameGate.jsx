@@ -3,6 +3,8 @@ import { useEffect, useState } from 'react';
 import { ArrowRight, AtSign, Copy, Eye, EyeOff, Facebook, Instagram, ShieldCheck } from 'lucide-react';
 import ShieldMark from './ShieldMark.jsx';
 import { LinkWithPhone } from './LinkDevice.jsx';
+import { nativeShell } from '../native.js';
+import { companionOnly } from '../companion.js';
 import './UsernameGate.css';
 
 // The X (formerly Twitter) mark; lucide only ships the old bird.
@@ -41,9 +43,33 @@ function IdentityBrand() {
   );
 }
 
+// On a computer the only way in is linking with the phone (src/companion.js).
+function CompanionSignIn({ onAuthenticated, onClose }) {
+  return (
+    <div className="identity-backdrop">
+      <div className="identity-layout">
+        <IdentityBrand />
+        <section className="identity-card" role="dialog" aria-modal="true" aria-labelledby="identity-title">
+          {onClose && <button className="identity-close" aria-label="Close account window" onClick={onClose}>×</button>}
+          <h1 className="identity-title" id="identity-title">Use Hidden Messenger on this computer</h1>
+          <p className="identity-copy">Your account lives on your phone. Link this computer by scanning the code with the app.</p>
+          <LinkWithPhone onAuthenticated={onAuthenticated} />
+          <div className="identity-switch">New to Hidden Messenger? <a href="/download">Get the Android app</a> and create your account there.</div>
+          <SocialLinks />
+        </section>
+      </div>
+    </div>
+  );
+}
+
 export default function UsernameGate({ onAuthenticated, onClose }) {
-  // On a computer, linking with the phone is the first choice (like WhatsApp Web).
-  const [linkMode, setLinkMode] = useState(() => !globalThis.Capacitor?.isNativePlatform?.() && (globalThis.innerWidth ?? 0) >= 900);
+  if (companionOnly()) return <CompanionSignIn onAuthenticated={onAuthenticated} onClose={onClose} />;
+  return <PasswordGate onAuthenticated={onAuthenticated} onClose={onClose} />;
+}
+
+function PasswordGate({ onAuthenticated, onClose }) {
+  // A development browser can also link with the phone.
+  const [linkMode, setLinkMode] = useState(() => !nativeShell() && (globalThis.innerWidth ?? 0) >= 900);
   const [username, setUsername] = useState('');
   const [mode, setMode] = useState('register');
   const [identity, setIdentity] = useState('');

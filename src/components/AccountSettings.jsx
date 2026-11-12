@@ -89,7 +89,7 @@ function Devices({ devices, onSignOut, error }) {
         {error && <p className="notif-error" role="alert">{error}</p>}
       </section>
       <p className="account-hint account-hint-padded">
-        To link another device, open Hidden Messenger there and sign in, or use <strong>Pair a device</strong> from a chat. Every device here can read and send your messages.
+        To use Hidden Messenger on a computer, open hiddenmessenger.com or the desktop app there and scan its QR code with <strong>Link a device</strong>. Every device here can read and send your messages.
       </p>
     </>
   );

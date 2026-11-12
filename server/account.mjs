@@ -13,7 +13,6 @@ import { join } from 'node:path';
 export const PERSONAL_ROWS = [
   ['sessions', 'user_id = ?'],
   ['contacts', 'owner_id = ? OR contact_id = ?'],
-  ['pairing_codes', 'user_id = ?'],
   ['message_reactions', 'user_id = ?'],
   ['message_hidden', 'user_id = ?'],
   ['poll_votes', 'user_id = ?'],

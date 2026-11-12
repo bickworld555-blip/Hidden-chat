@@ -1684,7 +1684,7 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
             <button type="button" className="icon-button" onClick={() => onStartCall?.('audio')} disabled={blocked} aria-label="Voice call"><Phone size={18} /></button>
             {/* Secondary actions collapse into the ⋮ menu on narrow screens (see .header-action-secondary). */}
             <button type="button" className="icon-button header-action-secondary" onClick={openChatSearch} aria-label="Search messages"><Search size={18} /></button>
-            <button type="button" className="icon-button header-action-secondary" onClick={onPair} aria-label="Pair a device"><Link2 size={18} /></button>
+            <button type="button" className="icon-button header-action-secondary" onClick={onPair} aria-label="Linked devices"><Link2 size={18} /></button>
             <span className="header-menu-wrap">
               <button type="button" className="icon-button" onClick={() => setHeaderMenuOpen((open) => !open)} aria-label="More options" aria-expanded={headerMenuOpen} aria-haspopup="menu"><MoreVertical size={18} /></button>
               {headerMenuOpen && (
@@ -1697,7 +1697,7 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
                     { id: 'mute', label: muted ? 'Unmute notifications' : 'Mute notifications', action: () => useChatStore.getState().toggleMuteChat(chatId) },
                     { id: 'disappearing', label: 'Disappearing messages', action: () => openInfo('disappearing') },
                     { id: 'theme', label: 'Chat theme', action: () => openInfo('theme') },
-                    { id: 'pair', label: 'Pair a device', action: () => onPair?.() },
+                    { id: 'pair', label: 'Linked devices', action: () => onPair?.() },
                     { id: 'info', label: 'View contact', action: () => openInfo('main') },
                   ].map((item) => (
                     <li key={item.id} role="none">

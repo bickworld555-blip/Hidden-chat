@@ -849,7 +849,7 @@ test('the overlay restores from PiP on a tap, adds participants, and the chat he
   assert.ok(overlay.includes("addRoomPeer({ peerId: event.from, callId: event.callId, direction: 'incoming', offer: event.signal })") && overlay.includes('<ParticipantTile'), 'joining peers get their own engine and tile');
   assert.ok(overlay.includes('const toggleMute = () => allEngines().forEach'), 'mute applies to every pair');
   assert.ok(app.includes("event.type === 'call:invite'") && app.includes('isRoomOffer(event, active)'), 'invites ring and room offers join silently');
-  for (const item of ['New group', 'New contact', "label: 'Search'", 'Media, links and docs', 'Mute notifications', 'Disappearing messages', 'Chat theme', "label: 'Pair a device'"]) {
+  for (const item of ['New group', 'New contact', "label: 'Search'", 'Media, links and docs', 'Mute notifications', 'Disappearing messages', 'Chat theme', "label: 'Linked devices'"]) {
     assert.ok(chatWindow.includes(item), `header menu has ${item}`);
   }
   assert.ok(chatWindow.includes("{ id: 'new-group', label: 'New group', action: () => onGroups?.(true) }"), 'New group opens group creation');
