@@ -33,7 +33,7 @@ import { ensureE2eSchema, registerE2e } from './e2e.mjs';
 import { registerSfu } from './sfu.mjs';
 import { gifConfigFromEnv, registerGifs } from './gifs.mjs';
 import { alertWebhookFromEnv, createAlerts, serverErrorWatch } from './monitoring.mjs';
-import { abuseLimitsFromEnv, addressChain, clientAddress, createRateLimiter, tooManyMessages, tooManySignups } from './abuse.mjs';
+import { abuseLimitsFromEnv, clientAddress, createRateLimiter, tooManyMessages, tooManySignups } from './abuse.mjs';
 import { ensureExtrasSchema, registerExtras, statusAudienceSql } from './extras.mjs';
 import { ensureAdminSchema, registerAdmin } from './admin.mjs';
 import { adminCredentialsFrom, createAdminAuth } from './adminAuth.mjs';
@@ -1322,11 +1322,6 @@ export function createChatServer({
   // Abuse limits (server/abuse.mjs): new accounts per client address, messages per account. Off in tests.
   const rateLimiter = createRateLimiter();
   const messageWait = (userId) => (abuseLimits ? rateLimiter.hit(`messages:${userId}`, abuseLimits.messages) : 0);
-  // TEMPORARY: shows the caller its own forwarding chain, to set RELAY_TRUST_PROXY_HOPS for the hosting proxies.
-  app.get('/api/v1/diagnostics/address', requireSession, (request, response) => {
-    const chain = addressChain(request);
-    response.json({ forwarded: chain.forwarded, socket: chain.socket, hops: abuseLimits?.trustProxyHops ?? 0, chosen: clientAddress(request, abuseLimits?.trustProxyHops ?? 0) });
-  });
   app.post('/api/v1/auth/register', phoneOnly, async (request, response) => {
     if (abuseLimits) {
       const address = clientAddress(request, abuseLimits.trustProxyHops);

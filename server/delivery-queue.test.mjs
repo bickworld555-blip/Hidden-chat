@@ -182,3 +182,21 @@ test('a group message waiting for a device says which group it is in, so the app
   const done = await api('/api/v1/queue/ack', { session: bob, method: 'POST', body: { messageIds: [sent.data.id] } });
   assert.equal(done.data.removed, 1, 'gone once the only member device saved it');
 });
+
+test("a delivered message takes its reactions with it", async () => {
+  const alice = await register('qa');
+  const bob = await register('qb');
+  const aliceSocket = await connect(alice);
+  const bobSocket = await connect(bob);
+  aliceSocket.send(JSON.stringify({ type: 'message:send', message: { id: 'rx-1', receiverId: bob.user.id, content: 'react to me' } }));
+  await aliceSocket.wait('message:ack', (event) => event.message.id === 'rx-1');
+  bobSocket.send(JSON.stringify({ type: 'message:reaction', messageId: 'rx-1', emoji: '👍' }));
+  const reactions = () => Number(service.db.prepare('SELECT count(*) AS count FROM message_reactions WHERE message_id = ?').get('rx-1').count);
+  for (let i = 0; i < 40 && reactions() === 0; i += 1) await new Promise((resolve) => setTimeout(resolve, 25));
+  assert.equal(reactions(), 1, 'stored while the message waits');
+  const done = await api('/api/v1/queue/ack', { session: bob, method: 'POST', body: { messageIds: ['rx-1'] } });
+  assert.equal(done.data.removed, 1);
+  assert.equal(reactions(), 0, 'gone with the message');
+  aliceSocket.close();
+  bobSocket.close();
+});
