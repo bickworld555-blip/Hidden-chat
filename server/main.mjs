@@ -14,6 +14,12 @@ try {
     .filter((entry) => entry.family === 'IPv4' && !entry.internal)
     .map((entry) => `http://${entry.address}:${address.port}`);
   for (const url of lanAddresses) console.log(`Hidden Messenger API LAN address: ${url}`);
+  // Operations (server/monitoring.mjs): a start is worth knowing about (a crash loop shows as repeated starts), and a
+  // crash is reported before the process ends. Only the error's name and code are sent, never its message.
+  service.alerts?.send('started', 'The server started.').catch(() => {});
+  process.on('uncaughtExceptionMonitor', (error) => {
+    service.alerts?.send('crash', `The server crashed (${error?.name ?? 'Error'}${error?.code ? `, ${error.code}` : ''}).`).catch(() => {});
+  });
 } catch (error) {
   console.error('Hidden Messenger server failed to start:', error.message, error.code ? `(${error.code})` : '');
   await service?.db?.close?.().catch(() => {});

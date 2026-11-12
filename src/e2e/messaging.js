@@ -32,7 +32,9 @@ export async function transmitDirect(client, message, { fresh = false } = {}) {
   if (!client?.send || !message?.receiverId) return false;
   let content;
   try {
-    content = await sealDirect(message.receiverId, message.content, { linkPreview: message.linkPreview, statusReply: message.statusReply }, { fresh: fresh || Boolean(message.awaitingKeys) });
+    content = await sealDirect(message.receiverId, message.content, {
+      linkPreview: message.linkPreview, statusReply: message.statusReply, replyToId: message.replyTo?.id, forwarded: message.forwarded === true,
+    }, { fresh: fresh || Boolean(message.awaitingKeys) });
   } catch (error) {
     // Strict end-to-end encryption: nothing people write is ever sent readable. When the contact has no keys yet
     // (an old app), the message waits in the outbox and goes out encrypted once they update.
@@ -49,9 +51,12 @@ export async function transmitDirect(client, message, { fresh = false } = {}) {
     return 'waiting';
   }
   if (message.awaitingKeys) useChatStore.getState().updateMessage(message.id, { awaitingKeys: false, status: 'sent' });
-  // The link preview only ever travels inside the encryption.
-  const { replyTo, linkPreview: _preview, statusReply: _statusReply, awaitingKeys: _waiting, ...rest } = message;
-  return Boolean(client.send({ type: 'message:send', message: { ...rest, content, ...(replyTo?.id ? { replyTo: { id: replyTo.id } } : {}) } }));
+  // The link preview, the quoted message and the forwarded mark only travel inside the encryption; a message that
+  // could not be sealed (a call record) keeps its quote outside, as before.
+  const { replyTo, forwarded, linkPreview: _preview, statusReply: _statusReply, awaitingKeys: _waiting, ...rest } = message;
+  const sealed = isEnvelope(content);
+  return Boolean(client.send({ type: 'message:send', message: { ...rest, content,
+    ...(!sealed && replyTo?.id ? { replyTo: { id: replyTo.id } } : {}), ...(!sealed && forwarded ? { forwarded: true } : {}) } }));
 }
 
 /** The server refused a sealed message because the device list changed: re-seal from the outbox and resend. */

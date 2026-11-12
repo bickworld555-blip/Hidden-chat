@@ -19,7 +19,7 @@ import { searchMessages } from '../contactInfo.js';
 import { disappearingLabel } from '../disappearing.js';
 import { uploadFile, uploadSizeError } from '../upload.js';
 import { FORWARD_LIMIT, forwardSections } from '../forwarding.js';
-import { quoteView, replyQuoteFor } from '../replies.js';
+import { quoteView, replyQuoteFor, resolveQuote } from '../replies.js';
 import { resolveSelection, selectionActions, toggleSelection } from '../selection.js';
 import { EXTENDED_REACTIONS as EXTENDED_EMOJIS, QUICK_REACTIONS as QUICK_EMOJIS } from '../reactions.js';
 import { formatMessageDate, formatMessageTime, localDateKey } from '../time.js';
@@ -1343,7 +1343,7 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
                   mine={message.senderId === userId}
                   sessionToken={sessionToken}
                   sender={message.senderId === userId ? user : chat}
-                  quote={quoteView(message.replyTo, userId, chat.name)}
+                  quote={quoteView(resolveQuote(message.replyTo, messages), userId, chat.name)}
                   selectionActive={selectionActive}
                   isSelected={selectedIds.includes(message.id)}
                   highlighted={highlightId === message.id}

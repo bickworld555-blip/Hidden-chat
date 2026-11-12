@@ -32,6 +32,8 @@ import { registerBilling } from './billing.mjs';
 import { ensureE2eSchema, registerE2e } from './e2e.mjs';
 import { registerSfu } from './sfu.mjs';
 import { gifConfigFromEnv, registerGifs } from './gifs.mjs';
+import { alertWebhookFromEnv, createAlerts, serverErrorWatch } from './monitoring.mjs';
+import { abuseLimitsFromEnv, addressChain, clientAddress, createRateLimiter, tooManyMessages, tooManySignups } from './abuse.mjs';
 import { ensureExtrasSchema, registerExtras, statusAudienceSql } from './extras.mjs';
 import { ensureAdminSchema, registerAdmin } from './admin.mjs';
 import { adminCredentialsFrom, createAdminAuth } from './adminAuth.mjs';
@@ -141,6 +143,8 @@ export function createChatServer({
   minClientProtocol = minimumClientProtocol(process.env),
   webPasswordSignIn = webPasswordSignInAllowed(process.env),
   gifConfig = gifConfigFromEnv(process.env),
+  abuseLimits = abuseLimitsFromEnv(process.env),
+  alerts = createAlerts({ url: alertWebhookFromEnv(process.env) }),
   gifFetch = globalThis.fetch,
 } = {}) {
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('PORT must be an integer from 0 to 65535.');
@@ -557,6 +561,8 @@ export function createChatServer({
   const eventPilot = createEventPilot();
   const app = express();
   app.disable('x-powered-by');
+  // Operations (server/monitoring.mjs): a burst of server errors sends an alert.
+  app.use(serverErrorWatch(alerts));
   const configuredOrigins = (Array.isArray(allowedOrigins) ? allowedOrigins : String(allowedOrigins).split(','))
     .map((origin) => origin.trim())
     .filter(Boolean);
@@ -1051,6 +1057,8 @@ export function createChatServer({
   app.post('/api/v1/groups/:groupId/messages', requireSession, async (request, response) => {
     const { groupId } = request.params;
     const userId = request.session.user_id;
+    const sendWait = messageWait(userId);
+    if (sendWait) return response.status(429).set('Retry-After', String(Math.ceil(sendWait / 1000))).json(tooManyMessages(sendWait));
     const content = request.body?.content;
     if (typeof content !== 'string' || !content.trim() || (!isEnvelope(content) && content.length > 10000) || content.startsWith('voice:') || routingOf(content).startsWith('voice:')
       || parseRouting(routingOf(content))?.once) {
@@ -1258,7 +1266,12 @@ export function createChatServer({
 
   app.get('/api/v1/ready', async (_request, response) => {
     response.set('Cache-Control', 'no-store');
-    await db.ready?.();
+    try {
+      await db.ready?.();
+    } catch (error) {
+      alerts.send('database', `The database is not answering (${error?.code ?? error?.name ?? 'error'}).`).catch(() => {});
+      return response.status(503).json({ status: 'unavailable' });
+    }
     const recent = await missingRecentMedia().catch(() => null);
     response.json({ status: 'ok', storage: storageInRelease ? 'release' : 'persistent', push: Boolean(push), ...(recent ? { recentMedia: recent } : {}) });
   });
@@ -1305,7 +1318,20 @@ export function createChatServer({
 
   // Browsers and the desktop app sign in by linking with the phone only (server/clientGate.mjs).
   const phoneOnly = phoneOnlySignIn({ allowed: webPasswordSignIn, appOrigin: BUNDLED_APP_ORIGIN });
+  // Abuse limits (server/abuse.mjs): new accounts per client address, messages per account. Off in tests.
+  const rateLimiter = createRateLimiter();
+  const messageWait = (userId) => (abuseLimits ? rateLimiter.hit(`messages:${userId}`, abuseLimits.messages) : 0);
+  // TEMPORARY: shows the caller its own forwarding chain, to set RELAY_TRUST_PROXY_HOPS for the hosting proxies.
+  app.get('/api/v1/diagnostics/address', requireSession, (request, response) => {
+    const chain = addressChain(request);
+    response.json({ forwarded: chain.forwarded, socket: chain.socket, hops: abuseLimits?.trustProxyHops ?? 0, chosen: clientAddress(request, abuseLimits?.trustProxyHops ?? 0) });
+  });
   app.post('/api/v1/auth/register', phoneOnly, async (request, response) => {
+    if (abuseLimits) {
+      const address = clientAddress(request, abuseLimits.trustProxyHops);
+      const wait = address ? rateLimiter.hit(`signups:${address}`, abuseLimits.signups) : 0;
+      if (wait) return response.status(429).set('Retry-After', String(Math.ceil(wait / 1000))).json(tooManySignups(wait));
+    }
     const username = normalizeUsername(request.body?.username);
     if (!USERNAME_PATTERN.test(username)) {
       return response.status(400).json({ error: 'Use 3–24 letters, numbers, or underscores.' });
@@ -2667,6 +2693,8 @@ export function createChatServer({
 
       if (event.type !== 'message:send') return;
       const payload = event.message ?? {};
+      const sendWait = messageWait(userId);
+      if (sendWait) return json(socket, { type: 'error', messageId: typeof payload.id === 'string' ? payload.id : null, message: tooManyMessages(sendWait).error, code: 'rate_limited', retryAfterMs: sendWait });
       const receiverId = payload.receiverId;
       const content = typeof payload.content === 'string' ? payload.content.trim() : '';
       const mediaId = mediaIdOf(content);
@@ -2703,7 +2731,10 @@ export function createChatServer({
         return json(socket, { type: 'error', message: 'Only a new voice message can be sent as view once.' });
       }
 
-      const requestedReplyId = typeof payload.replyTo?.id === 'string' ? payload.replyTo.id : null;
+      // An end-to-end encrypted message carries its reply and forward marks inside the encryption, so neither is stored
+      // (the server does not learn what replies to what, or what was forwarded); only unsealed records keep them.
+      const sealedMessage = isEnvelope(content);
+      const requestedReplyId = !sealedMessage && typeof payload.replyTo?.id === 'string' ? payload.replyTo.id : null;
       const replyToId = requestedReplyId && (await db.prepare(`SELECT 1 FROM messages WHERE id = ?
         AND ((sender_id = ? AND receiver_id = ?) OR (sender_id = ? AND receiver_id = ?))`)
         .get(requestedReplyId, userId, receiverId, receiverId, userId)) ? requestedReplyId : null;
@@ -2748,7 +2779,7 @@ export function createChatServer({
         // One tick until the recipient's device acknowledges it (message:delivered), even if they look online.
         status: 'sent',
         replyToId,
-        forwarded: payload.forwarded === true,
+        forwarded: !sealedMessage && payload.forwarded === true,
         expiresAt: disappearSeconds > 0 ? Date.now() + disappearSeconds * 1000 : null,
       };
       const inserted = (await db.prepare(`INSERT INTO messages(id, sender_id, receiver_id, created_at, content, status, reply_to_id, forwarded, expires_at)
@@ -2849,6 +2880,7 @@ export function createChatServer({
     app,
     server,
     db,
+    alerts,
     eventPilot,
     expireMessages,
     expireGroupMessages,

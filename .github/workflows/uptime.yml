@@ -1,0 +1,43 @@
+name: Uptime check
+
+# Every 10 minutes: hiddenmessenger.com/api/v1/ready must answer {"status":"ok"} (the server is up and its database
+# answers). A failed run is emailed by GitHub to the repository's watchers; with the repository secret
+# ALERT_WEBHOOK_URL set, it also posts to that webhook (Slack, Discord, …).
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: uptime
+  cancel-in-progress: false
+
+jobs:
+  ready:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Check /api/v1/ready (3 tries)
+        id: check
+        shell: bash
+        run: |
+          for attempt in 1 2 3; do
+            body=$(curl -sS --max-time 20 -H 'Cache-Control: no-cache' https://hiddenmessenger.com/api/v1/ready || true)
+            if echo "$body" | grep -q '"status":"ok"'; then echo "up: $body"; exit 0; fi
+            echo "attempt $attempt: ${body:-no answer}"
+            sleep 20
+          done
+          exit 1
+      - name: Alert
+        if: failure()
+        env:
+          ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL }}
+        shell: bash
+        run: |
+          if [ -n "$ALERT_WEBHOOK_URL" ]; then
+            message='[Hidden Messenger] hiddenmessenger.com is not ready (uptime check failed 3 times).'
+            curl -sS --max-time 10 -H 'Content-Type: application/json' -d "{\"text\":\"$message\",\"content\":\"$message\"}" "$ALERT_WEBHOOK_URL" || true
+          fi

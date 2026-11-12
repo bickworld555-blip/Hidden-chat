@@ -16,14 +16,16 @@ import { buildEnvelope, ENVELOPE_PREFIX, isEnvelope, parseEnvelope, routingFor, 
 import { sha256Hex } from './primitives.js';
 import { sanitizePreview } from '../linkPreviewParse.js';
 
-// What travels inside the encryption: { c: content, lp?: link preview made by the sender }.
+// What travels inside the encryption: { c: content, lp?: link preview made by the sender, r?: the id of the message
+// it replies to, fw?: 1 when forwarded }. Replies and forwards are not visible to the server (like Signal).
 // A reply to a status carries a small quote of it: { kind: 'text' | 'image' | 'video', text }.
 const cleanStatusReply = (value) => (value && typeof value === 'object' && ['text', 'image', 'video', 'file'].includes(value.kind)
   ? { kind: value.kind, text: typeof value.text === 'string' ? value.text.slice(0, 200) : '', ...(value.reaction === true ? { reaction: true } : {}) } : null);
-const innerOf = (content, extra = {}) => {
+export const innerOf = (content, extra = {}) => {
   const linkPreview = sanitizePreview(extra.linkPreview);
   const statusReply = cleanStatusReply(extra.statusReply);
-  return { c: content, ...(linkPreview ? { lp: linkPreview } : {}), ...(statusReply ? { sr: statusReply } : {}) };
+  const replyToId = typeof extra.replyToId === 'string' && extra.replyToId.length < 120 ? extra.replyToId : null;
+  return { c: content, ...(linkPreview ? { lp: linkPreview } : {}), ...(statusReply ? { sr: statusReply } : {}), ...(replyToId ? { r: replyToId } : {}), ...(extra.forwarded ? { fw: 1 } : {}) };
 };
 
 export const DEVICE_LIST_TTL_MS = 5 * 60 * 1000;
@@ -181,11 +183,13 @@ async function recall(hash) {
 }
 
 // The opened form callers get: { content, linkPreview? } with the routed attachment id.
-const openedFrom = (inner, route) => ({
+export const openedFrom = (inner, route) => ({
   content: withRoutedMedia(inner.c, route),
   e2e: true,
   ...(inner.lp ? { linkPreview: sanitizePreview(inner.lp) } : {}),
   ...(inner.sr ? { statusReply: cleanStatusReply(inner.sr) } : {}),
+  ...(typeof inner.r === 'string' && inner.r.length < 120 ? { replyTo: { id: inner.r } } : {}),
+  ...(inner.fw === 1 ? { forwarded: true } : {}),
 });
 
 // --- Sealing ------------------------------------------------------------------------------------------
@@ -328,7 +332,12 @@ export async function openDirectMessage(message, known = null) {
     return { ...rest, e2e: true };
   }
   const { e2eError: _stale, ...base } = message;
-  return { ...base, content: opened.content, ...(opened.e2e ? { e2e: true } : {}), ...(opened.linkPreview ? { linkPreview: opened.linkPreview } : {}), ...(opened.statusReply ? { statusReply: opened.statusReply } : {}), ...(opened.e2eError ? { e2eError: opened.e2eError } : {}) };
+  return {
+    ...base, content: opened.content, ...(opened.e2e ? { e2e: true } : {}), ...(opened.linkPreview ? { linkPreview: opened.linkPreview } : {}),
+    ...(opened.statusReply ? { statusReply: opened.statusReply } : {}), ...(opened.e2eError ? { e2eError: opened.e2eError } : {}),
+    // Reply and forward travel inside the encryption; a copy the server still describes (older apps) keeps its own.
+    ...(opened.replyTo && !base.replyTo ? { replyTo: opened.replyTo } : {}), ...(opened.forwarded ? { forwarded: true } : {}),
+  };
 }
 
 /** Opens a list in order (ratchets and sender keys advance message by message). */
