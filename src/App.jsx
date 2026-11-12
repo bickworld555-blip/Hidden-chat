@@ -100,6 +100,7 @@ import { applyAppBadge, maybeRemind, showSystemNotification, vibrateFor } from '
 import { badgeCount, unseenMissedCalls, useNotificationSettings } from './notificationSettings.js';
 import { hiddenByBlock, isBlocked } from './blocking.js';
 import { fetchBlocks } from './blocksApi.js';
+import { activityFromEvent } from './typing.js';
 import { TERMINAL_STATUSES } from './callEngine.js';
 import { isRoomOffer } from './callRoom.js';
 import { animationsAttribute, callAnimationsAttribute, useAppearance } from './appearance.js';
@@ -346,7 +347,9 @@ export default function App() {
           }
           if (event.type === 'connection:ready') event.presence.forEach((item) => setPresence(item.userId, item.status, item.lastSeenAt));
           if (event.type === 'presence:update') setPresence(event.userId, event.status, event.lastSeenAt);
-          if (event.type === 'presence:typing') setTyping(event.userId, event.active);
+          if (event.type === 'presence:typing') setTyping(event.userId, activityFromEvent(event));
+          // Their message arrived: they stopped typing (or recording) it.
+          if (event.type === 'message:new' && event.message?.senderId !== userId && !event.message?.groupId) setTyping(event.message?.senderId, null);
           if (event.type === 'message:new' || event.type === 'message:ack') {
             const { blockedChats, mutedChatIds } = useChatStore.getState();
             const incoming = event.type === 'message:new' && event.message.senderId !== userId;

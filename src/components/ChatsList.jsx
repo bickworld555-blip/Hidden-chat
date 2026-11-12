@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Archive, ArchiveRestore, ArrowLeft, BellOff, Camera, Check, Heart, Lock, MessageSquarePlus, MoreVertical, Phone, Pin, Plus, Search, Tag, Trash2, Users, Video, Volume2, VolumeX, X } from 'lucide-react';
+import { Archive, ArchiveRestore, ArrowLeft, BellOff, Camera, Check, Heart, Lock, MessageSquarePlus, Mic, MoreVertical, Phone, Pin, Plus, Search, Tag, Trash2, Users, Video, Volume2, VolumeX, X } from 'lucide-react';
 import { setChatArchived, toggleChatLabel, useAccountData } from '../accountData.js';
 import { chatLockMethod, unlockLockedChats } from '../chatLock.js';
 import { useT } from '../i18n.js';
@@ -20,6 +20,7 @@ import MessageSearch, { SearchFilterChips } from './MessageSearch.jsx';
 import { ListEditor, ListPicker, listEntries } from './ChatLists.jsx';
 import { countUnreadConversations, mergeGroupRows, unreadBadge } from '../groupRows.js';
 import VerifiedBadge from './VerifiedBadge.jsx';
+import { activityLabel } from '../typing.js';
 
 function GroupListRow({ row, onOpen, pressHandlers, labels = [], consumeLongPress = () => false }) {
   return (
@@ -48,6 +49,7 @@ export default function ChatsList({ onOpenChat, onStartCall, onGroups, groups = 
   const [headerMenu, setHeaderMenu] = useState(false);
   const rawChats = useChatStore((state) => state.chats);
   const presence = useChatStore((state) => state.presence);
+  const typing = useChatStore((state) => state.typing);
   const statusRings = useChatStore((state) => state.statusRings);
   const sessionToken = useChatStore((state) => state.sessionToken);
   const userId = useChatStore((state) => state.userId);
@@ -516,6 +518,7 @@ export default function ChatsList({ onOpenChat, onStartCall, onGroups, groups = 
         {!searchFilter && visibleRows.map((chat) => {
           if (chat.kind === 'group') return <GroupListRow key={`group-${chat.id}`} row={chat} onOpen={onOpenGroup} labels={labelsFor(chat)} pressHandlers={rowPressHandlers(chat)} consumeLongPress={() => longPress.consumeFired()} />;
           const online = presence?.[chat.id] === 'online';
+          const activity = chat.deleted ? null : typing?.[chat.id];
           const isSelected = selectedChatIds.includes(chat.id);
           const isPinned = pinnedChatIds.includes(chat.id);
           const isMuted = mutedChatIds.includes(chat.id);
@@ -545,7 +548,9 @@ export default function ChatsList({ onOpenChat, onStartCall, onGroups, groups = 
                     <time className={chat.unread > 0 ? 'unread' : ''}>{chat.time ?? ''}</time>
                   </span>
                   <span className="wa-row-bottom">
-                    <span className="wa-preview"><FormattedText text={chat.preview || 'No messages yet'} inline /></span>
+                    {activity
+                      ? <span className="wa-preview is-activity">{activity === 'recording' && <Mic size={14} aria-hidden="true" />}{activityLabel(activity)}</span>
+                      : <span className="wa-preview"><FormattedText text={chat.preview || 'No messages yet'} inline /></span>}
                     <span className="wa-row-indicators">
                       {isMuted && <VolumeX size={15} className="wa-row-badge-icon" title="Muted" />}
                       {isPinned && <Pin size={15} className="wa-row-badge-icon" title="Pinned" />}

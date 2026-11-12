@@ -2378,7 +2378,9 @@ export function createChatServer({
         const peerId = event.peerId;
         if (typeof peerId === 'string' && peerId !== userId && (await db.prepare("SELECT 1 FROM users WHERE id = ? AND deleted_at IS NULL").get(peerId))
           && !(await blocks.between(userId, peerId))) {
-          broadcastUser(peerId, { type: 'presence:typing', userId, active: Boolean(event.active) });
+          // "typing…" or "recording audio…" (a voice note being held or recorded); anything else is typing.
+          const active = Boolean(event.active);
+          broadcastUser(peerId, { type: 'presence:typing', userId, active, ...(active ? { kind: event.kind === 'recording' ? 'recording' : 'typing' } : {}) });
         }
         return;
       }

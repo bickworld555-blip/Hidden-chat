@@ -20,8 +20,10 @@ import { transmitDirect } from './e2e/messaging.js';
 import { isNotice } from './e2e/notices.js';
 import { extrasPreview } from './mediaExtras.js';
 import { orderPreview } from './orders.js';
+import { ACTIVITY_EXPIRES_MS } from './typing.js';
 
 const EMPTY_MESSAGES = Object.freeze([]);
+const typingExpiry = new Map();
 
 // A message deleted for everyone keeps its place, sender and time, but nothing of what it said.
 function deletedPlaceholder(message) {
@@ -582,7 +584,23 @@ export const useChatStore = create((setState, getState) => ({
     setState((state) => ({ presence: { ...state.presence, [userId]: status }, lastSeen: { ...state.lastSeen, [userId]: lastSeenAt ?? null } }));
   },
   setPollVotes(messageId, votes) { setState((state) => ({ pollVotes: { ...state.pollVotes, [messageId]: votes ?? {} } })); },
-  setTyping(userId, active) { setState((state) => ({ typing: { ...state.typing, [userId]: active } })); },
+  // What a contact is doing now ('typing' | 'recording' | null). Never persisted; it lapses ACTIVITY_EXPIRES_MS after
+  // the last refresh so a lost "stopped" can't leave it on.
+  setTyping(userId, kind) {
+    clearTimeout(typingExpiry.get(userId));
+    typingExpiry.delete(userId);
+    if (kind) {
+      const timer = setTimeout(() => { typingExpiry.delete(userId); getState().setTyping(userId, null); }, ACTIVITY_EXPIRES_MS);
+      timer?.unref?.();
+      typingExpiry.set(userId, timer);
+    }
+    setState((state) => {
+      if ((state.typing[userId] ?? null) === (kind || null)) return {};
+      const typing = { ...state.typing };
+      if (kind) typing[userId] = kind; else delete typing[userId];
+      return { typing };
+    });
+  },
   markRead(chatId) {
     setState((state) => ({
       chats: state.chats.map((chat) => chat.id === chatId ? { ...chat, unread: 0 } : chat),

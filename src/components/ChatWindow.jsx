@@ -63,6 +63,7 @@ import { loadPins, setMessagePinned, useAccountData } from '../accountData.js';
 import { appSettings } from '../settings.js';
 import { prepareForSend } from '../mediaQuality.js';
 import { isStickerContent, stickerContent } from '../stickers.js';
+import { activityLabel, createActivitySender } from '../typing.js';
 import { StickerMessage, StickerPalette } from './parity/Stickers.jsx';
 import { ComposerAssist } from './parity/ComposerAssist.jsx';
 import PinnedBanner from './parity/PinnedBanner.jsx';
@@ -747,7 +748,7 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
   const messageScrollRef = useRef(null);
   const messageStackRef = useRef(null);
   const messagesEndRef = useRef(null);
-  const typingTimerRef = useRef(null);
+  const activityRef = useRef(null);
 
   // Auto-scroll state: the feed stays pinned to the newest message unless the user scrolls up to read history.
   const stickToBottomRef = useRef(true);
@@ -941,7 +942,20 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
     if (nativeShell()) nativeClearMessageNotifications(`chat:${chatId}`);
   }, [messages, chatId, readChat, pageVisible]);
 
-  useEffect(() => () => clearTimeout(typingTimerRef.current), []);
+  // "typing…" / "recording audio…" for the person in this chat: one sender per open chat, stopped when the chat
+  // closes or the app goes to the background; a voice note in progress (`recording`) keeps "recording audio…" alive.
+  const isDeletedChat = Boolean(chat?.deleted);
+  useEffect(() => {
+    if (!chatId || isDeletedChat) return undefined;
+    const sender = createActivitySender((event) => client?.send?.(event), { peerId: chatId });
+    activityRef.current = sender;
+    return () => {
+      sender.stop();
+      if (activityRef.current === sender) activityRef.current = null;
+    };
+  }, [chatId, client, isDeletedChat]);
+  useEffect(() => { activityRef.current?.recording(recording); }, [recording, chatId, client, isDeletedChat]);
+  useEffect(() => { if (!pageVisible && activityRef.current?.kind === 'typing') activityRef.current.stop(); }, [pageVisible]);
 
   const mediaMessages = useMemo(() => messages.filter((message) => message?.id && isMediaContent(message.content)), [messages]);
   // A deleted message (by either side) closes its viewer because it is no longer found.
@@ -1255,14 +1269,13 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
 
   function handleTextChange(event) {
     setText(event.target.value);
-    notifyTyping();
+    // Emptying the box stops "typing…" at once, as on WhatsApp.
+    if (event.target.value) notifyTyping();
+    else activityRef.current?.stop();
   }
 
   function notifyTyping() {
-    if (!chatId) return;
-    client?.send?.({ type: 'presence:typing', peerId: chatId, active: true });
-    clearTimeout(typingTimerRef.current);
-    typingTimerRef.current = setTimeout(() => client?.send?.({ type: 'presence:typing', peerId: chatId, active: false }), 1800);
+    activityRef.current?.typed();
   }
 
   function insertEmoji(emoji) {
@@ -1299,8 +1312,7 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
       saveEdit(editing, content);
       return;
     }
-    clearTimeout(typingTimerRef.current);
-    client?.send?.({ type: 'presence:typing', peerId: chatId, active: false });
+    activityRef.current?.stop();
     sendContent(content);
     setText('');
     setEmojiOpen(false);
@@ -1375,7 +1387,7 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
     );
   }
 
-  const status = typing ? 'typing…' : presenceLine({ status: presence, lastSeenAt }, now);
+  const status = typing ? activityLabel(typing) : presenceLine({ status: presence, lastSeenAt }, now);
   const shareable = (Array.isArray(chats) ? chats : []).filter((item) => item?.id && item.id !== userId);
 
 
@@ -1745,7 +1757,13 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
         <div className="message-stack" ref={messageStackRef}>
           {messageList}
           {uploadProgress && <PendingUpload upload={uploadProgress} onCancel={cancelUpload} />}
-          {typing && <div className="typing-indicator"><span /><span /><span /></div>}
+          {typing === 'recording' && (
+            <div className="recording-indicator" role="status" aria-label={`${chat?.name ?? 'Contact'} is recording audio`}>
+              <span className="recording-indicator-mic" aria-hidden="true"><Mic size={18} /></span>
+              <span className="recording-indicator-bars" aria-hidden="true"><span /><span /><span /><span /><span /></span>
+            </div>
+          )}
+          {typing === 'typing' && <div className="typing-indicator" role="status" aria-label={`${chat?.name ?? 'Contact'} is typing`}><span /><span /><span /></div>}
           <div ref={messagesEndRef} className="messages-end" aria-hidden="true" />
         </div>
       </div>

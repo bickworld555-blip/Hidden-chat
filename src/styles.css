@@ -5290,3 +5290,26 @@ textarea.hm-input { min-height: 96px; resize: vertical; }
 .blocked-action.is-block { border-color: #d93025; color: #d93025; }
 .blocked-action:disabled { opacity: .5; cursor: progress; }
 .blocked-empty { display: flex; align-items: center; gap: 8px; padding: 16px 20px; color: var(--wa-muted, var(--muted)); }
+
+/* ===== Live activity: "typing…" / "recording audio…" (WhatsApp green, 4.5:1+ on the list in both themes) ===== */
+.app-shell { --hm-activity: #11823b; }
+.app-shell.dark-theme { --hm-activity: #1fc461; }
+.wa-preview.is-activity { display: inline-flex; align-items: center; gap: 4px; color: var(--hm-activity); font-weight: 500; }
+.wa-preview.is-activity svg { flex: none; }
+/* In the chat: the other person is recording a voice note — a pulsing mic and moving level bars, where the typing
+   dots would be. */
+.recording-indicator { display: inline-flex; align-items: center; gap: 10px; align-self: flex-start; margin: 4px 0 4px 32px; padding: 8px 14px 8px 8px; border-radius: 18px; background: var(--wa-in, #fff); box-shadow: 0 1px 1px #0000001a; }
+.app-shell.is-mobile .recording-indicator { margin-left: 0; }
+.recording-indicator-mic { position: relative; width: 32px; height: 32px; display: grid; place-items: center; border-radius: 50%; background: var(--hm-activity); color: #fff; animation: recording-pulse 1.4s ease-out infinite; }
+.recording-indicator-bars { display: inline-flex; align-items: center; gap: 3px; height: 20px; }
+.recording-indicator-bars span { width: 3px; height: 6px; border-radius: 2px; background: var(--hm-activity); animation: recording-bar 0.9s ease-in-out infinite; }
+.recording-indicator-bars span:nth-child(2) { animation-delay: .12s; }
+.recording-indicator-bars span:nth-child(3) { animation-delay: .24s; }
+.recording-indicator-bars span:nth-child(4) { animation-delay: .36s; }
+.recording-indicator-bars span:nth-child(5) { animation-delay: .48s; }
+@keyframes recording-pulse { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--hm-activity) 55%, transparent); } 70% { box-shadow: 0 0 0 10px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
+@keyframes recording-bar { 0%, 100% { height: 6px; } 50% { height: 18px; } }
+@media (prefers-reduced-motion: reduce) {
+  .recording-indicator-mic, .recording-indicator-bars span { animation: none; }
+  .recording-indicator-bars span { height: 12px; }
+}
