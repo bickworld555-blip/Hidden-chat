@@ -1229,6 +1229,14 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
 
   const handleVoiceCancel = useCallback(() => { setRecording(false); setVoiceHold(null); }, []);
 
+  // A tap on the mic opens the locked recorder, whose Send button then sits under the finger: the tap's own click
+  // would land on it and end the recording before the microphone opens. That one click is dropped.
+  function swallowTapClick() {
+    const swallow = (click) => { click.preventDefault(); click.stopPropagation(); };
+    window.addEventListener('click', swallow, { capture: true, once: true });
+    setTimeout(() => window.removeEventListener('click', swallow, { capture: true }), 400);
+  }
+
   // The mic: a quick tap starts a locked recording (trash / pause / send); holding records while held — release to
   // send, slide up to lock, slide left to cancel. Too short a hold is discarded with a hint.
   function startVoiceGesture(event) {
@@ -1257,7 +1265,7 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
     function release() {
       finish();
       const held = Date.now() - start.at;
-      if (held < VOICE_TAP_MS) { setVoiceHold(null); return; }
+      if (held < VOICE_TAP_MS) { setVoiceHold(null); swallowTapClick(); return; }
       if (held < VOICE_MIN_HOLD_MS) { recorderRef.current?.discard(); setError('Hold to record, release to send'); return; }
       recorderRef.current?.send();
     }
