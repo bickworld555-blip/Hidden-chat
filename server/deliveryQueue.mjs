@@ -47,8 +47,22 @@ const cleanIds = (ids, limit = MAX_ACK) => (Array.isArray(ids) ? [...new Set(ids
  * (index.mjs owns those tables; without `force` it may keep a message that is still in use, such as an open poll).
  */
 export function createDeliveryQueue({ db, onlineDevices = () => [], removeMessage, now = () => Date.now() }) {
+  // The devices a message waits for: signed-in devices that published end-to-end keys (the ones messages are
+  // encrypted for). A session without keys (a script, a half-finished sign-in) can never read an encrypted message,
+  // so waiting for it would keep every message on the server for the full 30 days. Accounts with no keyed device
+  // fall back to every signed-in device.
   async function devicesOf(userId) {
-    const rows = await db.prepare('SELECT DISTINCT device_id AS "deviceId" FROM sessions WHERE user_id = ? AND device_id IS NOT NULL').all(userId);
+    const at = now();
+    let rows = [];
+    try {
+      rows = await db.prepare(`SELECT DISTINCT s.device_id AS "deviceId" FROM sessions s
+        JOIN e2e_devices e ON e.user_id = s.user_id AND e.device_id = s.device_id
+        WHERE s.user_id = ? AND (s.expires_at IS NULL OR s.expires_at > ?)`).all(userId, at);
+    } catch { rows = []; /* no end-to-end tables (tests, older databases) */ }
+    if (!rows.length) {
+      rows = await db.prepare(`SELECT DISTINCT device_id AS "deviceId" FROM sessions
+        WHERE user_id = ? AND device_id IS NOT NULL AND (expires_at IS NULL OR expires_at > ?)`).all(userId, at);
+    }
     return rows.map((row) => row.deviceId).filter(Boolean);
   }
 

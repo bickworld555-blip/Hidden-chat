@@ -7,6 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import WebSocket from 'ws';
 import { createChatServer } from './index.mjs';
+import { createProtocol } from '../src/e2e/protocol.js';
 
 const PASSWORD = 'Correct-Horse-Battery-42!';
 let service;
@@ -84,6 +85,25 @@ test('a direct message leaves the server once every device of both people has st
   const done = await api('/api/v1/queue/ack', { session: bobPhone, method: 'POST', body: { messageIds: ['q-1'] } });
   assert.equal(done.data.removed, 1);
   assert.equal((await history(alice, bob.user.id)).some((message) => message.id === 'q-1'), false, 'gone from the server');
+  aliceSocket.close();
+});
+
+test('a message waits only for devices with end-to-end keys, not for a signed-in session that can never read it', async () => {
+  const alice = await register('qa');
+  const bob = await register('qb'); // a session that never sets up encryption (a script, an abandoned sign-in)
+  const bobPhone = await signInAgain(bob);
+  const memory = new Map();
+  const protocol = createProtocol({ storage: { get: async (k) => memory.get(k), set: async (k, v) => { memory.set(k, v); }, del: async (k) => { memory.delete(k); } } });
+  assert.equal((await api('/api/v1/e2e/keys', { session: bobPhone, method: 'PUT', body: await protocol.prepareUpload({ serverPreKeyCount: 0 }) })).status, 200);
+
+  const aliceSocket = await connect(alice);
+  aliceSocket.send(JSON.stringify({ type: 'message:send', message: { id: 'k-1', receiverId: bob.user.id, content: 'hello' } }));
+  await aliceSocket.wait('message:ack', (event) => event.message.id === 'k-1');
+  assert.equal((await api('/api/v1/queue', { session: bob })).data.messages.length, 0, 'not waiting for the keyless session');
+
+  const done = await api('/api/v1/queue/ack', { session: bobPhone, method: 'POST', body: { messageIds: ['k-1'] } });
+  assert.equal(done.data.removed, 1);
+  assert.equal((await history(alice, bob.user.id)).some((message) => message.id === 'k-1'), false, 'gone once the keyed phone stored it');
   aliceSocket.close();
 });
 
