@@ -73,3 +73,27 @@ test('restoring keeps group chat history, including the separate group list of o
   assert.equal(state.messages['group:g1'][0].content, 'group, new format');
   assert.equal(state.messages['group:g2'][0].timestamp, at(3));
 });
+
+test('a request that never reached the server is told apart from a refused one', async () => {
+  const { isNetworkFailure } = await import('../src/api.js');
+  assert.equal(isNetworkFailure(new TypeError('Failed to fetch')), true);
+  assert.equal(isNetworkFailure(new TypeError('Load failed')), true);
+  assert.equal(isNetworkFailure(new Error('Could not load your Hidden Messenger contacts.')), false);
+  assert.equal(isNetworkFailure(new TypeError('x is not a function')), false);
+});
+
+test('a group never opened online still opens offline from the saved list, and listed groups get their details kept', async () => {
+  await import('fake-indexeddb/auto');
+  const { cachedGroupDetails, offlineGroupDetails, prefetchGroupDetails } = await import('../src/groupCache.js');
+  const shown = offlineGroupDetails({ id: 'g9', name: 'Dj', role: 'member', isAnnouncement: false }, 'me');
+  assert.equal(shown.name, 'Dj');
+  assert.deepEqual(shown.members, [{ id: 'me', name: 'You', role: 'member' }]);
+  assert.equal(offlineGroupDetails(undefined, 'me'), null);
+
+  const asked = [];
+  const fetchDetails = async (id) => { asked.push(id); if (id === 'bad') throw new TypeError('Failed to fetch'); return { id, name: `Group ${id}`, members: [] }; };
+  await prefetchGroupDetails('pf-owner', [{ id: 'a' }, { id: 'bad' }], fetchDetails);
+  await prefetchGroupDetails('pf-owner', [{ id: 'a' }, { id: 'bad' }], fetchDetails);
+  assert.deepEqual(asked, ['a', 'bad', 'bad'], 'once per session; a failed one is tried again');
+  assert.equal((await cachedGroupDetails('pf-owner', 'a')).name, 'Group a');
+});

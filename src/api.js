@@ -41,3 +41,8 @@ export function apiFetch(path, options = {}) {
   if (target?.protocol === 'https:' && target.hostname.endsWith('.ngrok-free.app')) headers.set('ngrok-skip-browser-warning', 'true');
   return globalThis.fetch(url, { ...options, headers });
 }
+
+/** A request that never reached the server (offline, DNS, connection refused): fetch rejects with a TypeError. */
+export function isNetworkFailure(error) {
+  return error instanceof TypeError && /fetch|network|load failed/i.test(String(error.message));
+}

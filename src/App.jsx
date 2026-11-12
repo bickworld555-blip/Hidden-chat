@@ -1,7 +1,7 @@
 import { acknowledgeEvents } from './deliveryAck.js';
-import { apiFetch, apiUrl } from './api.js';
+import { apiFetch, apiUrl, isNetworkFailure } from './api.js';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { cachedGroups, saveGroups } from './groupCache.js';
+import { cachedGroups, prefetchGroupDetails, saveGroups } from './groupCache.js';
 import { activateAccount, addOrActivateAccount, getAccountsState, loadAccounts, removeAccount, sessionFromAccount, updateAccountUser } from './accounts.js';
 import { Bell, ChevronRight, MessageSquarePlus, Moon, Sun } from 'lucide-react';
 import { notificationPreview, savedMessageCount, useChatStore } from './store.js';
@@ -477,6 +477,17 @@ export default function App() {
           openChain = openChain.then(() => openEvent(event)).then(handleEvent).catch((error) => console.error('Could not handle a message:', error));
         }, setConnection);
         realtime.onRevoked = () => revokedRef.current?.();
+        let contactsLoaded = false;
+        const loadContacts = async () => {
+          const contactResponse = await apiFetch('/api/v1/contacts', { headers: { Authorization: `Bearer ${sessionToken}` } });
+          if (!contactResponse.ok) throw new Error('Could not load your Hidden Messenger contacts.');
+          const contacts = await contactResponse.json();
+          if (cancelled) return [];
+          setContacts(contacts);
+          persistContacts(userId).catch(() => {});
+          contactsLoaded = true;
+          return contacts;
+        };
         realtime.onReady = async () => {
           const outbox = await getOutbox(userId);
           for (const message of outbox) await transmitDirect(realtime, message);
@@ -492,6 +503,10 @@ export default function App() {
               if (!byChat.has(chatId)) byChat.set(chatId, []);
               byChat.get(chatId).push(message);
             }
+            // Started offline (the contact list never loaded), or someone new wrote meanwhile: their chat row comes
+            // from the contact list, so it is loaded first; otherwise the message is saved but has no row to show in.
+            const known = new Set(useChatStore.getState().chats.map((chat) => chat.id));
+            if (!contactsLoaded || [...byChat.keys()].some((chatId) => !known.has(chatId))) await loadContacts().catch(() => {});
             for (const [chatId, rows] of byChat) mergeHistory(chatId, await openHistory(chatId, rows));
             const events = (queued.events ?? []).filter((event) => event?.id && event.type);
             for (const event of events) handleEvent(needsOpening(event) ? await openEvent(event) : event);
@@ -516,12 +531,8 @@ export default function App() {
         // time before connecting, which kept a 30-chat account offline for ~8 s on mobile data).
         realtime.connect();
         preloadLazyScreens();
-        const contactResponse = await apiFetch('/api/v1/contacts', { headers: { Authorization: `Bearer ${sessionToken}` } });
-        if (!contactResponse.ok) throw new Error('Could not load your Hidden Messenger contacts.');
-        const contacts = await contactResponse.json();
+        const contacts = await loadContacts();
         if (cancelled) return;
-        setContacts(contacts);
-        persistContacts(userId).catch(() => {});
         // The open chat first, then the rest, a few at a time.
         const active = useChatStore.getState().activeChatId;
         const ordered = [...contacts].sort((a, b) => Number(b.id === active) - Number(a.id === active));
@@ -530,7 +541,11 @@ export default function App() {
           if (!cancelled && response.ok) mergeHistory(contact.id, await openHistory(contact.id, await response.json()));
         });
       } catch (error) {
-        if (!cancelled) { setFatalError(error.message); setConnection('offline'); }
+        if (cancelled) return;
+        setConnection('offline');
+        // No network: everything shown comes from this device, and the connection status already says offline, so a
+        // raw "Failed to fetch" adds nothing. Other failures (a refused request) are still reported.
+        if (!isNetworkFailure(error)) setFatalError(error.message);
       }
     }
     boot();
@@ -790,6 +805,10 @@ export default function App() {
         fresh = true;
         setGroupSummaries(list);
         saveGroups(userId, list).catch(() => {});
+        // Each group's members and settings too (once per session), so any group opens offline.
+        const headers = { Authorization: `Bearer ${sessionToken}` };
+        prefetchGroupDetails(userId, list, (groupId) => apiFetch(`/api/v1/groups/${encodeURIComponent(groupId)}`, { headers })
+          .then((response) => (response.ok ? response.json() : null))).catch(() => {});
       })
       .catch(() => {});
     return () => controller.abort();

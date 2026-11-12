@@ -1,4 +1,4 @@
-import { apiFetch } from '../api.js';
+import { apiFetch, isNetworkFailure } from '../api.js';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft, BarChart3, Bell, BellOff, CalendarClock, CalendarDays, Check, ChevronDown, Clock, Copy, Download, Flag, Link2, LockKeyhole, LogOut, Megaphone, MinusCircle, Paperclip,
@@ -24,7 +24,7 @@ import { fetchGroupMessages } from '../groupHistory.js';
 import { dropPending, enqueuePending, flushPending, pendingFor, usePending } from '../groupPending.js';
 import FormattedText from './FormattedText.jsx';
 import { useChatStore } from '../store.js';
-import { cachedGroupDetails, cachedGroups, saveGroupDetails, saveGroups } from '../groupCache.js';
+import { cachedGroupDetails, cachedGroups, offlineGroupDetails, saveGroupDetails, saveGroups } from '../groupCache.js';
 import { isMediaContent } from '../media.js';
 import { MAX_CALL_PARTICIPANTS } from '../callRoom.js';
 import { fetchCallTopology, newCallKey, parseRelayCall, relayCallContent, relayCallJoinable } from '../groupRelayCall.js';
@@ -276,7 +276,9 @@ export default function GroupsView({ token, userId, revision, onClose, onStartGr
     Promise.all([cachedGroups(userId), selected ? cachedGroupDetails(userId, selected) : null]).then(([list, details]) => {
       if (cancelled || shownFromServer.current) return;
       if (list) setGroups((current) => (current.length ? current : list));
-      if (details) setGroup((current) => current ?? details);
+      // Never opened online since details were kept: its name and settings from the saved list.
+      const shown = details ?? (selected ? offlineGroupDetails(list?.find((item) => item.id === selected), userId) : null);
+      if (shown) setGroup((current) => current ?? shown);
     }).catch(() => {});
     return () => { cancelled = true; };
   }, [selected, userId]);
@@ -286,7 +288,7 @@ export default function GroupsView({ token, userId, revision, onClose, onStartGr
     refresh(controller.signal).catch((caught) => {
       if (caught.name === 'AbortError') return;
       // Offline: what this device kept stays on screen; there is nothing to report until the network is back.
-      if (caught instanceof TypeError && /fetch|network/i.test(caught.message)) return;
+      if (isNetworkFailure(caught)) return;
       setError(caught.message);
     });
     return () => controller.abort();
@@ -738,7 +740,7 @@ export default function GroupsView({ token, userId, revision, onClose, onStartGr
                     <article tabIndex={0} className={`groups-message ${mine ? 'mine' : 'theirs'} ${isMedia ? 'has-media' : ''} ${scheduled ? 'is-scheduled' : ''} ${sticker ? 'is-sticker' : ''}`}
                       onClick={(clickEvent) => { if (!clickEvent.target.closest('button, a, input, audio, video')) setActiveMessageId(active ? '' : message.id); }}
                       onKeyDown={(keyEvent) => { if (keyEvent.key === 'Enter' && keyEvent.target === keyEvent.currentTarget) setActiveMessageId(active ? '' : message.id); }}>
-                      {!mine && <strong className="groups-sender" style={{ color: senderColor(message.senderId) }}>{sender?.name || 'Former member'}</strong>}
+                      {!mine && <strong className="groups-sender" style={{ color: senderColor(message.senderId) }}>{sender?.name || (group.offline ? 'Member' : 'Former member')}</strong>}
                       {relayCard ? (
                         <div className="groups-scheduled-card groups-relay-card">
                           <span className="groups-scheduled-icon">{relayCard.mode === 'video' ? <Video size={22} /> : <Phone size={22} />}</span>
