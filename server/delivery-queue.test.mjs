@@ -140,3 +140,31 @@ test('the admin dashboard can count what is waiting, without message content', a
   const response = await api('/api/admin/v1/queue');
   assert.ok([401, 403].includes(response.status), 'admin only');
 });
+
+test('an ordinary request counts as the device being used, so a device back after 20 days is waited for again', async () => {
+  const alice = await register('qa');
+  const bob = await register('qb');
+  const memory = new Map();
+  const protocol = createProtocol({ storage: { get: async (k) => memory.get(k), set: async (k, v) => { memory.set(k, v); }, del: async (k) => { memory.delete(k); } } });
+  await api('/api/v1/e2e/keys', { session: bob, method: 'PUT', body: await protocol.prepareUpload({ serverPreKeyCount: 0 }) });
+  // Bob also uses a laptop every day, so an idle phone would not be waited for.
+  const laptop = await signInAgain(bob);
+  const laptopMemory = new Map();
+  const laptopProtocol = createProtocol({ storage: { get: async (k) => laptopMemory.get(k), set: async (k, v) => { laptopMemory.set(k, v); }, del: async (k) => { laptopMemory.delete(k); } } });
+  await api('/api/v1/e2e/keys', { session: laptop, method: 'PUT', body: await laptopProtocol.prepareUpload({ serverPreKeyCount: 0 }) });
+  const backThen = Date.now() - 20 * 24 * 60 * 60 * 1000;
+  const activity = () => Number(service.db.prepare('SELECT last_active_at AS at FROM sessions WHERE device_id = ?').get(bob.deviceId).at);
+  service.db.prepare('UPDATE sessions SET last_active_at = ?, created_at = ? WHERE device_id = ?').run(backThen, backThen, bob.deviceId);
+
+  assert.equal((await api('/api/v1/queue', { session: bob })).status, 200); // e.g. a phone woken by a push notification
+  assert.ok(activity() > Date.now() - 60_000, 'the request refreshed the last activity');
+  const before = activity();
+  await api('/api/v1/queue', { session: bob });
+  assert.equal(activity(), before, 'written at most once an hour');
+
+  const aliceSocket = await connect(alice);
+  aliceSocket.send(JSON.stringify({ type: 'message:send', message: { id: 'act-1', receiverId: bob.user.id, content: 'hello' } }));
+  await aliceSocket.wait('message:ack', (event) => event.message.id === 'act-1');
+  assert.deepEqual((await api('/api/v1/queue', { session: bob })).data.messages.map((message) => message.id), ['act-1']);
+  aliceSocket.close();
+});

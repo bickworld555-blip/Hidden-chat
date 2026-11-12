@@ -102,3 +102,28 @@ test('a signed-out device is released like an idle one', async () => {
   await queue.releaseInactiveDevices();
   assert.deepEqual(removed, ['m6']);
 });
+
+test('in a group, every member without a signed-in device keeps their own "any device" target', async () => {
+  const { db, queue, device, targets, removed } = setup();
+  device('ann', 'ann-phone');
+  for (const userId of ['ann', 'bob', 'cat']) db.prepare('INSERT INTO group_members VALUES (?, ?)').run('g1', userId);
+  await queue.trackGroup({ messageId: 'gm1', groupId: 'g1', senderId: 'ann', senderDeviceId: 'ann-phone' });
+  assert.deepEqual(targets('gm1').map((row) => `${row.userId}/${row.deviceId}`), ['bob/*', 'cat/*']);
+  await queue.ack('bob', 'bob-new-phone', { messageIds: ['gm1'] });
+  assert.deepEqual(removed, [], 'still waiting for cat');
+  await queue.ack('cat', 'cat-new-phone', { messageIds: ['gm1'] });
+  assert.deepEqual(removed, ['gm1']);
+});
+
+test('a database made with the old key is rebuilt in place, keeping its waiting deliveries', () => {
+  const db = new DatabaseSync(':memory:');
+  db.exec(`CREATE TABLE message_deliveries (message_id TEXT NOT NULL, kind TEXT NOT NULL, user_id TEXT NOT NULL, device_id TEXT NOT NULL,
+    created_at INTEGER NOT NULL, delivered_at INTEGER, PRIMARY KEY (message_id, device_id));
+    INSERT INTO message_deliveries VALUES ('m', 'group', 'bob', '*', 1, NULL);`);
+  ensureDeliveryQueueSchema(db);
+  ensureDeliveryQueueSchema(db); // idempotent
+  const key = db.prepare('PRAGMA table_info(message_deliveries)').all().filter((column) => column.pk > 0).map((column) => column.name);
+  assert.deepEqual(key, ['message_id', 'user_id', 'device_id']);
+  db.prepare("INSERT INTO message_deliveries VALUES ('m', 'group', 'cat', '*', 1, NULL)").run();
+  assert.equal(db.prepare('SELECT count(*) AS count FROM message_deliveries').get().count, 2);
+});

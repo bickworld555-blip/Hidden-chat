@@ -20,10 +20,18 @@ const RELEASE_EVERY_MS = 10 * 60 * 1000;
 const MAX_EVENTS_PER_DEVICE = 2000;
 
 export function ensureDeliveryQueueSchema(db) {
+  // Databases made before the key included user_id (two group members waiting on "any device" collided) are rebuilt.
+  const keyColumns = db.prepare('PRAGMA table_info(message_deliveries)').all().filter((column) => column.pk > 0).map((column) => column.name);
+  const rebuild = keyColumns.length > 0 && !keyColumns.includes('user_id');
+  if (rebuild) {
+    db.exec(`ALTER TABLE message_deliveries RENAME TO message_deliveries_old;
+      DROP INDEX IF EXISTS message_deliveries_pending;
+      DROP INDEX IF EXISTS message_deliveries_user;`);
+  }
   db.exec(`
     CREATE TABLE IF NOT EXISTS message_deliveries (
       message_id TEXT NOT NULL, kind TEXT NOT NULL, user_id TEXT NOT NULL, device_id TEXT NOT NULL,
-      created_at INTEGER NOT NULL, delivered_at INTEGER, PRIMARY KEY (message_id, device_id)
+      created_at INTEGER NOT NULL, delivered_at INTEGER, PRIMARY KEY (message_id, user_id, device_id)
     );
     CREATE INDEX IF NOT EXISTS message_deliveries_pending ON message_deliveries(device_id, delivered_at);
     CREATE INDEX IF NOT EXISTS message_deliveries_user ON message_deliveries(user_id, delivered_at);
@@ -35,11 +43,16 @@ export function ensureDeliveryQueueSchema(db) {
       id TEXT PRIMARY KEY, user_id TEXT NOT NULL, device_id TEXT NOT NULL, payload TEXT NOT NULL, created_at INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS device_events_device ON device_events(device_id, created_at);
-    CREATE TABLE IF NOT EXISTS backups (
+        CREATE TABLE IF NOT EXISTS backups (
       user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE, disk_name TEXT NOT NULL, byte_size INTEGER NOT NULL,
       kdf TEXT NOT NULL, updated_at INTEGER NOT NULL
     );
   `);
+  if (rebuild) {
+    db.exec(`INSERT INTO message_deliveries(message_id, kind, user_id, device_id, created_at, delivered_at)
+        SELECT message_id, kind, user_id, device_id, created_at, delivered_at FROM message_deliveries_old;
+      DROP TABLE message_deliveries_old;`);
+  }
 }
 
 const cleanIds = (ids, limit = MAX_ACK) => (Array.isArray(ids) ? [...new Set(ids.filter((id) => typeof id === 'string' && id.length > 0 && id.length < 120))].slice(0, limit) : []);
@@ -178,16 +191,16 @@ export function createDeliveryQueue({ db, onlineDevices = () => [], removeMessag
     const activeSession = (alias, row) => `EXISTS (SELECT 1 FROM sessions ${alias} WHERE ${alias}.user_id = ${row}.user_id
       AND ${alias}.device_id = ${row}.device_id AND (${alias}.expires_at IS NULL OR ${alias}.expires_at > ?)
       AND COALESCE(${alias}.last_active_at, ${alias}.created_at, 0) > ?)`;
-    const rows = await db.prepare(`SELECT d.message_id AS "messageId", d.device_id AS "deviceId" FROM message_deliveries d
+    const rows = await db.prepare(`SELECT d.message_id AS "messageId", d.user_id AS "userId", d.device_id AS "deviceId" FROM message_deliveries d
       WHERE d.delivered_at IS NULL AND d.device_id <> ? AND NOT ${activeSession('s', 'd')}
         AND (EXISTS (SELECT 1 FROM message_routes r WHERE r.message_id = d.message_id AND r.sender_id = d.user_id)
           OR EXISTS (SELECT 1 FROM message_deliveries o WHERE o.message_id = d.message_id AND o.user_id = d.user_id
             AND o.device_id <> d.device_id AND (o.delivered_at IS NOT NULL OR o.device_id = ? OR ${activeSession('s2', 'o')})))
       LIMIT 5000`).all(ANY_DEVICE, at, idleSince, ANY_DEVICE, at, idleSince);
     const touched = new Set();
-    for (const { messageId, deviceId } of rows) {
-      await db.prepare('UPDATE message_deliveries SET delivered_at = ? WHERE message_id = ? AND device_id = ? AND delivered_at IS NULL')
-        .run(at, messageId, deviceId);
+    for (const { messageId, userId, deviceId } of rows) {
+      await db.prepare('UPDATE message_deliveries SET delivered_at = ? WHERE message_id = ? AND user_id = ? AND device_id = ? AND delivered_at IS NULL')
+        .run(at, messageId, userId, deviceId);
       touched.add(messageId);
     }
     let removed = 0;
