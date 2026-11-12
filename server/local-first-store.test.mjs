@@ -97,3 +97,10 @@ test('a group never opened online still opens offline from the saved list, and l
   assert.deepEqual(asked, ['a', 'bad', 'bad'], 'once per session; a failed one is tried again');
   assert.equal((await cachedGroupDetails('pf-owner', 'a')).name, 'Group a');
 });
+
+test('the Android app may reach the group-call media server (LiveKit Cloud, or one named at build time)', async () => {
+  const { bundledCsp, sfuOrigins } = await import('../scripts/configure-android.mjs');
+  const connect = bundledCsp('https://example.com/').split('; ').find((part) => part.startsWith('connect-src'));
+  assert.match(connect, /https:\/\/\*\.livekit\.cloud wss:\/\/\*\.livekit\.cloud/);
+  assert.deepEqual(sfuOrigins('wss://sfu.example.com https://a.example/path http://plain.example nonsense'), ['wss://sfu.example.com']);
+});

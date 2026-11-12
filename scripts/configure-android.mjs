@@ -36,21 +36,37 @@ export function androidConfig(rawUrl) {
   };
 }
 
+/** Extra media-server origins for the CSP: only bare https:// and wss:// origins are kept. */
+export function sfuOrigins(value = '') {
+  return String(value).split(/\s+/).filter(Boolean).flatMap((entry) => {
+    try {
+      const url = new URL(entry);
+      return ['https:', 'wss:'].includes(url.protocol) && url.origin === entry.replace(/\/$/, '') ? [url.origin] : [];
+    } catch {
+      return [];
+    }
+  });
+}
+
 /**
  * The bundled app's Content-Security-Policy: scripts only from the APK itself (and WebAssembly for the on-device
- * face tracker), network only to the app's server and the map/place services it uses, no frames or plugins.
+ * face tracker), network only to the app's server, the map/place services it uses and the group-call media server,
+ * no frames or plugins.
  */
 export function bundledCsp(rawUrl) {
   const api = apiOrigin(rawUrl);
   const socket = api.replace(/^https:/, 'wss:');
   const services = ['https://nominatim.openstreetmap.org', 'https://overpass-api.de', 'https://overpass.kumi.systems', 'https://overpass.private.coffee', 'https://storage.googleapis.com'];
+  // Group calls through the media server (server/sfu.mjs): LiveKit Cloud and its region servers, plus a self-hosted
+  // server named in ANDROID_SFU_ORIGINS (space-separated https:// and wss:// origins). Media stays end-to-end encrypted.
+  const sfu = ['https://*.livekit.cloud', 'wss://*.livekit.cloud', ...sfuOrigins(process.env.ANDROID_SFU_ORIGINS)];
   return [
     "default-src 'self'",
     "script-src 'self' 'wasm-unsafe-eval'",
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob: https:",
     `media-src 'self' blob: data: ${api}`,
-    `connect-src 'self' blob: data: ${api} ${socket} ${services.join(' ')}`,
+    `connect-src 'self' blob: data: ${api} ${socket} ${services.join(' ')} ${sfu.join(' ')}`,
     "worker-src 'self' blob:",
     "font-src 'self' data:",
     "object-src 'none'",
