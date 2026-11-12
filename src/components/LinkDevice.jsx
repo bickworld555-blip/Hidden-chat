@@ -8,7 +8,7 @@ import { Camera, Keyboard, Laptop, Lock, RefreshCw } from 'lucide-react';
 import jsQR from 'jsqr';
 import { approveLink, keyFingerprint, lookupLink, parseLinkQr, rememberPendingHistory, startLink, waitForApproval } from '../linking.js';
 import { buildBackupData } from '../backup.js';
-import { useChatStore } from '../store.js';
+import { loadAllSavedMessages, useChatStore } from '../store.js';
 
 export function LinkWithPhone({ onAuthenticated }) {
   const [link, setLink] = useState(null);
@@ -128,9 +128,10 @@ export function LinkScanner({ token, onDone, onCancel }) {
     setError('');
     try {
       const state = useChatStore.getState();
-      // Every message on this phone, sent in parts (newest first); the new device can be used after the first.
-      const result = await approveLink(token, { ...pending, confirmedKey: matches ? pending.publicKey : null }, () => buildBackupData({
-        user: state.user, chats: state.chats, messages: state.messages, callLogs: state.callLogs.slice(0, 500), preferences: {}, groups: [],
+      // Every message on this phone (the whole local store, group chats included, not only what is in memory), sent
+      // in parts (newest first); the new device can be used after the first.
+      const result = await approveLink(token, { ...pending, confirmedKey: matches ? pending.publicKey : null }, async () => buildBackupData({
+        user: state.user, chats: state.chats, messages: await loadAllSavedMessages(state.userId), callLogs: state.callLogs.slice(0, 500), preferences: {}, groups: [],
       }), { onProgress: (sent, total) => setProgress(total > 1 ? `Sending your chats… ${sent} of ${total}` : 'Chats sent') });
       onDone(result.deviceName, result);
     } catch (caught) {

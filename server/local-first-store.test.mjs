@@ -39,3 +39,37 @@ test('the group list and a group\'s details are kept on the device, per account,
   assert.equal(await cachedGroups('someone-else'), null, 'another account on the device does not see them');
   assert.equal(await cachedGroupDetails('me', 'unknown'), null);
 });
+
+test('a full backup reads every message saved on the device, not only the newest ones held in memory', async () => {
+  await import('fake-indexeddb/auto');
+  const { useChatStore, loadAllSavedMessages } = await import('../src/store.js');
+  const messages = Array.from({ length: 6 }, (_, index) => ({ id: `full-${index}`, senderId: 'ava', receiverId: 'full-owner', timestamp: new Date(Date.UTC(2026, 10, 1, 9, index)).toISOString(), content: `m${index}` }));
+  const group = [{ id: 'g-1', senderId: 'ava', groupId: 'g1', createdAt: Date.UTC(2026, 10, 1), timestamp: new Date(Date.UTC(2026, 10, 1)).toISOString(), content: 'in the group' }];
+  useChatStore.getState().setUserId('full-owner');
+  await useChatStore.getState().hydrateMessages('full-owner');
+  useChatStore.setState({ chats: [{ id: 'ava' }], messages: { ava: messages, 'group:g1': group } });
+  await useChatStore.getState().persistMessages('full-owner');
+  assert.equal((await loadAllSavedMessages('full-owner')).ava.length, 6, 'written to the device store');
+  // A later start: memory holds only what was loaded (here, nothing yet but a new message), the rest stays on disk.
+  useChatStore.getState().setUserId('');
+  useChatStore.getState().setUserId('full-owner');
+  useChatStore.setState({ chats: [{ id: 'ava' }], messages: { ava: [{ ...messages[5], id: 'full-new', content: 'new' }] } });
+  const all = await loadAllSavedMessages('full-owner');
+  assert.equal(all.ava.length, 7, 'the six saved earlier and the new one');
+  assert.equal(all['group:g1'][0].content, 'in the group');
+});
+
+test('restoring keeps group chat history, including the separate group list of older backup files', async () => {
+  const { useChatStore } = await import('../src/store.js');
+  useChatStore.setState({ userId: 'restorer', chats: [{ id: 'ava' }], messages: {}, callLogs: [] });
+  const at = (minute) => new Date(Date.UTC(2026, 10, 1, 9, minute)).toISOString();
+  const result = useChatStore.getState().restoreBackup({
+    kind: 'chats', chats: [{ id: 'ava' }],
+    messages: { ava: [{ id: 'd1', timestamp: at(1), content: 'direct' }], 'group:g1': [{ id: 'g1-a', timestamp: at(2), content: 'group, new format' }] },
+    groups: [{ id: 'g2', name: 'Old', messages: [{ id: 'g2-a', createdAt: Date.UTC(2026, 10, 1, 9, 3), content: 'group, old format' }] }],
+  });
+  assert.equal(result.addedMessages, 3);
+  const state = useChatStore.getState();
+  assert.equal(state.messages['group:g1'][0].content, 'group, new format');
+  assert.equal(state.messages['group:g2'][0].timestamp, at(3));
+});

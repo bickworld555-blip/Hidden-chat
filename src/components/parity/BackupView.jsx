@@ -1,34 +1,13 @@
 // Chat backup (encrypted with a password only you know), restore, and exporting one chat as text.
 import { useState } from 'react';
 import { DatabaseBackup, Download, FileText, Upload } from 'lucide-react';
-import { useChatStore, previewFor } from '../../store.js';
-import { apiFetch } from '../../api.js';
+import { loadAllSavedMessages, useChatStore, previewFor } from '../../store.js';
 import { MIN_PASSWORD_LENGTH, buildBackupData, exportChatText, openBackup, sealBackup, validateBackupData } from '../../backup.js';
 import { saveFile } from '../../fileSave.js';
-import { openGroupMessages } from '../../e2e/client.js';
 import Panel, { Notice } from './Panel.jsx';
 import AccountBackup from './AccountBackup.jsx';
 
 const LAST_BACKUP_KEY = 'hm:last-backup-at';
-
-async function fetchJson(token, path) {
-  const response = await apiFetch(path, { headers: { Authorization: `Bearer ${token}` } });
-  if (!response.ok) throw new Error('Could not load your groups for the backup.');
-  return response.json();
-}
-
-// Groups live on the server; the backup keeps a copy of their recent history (up to 500 messages each).
-async function groupSnapshots(token) {
-  const groups = await fetchJson(token, '/api/v1/groups');
-  const snapshots = [];
-  for (const group of groups) {
-    const sealed = await fetchJson(token, `/api/v1/groups/${encodeURIComponent(group.id)}/messages`).catch(() => []);
-    // The backup holds what this device can read (it is itself encrypted with the backup password).
-    const messages = await openGroupMessages(group.id, sealed);
-    snapshots.push({ id: group.id, name: group.name, messages });
-  }
-  return snapshots;
-}
 
 export default function BackupView({ token, onClose }) {
   const [mode, setMode] = useState(null);
@@ -54,10 +33,11 @@ export default function BackupView({ token, onClose }) {
       const data = buildBackupData({
         user: state.user,
         chats: state.chats,
-        messages: state.messages,
+        // Everything saved on this device, group chats included (the server no longer keeps delivered messages).
+        messages: await loadAllSavedMessages(state.userId),
         callLogs: state.callLogs,
         preferences: { pinnedChatIds: state.pinnedChatIds, mutedChatIds: state.mutedChatIds, favouriteChatIds: state.favouriteChatIds, chatThemes: state.chatThemes, blockedChats: state.blockedChats },
-        groups: await groupSnapshots(token),
+        groups: [],
       });
       const text = await sealBackup(data, password);
       const date = new Date().toISOString().slice(0, 10);
@@ -93,7 +73,7 @@ export default function BackupView({ token, onClose }) {
   async function exportChat(chat) {
     const state = useChatStore.getState();
     const names = { [state.userId]: 'You', [chat.id]: chat.name ?? chat.username ?? 'Contact' };
-    const text = exportChatText({ title: chat.name ?? chat.username, messages: state.messages[chat.id] ?? [], nameFor: (id) => names[id] ?? 'Unknown', describe: previewFor });
+    const text = exportChatText({ title: chat.name ?? chat.username, messages: (await loadAllSavedMessages(state.userId))[chat.id] ?? [], nameFor: (id) => names[id] ?? 'Unknown', describe: previewFor });
     try {
       const saved = await saveFile(new Blob([text], { type: 'text/plain;charset=utf-8' }), `Hidden Messenger chat with ${chat.name ?? chat.username}.txt`, 'text/plain');
       setNotice(saved.path ? `Chat exported to ${saved.path}.` : 'Chat exported.');

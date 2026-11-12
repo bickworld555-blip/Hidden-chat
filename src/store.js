@@ -942,8 +942,17 @@ export const useChatStore = create((setState, getState) => ({
         addedChats += 1;
       }
     }
-    for (const [chatId, list] of Object.entries(data.messages)) {
-      if (!chats.some((chat) => chat.id === chatId)) continue;
+    // Group history is saved under "group:<id>" like any chat. Older backup files kept it apart (data.groups).
+    const incoming = { ...data.messages };
+    for (const group of Array.isArray(data.groups) ? data.groups : []) {
+      if (typeof group?.id !== 'string' || !Array.isArray(group.messages)) continue;
+      const key = groupChatKey(group.id);
+      const rows = group.messages.filter((message) => typeof message?.id === 'string')
+        .map((message) => ({ ...message, timestamp: typeof message.timestamp === 'string' ? message.timestamp : new Date(Number(message.createdAt) || 0).toISOString() }));
+      incoming[key] = [...(incoming[key] ?? []), ...rows];
+    }
+    for (const [chatId, list] of Object.entries(incoming)) {
+      if (!chatId.startsWith('group:') && !chats.some((chat) => chat.id === chatId)) continue;
       const current = new Map((messages[chatId] ?? []).map((message) => [message.id, message]));
       for (const message of list) {
         if (current.has(message.id)) continue;

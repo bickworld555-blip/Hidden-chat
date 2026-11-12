@@ -148,7 +148,7 @@ export async function approveLink(token, { id, secret, code, publicKey, confirme
   // server still reports that same key).
   const key = secret ? publicKey : confirmedKey && confirmedKey === approved.historyKey ? confirmedKey : null;
   if (!key || !buildHistory) return { ...approved, historySent: false };
-  const parts = historyParts(buildHistory());
+  const parts = historyParts(await buildHistory());
   for (let index = 0; index < parts.length; index += 1) {
     const sealed = await sealHistory(parts[index], key);
     for (let attempt = 0; ; attempt += 1) {
