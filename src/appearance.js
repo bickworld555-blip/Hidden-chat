@@ -1,6 +1,7 @@
 // Appearance preferences (motion). Stored per device, applied as a data attribute on the app shell
 // so one CSS rule can switch every transition and animation off.
 import { useSyncExternalStore } from 'react';
+import { deviceStorage } from './deviceStorage.js';
 
 export const APPEARANCE_KEY = 'relay:appearance';
 export const DEFAULT_APPEARANCE = Object.freeze({ animations: true, callAnimations: true, avatarCalls: false });
@@ -19,7 +20,7 @@ function read() {
   if (current) return current;
   let parsed = null;
   try {
-    parsed = JSON.parse(globalThis.localStorage?.getItem(APPEARANCE_KEY) ?? 'null');
+    parsed = JSON.parse(deviceStorage.getItem(APPEARANCE_KEY) ?? 'null');
   } catch {
     parsed = null;
   }
@@ -34,7 +35,7 @@ export function getAppearance() {
 export function setAppearance(patch) {
   current = normalizeAppearance({ ...read(), ...patch });
   try {
-    globalThis.localStorage?.setItem(APPEARANCE_KEY, JSON.stringify(current));
+    deviceStorage.setItem(APPEARANCE_KEY, JSON.stringify(current));
   } catch {
     // Private mode or storage quota: the preference still applies for this session.
   }

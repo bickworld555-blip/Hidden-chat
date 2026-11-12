@@ -2,6 +2,7 @@
 // Chat theme) keeps that; every other chat shows this wallpaper. Drawn by CSS ([data-wallpaper] on the
 // message list), so it follows light and dark mode.
 import { useSyncExternalStore } from 'react';
+import { deviceStorage } from './deviceStorage.js';
 
 export const WALLPAPERS = Object.freeze([
   { id: 'doodle', label: 'Default', kind: 'Pattern' },
@@ -19,7 +20,7 @@ const listeners = new Set();
 
 export function getWallpaper() {
   try {
-    const value = localStorage.getItem(KEY);
+    const value = deviceStorage.getItem(KEY);
     return WALLPAPERS.some((wallpaper) => wallpaper.id === value) ? value : 'doodle';
   } catch {
     return 'doodle';
@@ -28,7 +29,7 @@ export function getWallpaper() {
 
 export function setWallpaper(id) {
   if (!WALLPAPERS.some((wallpaper) => wallpaper.id === id)) return;
-  try { localStorage.setItem(KEY, id); } catch { /* private mode: this session only */ }
+  try { deviceStorage.setItem(KEY, id); } catch { /* private mode: this session only */ }
   for (const listener of listeners) listener();
 }
 

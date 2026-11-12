@@ -9,6 +9,7 @@ import FormattedText from '../FormattedText.jsx';
 import { openContent, sealDirect } from '../../e2e/client.js';
 import { publicOrigin } from '../../api.js';
 import VerifiedBadge from '../VerifiedBadge.jsx';
+import { deviceStorage } from '../../deviceStorage.js';
 
 const CHANNEL_REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
 const directContacts = (chats) => chats.filter((chat) => chat.kind !== 'group' && chat.id && chat.username);
@@ -433,12 +434,12 @@ export function JoinCallLink({ token, code, onClose, onCall }) {
 // --- Status privacy and muted statuses -------------------------------------------------------------------------
 export const MUTED_STATUS_KEY = 'hm:muted-statuses';
 export function mutedStatusUsers() {
-  try { return JSON.parse(localStorage.getItem(MUTED_STATUS_KEY) ?? '[]'); } catch { return []; }
+  try { return JSON.parse(deviceStorage.getItem(MUTED_STATUS_KEY) ?? '[]'); } catch { return []; }
 }
 export function setStatusMuted(userId, muted) {
   const next = new Set(mutedStatusUsers());
   if (muted) next.add(userId); else next.delete(userId);
-  try { localStorage.setItem(MUTED_STATUS_KEY, JSON.stringify([...next])); } catch { /* still applies this session */ }
+  try { deviceStorage.setItem(MUTED_STATUS_KEY, JSON.stringify([...next])); } catch { /* still applies this session */ }
   return [...next];
 }
 

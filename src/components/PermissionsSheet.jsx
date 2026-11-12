@@ -1,6 +1,7 @@
 import { Bell } from 'lucide-react';
 import { requestNotificationPermission } from '../notify.js';
 import { PERMISSIONS_ASKED_KEY, permissionsAskedKey } from '../permissionsKey.js';
+import { deviceStorage } from '../deviceStorage.js';
 
 export { PERMISSIONS_ASKED_KEY };
 
@@ -8,7 +9,7 @@ export { PERMISSIONS_ASKED_KEY };
 // Microphone, camera and location are asked by the browser when a call, voice note or location share needs them.
 export default function PermissionsSheet({ onDone }) {
   const finish = () => {
-    try { localStorage.setItem(permissionsAskedKey(), '1'); } catch { /* private mode */ }
+    try { deviceStorage.setItem(permissionsAskedKey(), '1'); } catch { /* private mode */ }
     onDone?.();
   };
   const allow = async () => {

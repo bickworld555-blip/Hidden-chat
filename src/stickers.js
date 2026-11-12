@@ -1,3 +1,4 @@
+import { deviceStorage } from './deviceStorage.js';
 // Sticker packs that ship with Hidden Messenger (original artwork: a die-cut emoji with a caption, drawn as SVG at
 // render time, so they cost nothing to download). A sticker message is "sticker:<pack>/<id>".
 export const STICKER_PREFIX = 'sticker:';
@@ -55,7 +56,7 @@ export function stickerPreview(content) {
   return found && !found.unknown ? `${found.emoji} Sticker` : '🏷️ Sticker';
 }
 
-export function loadRecentStickers(storage = globalThis.localStorage) {
+export function loadRecentStickers(storage = deviceStorage) {
   try {
     const list = JSON.parse(storage?.getItem(RECENTS_KEY) ?? '[]');
     return Array.isArray(list) ? list.filter((key) => BY_KEY.has(key)).slice(0, MAX_RECENTS) : [];
@@ -64,7 +65,7 @@ export function loadRecentStickers(storage = globalThis.localStorage) {
   }
 }
 
-export function rememberSticker(key, storage = globalThis.localStorage) {
+export function rememberSticker(key, storage = deviceStorage) {
   const next = [key, ...loadRecentStickers(storage).filter((item) => item !== key)].slice(0, MAX_RECENTS);
   try { storage?.setItem(RECENTS_KEY, JSON.stringify(next)); } catch { /* private mode */ }
   return next;

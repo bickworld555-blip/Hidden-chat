@@ -6,6 +6,7 @@ import { MIN_PASSWORD_LENGTH, buildBackupData, exportChatText, openBackup, sealB
 import { saveFile } from '../../fileSave.js';
 import Panel, { Notice } from './Panel.jsx';
 import AccountBackup from './AccountBackup.jsx';
+import { deviceStorage } from '../../deviceStorage.js';
 
 const LAST_BACKUP_KEY = 'hm:last-backup-at';
 
@@ -17,7 +18,7 @@ export default function BackupView({ token, onClose }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
-  const [lastBackup, setLastBackup] = useState(() => Number(localStorage.getItem(LAST_BACKUP_KEY) || 0));
+  const [lastBackup, setLastBackup] = useState(() => Number(deviceStorage.getItem(LAST_BACKUP_KEY) || 0));
   const chats = useChatStore((state) => state.chats);
   const userId = useChatStore((state) => state.userId);
 
@@ -43,7 +44,7 @@ export default function BackupView({ token, onClose }) {
       const date = new Date().toISOString().slice(0, 10);
       const saved = await saveFile(new Blob([text], { type: 'application/json' }), `hidden-messenger-backup-${state.user?.username ?? 'account'}-${date}.hmbackup`, 'application/octet-stream');
       const at = Date.now();
-      localStorage.setItem(LAST_BACKUP_KEY, String(at));
+      deviceStorage.setItem(LAST_BACKUP_KEY, String(at));
       setLastBackup(at);
       reset();
       setNotice(saved.path ? `Backup saved to ${saved.path}. Keep your password: without it the backup can’t be opened.` : 'Backup downloaded. Keep your password: without it the backup can’t be opened.');

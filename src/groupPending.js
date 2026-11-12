@@ -2,6 +2,7 @@
 // old app), nothing is sent readable. The message is kept on this device, shown as "Waiting", and sent sealed
 // once every member has keys (the group screen retries while it is open). Stored per account and group.
 import { useSyncExternalStore } from 'react';
+import { deviceStorage } from './deviceStorage.js';
 
 const listeners = new Set();
 const keyOf = (userId, groupId) => `hm:group-pending:${userId}:${groupId}`;
@@ -11,7 +12,7 @@ export function pendingFor(userId, groupId) {
   const key = keyOf(userId, groupId);
   if (!cache.has(key)) {
     let list = [];
-    try { list = JSON.parse(localStorage.getItem(key) ?? '[]'); } catch { list = []; }
+    try { list = JSON.parse(deviceStorage.getItem(key) ?? '[]'); } catch { list = []; }
     cache.set(key, Array.isArray(list) ? list : []);
   }
   return cache.get(key);
@@ -20,7 +21,7 @@ export function pendingFor(userId, groupId) {
 function save(userId, groupId, list) {
   const key = keyOf(userId, groupId);
   cache.set(key, list);
-  try { if (list.length) localStorage.setItem(key, JSON.stringify(list)); else localStorage.removeItem(key); } catch { /* private mode */ }
+  try { if (list.length) deviceStorage.setItem(key, JSON.stringify(list)); else deviceStorage.removeItem(key); } catch { /* private mode */ }
   for (const listener of listeners) listener();
 }
 

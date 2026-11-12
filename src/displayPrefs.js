@@ -1,14 +1,15 @@
 // Display preferences on this device (Settings › Chats › Font size, Settings › Accessibility): message font size
 // and increased contrast. Applied as attributes on the app shell (App.jsx), so CSS does the rest.
 import { useSyncExternalStore } from 'react';
+import { deviceStorage } from './deviceStorage.js';
 
 export const FONT_SIZES = [['small', 'Small'], ['medium', 'Medium'], ['large', 'Large'], ['xlarge', 'Extra large']];
 const FONT_KEY = 'hm:font-size';
 const CONTRAST_KEY = 'hm:high-contrast';
 const listeners = new Set();
 const notify = () => { for (const listener of listeners) listener(); };
-const read = (key) => { try { return localStorage.getItem(key); } catch { return null; } };
-const write = (key, value) => { try { localStorage.setItem(key, value); } catch { /* private mode */ } notify(); };
+const read = (key) => { try { return deviceStorage.getItem(key); } catch { return null; } };
+const write = (key, value) => { try { deviceStorage.setItem(key, value); } catch { /* private mode */ } notify(); };
 
 export const getFontSize = () => (FONT_SIZES.some(([id]) => id === read(FONT_KEY)) ? read(FONT_KEY) : 'medium');
 export const setFontSize = (id) => { if (FONT_SIZES.some(([value]) => value === id)) write(FONT_KEY, id); };

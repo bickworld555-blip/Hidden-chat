@@ -103,6 +103,7 @@ export default function StorageView({ onClose }) {
           {local.error ? ` · ${local.error}` : ''}
           {local.kind === 'sqlite' && typeof local.fts === 'boolean' && (
             <span className="hm-local-store-facts" data-fts={local.fts ? 'on' : 'off'} data-media-files={local.mediaFiles ?? ''}>
+              <br />Database version {local.schemaVersion ?? '?'} · contacts, outbox, call log and preferences: {local.records === 'sqlite' ? 'SQLite' : 'browser storage'} · settings: {local.settings === 'sqlite' ? 'SQLite' : 'browser storage'}
               <br />Search works offline ({local.fts ? 'full-text index' : 'scan'}) · {local.mediaFiles ?? 0} attachment files in the app’s private folder ({local.mediaRecords} recorded, {formatFileSize(local.mediaBytes)})
             </span>
           )}

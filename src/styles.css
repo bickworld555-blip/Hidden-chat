@@ -5332,3 +5332,6 @@ button.wa-quoted-reply-preview:active { filter: brightness(.94); }
 .wa-status-chip { flex: none; display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px 2px 2px; border-radius: 999px; background: color-mix(in srgb, var(--wa-green) 14%, transparent); color: var(--wa-text); font-size: 12px; font-weight: 600; line-height: 1; }
 .wa-status-chip-tile { width: 18px; height: 18px; display: grid; place-items: center; border-radius: 50%; background: var(--wa-green); color: #fff; font-size: 8px; font-weight: 700; }
 .wa-status-preview-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Phone storage full or failing (src/storageHealth.js): a strip at the top, below the status bar, until it works. */
+.storage-banner { position: fixed; top: var(--hm-safe-top, 0px); left: 0; right: 0; z-index: 1500; margin: 0; padding: 10px 16px; background: #7a4a00; color: #fff; font-size: 13.5px; line-height: 1.35; box-shadow: 0 2px 6px rgba(0, 0, 0, .3); }

@@ -9,6 +9,7 @@ import { apiFetch } from './api.js';
 import { MIN_PASSWORD_LENGTH, buildBackupData, openBackup, sealBackup, validateBackupData } from './backup.js';
 import { secureDel, secureGet, secureSet } from './secureStorage.js';
 import { loadAllSavedMessages, useChatStore } from './store.js';
+import { deviceStorage } from './deviceStorage.js';
 
 export const FREQUENCIES = Object.freeze({ daily: 24 * 60 * 60 * 1000, weekly: 7 * 24 * 60 * 60 * 1000, off: 0 });
 const SETTINGS_KEY = (userId) => `hm:cloud-backup:${userId}`;
@@ -117,12 +118,12 @@ export async function restoreFromAccountBackup(token, typed, kind) {
 export async function shouldOfferRestore(token, userId, localMessageCount) {
   if (!token || !userId || localMessageCount > 0) return null;
   try {
-    if (localStorage.getItem(RESTORE_OFFERED_KEY(userId)) === '1') return null;
+    if (deviceStorage.getItem(RESTORE_OFFERED_KEY(userId)) === '1') return null;
   } catch { /* private mode */ }
   const info = await backupInfo(token).catch(() => null);
   return info?.exists ? info : null;
 }
 
 export function markRestoreOffered(userId) {
-  try { localStorage.setItem(RESTORE_OFFERED_KEY(userId), '1'); } catch { /* private mode */ }
+  try { deviceStorage.setItem(RESTORE_OFFERED_KEY(userId), '1'); } catch { /* private mode */ }
 }

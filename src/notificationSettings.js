@@ -1,6 +1,7 @@
 // Device-level notification settings (like OS settings, not per account), persisted in localStorage.
 // Pure helpers live here so the panel, the playback engine and tests share one definition.
 import { useSyncExternalStore } from 'react';
+import { deviceStorage } from './deviceStorage.js';
 
 export const STORAGE_KEY = 'relay:notification-settings';
 
@@ -150,7 +151,7 @@ let current = null;
 function read() {
   if (current) return current;
   let stored = null;
-  try { stored = JSON.parse(globalThis.localStorage?.getItem(STORAGE_KEY) ?? 'null'); } catch { stored = null; }
+  try { stored = JSON.parse(deviceStorage.getItem(STORAGE_KEY) ?? 'null'); } catch { stored = null; }
   current = normalizeSettings(stored);
   return current;
 }
@@ -162,7 +163,7 @@ export function getNotificationSettings() {
 export function updateNotificationSettings(update) {
   const next = normalizeSettings(typeof update === 'function' ? update(read()) : { ...read(), ...update });
   current = next;
-  try { globalThis.localStorage?.setItem(STORAGE_KEY, JSON.stringify(next)); } catch { /* private mode */ }
+  try { deviceStorage.setItem(STORAGE_KEY, JSON.stringify(next)); } catch { /* private mode */ }
   for (const listener of listeners) listener(next);
   return next;
 }

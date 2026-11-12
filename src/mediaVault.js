@@ -9,8 +9,10 @@
 //   Web:         IndexedDB ("hm-media-vault").
 import { createStore, del, get, set } from 'idb-keyval';
 import { nativeShell } from './native.js';
+import { classifyStorageError, reportStorageFailure } from './storageHealth.js';
 
-// Attachments bigger than this are not fetched ahead of time; they are kept once opened.
+// Attachments bigger than this are fetched ahead of time only by the Android app, straight to disk, on Wi-Fi and
+// with room to spare (src/media.js largeDownloadPlan); otherwise they are kept once opened.
 export const PREFETCH_LIMIT_BYTES = 64 * 1024 * 1024;
 
 let store = null;
@@ -49,6 +51,35 @@ async function sha256(blob) {
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
+// Big files never cross the plugin bridge as one base64 string (a 300 MB video was 400 MB of text in the WebView):
+// they are written in pieces and read back through the WebView's own file URL, which it streams from disk.
+const WRITE_PIECE_BYTES = 3 * 1024 * 1024;
+
+async function readNativeFile(parts, path, type) {
+  try {
+    const { uri } = await parts.Filesystem.getUri({ path, directory: parts.Directory.Data });
+    const response = await fetch(globalThis.Capacitor.convertFileSrc(uri));
+    if (response.ok) {
+      const blob = await response.blob();
+      return type && blob.type !== type ? new Blob([blob], { type }) : blob;
+    }
+  } catch { /* the plugin's own read below */ }
+  const file = await parts.Filesystem.readFile({ path, directory: parts.Directory.Data });
+  return fromBase64(file.data, type);
+}
+
+async function writeNativeFile(parts, path, blob) {
+  if (blob.size <= WRITE_PIECE_BYTES) {
+    await parts.Filesystem.writeFile({ path, data: await toBase64(blob), directory: parts.Directory.Data, recursive: true });
+    return;
+  }
+  for (let offset = 0; offset < blob.size; offset += WRITE_PIECE_BYTES) {
+    const data = await toBase64(blob.slice(offset, offset + WRITE_PIECE_BYTES));
+    if (offset === 0) await parts.Filesystem.writeFile({ path, data, directory: parts.Directory.Data, recursive: true });
+    else await parts.Filesystem.appendFile({ path, data, directory: parts.Directory.Data });
+  }
+}
+
 /** { blob, info } kept for this attachment, or null. */
 export async function readStoredMedia(id) {
   if (!id) return null;
@@ -56,10 +87,7 @@ export async function readStoredMedia(id) {
   if (parts) {
     try {
       const ref = await parts.refs.readMediaRef(id);
-      if (ref) {
-        const file = await parts.Filesystem.readFile({ path: ref.local_file_path, directory: parts.Directory.Data });
-        return { blob: fromBase64(file.data, ref.content_type), info: ref.info };
-      }
+      if (ref) return { blob: await readNativeFile(parts, ref.local_file_path, ref.content_type), info: ref.info };
     } catch { /* falls back to the web store below */ }
   }
   const target = vault();
@@ -82,13 +110,19 @@ export async function storeMedia(id, blob, info = null, { descriptor = null } = 
   if (parts) {
     try {
       const path = `media/${id}.bin`;
-      await parts.Filesystem.writeFile({ path, data: await toBase64(blob), directory: parts.Directory.Data, recursive: true });
+      await writeNativeFile(parts, path, blob);
       await parts.refs.writeMediaRef({
-        id, localFilePath: path, fileHash: await sha256(blob), decryptionKey: descriptor ? JSON.stringify(descriptor) : null,
+        // A big file is not hashed here (that reads all of it into memory); an encrypted one is checked against its
+        // descriptor's digests whenever it is opened.
+        id, localFilePath: path, fileHash: blob.size <= PREFETCH_LIMIT_BYTES ? await sha256(blob) : null, decryptionKey: descriptor ? JSON.stringify(descriptor) : null,
         serverBlobPath: `/api/v1/media/${id}`, contentType: blob.type, byteSize: blob.size, info,
       });
       return true;
-    } catch { /* falls back to the web store below */ }
+    } catch (error) {
+      // No room on the phone: the attachment stays on the server (its message is not acknowledged) and the app says so.
+      if (classifyStorageError(error) === 'full') { reportStorageFailure(error); return false; }
+      /* otherwise the web store below */
+    }
   }
   const target = vault();
   if (!target) return false;
@@ -98,6 +132,35 @@ export async function storeMedia(id, blob, info = null, { descriptor = null } = 
     return true;
   } catch {
     return false;
+  }
+}
+
+/** True in the Android app, where big attachments can be downloaded straight to disk (downloadMediaToDevice). */
+export async function canDownloadToDevice() {
+  return Boolean(await native());
+}
+
+/**
+ * Android: downloads `url` (a one-time link to the bytes the server keeps) straight into the app's private folder on a
+ * background thread, without passing the file through the WebView, then records it like storeMedia. A failed or
+ * interrupted download leaves no record (and its partial file is removed).
+ */
+export async function downloadMediaToDevice(id, url, info = null, { descriptor = null, size = null } = {}) {
+  const parts = await native();
+  if (!parts || !id || !/^https?:\/\//.test(String(url))) return false;
+  const path = `media/${id}.bin`;
+  try {
+    await parts.Filesystem.downloadFile({ url, path, directory: parts.Directory.Data, recursive: true });
+    const stat = await parts.Filesystem.stat({ path, directory: parts.Directory.Data });
+    if (size && Number(stat.size) !== Number(size)) throw new Error(`Downloaded ${stat.size} of ${size} bytes.`);
+    await parts.refs.writeMediaRef({
+      id, localFilePath: path, fileHash: null, decryptionKey: descriptor ? JSON.stringify(descriptor) : null,
+      serverBlobPath: `/api/v1/media/${id}`, contentType: info?.contentType ?? 'application/octet-stream', byteSize: Number(stat.size), info,
+    });
+    return true;
+  } catch (error) {
+    await parts.Filesystem.deleteFile({ path, directory: parts.Directory.Data }).catch(() => {});
+    throw error;
   }
 }
 

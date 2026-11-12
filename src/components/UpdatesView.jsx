@@ -11,6 +11,7 @@ import { presentName } from '../profile.js';
 import { useBackHandler } from '../backStack.js';
 import { followerCount, mutedStatusUsers, setStatusMuted } from './extras/ExtrasPanels.jsx';
 import VerifiedBadge from './VerifiedBadge.jsx';
+import { deviceStorage } from '../deviceStorage.js';
 const HIDDEN_SUGGESTIONS_KEY = 'hm:hidden-channel-suggestions';
 import {
   STATUS_BACKGROUNDS, deleteStatus, fetchStatuses, markStatusSeen, postMediaStatus, postTextStatus, statusKind, statusTime, statusViewers,
@@ -83,7 +84,7 @@ export default function UpdatesView({ onOpenChannels, onSheet, onSettings }) {
   }, [token, revision]);
   // Suggested channels to follow (the directory, minus channels already followed and ones hidden here).
   const [suggested, setSuggested] = useState([]);
-  const [hiddenSuggestions, setHiddenSuggestions] = useState(() => { try { return JSON.parse(localStorage.getItem(HIDDEN_SUGGESTIONS_KEY) ?? '[]'); } catch { return []; } });
+  const [hiddenSuggestions, setHiddenSuggestions] = useState(() => { try { return JSON.parse(deviceStorage.getItem(HIDDEN_SUGGESTIONS_KEY) ?? '[]'); } catch { return []; } });
   const [channelsRevision, setChannelsRevision] = useState(0);
   useEffect(() => {
     if (!token) return;
@@ -93,7 +94,7 @@ export default function UpdatesView({ onOpenChannels, onSheet, onSettings }) {
   const suggestions = suggested.filter((item) => !channels.some((own) => own.id === item.id) && !hiddenSuggestions.includes(item.id)).slice(0, 5);
   const hideSuggestion = (id) => setHiddenSuggestions((current) => {
     const next = [...current, id];
-    try { localStorage.setItem(HIDDEN_SUGGESTIONS_KEY, JSON.stringify(next)); } catch { /* hidden for this session */ }
+    try { deviceStorage.setItem(HIDDEN_SUGGESTIONS_KEY, JSON.stringify(next)); } catch { /* hidden for this session */ }
     return next;
   });
   async function follow(id) {

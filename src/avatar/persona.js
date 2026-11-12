@@ -1,6 +1,7 @@
 // The user's animated persona: which character they chose and the face-scan profile. Stored per device.
 import { useSyncExternalStore } from 'react';
 import { CHARACTERS, characterById } from './characters.js';
+import { deviceStorage } from '../deviceStorage.js';
 
 export const PERSONA_KEY = 'relay:avatar-persona';
 
@@ -32,7 +33,7 @@ function clampNumber(value, min, max, fallback) {
 function read() {
   if (current !== null) return current;
   let parsed = null;
-  try { parsed = JSON.parse(globalThis.localStorage?.getItem(PERSONA_KEY) ?? 'null'); } catch { parsed = null; }
+  try { parsed = JSON.parse(deviceStorage.getItem(PERSONA_KEY) ?? 'null'); } catch { parsed = null; }
   current = normalizePersona(parsed) ?? false;
   return current;
 }
@@ -46,8 +47,8 @@ export function savePersona(persona) {
   const next = normalizePersona(persona);
   current = next ?? false;
   try {
-    if (next) globalThis.localStorage?.setItem(PERSONA_KEY, JSON.stringify(next));
-    else globalThis.localStorage?.removeItem(PERSONA_KEY);
+    if (next) deviceStorage.setItem(PERSONA_KEY, JSON.stringify(next));
+    else deviceStorage.removeItem(PERSONA_KEY);
   } catch {
     // Storage unavailable: the persona still applies for this session.
   }

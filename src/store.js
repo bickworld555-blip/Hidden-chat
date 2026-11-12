@@ -21,8 +21,13 @@ import { isNotice } from './e2e/notices.js';
 import { extrasPreview } from './mediaExtras.js';
 import { orderPreview } from './orders.js';
 import { ACTIVITY_EXPIRES_MS } from './typing.js';
+import { reportStorageFailure, reportStorageWorking } from './storageHealth.js';
 
 const EMPTY_MESSAGES = Object.freeze([]);
+// Start-up reads the newest STARTUP_WINDOW messages of each chat (older ones load as a chat scrolls back, a page of
+// MESSAGE_WINDOW at a time). With 100,000 messages in 200 chats the old 500-per-chat start read all of them
+// (server/local-db.test.mjs); this reads 20,000.
+export const STARTUP_WINDOW = 100;
 const typingExpiry = new Map();
 
 // A message deleted for everyone keeps its place, sender and time, but nothing of what it said.
@@ -115,7 +120,8 @@ export async function localStoreStatus(userId) {
   if (kind === 'sqlite') {
     try {
       const [{ localStoreFacts }, { storedMediaFileCount }] = await Promise.all([import('./sqliteMessageDb.js'), import('./mediaVault.js')]);
-      facts = { ...(await localStoreFacts()), mediaFiles: await storedMediaFileCount() };
+      const [{ deviceStorageLocation }, records] = await Promise.all([import('./deviceStorage.js'), import('./secureStorage.js').then((module) => module.secureRecordsLocation())]);
+      facts = { ...(await localStoreFacts()), mediaFiles: await storedMediaFileCount(), records, settings: deviceStorageLocation() };
     } catch { facts = null; }
   }
   return { kind, messages, error: storeError, ...facts };
@@ -168,7 +174,7 @@ export function flushPersistedMessages() {
   pendingPersistUser = null;
   persistChain = persistChain.then(async () => {
     const state = useChatStore.getState();
-    if (!userId || userId !== state.userId || saved.owner !== userId) return;
+    if (!userId || userId !== state.userId || saved.owner !== userId) return true;
     const current = state.messages;
     const cleared = new Set(clearedChats);
     clearedChats.clear();
@@ -176,19 +182,29 @@ export function flushPersistedMessages() {
       const diff = diffMessages(saved.chats, current, cleared);
       await messageStore().apply(userId, diff);
       if (saved.owner === userId) saved = { owner: userId, chats: snapshotOf(current) };
+      reportStorageWorking();
       // Saved here: the server may now delete them once every device has its copy (src/deliveryAck.js).
       if (diff.puts.length > 0) {
         const latest = useChatStore.getState();
         acknowledgeSaved(diff.puts.map((put) => put.message), { client: latest.client, sessionToken: latest.sessionToken })
           .catch((error) => console.error('Could not acknowledge saved messages:', error));
       }
+      return true;
     } catch (error) {
+      // Nothing is lost: what was not saved stays in memory and in the next diff, and is not acknowledged, so the
+      // server keeps it too. The app says why (phone storage full) and tries again.
       for (const chat of cleared) clearedChats.add(chat);
       console.error('Could not save messages:', error);
+      reportStorageFailure(error);
+      clearTimeout(persistRetryTimer);
+      persistRetryTimer = setTimeout(() => { if (useChatStore.getState().userId === userId) { pendingPersistUser = userId; flushPersistedMessages(); } }, PERSIST_RETRY_MS);
+      return false;
     }
   });
   return persistChain;
 }
+const PERSIST_RETRY_MS = 30_000;
+let persistRetryTimer = null;
 
 if (typeof document !== 'undefined') {
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden' && persistTimer) flushPersistedMessages(); });
@@ -1124,7 +1140,7 @@ export const useChatStore = create((setState, getState) => ({
       await db.apply(userId, { puts });
       await del(`relay:messages:${userId}`);
     }
-    const { messages: loaded, more } = await db.loadRecent(userId, MESSAGE_WINDOW).catch((error) => {
+    const { messages: loaded, more } = await db.loadRecent(userId, STARTUP_WINDOW).catch((error) => {
       console.error('Could not read saved messages:', error);
       return { messages: {}, more: new Set() };
     });

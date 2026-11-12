@@ -6,6 +6,7 @@
 //     MexPrivacySettingsHandler); changes apply at once and roll back if the server refuses them;
 //   • values are validated on the way in and on the way out (a damaged or old value falls back to the default).
 import { useSyncExternalStore } from 'react';
+import { deviceStorage } from './deviceStorage.js';
 
 export const SETTINGS_VERSION = 1;
 export const DEVICE_SETTINGS_KEY = 'hm:settings';
@@ -107,7 +108,7 @@ export function migrateDeviceRecord(stored, readLegacy = () => null) {
  * createSettings({ storage, remote }) → the settings store.
  * storage: { getItem, setItem, removeItem } (localStorage); remote: { load() → {…}, save(patch) → {…} } (privacy API).
  */
-export function createSettings({ storage = globalThis.localStorage, remote = null } = {}) {
+export function createSettings({ storage = deviceStorage, remote = null } = {}) {
   const listeners = new Set();
   let device = null;
   let account = {};

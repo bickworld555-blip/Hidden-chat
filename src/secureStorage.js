@@ -1,5 +1,6 @@
 // Encrypted local storage for what this device keeps about the account: session tokens, the message cache, the
-// outbox, call history and per-account preferences (IndexedDB via idb-keyval).
+// outbox, call history and per-account preferences: in the Android app in the encrypted SQLite database
+// (src/recordStore.js), in a browser in IndexedDB (idb-keyval).
 //
 // Envelope encryption, like WhatsApp's AndroidKeyStore + AES/GCM: every record is AES-256-GCM encrypted with one
 // random data key. The data key itself is protected by the platform:
@@ -8,8 +9,9 @@
 //   • Browser: a non-extractable Web Crypto key kept in IndexedDB (scripts can use it, never read it out).
 // Each record is bound to its storage key (additional data), so one record cannot be swapped in for another.
 // Records written before encryption are read once in the clear and re-written encrypted.
-import { del as idbDel, get as idbGet, set as idbSet } from 'idb-keyval';
+import { del as idbDel, delMany as idbDelMany, entries as idbEntries, get as idbGet, set as idbSet } from 'idb-keyval';
 import { nativeOpenSecret, nativeSealSecret, nativeShell } from './native.js';
+import { reportStorageFailure } from './storageHealth.js';
 
 export const SECURE_RECORD_VERSION = 1;
 const DATA_KEY_BROWSER = 'hm:data-key-v1';
@@ -118,10 +120,47 @@ const nativePlatform = () => (nativeShell()
   }
   : null);
 
+// The Android app keeps these records in its encrypted SQLite database (src/recordStore.js), moved there once from
+// IndexedDB; the browser keeps IndexedDB.
+function nativeRecordStorage() {
+  let tables = null;
+  const sqlite = () => (tables ??= import('./sqliteMessageDb.js').then((module) => module.records));
+  const via = (name) => async (...args) => (await sqlite())[name](...args);
+  const ownedHere = (name, value) => isSecureRecord(value) || name === DATA_KEY_SEALED;
+  return import('./recordStore.js').then(({ createRecordStorage }) => createRecordStorage({
+    tables: { kvGet: via('kvGet'), kvSet: via('kvSet'), kvDelete: via('kvDelete'), kvPutMany: via('kvPutMany') },
+    idb: { get: idbGet, set: idbSet, del: idbDel, delMany: idbDelMany, entries: idbEntries },
+    owns: ownedHere,
+    keepInIdb: [DATA_KEY_BROWSER],
+  }));
+}
+
+let nativeRecords = null;
+/** Where the records live: 'sqlite' or 'idb' in the Android app (once moved), 'idb' in a browser. */
+export async function secureRecordsLocation() {
+  secureStorage();
+  return nativeRecords ? (await nativeRecords).ready() : 'idb';
+}
+
 let shared = null;
 /** The app's encrypted store (created on first use, so tests and server code never touch the platform). */
 export function secureStorage() {
-  shared ??= createSecureStorage({ platform: nativePlatform() });
+  if (!shared) {
+    const platform = nativePlatform();
+    if (platform) {
+      const records = nativeRecordStorage();
+      nativeRecords = records;
+      const storage = {
+        get: async (name) => (await records).get(name),
+        // A record that cannot be written (phone full) is reported; the caller still sees the error.
+        set: async (name, value) => { try { return await (await records).set(name, value); } catch (error) { reportStorageFailure(error); throw error; } },
+        del: async (name) => (await records).del(name),
+      };
+      shared = createSecureStorage({ platform, storage });
+    } else {
+      shared = createSecureStorage({ platform });
+    }
+  }
   return shared;
 }
 

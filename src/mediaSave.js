@@ -7,6 +7,7 @@ import { nativeOpenMedia, nativeSaveMedia, nativeShell } from './native.js';
 import { isEncryptedMedia, loadMediaBlob, parseMediaRef } from './media.js';
 import { blobToBase64, saveFile } from './fileSave.js';
 import { parseVoiceContent } from './voice.js';
+import { deviceStorage } from './deviceStorage.js';
 
 export const MEDIA_SAVE_KEY = 'hm:media-save';
 const SAVED_KEY = 'hm:media-saved-ids';
@@ -14,11 +15,11 @@ const MAX_REMEMBERED = 2000;
 const listeners = new Set();
 
 export function mediaSaveEnabled() {
-  try { return localStorage.getItem(MEDIA_SAVE_KEY) === 'on'; } catch { return false; }
+  try { return deviceStorage.getItem(MEDIA_SAVE_KEY) === 'on'; } catch { return false; }
 }
 
 export function setMediaSaveEnabled(enabled) {
-  try { localStorage.setItem(MEDIA_SAVE_KEY, enabled ? 'on' : 'off'); } catch { /* private mode */ }
+  try { deviceStorage.setItem(MEDIA_SAVE_KEY, enabled ? 'on' : 'off'); } catch { /* private mode */ }
   for (const listener of listeners) listener();
 }
 
@@ -27,12 +28,12 @@ export function useMediaSave() {
 }
 
 function savedIds() {
-  try { return new Set(JSON.parse(localStorage.getItem(SAVED_KEY) ?? '[]')); } catch { return new Set(); }
+  try { return new Set(JSON.parse(deviceStorage.getItem(SAVED_KEY) ?? '[]')); } catch { return new Set(); }
 }
 
 function rememberSaved(id) {
   const ids = [...savedIds().add(id)].slice(-MAX_REMEMBERED);
-  try { localStorage.setItem(SAVED_KEY, JSON.stringify(ids)); } catch { /* full or private */ }
+  try { deviceStorage.setItem(SAVED_KEY, JSON.stringify(ids)); } catch { /* full or private */ }
 }
 
 // The attachment a message carries, if it is one that can be saved (view once notes never are).

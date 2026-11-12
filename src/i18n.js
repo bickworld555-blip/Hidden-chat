@@ -1,6 +1,7 @@
 // App language. The chosen language sets the page language (screen readers, hyphenation), dates and times, and
 // the translated strings below; anything not yet translated stays in English. Kept on this device.
 import { create } from 'zustand';
+import { deviceStorage } from './deviceStorage.js';
 
 export const LANGUAGES = [
   { id: 'en', name: 'English', native: 'English' },
@@ -36,7 +37,7 @@ const STRINGS = {
 
 function storedLanguage() {
   try {
-    const value = localStorage.getItem(STORAGE_KEY);
+    const value = deviceStorage.getItem(STORAGE_KEY);
     if (LANGUAGES.some((language) => language.id === value)) return value;
   } catch { /* falls back below */ }
   const preferred = (globalThis.navigator?.language ?? 'en').slice(0, 2).toLowerCase();
@@ -52,7 +53,7 @@ applyDocumentLanguage(useLanguage.getState().language);
 
 export function setLanguage(language) {
   if (!LANGUAGES.some((item) => item.id === language)) return;
-  try { localStorage.setItem(STORAGE_KEY, language); } catch { /* applies for this session */ }
+  try { deviceStorage.setItem(STORAGE_KEY, language); } catch { /* applies for this session */ }
   applyDocumentLanguage(language);
   useLanguage.setState({ language });
 }

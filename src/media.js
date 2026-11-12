@@ -3,7 +3,7 @@
 import { MAX_TRANSFER_BYTES, PREVIEW_LIMIT_BYTES } from './transfer.js';
 import { decryptMedia, parseEncryptedMediaRef } from './mediaCrypto.js';
 import { apiFetch, apiUrl } from './api.js';
-import { PREFETCH_LIMIT_BYTES, readStoredMedia, storeMedia, storeMediaInfo } from './mediaVault.js';
+import { PREFETCH_LIMIT_BYTES, canDownloadToDevice, downloadMediaToDevice, readStoredMedia, storeMedia, storeMediaInfo } from './mediaVault.js';
 
 export const MAX_UPLOAD_BYTES = MAX_TRANSFER_BYTES;
 
@@ -227,6 +227,25 @@ export async function loadMediaBlob(id, sessionToken, options = {}) {
   return blob;
 }
 
+// Free space kept for the phone itself after a big download.
+export const LARGE_DOWNLOAD_RESERVE_BYTES = 256 * 1024 * 1024;
+let lastLargeDownloadDecision = null;
+export const largeDownloadDecision = () => lastLargeDownloadDecision;
+
+/**
+ * Whether a big attachment (over PREFETCH_LIMIT_BYTES) may be fetched ahead of time now: { ok, reason }. Never on
+ * mobile data (`connection.type` 'cellular', or a metered `saveData` connection), and only with its size plus a reserve
+ * free (`estimate`: navigator.storage.estimate(), which the WebView bases on the phone's free space).
+ */
+export function largeDownloadPlan({ size, connection = null, estimate = null }) {
+  const type = connection?.type;
+  if (connection?.saveData) return { ok: false, reason: 'data-saver' };
+  if (type && !['wifi', 'ethernet'].includes(type)) return { ok: false, reason: type === 'none' ? 'offline' : 'mobile-data' };
+  const free = Number(estimate?.quota) - Number(estimate?.usage);
+  if (Number.isFinite(free) && free < Number(size) + LARGE_DOWNLOAD_RESERVE_BYTES) return { ok: false, reason: 'low-storage' };
+  return { ok: true, reason: 'ok' };
+}
+
 /**
  * Fetches an attachment into this device's store ahead of time (a message is acknowledged to the server only once
  * its attachment is kept here). True when it is kept; big files are left until opened.
@@ -236,7 +255,18 @@ export async function storeMediaLocally(id, sessionToken) {
   if ((await readStoredMedia(id))?.blob) return true;
   try {
     const info = await fetchMediaInfo(id, sessionToken);
-    if (Number(info?.size ?? 0) > PREFETCH_LIMIT_BYTES) return false;
+    const size = Number(info?.size ?? 0);
+    if (size > PREFETCH_LIMIT_BYTES) {
+      // Big files: on the phone, fetched straight to disk while on Wi-Fi with room to spare, so the server can let go
+      // of them before they expire; otherwise kept once opened (and tried again at the next reconnect).
+      if (!(await canDownloadToDevice())) return false;
+      const estimate = await globalThis.navigator?.storage?.estimate?.().catch(() => null);
+      const plan = largeDownloadPlan({ size, connection: globalThis.navigator?.connection, estimate });
+      lastLargeDownloadDecision = { id, size, ...plan, at: Date.now() };
+      if (!plan.ok) return false;
+      const link = await requestMediaLink(id, sessionToken);
+      return await downloadMediaToDevice(id, link.url, info, { descriptor: encryptedDescriptors.get(id) ?? null, size });
+    }
     const blob = await fetchMediaBlob(id, sessionToken);
     return storeMedia(id, blob, info, { descriptor: encryptedDescriptors.get(id) ?? null });
   } catch {

@@ -8,6 +8,7 @@ import { nativeShell } from '../../native.js';
 import { disableTwoStep, enableTwoStep, verifyTwoStep } from '../../parityApi.js';
 import { refreshTwoStep, useAccountData } from '../../accountData.js';
 import ShieldMark from '../ShieldMark.jsx';
+import { deviceStorage } from '../../deviceStorage.js';
 
 /** Covers the app while it is locked. */
 export function AppLockGate() {
@@ -146,7 +147,7 @@ export function TwoStepSettings({ token }) {
         if (!/^\d{6}$/.test(form.pin)) throw new Error('The PIN is 6 digits.');
         if (form.pin !== form.confirm) throw new Error('The PINs don’t match.');
         await enableTwoStep(token, form.pin, form.password);
-        localStorage.setItem('hm:two-step-verified-at', String(Date.now()));
+        deviceStorage.setItem('hm:two-step-verified-at', String(Date.now()));
         setNotice(form.mode === 'change' ? 'PIN changed.' : 'Two-step verification is on.');
       }
       setForm(null);
@@ -195,19 +196,19 @@ export function TwoStepReminder({ token }) {
   const [error, setError] = useState('');
   useEffect(() => {
     if (!twoStep?.enabled) { setDue(false); return; }
-    const last = Number(localStorage.getItem(REMINDER_KEY) || 0) || twoStep.setAt || 0;
-    if (!localStorage.getItem(REMINDER_KEY)) localStorage.setItem(REMINDER_KEY, String(last || Date.now()));
+    const last = Number(deviceStorage.getItem(REMINDER_KEY) || 0) || twoStep.setAt || 0;
+    if (!deviceStorage.getItem(REMINDER_KEY)) deviceStorage.setItem(REMINDER_KEY, String(last || Date.now()));
     setDue(Date.now() - (last || Date.now()) >= REMINDER_INTERVAL_MS);
   }, [twoStep]);
   if (!due) return null;
-  const later = () => { localStorage.setItem(REMINDER_KEY, String(Date.now() - REMINDER_INTERVAL_MS + 24 * 60 * 60 * 1000)); setDue(false); };
+  const later = () => { deviceStorage.setItem(REMINDER_KEY, String(Date.now() - REMINDER_INTERVAL_MS + 24 * 60 * 60 * 1000)); setDue(false); };
   return (
     <div className="wa-sheet-backdrop" role="presentation">
       <form className="hm-sheet hm-two-step-reminder" role="dialog" aria-modal="true" aria-label="Enter your two-step verification PIN" onSubmit={async (event) => {
         event.preventDefault();
         try {
           await verifyTwoStep(token, pin);
-          localStorage.setItem(REMINDER_KEY, String(Date.now()));
+          deviceStorage.setItem(REMINDER_KEY, String(Date.now()));
           setDue(false);
         } catch (caught) {
           setError(caught.message);

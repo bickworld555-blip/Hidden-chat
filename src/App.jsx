@@ -1,10 +1,10 @@
-import { acknowledgeEvents } from './deliveryAck.js';
+import { acknowledgeEvents, acknowledgeSaved } from './deliveryAck.js';
 import { apiFetch, apiUrl, isNetworkFailure } from './api.js';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { cachedGroups, prefetchGroupDetails, saveGroups } from './groupCache.js';
 import { activateAccount, addOrActivateAccount, getAccountsState, loadAccounts, removeAccount, sessionFromAccount, updateAccountUser } from './accounts.js';
 import { Bell, ChevronRight, MessageSquarePlus, Moon, Sun } from 'lucide-react';
-import { notificationPreview, savedMessageCount, useChatStore } from './store.js';
+import { flushPersistedMessages, notificationPreview, savedMessageCount, useChatStore } from './store.js';
 import { runScheduledBackup, shouldOfferRestore } from './cloudBackup.js';
 import RestoreBackupSheet from './components/RestoreBackupSheet.jsx';
 import { fetchStatuses } from './statusApi.js';
@@ -107,6 +107,8 @@ import { isRoomOffer } from './callRoom.js';
 import { animationsAttribute, callAnimationsAttribute, useAppearance } from './appearance.js';
 import { useFontSize, useHighContrast } from './displayPrefs.js';
 import { linkContact, searchPeople } from './contactsApi.js';
+import { deviceStorage } from './deviceStorage.js';
+import { storageProblemText, useStorageProblem } from './storageHealth.js';
 
 function useIsMobile() {
   const query = '(max-width: 768px)';
@@ -182,14 +184,14 @@ export default function App() {
   const [incomingShare, setIncomingShare] = useState(null);
   // Android blocks lock-screen calls or the floating video window for this app: the native state, to ask once.
   const [switchingId, setSwitchingId] = useState(null);
-  const [callsSeenAt, setCallsSeenAt] = useState(() => Number(localStorage.getItem('relay:calls-seen-at')) || 0);
+  const [callsSeenAt, setCallsSeenAt] = useState(() => Number(deviceStorage.getItem('relay:calls-seen-at')) || 0);
   const openChatRef = useRef(null);
   const openGroupRef = useRef(null);
   const revokedRef = useRef(null);
   const removingRef = useRef(new Set());
   const [authOpen, setAuthOpen] = useState(false);
   const [darkMode, setDarkMode] = useState(() => {
-    const stored = localStorage.getItem('relay:theme');
+    const stored = deviceStorage.getItem('relay:theme');
     return stored ? stored === 'dark' : window.matchMedia('(max-width: 768px)').matches;
   });
   const [fatalError, setFatalError] = useState('');
@@ -526,7 +528,18 @@ export default function App() {
             // from the contact list, so it is loaded first; otherwise the message is saved but has no row to show in.
             const known = new Set(useChatStore.getState().chats.map((chat) => chat.id));
             if (!contactsLoaded || [...byChat.keys()].some((chatId) => !known.has(chatId))) await loadContacts().catch(() => {});
-            for (const [chatId, rows] of byChat) mergeHistory(chatId, await openHistory(chatId, rows));
+            const waiting = [];
+            for (const [chatId, rows] of byChat) {
+              const opened = await openHistory(chatId, rows);
+              mergeHistory(chatId, opened);
+              waiting.push(...opened);
+            }
+            // Saved before but never acknowledged (a big attachment waiting for Wi-Fi, a save that failed): saved now if
+            // they are not on disk yet, then acknowledged, each attachment fetched first. Only after a successful save.
+            if (waiting.length) {
+              useChatStore.getState().persistMessages(userId);
+              if (await flushPersistedMessages()) acknowledgeSaved(waiting, { client: realtime, sessionToken }).catch(() => {});
+            }
             // Group messages that waited for this device: each group's history is fetched, opened and saved here (then
             // acknowledged once saved), whether or not the group is opened; the server keeps them until then.
             const waitingGroups = [...new Set((queued.groupMessages ?? []).map((row) => row?.groupId).filter((id) => typeof id === 'string'))];
@@ -683,7 +696,7 @@ export default function App() {
   function toggleTheme() {
     const next = !darkMode;
     setDarkMode(next);
-    localStorage.setItem('relay:theme', next ? 'dark' : 'light');
+    deviceStorage.setItem('relay:theme', next ? 'dark' : 'light');
   }
 
   // Activates a session in the store and remembers it in the device's account list.
@@ -762,8 +775,8 @@ export default function App() {
   // The public site sends signed-in visitors straight here (src/main.jsx reads this hint).
   useEffect(() => {
     try {
-      if (sessionToken) localStorage.setItem(SIGNED_IN_HINT, '1');
-      else localStorage.removeItem(SIGNED_IN_HINT);
+      if (sessionToken) deviceStorage.setItem(SIGNED_IN_HINT, '1');
+      else deviceStorage.removeItem(SIGNED_IN_HINT);
     } catch { /* the hint is a convenience only */ }
   }, [sessionToken]);
   // A browser linked by QR code: the phone sent recent chats end to end; merge them once (src/linking.js).
@@ -788,11 +801,11 @@ export default function App() {
     if (!sessionToken || !userId) return;
     const key = `hm:region-sent:${userId}`;
     const today = new Date().toISOString().slice(0, 10);
-    try { if (localStorage.getItem(key) === today) return; } catch { /* send anyway */ }
+    try { if (deviceStorage.getItem(key) === today) return; } catch { /* send anyway */ }
     const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
     if (!timeZone) return;
     apiFetch('/api/v1/me/region', { method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ timeZone }) })
-      .then((response) => { if (response.ok) try { localStorage.setItem(key, today); } catch { /* next time */ } })
+      .then((response) => { if (response.ok) try { deviceStorage.setItem(key, today); } catch { /* next time */ } })
       .catch(() => {});
   }, [sessionToken, userId]);
   const activeTab = isMobile ? mobileActiveTab : desktopTab;
@@ -832,6 +845,8 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [sessionToken, statusRingsUntil]);
   const statusViewerFor = useChatStore((state) => state.statusViewerFor);
+  // Phone storage full (or failing): said at the top until saving works again (src/storageHealth.js).
+  const storageProblem = useStorageProblem();
   const closeStatusViewer = useCallback(() => useChatStore.getState().openStatusOf(null), []);
   useEffect(() => onNative('pictureInPicture', ({ active }) => document.documentElement.classList.toggle('native-pip', Boolean(active))), []);
   // Group rows in the chat list come from the server listing, refreshed on every group:* socket event and reconnect.
@@ -876,7 +891,7 @@ export default function App() {
     if (activeTab !== 'calls') return;
     const now = Date.now();
     setCallsSeenAt(now);
-    localStorage.setItem('relay:calls-seen-at', String(now));
+    deviceStorage.setItem('relay:calls-seen-at', String(now));
     if (nativeShell()) nativeClearMissedCalls();
   }, [activeTab, callLogs]);
 
@@ -1012,12 +1027,12 @@ export default function App() {
       return undefined;
     }
     let asked = false;
-    try { asked = localStorage.getItem(permissionsAskedKey()) === '1'; } catch { /* private mode */ }
+    try { asked = deviceStorage.getItem(permissionsAskedKey()) === '1'; } catch { /* private mode */ }
     const needsWebPrompt = !nativeShell() && typeof Notification !== 'undefined' && Notification.permission === 'default';
     if (nativeShell()) {
       if (asked) nativeStartBackground();
       else {
-        try { localStorage.setItem(permissionsAskedKey(), '1'); } catch { /* private mode */ }
+        try { deviceStorage.setItem(permissionsAskedKey(), '1'); } catch { /* private mode */ }
         nativeRequestStartupPermissions().catch(() => null).finally(() => nativeStartBackground());
       }
     } else if (!asked && needsWebPrompt) setPermissionsOpen(true);
@@ -1061,6 +1076,7 @@ export default function App() {
 
   return (
     <main className={`app-shell ${darkMode ? 'dark-theme' : ''} ${isMobile ? 'is-mobile' : ''} ${chatOpenOnMobile ? 'chat-open' : ''}`} data-animations={animationsAttribute(appearance)} data-call-animations={callAnimationsAttribute(appearance)} data-font-size={fontSize} data-contrast={highContrast ? 'high' : undefined}>
+      {storageProblem && <p className="storage-banner" role="alert">{storageProblemText(storageProblem)}</p>}
       {!isMobile && <DesktopRail activeTab={desktopTab} onTab={setDesktopTab} onSheet={setParitySheet} unreadCount={unreadChats} darkMode={darkMode} onToggleTheme={toggleTheme} />}
       <Sidebar onPair={() => setAccountSettingsOpen('devices')} onSounds={() => setNotificationsOpen(true)} onNotifications={() => setNotificationsOpen(true)} onAccountSettings={() => setAccountSettingsOpen('account')} onSelectChat={() => setMobileListOpen(false)} onOpenAuth={() => setAuthOpen(true)} onAuthenticated={acceptSession} onLogout={logout} onAccounts={() => setAccountsOpen(true)} onGroups={() => openGroups()} groups={groupRows} onOpenGroup={(id) => openGroups(false, id)} />
       <div className="workspace">
