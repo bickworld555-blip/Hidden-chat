@@ -275,7 +275,7 @@ export function createLoginThrottle({ now = () => Date.now(), freeAttempts = 5, 
 
 export function registerParity(ctx) {
   const { app, db, requireSession, broadcastUser, notifyGroup, groupMembership, publicUser, hashPassword, verifyPassword,
-    isOnline, deliverDirectMessage, detectImage, dataDirectory, runBatch, e2e } = ctx;
+    isOnline, deliverDirectMessage, detectImage, dataDirectory, runBatch, e2e, businessCache = null } = ctx;
   const catalogDirectory = join(dataDirectory, 'catalog');
   mkdirSync(catalogDirectory, { recursive: true });
   const now = () => Date.now();
@@ -1184,7 +1184,8 @@ export function registerParity(ctx) {
    * 14 quiet days) and away message (at most once a day per person; "offline" = only while they have no app open).
    */
   async function afterDirectMessage({ senderId, receiverId, messageId }) {
-    const profile = await businessRow.get(receiverId);
+    // Asked on every direct message: kept in memory between changes to business_profiles (server/memoryCache.mjs).
+    const profile = businessCache ? await businessCache.remember(receiverId, async () => (await businessRow.get(receiverId)) ?? null) : await businessRow.get(receiverId);
     if (!profile || (!Number(profile.greetingEnabled) && !Number(profile.awayEnabled))) return;
     const at = now();
     const sentRecently = async (kind, windowMs) => {

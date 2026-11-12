@@ -62,26 +62,40 @@ const cleanIds = (ids, limit = MAX_ACK) => (Array.isArray(ids) ? [...new Set(ids
  * `removeMessage(kind, messageId, { force })` → deletes a fully delivered message's row, reactions and media
  * (index.mjs owns those tables; without `force` it may keep a message that is still in use, such as an open poll).
  */
-export function createDeliveryQueue({ db, onlineDevices = () => [], removeMessage, now = () => Date.now() }) {
+export function createDeliveryQueue({ db, onlineDevices = () => [], removeMessage, now = () => Date.now(), devicesCache = null }) {
   // The devices a message waits for: signed-in devices that published end-to-end keys (the ones messages are
   // encrypted for) and were active in the last 14 days. A session without keys (a script, a half-finished sign-in)
   // can never read an encrypted message, and an install left unused for weeks may never come back; waiting for either
   // would keep messages on the server for the full 30 days. When none of a user's devices qualifies, the message
   // still waits: for their keyed devices however long idle, else for any signed-in device.
+  // A user's signed-in devices, as rows read together and kept in `devicesCache` (server/memoryCache.mjs; cleared by
+  // any write to sessions or e2e_devices) — asked for both people on every message and receipt. Expiry and the 14-day
+  // rule are applied to the rows at each use, so a cached row never outlives its session.
+  async function deviceRowsOf(userId) {
+    const load = async () => {
+      let keyed = [];
+      try {
+        keyed = await db.prepare(`SELECT s.device_id AS "deviceId", COALESCE(s.last_active_at, s.created_at, 0) AS "activeAt", s.expires_at AS "expiresAt" FROM sessions s
+          JOIN e2e_devices e ON e.user_id = s.user_id AND e.device_id = s.device_id
+          WHERE s.user_id = ?`).all(userId);
+      } catch { keyed = []; /* no end-to-end tables (tests, older databases) */ }
+      const signedIn = await db.prepare(`SELECT device_id AS "deviceId", expires_at AS "expiresAt" FROM sessions
+        WHERE user_id = ? AND device_id IS NOT NULL`).all(userId);
+      return { keyed, signedIn };
+    };
+    return devicesCache ? devicesCache.remember(userId, load) : load();
+  }
+
   async function devicesOf(userId) {
     const at = now();
     const ids = (rows) => [...new Set(rows.map((row) => row.deviceId).filter(Boolean))];
-    let keyed = [];
-    try {
-      keyed = await db.prepare(`SELECT s.device_id AS "deviceId", COALESCE(s.last_active_at, s.created_at, 0) AS "activeAt" FROM sessions s
-        JOIN e2e_devices e ON e.user_id = s.user_id AND e.device_id = s.device_id
-        WHERE s.user_id = ? AND (s.expires_at IS NULL OR s.expires_at > ?)`).all(userId, at);
-    } catch { keyed = []; /* no end-to-end tables (tests, older databases) */ }
+    const current = (row) => row.expiresAt === null || row.expiresAt === undefined || Number(row.expiresAt) > at;
+    const rows = await deviceRowsOf(userId);
+    const keyed = rows.keyed.filter(current);
     const active = keyed.filter((row) => Number(row.activeAt) > at - INACTIVE_DEVICE_MS);
     if (active.length) return ids(active);
     if (keyed.length) return ids(keyed);
-    return ids(await db.prepare(`SELECT device_id AS "deviceId" FROM sessions
-      WHERE user_id = ? AND device_id IS NOT NULL AND (expires_at IS NULL OR expires_at > ?)`).all(userId, at));
+    return ids(rows.signedIn.filter(current));
   }
 
   async function addTargets(messageId, kind, userId, deviceIds, at) {

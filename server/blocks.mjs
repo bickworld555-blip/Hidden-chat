@@ -13,18 +13,24 @@ export function ensureBlockSchema(db) {
   db.exec('CREATE INDEX IF NOT EXISTS blocks_blocked ON blocks(blocked_id)');
 }
 
-/** Block lookups for the rest of the server. */
-export function createBlocks(db) {
+/**
+ * Block lookups for the rest of the server. Each account's own list (whom it blocked) is read once and kept in
+ * `cache` (server/memoryCache.mjs; cleared by any write to blocks), so the checks on every message, call and typing
+ * event cost no query. Without a cache every check reads the list.
+ */
+export function createBlocks(db, { cache = null } = {}) {
+  const read = async (blockerId) => new Set((await db.prepare('SELECT blocked_id AS "id" FROM blocks WHERE blocker_id = ?').all(blockerId)).map((row) => row.id));
+  const blockedBy = (blockerId) => (cache ? cache.remember(blockerId, () => read(blockerId)) : read(blockerId));
   return {
     /** Whether `blockerId` blocked `blockedId`. */
     async has(blockerId, blockedId) {
       if (!blockerId || !blockedId) return false;
-      return Boolean(await db.prepare('SELECT 1 FROM blocks WHERE blocker_id = ? AND blocked_id = ?').get(blockerId, blockedId));
+      return (await blockedBy(blockerId)).has(blockedId);
     },
     /** Whether either of the two blocked the other. */
     async between(a, b) {
       if (!a || !b) return false;
-      return Boolean(await db.prepare('SELECT 1 FROM blocks WHERE (blocker_id = ? AND blocked_id = ?) OR (blocker_id = ? AND blocked_id = ?)').get(a, b, b, a));
+      return (await blockedBy(a)).has(b) || (await blockedBy(b)).has(a);
     },
     /** Everyone `userId` blocked or was blocked by (for filtering many viewers at once). */
     async relatedTo(userId) {

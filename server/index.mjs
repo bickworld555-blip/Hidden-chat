@@ -34,6 +34,7 @@ import { registerSfu } from './sfu.mjs';
 import { gifConfigFromEnv, registerGifs } from './gifs.mjs';
 import { alertWebhookFromEnv, createAlerts, serverErrorWatch } from './monitoring.mjs';
 import { createBlocks, ensureBlockSchema, registerBlocks } from './blocks.mjs';
+import { createMemoryRateLimiter, createTtlCache, invalidateOnWrite } from './memoryCache.mjs';
 import { abuseLimitsFromEnv, clientAddress, createSharedRateLimiter, ensureRateLimitSchema, tooManyMessages, tooManySignups } from './abuse.mjs';
 import { ensureExtrasSchema, registerExtras, statusAudienceSql } from './extras.mjs';
 import { ensureAdminSchema, registerAdmin } from './admin.mjs';
@@ -172,9 +173,29 @@ export function createChatServer({
     mkdirSync(join(dataDirectory, 'media'), { recursive: true });
   }
   const mediaDirectory = join(dataDirectory, 'media');
-  const db = database ?? (databaseUrl
+  // What nearly every message and request asks again, kept in this process for up to a minute and dropped the moment
+  // a write touches its table (server/memoryCache.mjs). Ignored writes are bookkeeping that changes nothing cached.
+  const sessionCache = createTtlCache();
+  const userCache = createTtlCache();
+  const blockCache = createTtlCache();
+  const devicesCache = createTtlCache();
+  const chatSettingCache = createTtlCache();
+  const linkCache = createTtlCache({ max: 50_000 });
+  const groupMemberCache = createTtlCache();
+  const businessCache = createTtlCache();
+  const db = invalidateOnWrite(rawDatabase(), {
+    sessions: { caches: [sessionCache, devicesCache], ignore: [/UPDATEs+(?:relay.)?sessionss+SETs+last_active_ats*=s*?s+WHERE/i] },
+    users: { caches: [sessionCache, userCache], ignore: [/UPDATEs+(?:relay.)?userss+SETs+(?:last_seen_at|country)/i] },
+    blocks: { caches: [blockCache] },
+    e2e_devices: { caches: [devicesCache] },
+    chat_settings: { caches: [chatSettingCache] },
+    contacts: { caches: [linkCache] },
+    group_members: { caches: [groupMemberCache], ignore: [/UPDATEs+(?:relay.)?group_memberss+SETs+(?:last_read_at|cleared_at|auto_delete)/i] },
+    business_profiles: { caches: [businessCache] },
+  });
+  function rawDatabase() { return database ?? (databaseUrl
     ? createPostgresDatabase({ env: { ...process.env, DATABASE_URL: databaseUrl } })
-    : new DatabaseSync(databasePath ?? join(dataDirectory, 'relay.sqlite')));
+    : new DatabaseSync(databasePath ?? join(dataDirectory, 'relay.sqlite'))); }
   if (db.dialect !== 'postgres') {
   db.exec(`
     PRAGMA journal_mode = WAL;
@@ -423,14 +444,19 @@ export function createChatServer({
   // Verified business badges (server/verification.mjs), read into memory for public user records.
   const verifiedAccounts = createVerifiedAccounts(db);
   // Who blocked whom (server/blocks.mjs), checked wherever two people reach each other.
-  const blocks = createBlocks(db);
+  const blocks = createBlocks(db, { cache: blockCache });
   const verifiedChannels = createVerifiedChannels(db);
   const upsertLink = db.prepare(`INSERT INTO contacts(owner_id, contact_id, created_at, saved, hidden) VALUES (?, ?, ?, ?, 0)
     ON CONFLICT(owner_id, contact_id) DO UPDATE SET saved = CASE WHEN contacts.saved > excluded.saved THEN contacts.saved ELSE excluded.saved END, hidden = 0`);
   // Links `peerId` into `ownerId`'s chat list (un-hiding a deleted thread); `save` also puts them in the contact book.
+  // Done on every message for both people: once linked (and not hidden or removed since — any contacts write clears
+  // linkCache), a plain link changes nothing and is skipped. Saving someone always writes.
   async function linkUsers(ownerId, peerId, { save = false } = {}) {
     if (!ownerId || !peerId || ownerId === peerId) return;
+    const key = `${ownerId}|${peerId}`;
+    if (!save && linkCache.get(key)) return;
     (await upsertLink.run(ownerId, peerId, Date.now(), save ? 1 : 0));
+    linkCache.set(key, true);
   }
   const linkRow = db.prepare("SELECT saved, hidden FROM contacts WHERE owner_id = ? AND contact_id = ?");
   const insertUser = db.prepare(`INSERT INTO users(id, username, name, initials, color, created_at)
@@ -469,7 +495,8 @@ export function createChatServer({
   const pairOf = (left, right) => (left < right ? [left, right] : [right, left]);
   const disappearingSetting = db.prepare("SELECT disappear_seconds AS \"seconds\" FROM chat_settings WHERE user_a = ? AND user_b = ?");
   async function disappearSecondsFor(left, right) {
-    return (await disappearingSetting.get(...pairOf(left, right)))?.seconds ?? 0;
+    const pair = pairOf(left, right);
+    return chatSettingCache.remember(pair.join('|'), async () => (await disappearingSetting.get(...pair))?.seconds ?? 0);
   }
 
   // The upload a message refers to: "media:<id>:…", "voice:<id>:…" and end-to-end encrypted attachments
@@ -649,13 +676,27 @@ export function createChatServer({
     return broadcastUser(targetId, event);
   }
 
+  // An account's row as the hot paths need it (name, deleted, read receipts), kept in userCache between writes.
+  const userRowQuery = db.prepare(`SELECT ${USER_COLUMNS}, read_receipts FROM users WHERE id = ?`);
+  async function userRow(userId) {
+    if (!userId) return null;
+    return userCache.remember(userId, async () => (await userRowQuery.get(userId)) ?? null);
+  }
+
+  // A request's session, kept in sessionCache by token hash (cleared by any write to sessions or users, so a sign-out,
+  // a removed device or a deleted account ends it at once). Expiry is checked at each use.
   async function getSession(token) {
     if (!token || token.length > 128) return null;
-    const row = (await db.prepare("SELECT * FROM sessions WHERE token_hash = ? AND (expires_at IS NULL OR expires_at > ?)")
-      .get(digest(token), Date.now()));
-    if (!row) return null;
-    const user = (await db.prepare(`SELECT ${USER_COLUMNS} FROM users WHERE id = ?`).get(row.user_id));
-    return user ? { ...row, user: publicUser(user) } : null;
+    const hash = digest(token);
+    const session = await sessionCache.remember(hash, async () => {
+      const row = (await db.prepare("SELECT * FROM sessions WHERE token_hash = ? AND (expires_at IS NULL OR expires_at > ?)")
+        .get(hash, Date.now()));
+      if (!row) return null;
+      const user = await userRow(row.user_id);
+      return user ? { ...row, user: publicUser(user) } : null;
+    });
+    if (!session || (session.expires_at !== null && session.expires_at !== undefined && Number(session.expires_at) <= Date.now())) return null;
+    return { ...session };
   }
 
   async function requireSession(request, response, next) {
@@ -667,7 +708,11 @@ export function createChatServer({
     // Any request counts as the device being in use (at most one write an hour), not only an open socket: a phone
     // woken by push notifications stays "active" and is still waited for by the delivery queue (14-day rule).
     if (Date.now() - Number(session.last_active_at ?? 0) > ACTIVITY_WRITE_MS) {
-      await db.prepare('UPDATE sessions SET last_active_at = ? WHERE token_hash = ?').run(Date.now(), session.token_hash);
+      const at = Date.now();
+      await db.prepare('UPDATE sessions SET last_active_at = ? WHERE token_hash = ?').run(at, session.token_hash);
+      // That write does not clear the cache (it changes nothing cached but this time): keep the cached copy current.
+      const cached = sessionCache.get(session.token_hash);
+      if (cached) cached.last_active_at = at;
     }
     return next();
   }
@@ -736,6 +781,7 @@ export function createChatServer({
     db,
     onlineDevices: (userId) => [...userSockets(userId)].map((socket) => socket.deviceId).filter(Boolean),
     removeMessage: removeQueuedMessage,
+    devicesCache,
   });
 
   /**
@@ -750,7 +796,8 @@ export function createChatServer({
     const route = parseRouting(routingOf(row.content));
     if (!force && (route?.kind === 'poll' || route?.once)) return false;
     await db.prepare('DELETE FROM message_reactions WHERE message_id = ?').run(messageId);
-    await db.prepare('DELETE FROM poll_votes WHERE message_id = ?').run(messageId);
+    // Votes belong to polls only (removed here only when forced): no query for every other message.
+    if (route?.kind === 'poll') await db.prepare('DELETE FROM poll_votes WHERE message_id = ?').run(messageId);
     if (kind === 'direct') await db.prepare('DELETE FROM message_hidden WHERE message_id = ?').run(messageId);
     await db.prepare(`DELETE FROM ${table} WHERE id = ?`).run(messageId);
     await purgeUnreferencedMedia(row.content);
@@ -846,6 +893,10 @@ export function createChatServer({
 
   const groupMembership = db.prepare(`SELECT role, auto_delete AS "autoDelete", last_read_at AS "lastReadAt", cleared_at AS "clearedAt"
     FROM group_members WHERE group_id = ? AND user_id = ?`);
+  // A group's member ids, kept in groupMemberCache between membership changes (typing asks on every keystroke burst).
+  async function groupMembersOf(groupId) {
+    return groupMemberCache.remember(groupId, async () => (await db.prepare('SELECT user_id AS "userId" FROM group_members WHERE group_id = ?').all(groupId)).map((row) => row.userId));
+  }
   async function notifyGroup(groupId, event) {
     const members = await db.prepare('SELECT user_id AS "userId" FROM group_members WHERE group_id = ?').all(groupId);
     for (const member of members) broadcastUser(member.userId, event);
@@ -1173,6 +1224,7 @@ export function createChatServer({
     e2e,
     app, db, requireSession, broadcastUser, notifyGroup, groupMembership, publicUser, hashPassword, verifyPassword,
     isOnline: (id) => isOnline(id), deliverDirectMessage, detectImage: detectAvatarImage, dataDirectory, runBatch: runGroupBatch,
+    businessCache,
   });
 
   // Presence (online / last seen) honours each owner's "Last seen and online" privacy: every viewer is told
@@ -1332,8 +1384,10 @@ export function createChatServer({
   // Abuse limits (server/abuse.mjs): new accounts per client address, messages per account. Off in tests.
   // Counters live in the database so every process and every restart shares them; keys are an HMAC under a secret
   // that is not in the database (RELAY_RATE_LIMIT_SECRET, else derived from the database address).
+  // Messages are counted in memory (no database write per message); sign-ups on the shared, persistent counters.
+  const messageLimiter = createMemoryRateLimiter();
   const rateLimiter = createSharedRateLimiter({ db, secret: process.env.RELAY_RATE_LIMIT_SECRET || digest(`hm-rate-limits:${databaseUrl ?? databasePath ?? 'local'}`) });
-  const messageWait = async (userId) => (abuseLimits ? rateLimiter.hit(`messages:${userId}`, abuseLimits.messages) : 0);
+  const messageWait = async (userId) => (abuseLimits ? messageLimiter.hit(`messages:${userId}`, abuseLimits.messages) : 0);
   app.post('/api/v1/auth/register', phoneOnly, async (request, response) => {
     if (abuseLimits) {
       const address = clientAddress(request, abuseLimits.trustProxyHops);
@@ -1409,10 +1463,9 @@ export function createChatServer({
 
   // --- Account: privacy, password, and the devices signed in to this account. ---
 
-  const readReceiptsRow = db.prepare('SELECT read_receipts AS "on" FROM users WHERE id = ?');
   async function readReceiptsOn(userId) {
-    const row = await readReceiptsRow.get(userId);
-    return row ? Number(row.on) === 1 : true;
+    const row = await userRow(userId);
+    return row ? Number(row.read_receipts) === 1 : true;
   }
   async function receiptsBetween(senderId, receiverId) {
     return (await readReceiptsOn(senderId)) && (await readReceiptsOn(receiverId));
@@ -2382,21 +2435,23 @@ export function createChatServer({
       if (event.type === 'presence:typing' && typeof event.groupId === 'string') {
         // In a group: only a member may say they are typing, and every other member hears it, with the name to show
         // ("Ava is typing…"); the sender's own devices don't.
+        // Typing never waits on the database: the members and the name come from memory (groupMemberCache, userCache).
         const groupId = event.groupId;
-        const sender = groupId.length < 80 ? await db.prepare(`SELECT u.name, u.username FROM group_members m JOIN users u ON u.id = m.user_id
-          WHERE m.group_id = ? AND m.user_id = ?`).get(groupId, userId) : null;
+        if (groupId.length >= 80) return;
+        const members = await groupMembersOf(groupId);
+        if (!members.includes(userId)) return;
+        const sender = await userRow(userId);
         if (!sender) return;
         const active = Boolean(event.active);
         const relayed = { type: 'presence:typing', groupId, userId, active, ...(active ? { kind: event.kind === 'recording' ? 'recording' : 'typing', name: sender.name || `@${sender.username}` } : {}) };
-        const members = await db.prepare('SELECT user_id AS "userId" FROM group_members WHERE group_id = ? AND user_id <> ?').all(groupId, userId);
-        for (const member of members) broadcastUser(member.userId, relayed);
+        for (const memberId of members) if (memberId !== userId) broadcastUser(memberId, relayed);
         return;
       }
 
       if (event.type === 'presence:typing') {
         const peerId = event.peerId;
-        if (typeof peerId === 'string' && peerId !== userId && (await db.prepare("SELECT 1 FROM users WHERE id = ? AND deleted_at IS NULL").get(peerId))
-          && !(await blocks.between(userId, peerId))) {
+        const peer = typeof peerId === 'string' && peerId !== userId ? await userRow(peerId) : null;
+        if (peer && !peer.deleted_at && !(await blocks.between(userId, peerId))) {
           // "typing…" or "recording audio…" (a voice note being held or recorded); anything else is typing.
           const active = Boolean(event.active);
           broadcastUser(peerId, { type: 'presence:typing', userId, active, ...(active ? { kind: event.kind === 'recording' ? 'recording' : 'typing' } : {}) });
@@ -2732,7 +2787,8 @@ export function createChatServer({
       const receiverId = payload.receiverId;
       const content = typeof payload.content === 'string' ? payload.content.trim() : '';
       const mediaId = mediaIdOf(content);
-      const receiver = typeof receiverId === 'string' && (await db.prepare('SELECT deleted_at AS "deletedAt" FROM users WHERE id = ?').get(receiverId));
+      const receiverRow = typeof receiverId === 'string' ? await userRow(receiverId) : null;
+      const receiver = receiverRow && { deletedAt: receiverRow.deleted_at };
       const clientMessageId = typeof payload.id === 'string' && payload.id.length > 0 && payload.id.length < 80 ? payload.id : null;
       if (receiver?.deletedAt) {
         return json(socket, { type: 'error', code: 'account_deleted', messageId: clientMessageId, message: 'This account was deleted. Messages can no longer be sent to it.' });
@@ -2806,7 +2862,7 @@ export function createChatServer({
       }
 
       const disappearSeconds = (await disappearSecondsFor(userId, receiverId));
-      const recipient = (await db.prepare("SELECT username, name, initials, color FROM users WHERE id = ?").get(receiverId));
+      const recipient = await userRow(receiverId);
       const message = {
         id: messageId,
         senderId: userId,
@@ -2967,6 +3023,7 @@ export function createChatServer({
         sweep(removeOrphanedMedia);
         sweep(() => backups.removeOrphanedBackups());
         sweep(() => rateLimiter.sweep());
+        sweep(() => messageLimiter.sweep());
       }, 60 * 60 * 1000);
       uploadSweep.unref();
       await eventPilot.publish('server:listening', server.address());
