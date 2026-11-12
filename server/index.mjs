@@ -722,18 +722,18 @@ export function createChatServer({
   /**
    * A message every target device has stored (or one past the 30-day limit): its row, reactions, hidden marks and
    * media go. Kept on purpose until then: open polls (people still vote) and unopened view once notes (the audio or
-   * photo is handed out once). Group messages stay until groups keep their history on the device.
+   * photo is handed out once). Group messages too: every member's devices keep the group's history locally.
    */
   async function removeQueuedMessage(kind, messageId, { force = false } = {}) {
-    if (kind !== 'direct') return false;
-    const row = await db.prepare('SELECT content FROM messages WHERE id = ?').get(messageId);
+    const table = kind === 'group' ? 'group_messages' : 'messages';
+    const row = await db.prepare(`SELECT content FROM ${table} WHERE id = ?`).get(messageId);
     if (!row) return false;
     const route = parseRouting(routingOf(row.content));
     if (!force && (route?.kind === 'poll' || route?.once)) return false;
     await db.prepare('DELETE FROM message_reactions WHERE message_id = ?').run(messageId);
-    await db.prepare('DELETE FROM message_hidden WHERE message_id = ?').run(messageId);
     await db.prepare('DELETE FROM poll_votes WHERE message_id = ?').run(messageId);
-    await db.prepare('DELETE FROM messages WHERE id = ?').run(messageId);
+    if (kind === 'direct') await db.prepare('DELETE FROM message_hidden WHERE message_id = ?').run(messageId);
+    await db.prepare(`DELETE FROM ${table} WHERE id = ?`).run(messageId);
     await purgeUnreferencedMedia(row.content);
     return true;
   }

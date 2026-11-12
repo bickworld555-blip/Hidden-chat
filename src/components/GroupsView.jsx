@@ -251,15 +251,21 @@ export default function GroupsView({ token, userId, revision, onClose, onStartGr
     if (signal.aborted) return;
     setGroups(list);
     setGroup(details);
-    setMessages(history);
+    // Local-first: what the server still holds is added to the group's history saved on this device.
+    setMessages(selected ? useChatStore.getState().mergeGroupMessages(selected, history) : history);
     const security = selected ? await groupEncryption(selected, { fresh: pendingFor(userId, selected).length > 0 }) : null;
     setGroupSecurity(security);
     // Waiting messages go out (sealed) as soon as every member has keys.
     if (selected && security?.encrypted && pendingFor(userId, selected).length) {
       const sent = await flushPending(userId, selected, (content) => sendGroupContent(selected, content, (sealed) => rawGroupRequest(token, `${groupPath}/messages`, { method: 'POST', body: { content: sealed } })));
-      if (sent) setMessages(await groupRequest(token, `${groupPath}/messages`, { signal }));
+      if (sent) setMessages(useChatStore.getState().mergeGroupMessages(selected, await groupRequest(token, `${groupPath}/messages`, { signal })));
     }
   }, [token, selected, groupPath]);
+
+  // Opening a group shows its history saved on this device at once; the server's part follows.
+  useEffect(() => {
+    if (selected) setMessages(useChatStore.getState().savedGroupMessages(selected));
+  }, [selected]);
 
   useEffect(() => {
     const controller = new AbortController();

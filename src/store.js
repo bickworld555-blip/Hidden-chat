@@ -571,6 +571,33 @@ export const useChatStore = create((setState, getState) => ({
   async getOutbox(userId) {
     return await get(`relay:outbox:${userId}`) ?? [];
   },
+  /**
+   * A group's messages kept on this device (local-first: the server deletes each one once every member's device
+   * has it). Rows from the server are added to what is saved here, never replacing a readable copy with one this
+   * device cannot open; returns the group's whole list, oldest first.
+   */
+  mergeGroupMessages(groupId, rows) {
+    const key = groupChatKey(groupId);
+    let merged = [];
+    setState((state) => {
+      const byId = new Map((state.messages[key] ?? []).map((message) => [message.id, message]));
+      for (const row of rows ?? []) {
+        if (!row?.id || row.pending) continue;
+        const known = byId.get(row.id);
+        if (known && !known.e2eError && row.e2eError) continue;
+        const createdAt = Number(row.createdAt ?? known?.createdAt ?? Date.now());
+        byId.set(row.id, { ...known, ...row, createdAt, timestamp: new Date(createdAt).toISOString() });
+      }
+      merged = [...byId.values()].sort((left, right) => Number(left.createdAt) - Number(right.createdAt));
+      return { messages: { ...state.messages, [key]: merged } };
+    });
+    const userId = getState().userId;
+    if (userId) getState().persistMessages(userId);
+    return merged;
+  },
+  savedGroupMessages(groupId) {
+    return getState().messages[groupChatKey(groupId)] ?? [];
+  },
   mergeHistory(chatId, history) {
     setState((state) => {
       const current = state.messages[chatId] ?? [];
@@ -972,6 +999,8 @@ export const useChatStore = create((setState, getState) => ({
 }));
 
 export { EMPTY_MESSAGES };
+/** Where a group's messages are kept in the message store (one-to-one chats use the contact's id). */
+export const groupChatKey = (groupId) => `group:${groupId}`;
 // Stars that were kept only on this device (before they followed the account) are uploaded once per account,
 // as soon as both the saved messages and the account's list are here; until then the device's flags stay.
 const hydratedAccounts = new Set();

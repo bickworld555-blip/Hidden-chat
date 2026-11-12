@@ -170,8 +170,12 @@ export function createDeliveryQueue({ db, onlineDevices = () => [], removeMessag
         AND NOT EXISTS (SELECT 1 FROM message_deliveries d WHERE d.message_id = m.id)
         AND (m.status IN ('delivered', 'read') OR m.deleted_at IS NOT NULL OR m.created_at <= ?) LIMIT 2000`).all(isoCutoff);
     for (const { id } of legacy) await removeMessage('direct', id, { force: true });
-    // Group history stays on the server until groups keep their messages on the device (see removeMessage).
-    return { expired: stale.length, legacy: legacy.length };
+    // Group history from before the queue was never kept on members' devices, so it is not deleted at once: it
+    // follows the 30-day limit, which gives every member's app time to save it.
+    const legacyGroup = await db.prepare(`SELECT id FROM group_messages g
+      WHERE NOT EXISTS (SELECT 1 FROM message_routes r WHERE r.message_id = g.id) AND g.created_at <= ? LIMIT 2000`).all(cutoff);
+    for (const { id } of legacyGroup) await removeMessage('group', id, { force: true });
+    return { expired: stale.length, legacy: legacy.length + legacyGroup.length };
   }
 
   /** Counts for the admin dashboard (no message ids, no content). */
