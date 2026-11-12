@@ -4079,6 +4079,8 @@ button.groups-setting:hover, label.groups-setting:hover { background: rgba(134, 
 .wa-add-participant { padding-top: calc(10px + var(--hm-safe-top)); }
 @media (max-width: 768px) {
   .groups-panel { padding-top: var(--hm-safe-top); }
+  /* Select contact (new chat) fills the phone screen: its header starts below the status bar. */
+  .wa-sc-header { height: calc(60px + var(--hm-safe-top)); padding-top: var(--hm-safe-top); }
 }
 .wa-video-side-toolbar { top: calc(72px + var(--hm-safe-top)); }
 

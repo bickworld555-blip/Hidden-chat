@@ -185,6 +185,9 @@ test('contact-book helpers: split, suggestions and exact handle matching', () =>
   const { chats, hiddenContacts } = splitLinks([{ id: 'a', saved: true, hidden: true }, { id: 'b', saved: false, hidden: false }, { id: 'c', saved: false, hidden: true }, null, { saved: true }]);
   assert.deepEqual([chats.map((c) => c.id), hiddenContacts.map((c) => c.id)], [['b'], ['a']]);
   assert.deepEqual(savedContacts([{ id: 'z', name: 'Zed', saved: true }, { id: 'me', name: 'Me', saved: true }, { id: 'g', name: 'Grp', saved: true, group: true }], [{ id: 'a', name: 'Al', saved: true }, { id: 'z', name: 'Zed', saved: true }], { userId: 'me' }).map((c) => c.id), ['a', 'z'], 'de-duplicated, without self or groups, sorted by name');
+  // A deleted account can't be messaged or added: it is in neither the contacts nor the recent-chats picker.
+  assert.deepEqual(savedContacts([{ id: 'd', name: 'Deleted account', saved: true, deleted: true }, { id: 'a', name: 'Al', saved: true }]).map((c) => c.id), ['a']);
+  assert.deepEqual(unsavedThreads([{ id: 'd', name: 'Deleted account', deleted: true }, { id: 'b', name: 'Bo' }]).map((c) => c.id), ['b']);
   assert.ok(matchesPerson({ name: 'Alice Wonder', username: 'alice' }, '@ALI') && matchesPerson({ name: 'Alice Wonder', username: 'alice' }, 'wonder') && !matchesPerson({ name: 'Bob', username: 'bob' }, 'alice'));
   const known = [{ id: 'k1', name: 'Kim', username: 'kim', saved: true }, { id: 'k2', name: 'Kai', username: 'kai' }];
   const remote = [{ id: 'k1', name: 'Kim', username: 'kim' }, { id: 'r1', name: 'Kira', username: 'kira' }];

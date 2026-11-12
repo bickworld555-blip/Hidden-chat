@@ -24,7 +24,7 @@ export function savedContacts(chats, hiddenContacts = [], { userId } = {}) {
   const seen = new Set();
   const out = [];
   for (const link of [...(chats ?? []), ...(hiddenContacts ?? [])]) {
-    if (!link?.id || link.id === userId || link.group || !isSavedContact(link) || seen.has(link.id)) continue;
+    if (!link?.id || link.id === userId || link.group || link.deleted || !isSavedContact(link) || seen.has(link.id)) continue;
     seen.add(link.id);
     out.push(link);
   }
@@ -33,7 +33,7 @@ export function savedContacts(chats, hiddenContacts = [], { userId } = {}) {
 
 // Threads with people who are not in the contact book (direct chats started from a search).
 export function unsavedThreads(chats, { userId } = {}) {
-  return (chats ?? []).filter((link) => link?.id && link.id !== userId && !link.group && !isSavedContact(link)).sort(byName);
+  return (chats ?? []).filter((link) => link?.id && link.id !== userId && !link.group && !link.deleted && !isSavedContact(link)).sort(byName);
 }
 
 // Matches a person against a free-text query by display name or @handle.
