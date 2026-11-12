@@ -2983,36 +2983,6 @@ html, body { overflow-x: hidden; }
   background: rgba(0, 90, 209, 0.12);
 }
 
-/* Quoted message reply styles */
-.wa-quoted-reply-preview {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 6px 8px;
-  margin-bottom: 6px;
-  border-left: 3px solid var(--wa-green);
-  border-radius: 4px;
-  background: rgba(0, 0, 0, 0.06);
-  font-size: 12px;
-}
-
-.dark-theme .wa-quoted-reply-preview {
-  background: rgba(255, 255, 255, 0.06);
-}
-
-.wa-quoted-sender {
-  font-weight: 600;
-  color: var(--wa-green);
-  font-size: 11.5px;
-}
-
-.wa-quoted-text {
-  color: var(--wa-sub);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 /* Reply banner above composer */
 .wa-composer-reply-banner {
   display: flex;
@@ -3093,8 +3063,6 @@ html, body { overflow-x: hidden; }
 
 /* Forwarded label and clickable quotes inside bubbles */
 .wa-forwarded-label { display: flex; align-items: center; gap: 4px; margin: -2px 0 4px; color: var(--wa-sub); font-size: 12.5px; font-style: italic; }
-button.wa-quoted-reply-preview { width: 100%; min-width: 0; border-top: 0; border-right: 0; border-bottom: 0; color: inherit; font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
-.wa-quoted-text { min-width: 0; }
 
 /* Swipe-to-reply */
 .message-line { touch-action: pan-y pinch-zoom; }
@@ -4612,7 +4580,6 @@ canvas.recording-wave { color: #5d6662; }
 .status-reply input { flex: 1; border: 0; border-radius: 22px; padding: 10px 14px; background: rgba(255, 255, 255, 0.92); color: #111b21; }
 .status-reply button { border: 0; border-radius: 50%; width: 42px; height: 42px; background: var(--accent, #2674d9); color: #fff; display: grid; place-items: center; }
 .status-mute { margin-left: auto; border: 1px solid rgba(255, 255, 255, 0.5); border-radius: 14px; padding: 4px 10px; background: transparent; color: #fff; font-size: 13px; }
-.status-reply-quote { margin: 0 0 4px; padding: 4px 8px; border-left: 3px solid var(--accent, #2674d9); border-radius: 4px; background: color-mix(in srgb, var(--accent, #2674d9) 12%, transparent); font-size: 12.5px; }
 .hm-hours-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 4px 0; }
 .hm-hours-row input[type="time"] { padding: 4px 6px; border-radius: 6px; border: 1px solid color-mix(in srgb, var(--muted, #667781) 40%, transparent); background: transparent; color: inherit; }
 
@@ -5322,3 +5289,45 @@ textarea.hm-input { min-height: 96px; resize: vertical; }
 .status-ring-wrap.has-status > .avatar { box-shadow: 0 0 0 2px var(--wa-bg, #fff), 0 0 0 4px var(--wa-green, #1a73e8); }
 .status-ring-wrap.status-seen > .avatar { box-shadow: 0 0 0 2px var(--wa-bg, #fff), 0 0 0 4px #8696a0; }
 .wa-row-avatar-wrap.has-status { cursor: pointer; }
+
+/* ===== Quote cards (WhatsApp): a reply's quoted message, a status reply's status, and the reply banner over the
+   message box. A rounded card tinted from its bubble, a 4px accent bar on the left, the sender's name in the accent
+   and up to two lines of the quoted text. The accent is mine ("self") or the contact's own colour; every pair
+   passes 4.5:1 on its card in both themes (light cards are lighter than the bubble, dark ones darker). ===== */
+.app-shell { --quote-self: #0b57d0; --quote-blue: #0b57d0; --quote-green: #137333; --quote-coral: #b3261e; --quote-yellow: #7a5900; --quote-violet: #7b3fc4; --quote-card-in: rgba(0, 0, 0, .05); --quote-card-out: rgba(255, 255, 255, .5); --quote-text: var(--wa-sub); }
+.app-shell.dark-theme { --quote-self: #a8c7fa; --quote-blue: #a8c7fa; --quote-green: #8be0a4; --quote-coral: #ffb4a8; --quote-yellow: #f6d36b; --quote-violet: #d6bcff; --quote-card-in: rgba(0, 0, 0, .22); --quote-card-out: rgba(0, 0, 0, .3); --quote-text: color-mix(in srgb, var(--wa-text) 82%, transparent); }
+.wa-quoted-reply-preview, .wa-composer-reply-banner { --quote-accent: var(--quote-self); }
+:is(.wa-quoted-reply-preview, .wa-composer-reply-banner)[data-accent="blue"] { --quote-accent: var(--quote-blue); }
+:is(.wa-quoted-reply-preview, .wa-composer-reply-banner)[data-accent="green"] { --quote-accent: var(--quote-green); }
+:is(.wa-quoted-reply-preview, .wa-composer-reply-banner)[data-accent="coral"] { --quote-accent: var(--quote-coral); }
+:is(.wa-quoted-reply-preview, .wa-composer-reply-banner)[data-accent="yellow"] { --quote-accent: var(--quote-yellow); }
+:is(.wa-quoted-reply-preview, .wa-composer-reply-banner)[data-accent="violet"] { --quote-accent: var(--quote-violet); }
+.wa-quoted-reply-preview {
+  position: relative; display: flex; align-items: stretch; gap: 8px; width: 100%; min-width: min(220px, 62vw); margin: 0 0 6px; padding: 6px 10px 7px 13px;
+  overflow: hidden; border: 0; border-radius: 8px; background: var(--quote-card-in); color: inherit; font: inherit; text-align: left;
+}
+.message-bubble.outgoing .wa-quoted-reply-preview { background: var(--quote-card-out); }
+.wa-quoted-reply-preview::before { content: ''; position: absolute; inset: 0 auto 0 0; width: 4px; background: var(--quote-accent); }
+button.wa-quoted-reply-preview { cursor: pointer; transition: filter .15s ease; }
+button.wa-quoted-reply-preview:active { filter: brightness(.94); }
+.wa-quoted-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.wa-quoted-sender { overflow: hidden; color: var(--quote-accent); font-size: 13px; font-weight: 600; line-height: 1.3; text-overflow: ellipsis; white-space: nowrap; }
+.wa-quoted-text { display: -webkit-box; overflow: hidden; color: var(--quote-text); font-size: 13px; line-height: 1.35; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.message-bubble.attachment-bubble .wa-quoted-reply-preview { margin: 0 0 4px; }
+/* A status reply: the card carries a tile of the status on the right (its colour and words, or a photo/video icon). */
+.status-reply-quote { flex-wrap: wrap; }
+.status-quote-tile { flex: none; width: 44px; min-height: 44px; align-self: center; display: grid; place-items: center; overflow: hidden; padding: 3px; border-radius: 6px; background: color-mix(in srgb, var(--quote-accent) 22%, transparent); color: var(--quote-accent); font-size: 7.5px; font-weight: 600; line-height: 1.15; text-align: center; overflow-wrap: anywhere; }
+/* A text status keeps its own colour (white words on it, as posted). */
+.status-quote-tile[style] { color: #fff; }
+.status-reply-reacted { flex-basis: 100%; color: var(--quote-text); font-size: 12px; font-style: italic; }
+/* The reply banner over the message box: the same card, with a close button. */
+.wa-composer-reply-banner { position: relative; overflow: hidden; margin: 0 0 6px; padding: 8px 8px 8px 14px; border: 0; border-radius: 12px; background: var(--wa-panel); box-shadow: 0 1px 2px rgba(0, 0, 0, .12); }
+.wa-composer-reply-banner::before { content: ''; position: absolute; inset: 0 auto 0 0; width: 4px; background: var(--quote-accent); }
+.wa-composer-reply-content strong { color: var(--quote-accent); font-size: 13px; }
+.wa-composer-reply-content span { color: var(--quote-text); font-size: 13px; }
+.wa-composer-reply-close { display: grid; place-items: center; width: 32px; height: 32px; flex: none; }
+/* The chat list: the last message was a reply or reaction to a status. */
+.wa-status-preview { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.wa-status-chip { flex: none; display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px 2px 2px; border-radius: 999px; background: color-mix(in srgb, var(--wa-green) 14%, transparent); color: var(--wa-text); font-size: 12px; font-weight: 600; line-height: 1; }
+.wa-status-chip-tile { width: 18px; height: 18px; display: grid; place-items: center; border-radius: 50%; background: var(--wa-green); color: #fff; font-size: 8px; font-weight: 700; }
+.wa-status-preview-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

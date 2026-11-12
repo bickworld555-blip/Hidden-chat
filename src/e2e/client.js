@@ -20,7 +20,13 @@ import { sanitizePreview } from '../linkPreviewParse.js';
 // it replies to, fw?: 1 when forwarded }. Replies and forwards are not visible to the server (like Signal).
 // A reply to a status carries a small quote of it: { kind: 'text' | 'image' | 'video', text }.
 const cleanStatusReply = (value) => (value && typeof value === 'object' && ['text', 'image', 'video', 'file'].includes(value.kind)
-  ? { kind: value.kind, text: typeof value.text === 'string' ? value.text.slice(0, 200) : '', ...(value.reaction === true ? { reaction: true } : {}) } : null);
+  ? {
+    kind: value.kind,
+    text: typeof value.text === 'string' ? value.text.slice(0, 200) : '',
+    ...(value.reaction === true ? { reaction: true } : {}),
+    // A text status's background colour, for the little tile on the quote card.
+    ...(typeof value.bg === 'string' && /^#[0-9a-f]{6}$/i.test(value.bg) ? { bg: value.bg } : {}),
+  } : null);
 export const innerOf = (content, extra = {}) => {
   const linkPreview = sanitizePreview(extra.linkPreview);
   const statusReply = cleanStatusReply(extra.statusReply);

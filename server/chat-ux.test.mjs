@@ -166,10 +166,10 @@ test('forward sheet groups chats into frequently contacted, recent, and other co
 test('reply quotes carry only the reference and render sender and preview', () => {
   const quote = replyQuoteFor({ id: 'm1', senderId: 'peer', content: 'media:abc:holiday.jpg', status: 'read', reactions: {} });
   assert.deepEqual(quote, { id: 'm1', senderId: 'peer', content: 'media:abc:holiday.jpg' });
-  assert.deepEqual(quoteView(quote, 'me', 'Ava'), { sender: 'Ava', text: '📷 Photo' });
-  assert.deepEqual(quoteView({ id: 'm2', senderId: 'me', content: 'hello' }, 'me', 'Ava'), { sender: 'You', text: 'hello' });
-  assert.deepEqual(quoteView({ id: 'm3', senderId: 'peer', deleted: true }, 'me', 'Ava'), { sender: 'Ava', text: '🚫 This message was deleted' });
-  assert.deepEqual(quoteView({ id: 'm4', senderName: 'You', content: 'legacy local quote' }, 'me', 'Ava'), { sender: 'You', text: 'legacy local quote' });
+  assert.deepEqual(quoteView(quote, 'me', 'Ava'), { sender: 'Ava', text: '📷 Photo', self: false });
+  assert.deepEqual(quoteView({ id: 'm2', senderId: 'me', content: 'hello' }, 'me', 'Ava'), { sender: 'You', text: 'hello', self: true });
+  assert.deepEqual(quoteView({ id: 'm3', senderId: 'peer', deleted: true }, 'me', 'Ava'), { sender: 'Ava', text: '🚫 This message was deleted', self: false });
+  assert.deepEqual(quoteView({ id: 'm4', senderName: 'You', content: 'legacy local quote' }, 'me', 'Ava'), { sender: 'You', text: 'legacy local quote', self: true });
   assert.equal(quoteView(null, 'me', 'Ava'), null);
 });
 
@@ -297,4 +297,42 @@ test('chat window wires swipe-to-reply, quotes, and the sectioned forward sheet'
     assert.ok(css.includes(selector), `styles.css is missing ${selector}`);
   }
   assert.ok(!css.includes('.wa-forward-picker'), 'the superseded forward picker styles are removed');
+});
+
+test('a status reply\'s card and chat-list line say whose status it was, as on WhatsApp', async () => {
+  const { statusQuoteView } = await import('../src/replies.js');
+  // They replied to my text status.
+  const theirs = statusQuoteView({ kind: 'text', text: 'Beach day', bg: '#7e57c2' }, { mine: false, peerName: 'Ava', content: 'Looks great!' });
+  assert.equal(theirs.title, 'You · Status');
+  assert.equal(theirs.text, 'Beach day');
+  assert.equal(theirs.background, '#7e57c2');
+  assert.equal(theirs.listLabel, 'Replied to your status');
+  assert.equal(theirs.listText, 'Looks great!');
+  // I reacted to their photo status.
+  const mine = statusQuoteView({ kind: 'image', text: '', reaction: true }, { mine: true, peerName: 'Ava', content: '😍' });
+  assert.equal(mine.title, 'Ava · Status');
+  assert.equal(mine.text, '📷 Photo');
+  assert.equal(mine.background, null);
+  assert.equal(mine.listLabel, 'You reacted 😍 to their status');
+  assert.equal(mine.listText, '');
+  assert.equal(statusQuoteView({ kind: 'text', text: '', bg: 'red; x' }, {}).background, null, 'only a plain colour is used');
+  assert.equal(statusQuoteView(null), null);
+});
+
+test('the chat list knows when the last message was a status reply, and forgets when it is not', async () => {
+  const { useChatStore } = await import('../src/store.js');
+  useChatStore.setState({ userId: 'me', chats: [{ id: 'ava', name: 'Ava' }], messages: {} });
+  const { addMessage } = useChatStore.getState();
+  addMessage({ id: 's1', senderId: 'ava', receiverId: 'me', timestamp: '2026-11-13T10:00:00.000Z', content: '😍', statusReply: { kind: 'text', text: 'Hi', reaction: true } });
+  assert.deepEqual(useChatStore.getState().chats.find((chat) => chat.id === 'ava').previewStatus, { kind: 'text', text: 'Hi', reaction: true, mine: false, content: '😍' });
+  addMessage({ id: 's2', senderId: 'me', receiverId: 'ava', timestamp: '2026-11-13T10:01:00.000Z', content: 'thanks' });
+  assert.equal(useChatStore.getState().chats.find((chat) => chat.id === 'ava').previewStatus, null);
+});
+
+test('a status reply carries the status colour inside the encryption, and nothing else', async () => {
+  const { innerOf, openedFrom } = await import('../src/e2e/client.js');
+  const inner = innerOf('Nice', { statusReply: { kind: 'text', text: 'Hi', bg: '#7e57c2', extra: 'dropped' } });
+  assert.deepEqual(inner.sr, { kind: 'text', text: 'Hi', bg: '#7e57c2' });
+  assert.deepEqual(openedFrom(inner, {}).statusReply, { kind: 'text', text: 'Hi', bg: '#7e57c2' });
+  assert.equal(innerOf('x', { statusReply: { kind: 'text', text: '', bg: 'url(x)' } }).sr.bg, undefined);
 });

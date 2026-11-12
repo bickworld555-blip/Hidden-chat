@@ -201,7 +201,7 @@ function StatusReply({ status, authorId, onFocus, onBlur, onSent }) {
   const [sent, setSent] = useState('');
   const sendMessage = useChatStore((state) => state.sendMessage);
   const quote = statusKind(status.content);
-  const statusReply = (extra = {}) => ({ statusReply: { kind: quote.kind, text: quote.kind === 'text' ? quote.text.slice(0, 200) : '', ...extra } });
+  const statusReply = (extra = {}) => ({ statusReply: { kind: quote.kind, text: quote.kind === 'text' ? quote.text.slice(0, 200) : '', ...(quote.kind === 'text' && status.background ? { bg: status.background } : {}), ...extra } });
   function send(event) {
     event.preventDefault();
     if (!text.trim() || !authorId) return;

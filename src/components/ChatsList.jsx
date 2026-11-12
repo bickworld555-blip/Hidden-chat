@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Archive, ArchiveRestore, ArrowLeft, BellOff, Camera, Check, Heart, Lock, MessageSquarePlus, Mic, MoreVertical, Phone, Pin, Plus, Search, Tag, Trash2, Users, Video, Volume2, VolumeX, X } from 'lucide-react';
+import { Archive, ArchiveRestore, ArrowLeft, BellOff, Camera, Check, Heart, FileText, Image as ImageIcon, Lock, MessageSquarePlus, Mic, MoreVertical, Phone, Pin, Plus, Search, Tag, Trash2, Users, Video, Volume2, VolumeX, X } from 'lucide-react';
 import { setChatArchived, toggleChatLabel, useAccountData } from '../accountData.js';
 import { chatLockMethod, unlockLockedChats } from '../chatLock.js';
 import { useT } from '../i18n.js';
@@ -22,6 +22,26 @@ import { countUnreadConversations, mergeGroupRows, unreadBadge } from '../groupR
 import VerifiedBadge from './VerifiedBadge.jsx';
 import { activityLabel, groupActivityLabel, groupActivityPeople } from '../typing.js';
 import { statusRingProps } from './StatusRing.jsx';
+import { statusQuoteView } from '../replies.js';
+
+// The last message replied or reacted to a status: a small card (a tile of the status and "Status") before the line
+// "Reacted 😍 to your status" or "Replied to their status: …", as on WhatsApp.
+function StatusPreview({ status }) {
+  const view = statusQuoteView(status, { mine: status.mine, content: status.content });
+  if (!view) return null;
+  const line = view.listText ? `${view.listLabel}: ${view.listText}` : view.listLabel;
+  return (
+    <span className="wa-preview wa-status-preview" aria-label={line}>
+      <span className="wa-status-chip" aria-hidden="true">
+        <span className={`wa-status-chip-tile is-${view.kind}`} style={view.background ? { background: view.background } : undefined}>
+          {view.kind === 'image' ? <ImageIcon size={11} /> : view.kind === 'video' ? <Video size={11} /> : view.kind === 'file' ? <FileText size={11} /> : 'Aa'}
+        </span>
+        Status
+      </span>
+      <span className="wa-status-preview-text" aria-hidden="true">{line}</span>
+    </span>
+  );
+}
 
 function GroupListRow({ row, onOpen, pressHandlers, labels = [], consumeLongPress = () => false }) {
   // "Ava is typing…" in green while someone in the group is (named as saved in this phone's chats when they are).
@@ -558,6 +578,7 @@ export default function ChatsList({ onOpenChat, onStartCall, onGroups, groups = 
                   <span className="wa-row-bottom">
                     {activity
                       ? <span className="wa-preview is-activity">{activity === 'recording' && <Mic size={14} aria-hidden="true" />}{activityLabel(activity)}</span>
+                      : chat.previewStatus ? <StatusPreview status={chat.previewStatus} />
                       : <span className="wa-preview"><FormattedText text={chat.preview || 'No messages yet'} inline /></span>}
                     <span className="wa-row-indicators">
                       {isMuted && <VolumeX size={15} className="wa-row-badge-icon" title="Muted" />}

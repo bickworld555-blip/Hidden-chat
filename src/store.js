@@ -322,12 +322,14 @@ function summarizeChat(chat, messages) {
   const last = messages?.length ? messages[messages.length - 1] : null;
   if (!last) return chat;
   const preview = last.deleted ? `🚫 ${deletedLabel(last.senderId !== chat.id)}` : chatPreview(messages);
-  return { ...chat, preview, time: formatChatListTime(last.timestamp), lastActivityAt: last.timestamp };
+  // The last message replied or reacted to a status: the chat list shows it as a status card (src/replies.js).
+  const previewStatus = !last.deleted && last.statusReply ? { ...last.statusReply, mine: last.senderId !== chat.id, content: typeof last.content === 'string' ? last.content : '' } : null;
+  return { ...chat, preview, previewStatus, time: formatChatListTime(last.timestamp), lastActivityAt: last.timestamp };
 }
 
 // Re-derives a chat's summary after messages were removed; an emptied chat keeps its place in the list.
 function resummarizeChat(chat, messages) {
-  return messages.length ? summarizeChat(chat, messages) : { ...chat, preview: 'No messages yet', time: '' };
+  return messages.length ? summarizeChat(chat, messages) : { ...chat, preview: 'No messages yet', previewStatus: null, time: '' };
 }
 
 // Per-user chat preferences that stay on this device.
@@ -459,6 +461,7 @@ export const useChatStore = create((setState, getState) => ({
       const chats = orderChatsByActivity(contacts.map((contact) => summarizeChat({
         ...contact,
         preview: current.get(contact.id)?.preview ?? contact.preview ?? 'Start a conversation',
+        previewStatus: current.get(contact.id)?.previewStatus ?? null,
         time: current.get(contact.id)?.time ?? contact.time ?? '',
         lastActivityAt: current.get(contact.id)?.lastActivityAt ?? contact.lastActivityAt,
         unread: current.get(contact.id)?.unread ?? 0,

@@ -9,7 +9,7 @@ import { isNotice, noticeText } from '../e2e/notices.js';
 import { isMediaContent } from '../media.js';
 import { LOAD_OLDER_STEP, RENDER_WINDOW, renderCountFor, windowedMessages } from '../messageWindow.js';
 import { attachmentContent, sealForUpload } from '../mediaCrypto.js';
-import { ArrowLeft, Ban, Camera, Check, CheckCheck, ChevronDown, ChevronUp, Clock, CornerUpLeft, Forward, Info, Link2, Mic, MoreVertical, Paperclip, Pencil, Phone, Pin, PinOff, Search, Send, ShoppingCart, Smile, Star, Timer, Trash2, Video, X } from 'lucide-react';
+import { ArrowLeft, Ban, Camera, Check, CheckCheck, ChevronDown, ChevronUp, Clock, CornerUpLeft, FileText, Forward, Image as ImageIcon, Info, Link2, Mic, MoreVertical, Paperclip, Pencil, Phone, Pin, PinOff, Search, Send, ShoppingCart, Smile, Star, Timer, Trash2, Video, X } from 'lucide-react';
 import { parseVoiceContent, voiceContent, voiceExtension } from '../voice.js';
 import { COMPOSER_EMOJIS, COMPOSER_MAX_LENGTH, composerAction, insertAtCaret } from '../composer.js';
 import { playNotificationTone } from '../sounds.js';
@@ -19,7 +19,7 @@ import { searchMessages } from '../contactInfo.js';
 import { disappearingLabel } from '../disappearing.js';
 import { uploadFile, uploadSizeError } from '../upload.js';
 import { FORWARD_LIMIT, forwardSections } from '../forwarding.js';
-import { quoteView, replyQuoteFor, resolveQuote } from '../replies.js';
+import { quoteView, replyQuoteFor, resolveQuote, statusQuoteView } from '../replies.js';
 import { resolveSelection, selectionActions, toggleSelection } from '../selection.js';
 import { EXTENDED_REACTIONS as EXTENDED_EMOJIS, QUICK_REACTIONS as QUICK_EMOJIS } from '../reactions.js';
 import { formatMessageDate, formatMessageTime, localDateKey } from '../time.js';
@@ -124,12 +124,12 @@ const bareLink = (value) => value.trim().replace(/^https?:\/\//i, '').replace(/\
 // matches what is shown, and the real footer is pinned to the bottom-right corner over it. When the last line is
 // too full the spacer wraps to a line of its own, so the footer never covers the text.
 // The card comes with the message (made by the sender); only old unencrypted messages still ask the server.
-function TextWithPreview({ content, sessionToken, meta, message }) {
+function TextWithPreview({ content, sessionToken, meta, message, mine = false, peerName = '', peerColor = 'blue' }) {
   const href = firstLink(content);
   const card = href ? <LinkPreview href={href} sessionToken={sessionToken} preview={message?.linkPreview ?? null} fetchAllowed={!message?.e2e} /> : null;
-  // A reply to a status quotes it (the quote travels inside the encryption).
-  const reply = message?.statusReply;
-  const quote = reply ? <p className="status-reply-quote"><strong>{reply.reaction ? 'Reacted to a status' : 'Status'}</strong> · {reply.kind === 'text' ? reply.text : reply.kind === 'video' ? '🎥 Video' : '📷 Photo'}</p> : null;
+  // A reply to a status quotes it (the quote travels inside the encryption): a card with whose status it was, what it
+  // said and a small tile of it, as on WhatsApp.
+  const quote = message?.statusReply ? <StatusQuoteCard view={statusQuoteView(message.statusReply, { mine, peerName, content })} accent={mine ? peerColor : 'self'} /> : null;
   const onlyLink = Boolean(href) && bareLink(content) === bareLink(href);
   if (onlyLink) {
     return (
@@ -150,6 +150,22 @@ function TextWithPreview({ content, sessionToken, meta, message }) {
         {meta}
       </div>
     </>
+  );
+}
+
+function StatusQuoteCard({ view, accent }) {
+  if (!view) return null;
+  return (
+    <div className="wa-quoted-reply-preview status-reply-quote" data-accent={accent}>
+      <span className="wa-quoted-body">
+        <span className="wa-quoted-sender">{view.title}</span>
+        <span className="wa-quoted-text">{view.text}</span>
+      </span>
+      <span className={`status-quote-tile is-${view.kind}`} style={view.background ? { background: view.background } : undefined} aria-hidden="true">
+        {view.kind === 'image' ? <ImageIcon size={18} /> : view.kind === 'video' ? <Video size={18} /> : view.kind === 'file' ? <FileText size={18} /> : <span>{view.text.slice(0, 18)}</span>}
+      </span>
+      {view.reaction && <span className="status-reply-reacted">{view.ownerIsMe ? 'Reacted to your status' : 'You reacted to their status'}</span>}
+    </div>
   );
 }
 
@@ -410,12 +426,16 @@ function MessageBubble({
             <button
               type="button"
               className="wa-quoted-reply-preview"
+              data-accent={quote.self ? 'self' : (shared?.peerColor ?? 'blue')}
+              aria-label={`Reply to ${quote.sender}: ${quote.text}. Show the original message`}
               onClick={() => {
                 if (message.replyTo?.id) onQuoteClick?.(message.replyTo.id);
               }}
             >
-              <span className="wa-quoted-sender">{quote.sender}</span>
-              <span className="wa-quoted-text">{quote.text}</span>
+              <span className="wa-quoted-body">
+                <span className="wa-quoted-sender">{quote.sender}</span>
+                <span className="wa-quoted-text">{quote.text}</span>
+              </span>
             </button>
           )}
           {voice?.viewOnce ? (
@@ -444,7 +464,7 @@ function MessageBubble({
                 : sharedKind === 'location' && parseLocation(content) ? <LocationBubble location={parseLocation(content)} onOpen={shared.openLocation} />
                 : sharedKind === 'live' && parseLive(content) ? <LiveLocationBubble live={parseLive(content)} mine={mine} peerName={shared.peerName} send={shared.send} onOpen={shared.openLive} />
                 : sharedKind === 'contact' && parseContact(content) ? <ContactBubble contact={parseContact(content)} onMessage={shared.messageContact} />
-                : <TextWithPreview content={content} sessionToken={sessionToken} meta={meta} message={message} />}
+                : <TextWithPreview content={content} sessionToken={sessionToken} meta={meta} message={message} mine={mine} peerName={shared?.peerName} peerColor={shared?.peerColor} />}
               {!textBody && meta}
             </>
           )}
@@ -1205,6 +1225,8 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
   const sharedHandlers = useMemo(() => ({
     pinnedIds,
     peerName: chat?.name ?? 'Contact',
+    // Quote cards colour the contact's name and bar with their colour (src/styles.css .wa-quoted-reply-preview).
+    peerColor: chat?.color ?? 'blue',
     userId,
     nameFor: (id) => (id === chat?.id ? presentName(chat) : null),
     pollContext: { peerId: chat?.id },
@@ -1822,7 +1844,7 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
         {replyingTo && (() => {
           const quote = quoteView(replyingTo, userId, chat.name);
           return (
-            <div className="wa-composer-reply-banner">
+            <div className="wa-composer-reply-banner" data-accent={quote.self ? 'self' : (chat.color ?? 'blue')}>
               <div className="wa-composer-reply-content">
                 <strong>{quote.sender}</strong>
                 <span>{quote.text}</span>
