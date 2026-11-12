@@ -183,6 +183,7 @@ export default function App() {
   const openChatRef = useRef(null);
   const openGroupRef = useRef(null);
   const revokedRef = useRef(null);
+  const removingRef = useRef(new Set());
   const [authOpen, setAuthOpen] = useState(false);
   const [darkMode, setDarkMode] = useState(() => {
     const stored = localStorage.getItem('relay:theme');
@@ -684,18 +685,26 @@ export default function App() {
   }
 
   // Signs one account out of the server and forgets it here; logging out the active account moves to the next one.
+  // Signing out closes that session's socket (code 4001), which reports "signed out" for the same account again;
+  // `removingRef` makes that echo a no-op instead of a second switch that would empty the next account's chats.
   async function removeAccountFromDevice(id) {
-    const account = getAccountsState().accounts.find((item) => item.id === id);
+    if (removingRef.current.has(id)) return;
+    removingRef.current.add(id);
     try {
-      if (account?.token) await apiFetch('/api/v1/auth/logout', { method: 'POST', headers: { Authorization: 'Bearer ' + account.token } });
-    } catch { /* already invalid server-side */ }
-    const next = await removeAccount(id);
-    if (id !== userId) return;
-    const following = next.accounts.find((item) => item.id === next.activeId);
-    if (!following) { clearActiveSession(); setAccountsOpen(false); return; }
-    const session = await validateAccount(following);
-    if (session) activateSession(session);
-    else { await removeAccount(following.id); clearActiveSession(); }
+      const account = getAccountsState().accounts.find((item) => item.id === id);
+      try {
+        if (account?.token) await apiFetch('/api/v1/auth/logout', { method: 'POST', headers: { Authorization: 'Bearer ' + account.token } });
+      } catch { /* already invalid server-side */ }
+      const next = await removeAccount(id);
+      if (id !== userId) return;
+      const following = next.accounts.find((item) => item.id === next.activeId);
+      if (!following) { clearActiveSession(); setAccountsOpen(false); return; }
+      const session = await validateAccount(following);
+      if (session) activateSession(session);
+      else { await removeAccount(following.id); clearActiveSession(); }
+    } finally {
+      removingRef.current.delete(id);
+    }
   }
 
   const logout = () => removeAccountFromDevice(userId);

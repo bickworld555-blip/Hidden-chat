@@ -374,6 +374,9 @@ export const useChatStore = create((setState, getState) => ({
   // Live location sessions (ephemeral, keyed by session id). `me`/`peer` hold the latest fixes.
   liveSessions: {},
   setUserId(userId) {
+    // Activating the account that is already active (a new session for it) keeps what is loaded: clearing it would
+    // leave chats empty, since loading from this device runs only when the account changes.
+    if (userId && userId === getState().userId) return;
     stopLiveTracking();
     saved = { owner: null, chats: new Map() };
     clearedChats.clear();

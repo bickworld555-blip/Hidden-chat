@@ -16,3 +16,13 @@ test('the search index holds readable words only: text, and an attachment name; 
   assert.equal(searchableText({ content: 'e2e2:text|{"v":2}' }), '');
   assert.equal(searchableText({ content: 'secret', e2eError: 'missing-key' }), '');
 });
+
+test('activating the account that is already active keeps its loaded chats; another account starts empty', async () => {
+  const { useChatStore } = await import('../src/store.js');
+  const message = { id: 'm1', senderId: 'ava', receiverId: 'me', timestamp: '2026-11-12T10:00:00.000Z', content: 'kept' };
+  useChatStore.setState({ userId: 'me', chats: [{ id: 'ava' }], messages: { ava: [message] } });
+  useChatStore.getState().setUserId('me'); // e.g. signing out another account echoes back to this one
+  assert.deepEqual(useChatStore.getState().messages.ava, [message]);
+  useChatStore.getState().setUserId('someone-else');
+  assert.deepEqual(useChatStore.getState().messages, {});
+});
