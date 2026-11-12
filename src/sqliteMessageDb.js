@@ -213,3 +213,10 @@ export async function deleteCached(owner, key) {
   const db = await openLocalDatabase();
   await db.run('DELETE FROM cache WHERE owner = ? AND key = ?', [owner, key]);
 }
+
+/** What this phone's store holds and can do, for Settings › Storage and data: search index and attachment records. */
+export async function localStoreFacts() {
+  const db = await openLocalDatabase();
+  const row = (await db.query('SELECT count(*) AS count, COALESCE(sum(byte_size), 0) AS bytes FROM media')).values?.[0] ?? {};
+  return { fts: ftsAvailable, mediaRecords: Number(row.count ?? 0), mediaBytes: Number(row.bytes ?? 0) };
+}

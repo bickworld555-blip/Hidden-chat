@@ -105,7 +105,17 @@ let storeError = '';
  */
 export async function localStoreStatus(userId) {
   const messages = await savedMessageCount(userId);
-  return { kind: nativeShell() ? storeKind ?? 'sqlite' : 'indexeddb', messages, error: storeError };
+  const kind = nativeShell() ? storeKind ?? 'sqlite' : 'indexeddb';
+  // On the phone: whether search uses the full-text index, and attachments kept in the app's private folder
+  // (files on disk next to the records that hold their path, checksum and key).
+  let facts = null;
+  if (kind === 'sqlite') {
+    try {
+      const [{ localStoreFacts }, { storedMediaFileCount }] = await Promise.all([import('./sqliteMessageDb.js'), import('./mediaVault.js')]);
+      facts = { ...(await localStoreFacts()), mediaFiles: await storedMediaFileCount() };
+    } catch { facts = null; }
+  }
+  return { kind, messages, error: storeError, ...facts };
 }
 
 /** Saved messages matching a search, newest first, from the device's own store (null where it has no index). */

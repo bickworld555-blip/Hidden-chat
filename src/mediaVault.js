@@ -130,3 +130,15 @@ export async function forgetMedia(id) {
   const target = vault();
   if (target) await del(key(id), target).catch(() => {});
 }
+
+/** Attachment files in the app's private folder (Android), or null elsewhere. */
+export async function storedMediaFileCount() {
+  const parts = await native();
+  if (!parts) return null;
+  try {
+    const listing = await parts.Filesystem.readdir({ path: 'media', directory: parts.Directory.Data });
+    return listing.files.filter((file) => String(file.name ?? file).endsWith('.bin')).length;
+  } catch {
+    return 0; // no attachment kept yet: the folder does not exist
+  }
+}

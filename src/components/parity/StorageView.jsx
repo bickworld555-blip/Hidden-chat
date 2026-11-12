@@ -101,6 +101,11 @@ export default function StorageView({ onClose }) {
         <p className="hm-muted hm-local-store" data-store={local.kind}>
           Chat history on this device: {local.kind === 'sqlite' ? 'encrypted SQLite (SQLCipher)' : local.kind === 'indexeddb' ? 'encrypted browser storage' : 'encrypted browser storage (SQLite unavailable)'} · {local.messages.toLocaleString()} messages
           {local.error ? ` · ${local.error}` : ''}
+          {local.kind === 'sqlite' && typeof local.fts === 'boolean' && (
+            <span className="hm-local-store-facts" data-fts={local.fts ? 'on' : 'off'} data-media-files={local.mediaFiles ?? ''}>
+              <br />Search works offline ({local.fts ? 'full-text index' : 'scan'}) · {local.mediaFiles ?? 0} attachment files in the app’s private folder ({local.mediaRecords} recorded, {formatFileSize(local.mediaBytes)})
+            </span>
+          )}
         </p>
       )}
 
