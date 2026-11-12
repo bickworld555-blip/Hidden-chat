@@ -219,9 +219,11 @@ test('Envelope: routing tells the server only what it needs; everything else is 
   assert.equal(routingFor('hello'), 'text');
   assert.equal(routingFor('media:abc:photo.jpg'), 'media:abc');
   assert.equal(routingFor('emedia:abc:xyz:photo.jpg'), 'media:abc');
-  assert.equal(routingFor('voice:v1:12.5'), 'voice:v1:12.5');
-  assert.equal(routingFor('voice:v1:7:once'), 'voice:v1:7:once');
-  assert.equal(routingFor('poll:{"question":"q","options":["a","b","c"],"multiple":true}'), 'poll:3:1');
+  // Minimal routing: no voice length, no poll size (both stay inside the encryption).
+  assert.equal(routingFor('voice:v1:12.5'), 'voice:v1:0');
+  assert.equal(routingFor('voice:v1:7:once'), 'voice:v1:0:once');
+  assert.equal(routingFor('poll:{"question":"q","options":["a","b","c"],"multiple":true}'), 'poll:12:1');
+  assert.equal(routingFor('poll:{"question":"q","options":["a","b"],"multiple":false}'), 'poll:12:1');
   assert.equal(routingFor('location:{"lat":1}'), 'other');
   assert.equal(routingFor('note: plain words'), 'text');
   const envelope = buildEnvelope('voice:v1:7:once', { sd: 'dev1', d: { bob: { b1: { h: { dh: 'x', pn: 0, n: 0 }, c: 'y' } } } });

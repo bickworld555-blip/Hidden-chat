@@ -107,11 +107,12 @@ test('a view once voice note plays once for the recipient, then the audio is gon
   assert.deepEqual(opened.data, audio);
   for (const socket of [senderSocket, recipientSocket]) {
     const update = await socket.wait('message:updated', (event) => event.messageId === 'once-1');
-    assert.equal(update.content, 'voice-opened:4');
+    // The server never learns a voice note's length (minimal routing), so the opened marker carries none.
+    assert.equal(update.content, 'voice-opened:0');
   }
   assert.equal((await api('/api/v1/messages/once-1/view-once', { session: recipient, method: 'POST' })).status, 410, 'a second play is refused');
   const history = (await api(`/api/v1/messages?peerId=${sender.user.id}`, { session: recipient })).data;
-  assert.equal(history.find((message) => message.id === 'once-1').content, 'voice-opened:4');
+  assert.equal(history.find((message) => message.id === 'once-1').content, 'voice-opened:0');
   // The audio file and its row are deleted once sent.
   await new Promise((resolve) => setTimeout(resolve, 100));
   assert.equal((await api(`/api/v1/media/${media.id}`, { session: recipient })).status, 404);

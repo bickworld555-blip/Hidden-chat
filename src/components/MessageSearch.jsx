@@ -2,7 +2,7 @@
 // (Photos, Videos, Links, Documents, Audio, Polls). Matching runs on this device (src/messageSearch.js).
 import { useEffect, useMemo, useState } from 'react';
 import { FileText, Image, Link2, Mic, ListChecks, Video } from 'lucide-react';
-import { useChatStore } from '../store.js';
+import { groupChatKey, loadAllSavedMessages, searchSavedMessages, useChatStore } from '../store.js';
 import { presentName } from '../profile.js';
 import { formatViewerTimestamp } from '../time.js';
 import { fetchGroupMessages } from '../groupHistory.js';
@@ -35,7 +35,16 @@ export default function MessageSearch({ query, filter, groups = [], onOpenChat, 
   const active = Boolean(query.trim() || filter);
   const groupIds = groups.map((group) => group.id).join(',');
 
-  // Group histories are fetched and opened once per search session (they are not kept on the device).
+  // Search covers everything saved on this device (local-first: the server keeps messages only until delivered),
+  // read once per search session: one-to-one chats and groups alike. What the server still holds for a group is
+  // added on top.
+  const [saved, setSaved] = useState(null);
+  useEffect(() => {
+    if (!active || saved || !userId) return undefined;
+    let cancelled = false;
+    loadAllSavedMessages(userId).then((all) => { if (!cancelled) setSaved(all); }).catch(() => { if (!cancelled) setSaved({}); });
+    return () => { cancelled = true; };
+  }, [active, userId]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!active || groupHistory || !token || !groups.length) return undefined;
     let cancelled = false;
@@ -43,16 +52,33 @@ export default function MessageSearch({ query, filter, groups = [], onOpenChat, 
       .then((entries) => { if (!cancelled) setGroupHistory(Object.fromEntries(entries)); });
     return () => { cancelled = true; };
   }, [active, token, groupIds]); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { if (!active) setGroupHistory(null); }, [active]);
+  // On the phone the full-text index answers first; its hits narrow what is scanned for snippets.
+  const [indexed, setIndexed] = useState(null);
+  useEffect(() => {
+    const text = query.trim();
+    if (!active || !text || !userId) { setIndexed(null); return undefined; }
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      searchSavedMessages(userId, text, 500).then((rows) => { if (!cancelled) setIndexed(Array.isArray(rows) ? new Set(rows.map((row) => row.id)) : null); }).catch(() => {});
+    }, 120);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [active, query, userId]);
+  useEffect(() => { if (!active) { setGroupHistory(null); setSaved(null); } }, [active]);
 
   const results = useMemo(() => {
     if (!active) return [];
+    const merge = (...lists) => {
+      const byId = new Map();
+      for (const list of lists) for (const message of list ?? []) if (message?.id) byId.set(message.id, message);
+      const all = [...byId.values()];
+      return indexed && !filter ? all.filter((message) => indexed.has(message.id)) : all;
+    };
     const sources = [
-      ...chats.map((chat) => ({ key: chat.id, name: presentName(chat) || chat.name || 'Unknown', messages: messages[chat.id] ?? [] })),
-      ...groups.map((group) => ({ key: group.id, name: group.name, isGroup: true, messages: groupHistory?.[group.id] ?? [] })),
+      ...chats.map((chat) => ({ key: chat.id, name: presentName(chat) || chat.name || 'Unknown', messages: merge(saved?.[chat.id], messages[chat.id]) })),
+      ...groups.map((group) => ({ key: group.id, name: group.name, isGroup: true, messages: merge(saved?.[groupChatKey(group.id)], messages[groupChatKey(group.id)], groupHistory?.[group.id]) })),
     ];
     return searchAllMessages(sources, { query, filter });
-  }, [active, chats, messages, groups, groupHistory, query, filter]);
+  }, [active, chats, messages, saved, indexed, groups, groupHistory, query, filter]);
 
   if (!active) return null;
   const loadingGroups = groups.length > 0 && !groupHistory;

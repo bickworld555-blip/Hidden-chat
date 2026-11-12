@@ -211,7 +211,7 @@ export async function loadMediaBlob(id, sessionToken, options = {}) {
   // device has its copy.
   const stored = await readStoredMedia(id);
   const fetched = stored?.blob ?? await fetchMediaBlob(id, sessionToken, options);
-  if (!stored?.blob) await storeMedia(id, fetched, peekMediaInfo(id, sessionToken));
+  if (!stored?.blob) await storeMedia(id, fetched, peekMediaInfo(id, sessionToken), { descriptor: encryptedDescriptors.get(id) ?? null });
   const descriptor = encryptedDescriptors.get(id);
   const blob = descriptor ? await decryptMedia(fetched, descriptor) : fetched;
   const key = cacheKey(id, sessionToken);
@@ -238,7 +238,7 @@ export async function storeMediaLocally(id, sessionToken) {
     const info = await fetchMediaInfo(id, sessionToken);
     if (Number(info?.size ?? 0) > PREFETCH_LIMIT_BYTES) return false;
     const blob = await fetchMediaBlob(id, sessionToken);
-    return storeMedia(id, blob, info);
+    return storeMedia(id, blob, info, { descriptor: encryptedDescriptors.get(id) ?? null });
   } catch {
     return false;
   }

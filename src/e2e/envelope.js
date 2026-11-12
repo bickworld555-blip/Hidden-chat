@@ -36,11 +36,14 @@ export function routingFor(content) {
   match = /^(?:vnote:|csticker:)?(?:e?media):([A-Za-z0-9_-]{1,80})(?::|$)/.exec(text);
   if (match) return `media:${match[1]}`;
   match = /^voice:([A-Za-z0-9_-]{1,80}):(\d{1,6}(?:\.\d{1,3})?)(:once)?(?::|$)/.exec(text);
-  if (match) return `voice:${match[1]}:${match[2]}${match[3] ?? ''}`;
+  // Only what the server needs to route and clean up: a voice note's length stays inside the encryption (0 here),
+  // and every poll looks the same from outside (the largest size, multiple answers allowed; the app enforces the
+  // real choice).
+  if (match) return `voice:${match[1]}:0${match[3] ?? ''}`;
   if (text.startsWith('poll:')) {
     try {
       const poll = JSON.parse(text.slice(5));
-      if (Array.isArray(poll?.options)) return `poll:${poll.options.length}:${poll.multiple === true ? 1 : 0}`;
+      if (Array.isArray(poll?.options)) return 'poll:12:1';
     } catch { /* falls through to "other" */ }
     return 'other';
   }

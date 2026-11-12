@@ -30,6 +30,9 @@ export function androidConfig(rawUrl) {
     loggingBehavior: 'none',
     server: { androidScheme: 'https', hostname: 'localhost', cleartext: false },
     android: { allowMixedContent: false, webContentsDebuggingEnabled: false },
+    // The local-first message store on the phone (src/sqliteMessageDb.js): SQLite encrypted with SQLCipher; the
+    // passphrase is kept by the plugin in Android's secure storage.
+    plugins: { CapacitorSQLite: { androidIsEncryption: true, androidBiometric: { biometricAuth: false } } },
   };
 }
 

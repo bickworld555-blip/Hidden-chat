@@ -1,3 +1,4 @@
+import { nativeShell } from './native.js';
 import { acknowledgeSaved } from './deliveryAck.js';
 import { pollSummary } from './polls.js';
 import { eventSummary } from './calendarEvents.js';
@@ -47,7 +48,57 @@ let pendingPersistUser = null;
 // Messages live one row each in IndexedDB (src/messageDb.js), each sealed at rest. A save writes only what changed
 // since the last save (`saved` is that copy); chats cleared meanwhile are dropped whole, older rows included.
 let messageDb = null;
-const messageStore = () => (messageDb ??= createMessageDb({ seal: (name, value) => secureStorage().seal(name, value), open: (name, record) => secureStorage().open(name, record) }));
+const indexedMessageStore = () => createMessageDb({ seal: (name, value) => secureStorage().seal(name, value), open: (name, record) => secureStorage().open(name, record) });
+const messageStore = () => (messageDb ??= nativeShell() ? localFirstStore(indexedMessageStore()) : indexedMessageStore());
+
+/**
+ * The Android app keeps its history in native SQLite encrypted with SQLCipher (src/sqliteMessageDb.js), the source
+ * of truth now that the server keeps messages only until delivered. The first time, everything saved in the old
+ * IndexedDB store is copied over. Should SQLite be unavailable, the IndexedDB store keeps working.
+ */
+function localFirstStore(indexed) {
+  let sqlite = null;
+  let failed = false;
+  const migrated = new Map();
+  async function pick(owner) {
+    if (failed) return indexed;
+    try {
+      sqlite ??= (await import('./sqliteMessageDb.js')).createSqliteMessageDb();
+      if (!migrated.has(owner)) {
+        migrated.set(owner, (async () => {
+          if ((await sqlite.count(owner)) > 0 || (await indexed.count(owner)) === 0) return;
+          const all = await indexed.loadAll(owner);
+          const puts = Object.entries(all).flatMap(([chat, list]) => list.map((message) => ({ chat, message })));
+          for (let start = 0; start < puts.length; start += 500) await sqlite.apply(owner, { puts: puts.slice(start, start + 500) });
+        })());
+      }
+      await migrated.get(owner);
+      return sqlite;
+    } catch (error) {
+      console.error('Local SQLite store unavailable; using IndexedDB:', error);
+      failed = true;
+      return indexed;
+    }
+  }
+  return {
+    apply: async (owner, diff) => (await pick(owner)).apply(owner, diff),
+    loadRecent: async (owner, limit) => (await pick(owner)).loadRecent(owner, limit),
+    loadOlder: async (owner, chat, beforeTs, limit) => (await pick(owner)).loadOlder(owner, chat, beforeTs, limit),
+    loadAll: async (owner) => (await pick(owner)).loadAll(owner),
+    count: async (owner) => (await pick(owner)).count(owner),
+    search: async (owner, query, limit) => {
+      const store = await pick(owner);
+      return store.search ? store.search(owner, query, limit) : null;
+    },
+    close() {},
+  };
+}
+
+/** Saved messages matching a search, newest first, from the device's own store (null where it has no index). */
+export async function searchSavedMessages(userId, query, limit = 200) {
+  const store = messageStore();
+  return store.search ? store.search(userId, query, limit) : null;
+}
 let saved = { owner: null, chats: new Map() };
 const clearedChats = new Set();
 let persistChain = Promise.resolve();
