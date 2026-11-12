@@ -26,3 +26,16 @@ test('activating the account that is already active keeps its loaded chats; anot
   useChatStore.getState().setUserId('someone-else');
   assert.deepEqual(useChatStore.getState().messages, {});
 });
+
+test('the group list and a group\'s details are kept on the device, per account, for offline display', async () => {
+  await import('fake-indexeddb/auto');
+  const { cachedGroupDetails, cachedGroups, saveGroupDetails, saveGroups } = await import('../src/groupCache.js');
+  assert.equal(await cachedGroups('me'), null, 'nothing kept yet');
+  const list = [{ id: 'g1', name: 'Dj', memberCount: 3, lastMessageAt: '2026-11-10T09:00:00.000Z' }];
+  await saveGroups('me', list);
+  await saveGroupDetails('me', 'g1', { id: 'g1', name: 'Dj', members: [{ id: 'me' }, { id: 'ava' }] });
+  assert.deepEqual(await cachedGroups('me'), list);
+  assert.equal((await cachedGroupDetails('me', 'g1')).name, 'Dj');
+  assert.equal(await cachedGroups('someone-else'), null, 'another account on the device does not see them');
+  assert.equal(await cachedGroupDetails('me', 'unknown'), null);
+});

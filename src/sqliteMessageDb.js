@@ -6,6 +6,7 @@
 //                index (owner, chat, ts) → a chat opens from its newest page
 //   messages_fts full-text index of readable text, for search without the network
 //   media        attachments kept on the device: local_file_path, file_hash, decryption_key, server_blob_path
+//   cache        other account data shown offline (src/groupCache.js: the group list and each group's details)
 //
 // The SQLCipher passphrase is random, made once, and kept by the plugin in Android's secure storage.
 import { CapacitorSQLite, SQLiteConnection } from '@capacitor-community/sqlite';
@@ -21,6 +22,9 @@ const SCHEMA = `
   CREATE TABLE IF NOT EXISTS media (
     id TEXT PRIMARY KEY, local_file_path TEXT NOT NULL, file_hash TEXT, decryption_key TEXT, server_blob_path TEXT,
     content_type TEXT, byte_size INTEGER, info TEXT, stored_at INTEGER NOT NULL
+  );
+  CREATE TABLE IF NOT EXISTS cache (
+    owner TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY (owner, key)
   );
 `;
 
@@ -188,4 +192,24 @@ export async function updateMediaInfo(id, info) {
 export async function deleteMediaRef(id) {
   const db = await openLocalDatabase();
   await db.run('DELETE FROM media WHERE id = ?', [id]);
+}
+
+// --- Account data kept for offline display (JSON values by owner and key). ---
+
+export async function readCached(owner, key) {
+  const db = await openLocalDatabase();
+  const row = (await db.query('SELECT value FROM cache WHERE owner = ? AND key = ?', [owner, key])).values?.[0];
+  if (!row) return undefined;
+  try { return JSON.parse(row.value); } catch { return undefined; }
+}
+
+export async function writeCached(owner, key, value) {
+  const db = await openLocalDatabase();
+  await db.run(`INSERT INTO cache(owner, key, value, updated_at) VALUES (?, ?, ?, ?)
+    ON CONFLICT(owner, key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`, [owner, key, JSON.stringify(value), Date.now()]);
+}
+
+export async function deleteCached(owner, key) {
+  const db = await openLocalDatabase();
+  await db.run('DELETE FROM cache WHERE owner = ? AND key = ?', [owner, key]);
 }

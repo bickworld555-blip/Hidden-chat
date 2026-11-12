@@ -24,6 +24,7 @@ import { fetchGroupMessages } from '../groupHistory.js';
 import { dropPending, enqueuePending, flushPending, pendingFor, usePending } from '../groupPending.js';
 import FormattedText from './FormattedText.jsx';
 import { useChatStore } from '../store.js';
+import { cachedGroupDetails, cachedGroups, saveGroupDetails, saveGroups } from '../groupCache.js';
 import { isMediaContent } from '../media.js';
 import { MAX_CALL_PARTICIPANTS } from '../callRoom.js';
 import { fetchCallTopology, newCallKey, parseRelayCall, relayCallContent, relayCallJoinable } from '../groupRelayCall.js';
@@ -251,6 +252,9 @@ export default function GroupsView({ token, userId, revision, onClose, onStartGr
     if (signal.aborted) return;
     setGroups(list);
     setGroup(details);
+    shownFromServer.current = true;
+    saveGroups(userId, list).catch(() => {});
+    if (selected && details) saveGroupDetails(userId, selected, details).catch(() => {});
     // Local-first: what the server still holds is added to the group's history saved on this device.
     setMessages(selected ? useChatStore.getState().mergeGroupMessages(selected, history) : history);
     const security = selected ? await groupEncryption(selected, { fresh: pendingFor(userId, selected).length > 0 }) : null;
@@ -262,14 +266,29 @@ export default function GroupsView({ token, userId, revision, onClose, onStartGr
     }
   }, [token, selected, groupPath]);
 
-  // Opening a group shows its history saved on this device at once; the server's part follows.
+  // Opening a group shows its history saved on this device at once; the server's part follows. Its name, members
+  // and the group list come from this device too (src/groupCache.js), so they still show offline.
+  const shownFromServer = useRef(false);
   useEffect(() => {
+    let cancelled = false;
+    shownFromServer.current = false;
     if (selected) setMessages(useChatStore.getState().savedGroupMessages(selected));
-  }, [selected]);
+    Promise.all([cachedGroups(userId), selected ? cachedGroupDetails(userId, selected) : null]).then(([list, details]) => {
+      if (cancelled || shownFromServer.current) return;
+      if (list) setGroups((current) => (current.length ? current : list));
+      if (details) setGroup((current) => current ?? details);
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [selected, userId]);
 
   useEffect(() => {
     const controller = new AbortController();
-    refresh(controller.signal).catch((caught) => { if (caught.name !== 'AbortError') setError(caught.message); });
+    refresh(controller.signal).catch((caught) => {
+      if (caught.name === 'AbortError') return;
+      // Offline: what this device kept stays on screen; there is nothing to report until the network is back.
+      if (caught instanceof TypeError && /fetch|network/i.test(caught.message)) return;
+      setError(caught.message);
+    });
     return () => controller.abort();
   }, [refresh, revision]);
   // While messages wait for members' keys, check again every 30 s (refresh sends them once everyone has keys).

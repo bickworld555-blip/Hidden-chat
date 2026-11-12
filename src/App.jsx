@@ -1,6 +1,7 @@
 import { acknowledgeEvents } from './deliveryAck.js';
 import { apiFetch, apiUrl } from './api.js';
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { cachedGroups, saveGroups } from './groupCache.js';
 import { activateAccount, addOrActivateAccount, getAccountsState, loadAccounts, removeAccount, sessionFromAccount, updateAccountUser } from './accounts.js';
 import { Bell, ChevronRight, MessageSquarePlus, Moon, Sun } from 'lucide-react';
 import { notificationPreview, savedMessageCount, useChatStore } from './store.js';
@@ -781,15 +782,23 @@ export default function App() {
   }, [sessionToken, statusRevision]);
   useEffect(() => onNative('pictureInPicture', ({ active }) => document.documentElement.classList.toggle('native-pip', Boolean(active))), []);
   // Group rows in the chat list come from the server listing, refreshed on every group:* socket event and reconnect.
+  // The last listing is kept on this device (src/groupCache.js), so groups show at once and stay when offline.
   useEffect(() => {
-    if (!sessionToken) { setGroupSummaries([]); return undefined; }
+    if (!sessionToken || !userId) { setGroupSummaries([]); return undefined; }
     const controller = new AbortController();
+    let fresh = false;
+    cachedGroups(userId).then((list) => { if (list && !fresh && !controller.signal.aborted) setGroupSummaries(list); }).catch(() => {});
     apiFetch('/api/v1/groups', { headers: { Authorization: `Bearer ${sessionToken}` }, signal: controller.signal })
       .then((response) => (response.ok ? response.json() : null))
-      .then((list) => { if (Array.isArray(list)) setGroupSummaries(list); })
+      .then((list) => {
+        if (!Array.isArray(list) || controller.signal.aborted) return;
+        fresh = true;
+        setGroupSummaries(list);
+        saveGroups(userId, list).catch(() => {});
+      })
       .catch(() => {});
     return () => controller.abort();
-  }, [sessionToken, groupRevision]);
+  }, [sessionToken, userId, groupRevision]);
   const mutedGroupIds = useMutedGroups(userId);
   const groupRows = useMemo(() => groupSummaries.map((group) => groupRow(group, userId, mutedGroupIds)), [groupSummaries, userId, mutedGroupIds]);
   const unreadChats = countUnreadConversations(chats, groupRows);
