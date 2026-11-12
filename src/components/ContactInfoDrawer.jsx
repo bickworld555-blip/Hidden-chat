@@ -366,7 +366,16 @@ export default function ContactInfoDrawer({
         <div className="wa-info-scroll">
           <section className="wa-info-profile">
             <Avatar name={name} initials={chat.initials ?? name.slice(0, 2).toUpperCase()} color={chat.color} image={chat.avatar} size="xl" />
-            <h3>{name}{chat.verified && <VerifiedBadge size={20} />}</h3>
+            <h3>{name}{chat.verified && <VerifiedBadge size={22} />}</h3>
+            {chat.verified && (
+              <p className="wa-info-verified">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                  <path d="M12 3l7 3v5c0 4.5-3 8.3-7 9.5C8 19.3 5 15.5 5 11V6l7-3z" />
+                  <path d="M9.2 11.8l2 2 3.8-3.9" />
+                </svg>
+                Verified Account
+              </p>
+            )}
             {chat.username && <p className="wa-info-handle">@{chat.username}{hasCustomDisplayName(chat) ? '' : ' · No display name yet'}</p>}
             {!blocked && status && <p className="wa-info-status">{status}</p>}
             <div className="wa-info-quick">
@@ -374,6 +383,12 @@ export default function ContactInfoDrawer({
               <button type="button" onClick={() => leaveTo(() => onStartCall?.('video'))} disabled={blocked}><Video size={20} /><span>Video</span></button>
               <button type="button" onClick={() => leaveTo(onSearch)}><Search size={20} /><span>Search</span></button>
             </div>
+            {chat.verified && (
+              <p className="wa-info-verified-note">
+                <VerifiedBadge size={20} />
+                <span>This account&apos;s identity has been checked. The green tick appears next to its name wherever it shows.</span>
+              </p>
+            )}
           </section>
 
           {!blocked && <BusinessInfoCard userId={chatId} sessionToken={sessionToken} />}

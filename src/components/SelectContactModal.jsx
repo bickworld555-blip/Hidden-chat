@@ -5,6 +5,7 @@ import { linkContact, searchPeople } from '../contactsApi.js';
 import { exactHandleMatch, isSavedContact, matchesPerson, mergeSuggestions, savedContacts, unsavedThreads } from '../contactBook.js';
 import Avatar from './Avatar.jsx';
 import StatusRing from './StatusRing.jsx';
+import VerifiedBadge from './VerifiedBadge.jsx';
 
 const SUGGEST_DEBOUNCE_MS = 180;
 
@@ -41,7 +42,7 @@ function PersonRow({ person, online, onChat, onAdd, busy, trailing }) {
     <div className="wa-sc-contact-item wa-sc-suggestion">
       <StatusRing userId={person.id} name={person.name}><Avatar name={person.name} initials={person.initials ?? person.name?.slice(0, 2)?.toUpperCase() ?? '?'} color={person.color} image={person.avatar} online={online} /></StatusRing>
       <div className="wa-sc-contact-info">
-        <strong className="wa-sc-contact-name">{person.name ?? person.username}</strong>
+        <strong className="wa-sc-contact-name">{person.name ?? person.username}{person.verified && <VerifiedBadge size={15} />}</strong>
         <span className="wa-sc-contact-status">@{person.username}{saved ? ' · In your contacts' : person.known ? ' · Recent chat' : ''}</span>
       </div>
       {trailing ?? (
@@ -249,7 +250,7 @@ export default function SelectContactModal({ isOpen, onClose, onSelectContact, o
               <button type="button" key={contact.id} className="wa-sc-contact-item" onClick={() => chatWith(contact)} disabled={busyId === contact.id}>
                 <StatusRing userId={contact.id} name={contact.name}><Avatar name={contact.name} initials={contact.initials ?? contact.name?.slice(0, 2)?.toUpperCase() ?? '?'} color={contact.color} image={contact.avatar} online={presence?.[contact.id] === 'online'} /></StatusRing>
                 <div className="wa-sc-contact-info">
-                  <strong className="wa-sc-contact-name">{contact.name ?? 'Unknown'}</strong>
+                  <strong className="wa-sc-contact-name">{contact.name ?? 'Unknown'}{contact.verified && <VerifiedBadge size={15} />}</strong>
                   <span className="wa-sc-contact-status">{contact.username ? `@${contact.username}` : 'Hey there! I am using Hidden Messenger'}</span>
                 </div>
                 <span className="wa-sc-saved-badge" aria-hidden="true"><Check size={14} /></span>
