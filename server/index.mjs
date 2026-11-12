@@ -33,6 +33,7 @@ import { ensureE2eSchema, registerE2e } from './e2e.mjs';
 import { registerSfu } from './sfu.mjs';
 import { gifConfigFromEnv, registerGifs } from './gifs.mjs';
 import { alertWebhookFromEnv, createAlerts, serverErrorWatch } from './monitoring.mjs';
+import { createBlocks, ensureBlockSchema, registerBlocks } from './blocks.mjs';
 import { abuseLimitsFromEnv, clientAddress, createSharedRateLimiter, ensureRateLimitSchema, tooManyMessages, tooManySignups } from './abuse.mjs';
 import { ensureExtrasSchema, registerExtras, statusAudienceSql } from './extras.mjs';
 import { ensureAdminSchema, registerAdmin } from './admin.mjs';
@@ -75,7 +76,7 @@ const LIVE_ACTIONS = new Set(['request', 'accept', 'decline', 'update', 'stop'])
 const MAX_CALL_PARTICIPANTS = 4;
 const LIVE_DURATIONS_MS = new Set(LIVE_DURATIONS.map((duration) => duration.ms));
 // Columns every user projection reads, so profile photos travel with the rest of the public profile.
-const USER_COLUMNS = 'id, username, name, initials, color, avatar_disk_name, avatar_type, avatar_updated_at';
+const USER_COLUMNS = 'id, username, name, initials, color, avatar_disk_name, avatar_type, avatar_updated_at, deleted_at';
 const MAX_AVATAR_BYTES = 5 * 1024 * 1024;
 // Image formats accepted as profile photos, recognised by their leading bytes rather than the declared type.
 const AVATAR_SIGNATURES = [
@@ -417,9 +418,12 @@ export function createChatServer({
   ensureRegionSchema(db);
   ensureDeliveryQueueSchema(db);
   ensureRateLimitSchema(db);
+  ensureBlockSchema(db);
   }
   // Verified business badges (server/verification.mjs), read into memory for public user records.
   const verifiedAccounts = createVerifiedAccounts(db);
+  // Who blocked whom (server/blocks.mjs), checked wherever two people reach each other.
+  const blocks = createBlocks(db);
   const verifiedChannels = createVerifiedChannels(db);
   const upsertLink = db.prepare(`INSERT INTO contacts(owner_id, contact_id, created_at, saved, hidden) VALUES (?, ?, ?, ?, 0)
     ON CONFLICT(owner_id, contact_id) DO UPDATE SET saved = CASE WHEN contacts.saved > excluded.saved THEN contacts.saved ELSE excluded.saved END, hidden = 0`);
@@ -511,7 +515,7 @@ export function createChatServer({
   async function deliverDirectMessage({ senderId, receiverId, content }) {
     const sender = await db.prepare(`SELECT ${USER_COLUMNS} FROM users WHERE id = ?`).get(senderId);
     const recipient = await db.prepare(`SELECT ${USER_COLUMNS} FROM users WHERE id = ?`).get(receiverId);
-    if (!sender || !recipient) return null;
+    if (!sender || !recipient || recipient.deleted_at || sender.deleted_at || await blocks.between(senderId, receiverId)) return null;
     const disappearSeconds = await disappearSecondsFor(senderId, receiverId);
     const message = {
       id: randomUUID(), senderId, receiverId,
@@ -687,6 +691,7 @@ export function createChatServer({
 
   function publicUser(row) {
     const avatar = row.avatar_disk_name ? `/api/v1/users/${encodeURIComponent(row.id)}/avatar?v=${row.avatar_updated_at ?? 0}` : null;
+    if (row.deleted_at) return { id: row.id, username: row.username, name: 'Deleted account', initials: '?', color: row.color, avatar: null, deleted: true };
     return { id: row.id, username: row.username, name: row.name, initials: row.initials, color: row.color, avatar, ...(verifiedAccounts.has(row.id) ? { verified: true } : {}) };
   }
 
@@ -1158,6 +1163,8 @@ export function createChatServer({
   });
   // Group calls through an SFU when one is configured (server/sfu.mjs); mesh otherwise.
   registerSfu({ app, db, requireSession });
+  registerBlocks({ app, db, requireSession, publicUser, userColumns: USER_COLUMNS, notifyUser: (id, event) => notifyUser(id, event),
+    onBlockChanged: async (blockerId, blockedId) => { await broadcastPresence(blockerId); await broadcastPresence(blockedId); } });
   // GIF search through GIPHY, proxied so GIPHY never sees users (server/gifs.mjs).
   registerGifs({ app, requireSession, config: gifConfig, fetchImpl: gifFetch });
 
@@ -1178,7 +1185,9 @@ export function createChatServer({
     if (!owner) return () => null;
     const contactIds = owner.privacy === 'contacts' ? new Set((await savedContactIds.all(ownerId)).map((row) => row.id)) : null;
     const online = isOnline(ownerId);
+    const blockedWith = await blocks.relatedTo(ownerId);
     return (viewerId) => {
+      if (blockedWith.has(viewerId)) return { userId: ownerId, status: 'hidden', lastSeenAt: null };
       const visible = canSeePresence({ ownerId, viewerId, privacy: owner.privacy, ownerContactIds: contactIds });
       // "Who can see when I'm online": everyone, or the same people as last seen.
       const onlineVisible = owner.onlinePrivacy === 'everyone' ? true : visible;
@@ -1501,7 +1510,8 @@ export function createChatServer({
 
   const avatarDirectory = join(dataDirectory, 'avatars');
   // Account information and account deletion (server/account.mjs).
-  registerAccount({ app, db, requireSession, verifyPassword, closeUserSessions, avatarDirectory, catalogDirectory: join(dataDirectory, 'catalog') });
+  registerAccount({ app, db, requireSession, verifyPassword, closeUserSessions, avatarDirectory, catalogDirectory: join(dataDirectory, 'catalog'),
+    onDeleted: async (userId, formerContacts) => { for (const ownerId of formerContacts) await notifyUser(ownerId, { type: 'account:deleted', userId }).catch(() => {}); } });
   mkdirSync(avatarDirectory, { recursive: true });
 
   async function broadcastProfile(userId) {
@@ -1540,7 +1550,8 @@ export function createChatServer({
     // "Who can see my profile photo": everyone, my contacts (people the owner saved) or nobody.
     const audience = row.photo_privacy ?? 'everyone';
     const contactIds = audience === 'contacts' ? new Set((await savedContactIds.all(request.params.id)).map((item) => item.id)) : null;
-    if (!audienceAllows({ ownerId: request.params.id, viewerId: request.session.user_id, audience, ownerContactIds: contactIds })) {
+    if (!audienceAllows({ ownerId: request.params.id, viewerId: request.session.user_id, audience, ownerContactIds: contactIds })
+      || await blocks.between(request.params.id, request.session.user_id)) {
       return response.status(404).json({ error: 'No profile photo.' });
     }
     response.set({
@@ -2011,8 +2022,9 @@ export function createChatServer({
       FROM statuses s
       WHERE s.expires_at > ? AND (s.user_id = ? OR (EXISTS (
         SELECT 1 FROM contacts c WHERE c.owner_id = s.user_id AND c.contact_id = ? AND c.hidden = 0
-        AND ${statusAudienceSql('s.user_id', 'c.contact_id')})))
-      ORDER BY s.created_at ASC`).all(userId, now, userId, userId);
+        AND ${statusAudienceSql('s.user_id', 'c.contact_id')}))
+        AND NOT EXISTS (SELECT 1 FROM blocks b WHERE (b.blocker_id = s.user_id AND b.blocked_id = ?) OR (b.blocker_id = ? AND b.blocked_id = s.user_id)))
+      ORDER BY s.created_at ASC`).all(userId, now, userId, userId, userId, userId);
     const mine = rows.filter((row) => row.userId === userId).map((row) => presentStatus(row, userId));
     const byAuthor = new Map();
     for (const row of rows.filter((item) => item.userId !== userId)) {
@@ -2138,7 +2150,7 @@ export function createChatServer({
     const handle = normalizeUsername(raw.replace(/^@/, '')).replace(/[^a-z0-9_]/g, '');
     if (!raw) return response.json([]);
     const rows = (await db.prepare(`SELECT ${USER_COLUMNS} FROM users
-      WHERE id <> ? AND ((length(?) > 0 AND substr(lower(username), 1, length(?)) = lower(?)) OR replace(lower(name), lower(?), '') <> lower(name))
+      WHERE id <> ? AND deleted_at IS NULL AND ((length(?) > 0 AND substr(lower(username), 1, length(?)) = lower(?)) OR replace(lower(name), lower(?), '') <> lower(name))
       ORDER BY CASE WHEN substr(lower(username), 1, length(?)) = lower(?) AND length(?) > 0 THEN 0 ELSE 1 END, lower(username) LIMIT 20`)
       .all(request.session.user_id, handle, handle, handle, raw, handle, handle, handle));
     response.json(rows.map(publicUser));
@@ -2163,7 +2175,7 @@ export function createChatServer({
       return response.status(400).json({ error: 'Choose a different Hidden Messenger user.' });
     }
     const contact = (await db.prepare(`SELECT ${USER_COLUMNS} FROM users WHERE id = ?`).get(contactId));
-    if (!contact) return response.status(404).json({ error: 'That Hidden Messenger handle was not found.' });
+    if (!contact || contact.deleted_at) return response.status(404).json({ error: 'That Hidden Messenger handle was not found.' });
     (await linkUsers(request.session.user_id, contactId, { save: request.body?.save !== false }));
     // Saving someone can reveal "My contacts" presence to them.
     await broadcastPresence(request.session.user_id);
@@ -2364,7 +2376,8 @@ export function createChatServer({
 
       if (event.type === 'presence:typing') {
         const peerId = event.peerId;
-        if (typeof peerId === 'string' && peerId !== userId && (await db.prepare("SELECT 1 FROM users WHERE id = ?").get(peerId))) {
+        if (typeof peerId === 'string' && peerId !== userId && (await db.prepare("SELECT 1 FROM users WHERE id = ? AND deleted_at IS NULL").get(peerId))
+          && !(await blocks.between(userId, peerId))) {
           broadcastUser(peerId, { type: 'presence:typing', userId, active: Boolean(event.active) });
         }
         return;
@@ -2381,6 +2394,7 @@ export function createChatServer({
           targetId = userByHandle.id;
         }
 
+        if (await blocks.between(userId, targetId) || (await db.prepare('SELECT 1 FROM users WHERE id = ? AND deleted_at IS NOT NULL').get(targetId))) return;
         if (!(await areLinked(userId, targetId)) || targetId === userId || typeof callId !== 'string' || callId.length > 80
           || !['audio', 'video'].includes(mode) || !signal || typeof signal !== 'object'
           || !CALL_SIGNAL_TYPES.has(signal.type) || (signal.type === 'reaction' && !CALL_REACTION_EMOJI.has(signal.emoji))) {
@@ -2697,7 +2711,18 @@ export function createChatServer({
       const receiverId = payload.receiverId;
       const content = typeof payload.content === 'string' ? payload.content.trim() : '';
       const mediaId = mediaIdOf(content);
-      const receiver = typeof receiverId === 'string' && (await db.prepare("SELECT 1 FROM users WHERE id = ?").get(receiverId));
+      const receiver = typeof receiverId === 'string' && (await db.prepare('SELECT deleted_at AS "deletedAt" FROM users WHERE id = ?').get(receiverId));
+      const clientMessageId = typeof payload.id === 'string' && payload.id.length > 0 && payload.id.length < 80 ? payload.id : null;
+      if (receiver?.deletedAt) {
+        return json(socket, { type: 'error', code: 'account_deleted', messageId: clientMessageId, message: 'This account was deleted. Messages can no longer be sent to it.' });
+      }
+      if (receiver && await blocks.has(userId, receiverId)) {
+        return json(socket, { type: 'error', code: 'blocked', messageId: clientMessageId, message: 'You blocked this contact. Unblock them to send a message.' });
+      }
+      // Blocked by the receiver: accepted with one tick, never stored or delivered (as on WhatsApp).
+      if (receiver && clientMessageId && typeof payload.content === 'string' && payload.content.trim() && await blocks.has(receiverId, userId)) {
+        return json(socket, { type: 'message:ack', message: { id: clientMessageId, senderId: userId, receiverId, timestamp: new Date().toISOString(), content: payload.content, status: 'sent' } });
+      }
       // Media from another conversation the sender can read (a forward) is re-shared to this receiver as its own copy.
       const media = mediaId ? (await db.prepare(`SELECT id, sender_id AS "senderId", receiver_id AS "receiverId", filename,
         content_type AS "contentType", byte_size AS "byteSize", disk_name AS "diskName"

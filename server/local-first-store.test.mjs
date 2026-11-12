@@ -104,3 +104,27 @@ test('the Android app may reach the group-call media server (LiveKit Cloud, or o
   assert.match(connect, /https:\/\/\*\.livekit\.cloud wss:\/\/\*\.livekit\.cloud/);
   assert.deepEqual(sfuOrigins('wss://sfu.example.com https://a.example/path http://plain.example nonsense'), ['wss://sfu.example.com']);
 });
+
+test("this device's block periods follow the server's block list (other devices, a new phone)", async () => {
+  const { reconcileBlocks } = await import('../src/blocksApi.js');
+  const before = {
+    stillBlocked: [{ from: '2026-11-01T00:00:00.000Z', to: null }],
+    liftedElsewhere: [{ from: '2026-11-02T00:00:00.000Z', to: null }],
+    longAgo: [{ from: '2026-10-01T00:00:00.000Z', to: '2026-10-02T00:00:00.000Z' }],
+  };
+  const at = '2026-11-12T12:00:00.000Z';
+  const next = reconcileBlocks(before, ['stillBlocked', 'newElsewhere', 'longAgo'], at);
+  assert.deepEqual(next.stillBlocked, before.stillBlocked, 'unchanged');
+  assert.equal(next.liftedElsewhere[0].to, at, 'ended');
+  assert.deepEqual(next.newElsewhere, [{ from: at, to: null }], 'started');
+  assert.deepEqual(next.longAgo.at(-1), { from: at, to: null }, 'blocked again after an old block');
+});
+
+test('a contact that deleted their account becomes a read-only "Deleted account" chat', async () => {
+  const { useChatStore } = await import('../src/store.js');
+  useChatStore.setState({ userId: 'me-del', chats: [{ id: 'gone', name: 'Cal', initials: 'CA', avatar: '/x' }, { id: 'here', name: 'Ava' }] });
+  useChatStore.getState().markAccountDeleted('gone');
+  const chats = useChatStore.getState().chats;
+  assert.deepEqual({ ...chats.find((chat) => chat.id === 'gone') }, { id: 'gone', name: 'Deleted account', initials: '?', avatar: null, deleted: true });
+  assert.equal(chats.find((chat) => chat.id === 'here').deleted, undefined);
+});

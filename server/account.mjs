@@ -12,7 +12,9 @@ import { join } from 'node:path';
 /** What deletion removes: [table, where clause] with "?" = the user id (repeated as needed). */
 export const PERSONAL_ROWS = [
   ['sessions', 'user_id = ?'],
-  ['contacts', 'owner_id = ? OR contact_id = ?'],
+  // Their own contact list goes; other people keep their chat with the account, which now reads "Deleted account".
+  ['contacts', 'owner_id = ?'],
+  ['blocks', 'blocker_id = ? OR blocked_id = ?'],
   ['message_reactions', 'user_id = ?'],
   ['message_hidden', 'user_id = ?'],
   ['poll_votes', 'user_id = ?'],
@@ -56,7 +58,7 @@ export const PERSONAL_ROWS = [
   ['messages', 'sender_id = ? OR receiver_id = ?'],
 ];
 
-export function registerAccount({ app, db, requireSession, verifyPassword, closeUserSessions, avatarDirectory, catalogDirectory }) {
+export function registerAccount({ app, db, requireSession, verifyPassword, closeUserSessions, avatarDirectory, catalogDirectory, onDeleted = async () => {} }) {
   const placeholders = (clause) => (clause.match(/\?/g) ?? []).length;
 
   // Your account information, as a download (no message contents: those are end-to-end encrypted on your phones).
@@ -98,6 +100,8 @@ export function registerAccount({ app, db, requireSession, verifyPassword, close
     const cover = await db.prepare('SELECT cover_disk_name AS "file" FROM business_profiles WHERE user_id = ?').get(userId);
     // Sign out everywhere first (sockets close, push stops), then remove the rows.
     await closeUserSessions(userId, 'This account was deleted');
+    // People who had a chat with the account are told once it is gone (their chat becomes read-only).
+    const formerContacts = (await db.prepare('SELECT owner_id AS "id" FROM contacts WHERE contact_id = ?').all(userId)).map((row) => row.id);
     for (const [table, where] of PERSONAL_ROWS) {
       await db.prepare(`DELETE FROM ${table} WHERE ${where}`).run(...Array(placeholders(where)).fill(userId));
     }
@@ -108,5 +112,6 @@ export function registerAccount({ app, db, requireSession, verifyPassword, close
     if (row.avatar) await unlink(join(avatarDirectory, row.avatar)).catch(() => {});
     for (const file of [...catalogFiles.map((item) => item.file), cover?.file].filter(Boolean)) await unlink(join(catalogDirectory, file)).catch(() => {});
     response.status(204).end();
+    await onDeleted(userId, formerContacts).catch(() => {});
   });
 }

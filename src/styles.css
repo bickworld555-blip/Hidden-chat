@@ -5277,3 +5277,16 @@ textarea.hm-input { min-height: 96px; resize: vertical; }
 .chat-row .unread-badge { position: static; }
 /* Keyboard shortcut hints mean nothing on a touch screen. */
 @media (pointer: coarse) { .search-box kbd { display: none; } }
+
+/* Settings › Privacy › Blocked contacts */
+.blocked-contacts { display: flex; flex-direction: column; gap: 4px; padding-bottom: 16px; }
+.blocked-add { display: flex; align-items: center; gap: 12px; min-height: 52px; margin: 4px 0; padding: 0 20px; border: 0; background: transparent; color: var(--wa-green, #1a73e8); font: inherit; font-weight: 600; text-align: left; cursor: pointer; }
+.blocked-list { list-style: none; margin: 0; padding: 0; }
+.blocked-list li { display: flex; align-items: center; gap: 12px; min-height: 64px; padding: 6px 20px; border-bottom: 1px solid var(--wa-line, var(--line)); }
+.blocked-name { display: flex; flex: 1; min-width: 0; flex-direction: column; }
+.blocked-name strong, .blocked-name small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.blocked-name small { color: var(--wa-muted, var(--muted)); }
+.blocked-action { flex: none; min-width: 88px; min-height: 40px; padding: 0 14px; border: 1px solid var(--wa-line, var(--line)); border-radius: 20px; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.blocked-action.is-block { border-color: #d93025; color: #d93025; }
+.blocked-action:disabled { opacity: .5; cursor: progress; }
+.blocked-empty { display: flex; align-items: center; gap: 8px; padding: 16px 20px; color: var(--wa-muted, var(--muted)); }

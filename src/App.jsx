@@ -99,6 +99,7 @@ import { playNotificationTone, stopAllTones } from './sounds.js';
 import { applyAppBadge, maybeRemind, showSystemNotification, vibrateFor } from './notify.js';
 import { badgeCount, unseenMissedCalls, useNotificationSettings } from './notificationSettings.js';
 import { hiddenByBlock, isBlocked } from './blocking.js';
+import { fetchBlocks } from './blocksApi.js';
 import { TERMINAL_STATUSES } from './callEngine.js';
 import { isRoomOffer } from './callRoom.js';
 import { animationsAttribute, callAnimationsAttribute, useAppearance } from './appearance.js';
@@ -304,6 +305,13 @@ export default function App() {
         const handleEvent = (event) => {
           if (event.type === 'connection:ready' || event.type === 'community:changed' || (typeof event.type === 'string' && event.type.startsWith('group:'))) setGroupRevision((current) => current + 1);
           handleAccountEvent(event);
+          // Blocked or unblocked on another of this account's devices; a contact deleted their account.
+          if (event.type === 'block:changed' && typeof event.userId === 'string') {
+            const store = useChatStore.getState();
+            const others = Object.entries(store.blockedChats).filter(([id, periods]) => id !== event.userId && isBlocked(periods)).map(([id]) => id);
+            store.applyServerBlocks(event.blocked ? [...others, event.userId] : others);
+          }
+          if (event.type === 'account:deleted' && typeof event.userId === 'string') useChatStore.getState().markAccountDeleted(event.userId);
           if (event.type === 'message:edited') updateMessage(event.messageId, { content: event.content, editedAt: event.editedAt, ...(event.e2eError ? { e2eError: event.e2eError } : {}) });
           // Reconnected after a drop: catch up on anything that changed meanwhile (the first connect already loaded history).
           if (event.type === 'connection:ready') {
@@ -487,6 +495,8 @@ export default function App() {
           const contacts = await contactResponse.json();
           if (cancelled) return [];
           setContacts(contacts);
+          // The block list follows the account (server/blocks.mjs): blocks made or lifted on another device apply here.
+          fetchBlocks(sessionToken).then((list) => { if (!cancelled) useChatStore.getState().applyServerBlocks(list.map((user) => user.id)); }).catch(() => {});
           persistContacts(userId).catch(() => {});
           contactsLoaded = true;
           return contacts;

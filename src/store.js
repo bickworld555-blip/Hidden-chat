@@ -7,6 +7,7 @@ import { create } from 'zustand';
 import { secureDel as del, secureGet as get, secureSet as set, secureStorage } from './secureStorage.js';
 import { createMessageDb, diffMessages, MESSAGE_WINDOW, snapshotOf } from './messageDb.js';
 import { endBlock, hiddenByBlock, startBlock } from './blocking.js';
+import { reconcileBlocks, setBlocked } from './blocksApi.js';
 import { mediaPreviewLabel } from './media.js';
 import { haversineDistance, isLiveExpired, parseContact, parseLocation, shouldSendLiveUpdate } from './geo.js';
 import { mergeMessageStatus } from './messageStatus.js';
@@ -891,13 +892,44 @@ export const useChatStore = create((setState, getState) => ({
   toggleFavouriteChat(chatId) {
     getState().setPreference('favouriteChatIds', (ids) => toggleId(ids, chatId));
   },
-  blockChat(chatId) {
+  // The server keeps and enforces the block list (src/blocksApi.js); this device keeps when each block started and
+  // ended, to hide what arrived while blocked. A change that the server did not take is undone here and rejects.
+  async blockChat(chatId) {
     const at = new Date().toISOString();
+    const before = getState().blockedChats[chatId];
     getState().setPreference('blockedChats', (blocked) => ({ ...blocked, [chatId]: startBlock(blocked[chatId], at) }));
+    const token = getState().sessionToken;
+    if (!token) return;
+    try {
+      await setBlocked(token, chatId, true);
+    } catch (error) {
+      getState().setPreference('blockedChats', (blocked) => ({ ...blocked, [chatId]: before ?? [] }));
+      throw error;
+    }
   },
-  unblockChat(chatId) {
+  async unblockChat(chatId) {
     const at = new Date().toISOString();
+    const before = getState().blockedChats[chatId];
     getState().setPreference('blockedChats', (blocked) => ({ ...blocked, [chatId]: endBlock(blocked[chatId], at) }));
+    const token = getState().sessionToken;
+    if (!token) return;
+    try {
+      await setBlocked(token, chatId, false);
+    } catch (error) {
+      getState().setPreference('blockedChats', (blocked) => ({ ...blocked, [chatId]: before ?? [] }));
+      throw error;
+    }
+  },
+  /** The server's block list (another device changed it, or this device starts): adopted here. */
+  applyServerBlocks(serverIds) {
+    getState().setPreference('blockedChats', (blocked) => reconcileBlocks(blocked, serverIds));
+  },
+  /** A contact deleted their account: the chat stays, read-only, as "Deleted account". */
+  markAccountDeleted(userId) {
+    setState((state) => ({
+      chats: state.chats.map((chat) => (chat.id === userId ? { ...chat, deleted: true, name: 'Deleted account', initials: '?', avatar: null } : chat)),
+    }));
+    getState().persistContacts(getState().userId);
   },
   setChatTheme(chatId, themeId) {
     getState().setPreference('chatThemes', (themes) => {

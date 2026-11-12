@@ -714,7 +714,8 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
   const [headerNotice, setHeaderNotice] = useState('');
   const [newContactOpen, setNewContactOpen] = useState(false);
   const muted = useChatStore((state) => state.mutedChatIds.includes(chatId));
-  const openInfo = (view) => { setContactInfoView(view); setContactInfoOpen(true); };
+  const [contactInfoDialog, setContactInfoDialog] = useState(null);
+  const openInfo = (view, dialog = null) => { setContactInfoView(view); setContactInfoDialog(dialog); setContactInfoOpen(true); };
 
   useEffect(() => {
     if (!headerMenuOpen) return undefined;
@@ -1674,14 +1675,14 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
                 {chat.disappearSeconds > 0 && <Timer size={13} className="conversation-timer" aria-label={`Disappearing messages: ${disappearingLabel(chat.disappearSeconds)}`} />}
               </strong>
               <small>
-                {blocked ? 'Blocked' : connection && connection !== 'online' && connection !== 'connected' ? [status, connection].filter(Boolean).join(' · ') : status}
+                {chat.deleted ? 'Account deleted' : blocked ? 'Blocked' : connection && connection !== 'online' && connection !== 'connected' ? [status, connection].filter(Boolean).join(' · ') : status}
               </small>
             </span>
           </div>
           <div className="conversation-actions">
             {cartItems > 0 && <button type="button" className="icon-button conversation-cart" onClick={() => setPicker('order')} aria-label={`Cart, ${cartItems} item${cartItems === 1 ? '' : 's'}`}><ShoppingCart size={18} /><span className="conversation-cart-count">{cartItems}</span></button>}
-            <button type="button" className="icon-button" onClick={() => onStartCall?.('video')} disabled={blocked} aria-label="Video call"><Video size={18} /></button>
-            <button type="button" className="icon-button" onClick={() => onStartCall?.('audio')} disabled={blocked} aria-label="Voice call"><Phone size={18} /></button>
+            <button type="button" className="icon-button" onClick={() => onStartCall?.('video')} disabled={blocked || chat.deleted} aria-label="Video call"><Video size={18} /></button>
+            <button type="button" className="icon-button" onClick={() => onStartCall?.('audio')} disabled={blocked || chat.deleted} aria-label="Voice call"><Phone size={18} /></button>
             {/* Secondary actions collapse into the ⋮ menu on narrow screens (see .header-action-secondary). */}
             <button type="button" className="icon-button header-action-secondary" onClick={openChatSearch} aria-label="Search messages"><Search size={18} /></button>
             <button type="button" className="icon-button header-action-secondary" onClick={onPair} aria-label="Linked devices"><Link2 size={18} /></button>
@@ -1699,6 +1700,7 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
                     { id: 'theme', label: 'Chat theme', action: () => openInfo('theme') },
                     { id: 'pair', label: 'Linked devices', action: () => onPair?.() },
                     { id: 'info', label: 'View contact', action: () => openInfo('main') },
+                    ...(chat.deleted ? [] : [{ id: 'block', label: blocked ? 'Unblock' : 'Block', action: () => (blocked ? unblockChat(chatId).catch((failure) => setError(failure.message)) : openInfo('main', 'block')) }]),
                   ].map((item) => (
                     <li key={item.id} role="none">
                       <button type="button" role="menuitem" className={item.hint ? 'is-placeholder' : ''} onClick={() => { setHeaderMenuOpen(false); item.action(); }}>
@@ -1761,9 +1763,11 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
         </button>
       )}
 
-      {blocked ? (
+      {chat.deleted ? (
+        <div className="wa-blocked-composer" role="status"><p>This account was deleted. You can&apos;t send messages to this chat anymore.</p></div>
+      ) : blocked ? (
         <div className="wa-blocked-composer">
-          <button type="button" onClick={() => unblockChat(chatId)}>You blocked this contact. Tap to unblock.</button>
+          <button type="button" onClick={() => unblockChat(chatId).catch((failure) => setError(failure.message))}>You blocked this contact. Tap to unblock.</button>
         </div>
       ) : (
       <form className="composer-wrap" onSubmit={handleSubmit}>
@@ -1868,6 +1872,7 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
           status={status}
           client={client}
           initialView={contactInfoView}
+          initialDialog={contactInfoDialog}
           onClose={() => setContactInfoOpen(false)}
           onStartCall={onStartCall}
           onSearch={openChatSearch}

@@ -123,6 +123,8 @@ export default function ContactInfoDrawer({
   onShowMessage,
   onChatDeleted,
   initialView = 'main',
+  // Opened from the chat's menu to block: the confirmation shows at once.
+  initialDialog = null,
 }) {
   const chatId = chat.id;
   const name = presentName(chat) || 'Unknown contact';
@@ -137,7 +139,7 @@ export default function ContactInfoDrawer({
 
   const [view, setView] = useState(initialView);
   const [mediaTab, setMediaTab] = useState('media');
-  const [dialog, setDialog] = useState(null);
+  const [dialog, setDialog] = useState(initialDialog);
   const [keepStarred, setKeepStarred] = useState(true);
   const [reportReason, setReportReason] = useState('spam');
   const [deleteAfterReport, setDeleteAfterReport] = useState(false);
@@ -238,7 +240,7 @@ export default function ContactInfoDrawer({
       body: JSON.stringify({ reason: reportReason }),
     });
     if (!response.ok) throw new Error((await response.json().catch(() => null))?.error ?? 'The report could not be sent. Try again.');
-    if (!blocked) store().blockChat(chatId);
+    if (!blocked) await store().blockChat(chatId);
     if (deleteAfterReport) {
       const { kept } = await deleteChatOnServer(sessionToken, chatId);
       onClose();
@@ -251,8 +253,7 @@ export default function ContactInfoDrawer({
 
   function toggleBlock() {
     if (blocked) {
-      store().unblockChat(chatId);
-      setToast(`${name} unblocked`);
+      store().unblockChat(chatId).then(() => setToast(`${name} unblocked`)).catch((failure) => setToast(failure.message));
     } else {
       openDialog('block');
     }
@@ -459,12 +460,12 @@ export default function ContactInfoDrawer({
         <ConfirmDialog
           title={`Block ${name}?`}
           confirmLabel="Block"
-          onConfirm={() => { store().blockChat(chatId); setDialog(null); setToast(`${name} blocked`); }}
+          onConfirm={() => runDialogAction(async () => { await store().blockChat(chatId); setToast(`${name} blocked`); })}
           onCancel={() => setDialog(null)}
         >
           <p>
-            Their new messages and calls won&apos;t reach this device. Blocking only applies here: {name} is not told and
-            can still send to your Hidden Messenger account.
+            Blocked contacts can no longer call you or send you messages, and they won&apos;t see your online status, last
+            seen, profile photo or status updates. {name} is not told.
           </p>
         </ConfirmDialog>
       )}

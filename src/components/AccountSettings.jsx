@@ -10,6 +10,8 @@ import { SECTIONS, SETTINGS, appSettings, optionLabel, useAccountSettingsLoaded,
 import { formatLastSeen } from '../presence.js';
 import { LinkScanner } from './LinkDevice.jsx';
 import { RadioList, Row, SubView } from './NotificationSettings.jsx';
+import BlockedContacts from './BlockedContacts.jsx';
+import { isBlocked } from '../blocking.js';
 
 const isPhone = (name = '') => /Android|iOS/.test(name);
 
@@ -162,6 +164,7 @@ export default function AccountSettings({ onClose, section = 'account', initialV
   const username = useChatStore((state) => state.user?.username ?? '');
   const [scanning, setScanning] = useState(false);
   const sessionToken = useChatStore((state) => state.sessionToken);
+  const blockedCount = useChatStore((state) => Object.values(state.blockedChats).filter(isBlocked).length);
   const [view, setView] = useState(initialView);
   // Android Back leaves a sub-screen first; the screen itself is closed by its opener.
   useBackHandler(Boolean(view), () => setView(null));
@@ -226,6 +229,12 @@ export default function AccountSettings({ onClose, section = 'account', initialV
         <PasswordForm sessionToken={sessionToken} onDone={(message) => { setNotice(message); setView(null); loadDevices(); }} />
       </SubView>
     );
+  } else if (view === 'blocked') {
+    content = (
+      <SubView title="Blocked contacts" onBack={() => setView(null)}>
+        <BlockedContacts token={sessionToken} />
+      </SubView>
+    );
   } else if (view === 'delete') {
     content = (
       <SubView title="Delete my account" onBack={() => setView(null)}>
@@ -266,6 +275,7 @@ export default function AccountSettings({ onClose, section = 'account', initialV
               </section>
               <section className="wa-info-section">
                 <Row title="Status" subtitle="Who sees your status updates, muted updates" onClick={() => onOpenSheet?.('statusprivacy')} />
+                <Row title="Blocked contacts" subtitle={blockedCount ? `${blockedCount} blocked` : 'None'} onClick={() => setView('blocked')} />
               </section>
               <section className="wa-info-section">
                 <h3>App lock</h3>
