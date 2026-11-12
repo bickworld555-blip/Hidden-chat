@@ -1,0 +1,48 @@
+{
+  "name": "hidden-messenger-desktop",
+  "productName": "Hidden Messenger",
+  "version": "1.0.0",
+  "description": "Hidden Messenger for Windows: the web companion, linked to your phone by QR code.",
+  "private": true,
+  "main": "main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test main.test.cjs",
+    "build:win": "electron-builder --win nsis portable --x64"
+  },
+  "devDependencies": {
+    "electron": "45.3.1",
+    "electron-builder": "26.18.0"
+  },
+  "build": {
+    "appId": "com.hiddenmessenger.desktop",
+    "productName": "Hidden Messenger",
+    "copyright": "Hidden Messenger",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "main.cjs",
+      "config.cjs",
+      "build/icon.png"
+    ],
+    "win": {
+      "icon": "build/icon.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "Hidden Messenger",
+      "artifactName": "HiddenMessenger-Setup-${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "HiddenMessenger-${version}-portable.${ext}"
+    }
+  },
+  "allowScripts": {
+    "electron-winstaller": false
+  }
+}
