@@ -283,7 +283,7 @@ test('chat window wires swipe-to-reply, quotes, and the sectioned forward sheet'
     'onPointerDown={handlePointerDown}',
     'swipeReply?.(message)',
     'onSwipeReply={message.content?.startsWith(\'call:\') || message.deleted ? null : stableStartReply}',
-    'quote={quoteView(message.replyTo, userId, chat.name)}',
+    'quote={quoteView(resolveQuote(message.replyTo, messages), userId, chat.name)}',
     'onQuoteClick={stableShowInChat}',
     'composerInputRef.current?.focus()',
     'sendToChat(target.id, source.content, { forwarded: true })',

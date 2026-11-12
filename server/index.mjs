@@ -1269,8 +1269,9 @@ export function createChatServer({
     try {
       await db.ready?.();
     } catch (error) {
+      // Alerted, then answered as before by the error handler (503, with the reason logged).
       alerts.send('database', `The database is not answering (${error?.code ?? error?.name ?? 'error'}).`).catch(() => {});
-      return response.status(503).json({ status: 'unavailable' });
+      throw error;
     }
     const recent = await missingRecentMedia().catch(() => null);
     response.json({ status: 'ok', storage: storageInRelease ? 'release' : 'persistent', push: Boolean(push), ...(recent ? { recentMedia: recent } : {}) });
