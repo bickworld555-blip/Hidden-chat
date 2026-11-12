@@ -157,7 +157,7 @@ export function FileCard({ id, filename, sessionToken, info, infoError }) {
   );
 }
 
-function ImageAttachment({ id, filename, sessionToken, info, onOpen }) {
+function ImageAttachment({ id, filename, sessionToken, info, onOpen, meta = null }) {
   const media = useMediaBlob(id, sessionToken);
   const [broken, setBroken] = useState(false);
   const { load } = media;
@@ -168,9 +168,11 @@ function ImageAttachment({ id, filename, sessionToken, info, onOpen }) {
     if (previewable) load().catch(() => {});
   }, [load, previewable]);
 
-  if (!previewable || broken || media.status === 'error') return <FileCard id={id} filename={filename} sessionToken={sessionToken} info={info} />;
+  if (!previewable || broken || media.status === 'error') return <><FileCard id={id} filename={filename} sessionToken={sessionToken} info={info} />{meta}</>;
 
+  // The time and ticks sit on the photo's bottom-right corner, over a soft shade, as on WhatsApp.
   return (
+    <div className={`wa-visual ${meta ? 'has-meta' : ''}`}>
     <button
       type="button"
       className="wa-image"
@@ -184,6 +186,8 @@ function ImageAttachment({ id, filename, sessionToken, info, onOpen }) {
         ? <img src={media.url} alt={filename} onError={() => setBroken(true)} />
         : <span className="wa-image-loading" aria-busy="true"><ProgressRing progress={media.progress} /></span>}
     </button>
+    {meta && <span className="wa-media-overlay">{meta}</span>}
+    </div>
   );
 }
 
@@ -208,7 +212,9 @@ function usePlaybackSource(id, sessionToken, info, media) {
     : { url: media.url, status: media.status, progress: media.progress, error: media.error, prepare };
 }
 
-function VideoAttachment({ id, filename, sessionToken, info, onOpen }) {
+// One card: size bottom-left, time and ticks bottom-right, download (or full screen) top-right. While it plays the
+// player's own controls take the bottom, so the time moves under it.
+function VideoAttachment({ id, filename, sessionToken, info, onOpen, meta = null }) {
   const media = useMediaBlob(id, sessionToken);
   const source = usePlaybackSource(id, sessionToken, info, media);
   const saver = useDownload(id, filename, sessionToken);
@@ -217,6 +223,7 @@ function VideoAttachment({ id, filename, sessionToken, info, onOpen }) {
 
   return (
     <div className="wa-video">
+      <div className={`wa-visual ${meta && !(playing && source.url) ? 'has-meta' : ''}`}>
       {playing && source.url ? (
         <video className="wa-video-player" src={source.url} controls autoPlay playsInline onClick={(event) => event.stopPropagation()} />
       ) : (
@@ -235,13 +242,15 @@ function VideoAttachment({ id, filename, sessionToken, info, onOpen }) {
           <span className="wa-video-caption"><Video size={14} /> {size || fileTypeLabel(filename)}</span>
         </button>
       )}
-      <div className="wa-media-footer">
-        <span className="wa-file-name" title={filename}>{filename}</span>
+      <span className="wa-media-tools">
         {playing && media.url && onOpen && (
           <button type="button" className="wa-media-link" onClick={(event) => { event.stopPropagation(); onOpen(); }} aria-label={`Open ${filename} full screen`}><Maximize2 size={14} /></button>
         )}
         <DownloadButton status={saver.status} progress={0} onClick={saver.download} filename={filename} />
+      </span>
+      {meta && !(playing && source.url) && <span className="wa-media-overlay">{meta}</span>}
       </div>
+      {meta && playing && source.url && meta}
       <DownloadProgress id={id} />
       {(source.status === 'error' || saver.status === 'error') && <span className="wa-file-error" role="alert"><AlertCircle size={12} /> {source.error || saver.error}</span>}
     </div>
@@ -339,14 +348,16 @@ function AudioAttachment({ id, filename, sessionToken, info }) {
 }
 
 // onOpen opens the chat's full-screen viewer for this message's photo or video.
-export default function MediaRenderer({ mediaRef, sessionToken, onOpen }) {
+// `meta` (optional): the message's time and ticks. Photos and videos show it on the media's bottom-right corner, as
+// WhatsApp does; files, audio files and the loading and error states show it below.
+export default function MediaRenderer({ mediaRef, sessionToken, onOpen, meta = null }) {
   const ref = parseMediaRef(mediaRef);
   const id = ref?.id ?? '';
   const filename = ref?.filename ?? 'attachment';
   const { info, error } = useMediaInfo(id, sessionToken);
 
   if (!ref || !id || !sessionToken) {
-    return <span className="wa-file-error" role="alert"><AlertCircle size={12} /> Attachment unavailable</span>;
+    return <><span className="wa-file-error" role="alert"><AlertCircle size={12} /> Attachment unavailable</span>{meta}</>;
   }
   if (!info && !error) {
     return (
@@ -358,14 +369,15 @@ export default function MediaRenderer({ mediaRef, sessionToken, onOpen }) {
             <span className="wa-file-meta">Loading…</span>
           </span>
         </div>
+        {meta}
       </div>
     );
   }
 
   const props = { id, filename, sessionToken, info };
   const kind = info ? mediaKind(info.contentType) : 'file';
-  if (kind === 'image') return <ImageAttachment {...props} onOpen={onOpen} />;
-  if (kind === 'video') return <VideoAttachment {...props} onOpen={onOpen} />;
-  if (kind === 'audio') return <AudioAttachment {...props} />;
-  return <FileCard {...props} infoError={error} />;
+  if (kind === 'image') return <ImageAttachment {...props} onOpen={onOpen} meta={meta} />;
+  if (kind === 'video') return <VideoAttachment {...props} onOpen={onOpen} meta={meta} />;
+  if (kind === 'audio') return <><AudioAttachment {...props} />{meta}</>;
+  return <><FileCard {...props} infoError={error} />{meta}</>;
 }

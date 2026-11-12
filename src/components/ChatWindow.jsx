@@ -460,12 +460,12 @@ function MessageBubble({
             <ProductCard itemId={productId} sessionToken={sessionToken}>{meta}</ProductCard>
           ) : (
             <>
-              {isMedia ? <MediaRenderer mediaRef={content} sessionToken={sessionToken} onOpen={onOpenMedia} />
+              {isMedia ? <MediaRenderer mediaRef={content} sessionToken={sessionToken} onOpen={onOpenMedia} meta={meta} />
                 : sharedKind === 'location' && parseLocation(content) ? <LocationBubble location={parseLocation(content)} onOpen={shared.openLocation} />
                 : sharedKind === 'live' && parseLive(content) ? <LiveLocationBubble live={parseLive(content)} mine={mine} peerName={shared.peerName} send={shared.send} onOpen={shared.openLive} />
                 : sharedKind === 'contact' && parseContact(content) ? <ContactBubble contact={parseContact(content)} onMessage={shared.messageContact} />
                 : <TextWithPreview content={content} sessionToken={sessionToken} meta={meta} message={message} mine={mine} peerName={shared?.peerName} peerColor={shared?.peerColor} />}
-              {!textBody && meta}
+              {!textBody && !isMedia && meta}
             </>
           )}
 

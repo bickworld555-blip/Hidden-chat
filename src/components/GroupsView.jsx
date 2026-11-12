@@ -757,6 +757,18 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
                 const productId = parseProductContent(message.content);
                 const sticker = isStickerContent(message.content);
                 const active = activeMessageId === message.id;
+                const mediaShown = isMedia && !relayCard && !scheduled && !message.e2eError;
+                // The time (and pin, star, Edited, delete): on a photo or video it sits on the media's corner, as on WhatsApp.
+                const meta = (
+                  <span className="groups-message-meta">
+                    {canDelete && <button type="button" disabled={busy} aria-label="Delete message" title="Delete message" onClick={() => perform(() => groupRequest(token, `${groupPath}/messages/${encodeURIComponent(message.id)}`, { method: 'DELETE' }))}><Trash2 size={13} /></button>}
+                    {message.expiresAt && <Timer size={12} aria-label="Disappears after 24 hours" />}
+                    {pinnedIds.has(message.id) && <Pin size={12} aria-label="Pinned" />}
+                    {starred[message.id] && <Star size={12} fill="currentColor" aria-label="Starred" />}
+                    {message.editedAt && <span className="message-edited">Edited</span>}
+                    <time dateTime={new Date(message.createdAt).toISOString()}>{formatTime(message.createdAt)}</time>
+                  </span>
+                );
                 return (
                   <div className={`groups-message-row ${mine ? 'mine' : 'theirs'}${active ? ' is-active' : ''}`} key={item.key} data-group-message-id={message.id}>
                     {!mine && (sender ? <Avatar {...sender} size="small" /> : <span className="groups-avatar groups-avatar-small" aria-hidden="true" />)}
@@ -777,20 +789,13 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
                           {onStartGroupCall && <button type="button" onClick={() => setCallPicker(scheduled.mode)}>{scheduled.at > Date.now() ? 'Start early' : 'Start call'}</button>}
                         </div>
                       ) : message.e2eError ? <p className="deleted-text"><span aria-hidden="true">🔒</span> Waiting for this message. It is end-to-end encrypted.</p>
-                        : isMedia ? <MediaRenderer mediaRef={message.content} sessionToken={token} />
+                        : isMedia ? <MediaRenderer mediaRef={message.content} sessionToken={token} meta={meta} />
                         : poll ? <PollBubble messageId={message.id} poll={poll} sessionToken={token} userId={userId} nameFor={(id) => group.members.find((member) => member.id === id)?.name} context={{ groupId: selected }} />
                         : event ? <EventBubble messageId={message.id} event={event} />
                         : sticker ? <StickerMessage content={message.content} />
                         : productId ? <ProductCard itemId={productId} sessionToken={token} />
                         : <p><MentionText text={message.content} usernames={usernames} ownUsername={ownUsername} /></p>}
-                      <span className="groups-message-meta">
-                        {canDelete && <button type="button" disabled={busy} aria-label="Delete message" title="Delete message" onClick={() => perform(() => groupRequest(token, `${groupPath}/messages/${encodeURIComponent(message.id)}`, { method: 'DELETE' }))}><Trash2 size={13} /></button>}
-                        {message.expiresAt && <Timer size={12} aria-label="Disappears after 24 hours" />}
-                        {pinnedIds.has(message.id) && <Pin size={12} aria-label="Pinned" />}
-                        {starred[message.id] && <Star size={12} fill="currentColor" aria-label="Starred" />}
-                        {message.editedAt && <span className="message-edited">Edited</span>}
-                        <time dateTime={new Date(message.createdAt).toISOString()}>{formatTime(message.createdAt)}</time>
-                      </span>
+                      {!mediaShown && meta}
                       {active && (
                         <span className="hm-message-actions" role="toolbar" aria-label="Message actions">
                           <button type="button" aria-label={starred[message.id] ? 'Unstar' : 'Star'} onClick={() => { setActiveMessageId(''); toggleStar(message.id, chatKey, !starred[message.id]).catch((caught) => setError(caught.message)); }}>

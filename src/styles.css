@@ -3172,10 +3172,24 @@ html, body { overflow-x: hidden; }
 .wa-video-play svg:not(.wa-file-progress) { margin-left: 3px; }
 .wa-video-caption { position: absolute; left: 8px; bottom: 6px; display: inline-flex; align-items: center; gap: 4px; color: #fff; font-size: 11.5px; text-shadow: 0 1px 2px #0008; }
 .wa-video-player { display: block; width: 100%; max-height: 340px; border-radius: 6px; background: #000; }
-.wa-media-footer { display: flex; align-items: center; gap: 8px; padding: 2px 4px 0 6px; }
-.wa-media-footer .wa-file-name { flex: 1; min-width: 0; font-size: 12.5px; -webkit-line-clamp: 1; }
-.wa-media-footer .wa-file-download { width: 30px; height: 30px; }
-.wa-media-link { border: 0; background: transparent; color: var(--wa-green); font-size: 12px; cursor: pointer; }
+/* Photos and videos are one card with their details, as on WhatsApp: the media fills the bubble (3px rim), the time
+   and ticks sit on its bottom-right corner over a soft shade, a video's size bottom-left and its download top-right. */
+.message-bubble.attachment-bubble:has(> .wa-visual, > .wa-video) { padding: 3px; }
+.wa-visual { position: relative; display: block; overflow: hidden; border-radius: 6px; }
+.wa-visual > .wa-image, .wa-visual > .wa-video-poster, .wa-visual > .wa-video-player { border-radius: 0; }
+.wa-visual > .wa-video-poster, .wa-visual > .wa-video-player { width: 100%; }
+.wa-visual.has-meta::after { content: ''; position: absolute; inset: auto 0 0 0; z-index: 1; height: 44px; background: linear-gradient(to top, rgba(0, 0, 0, .5), transparent); pointer-events: none; }
+.wa-media-overlay { position: absolute; right: 7px; bottom: 5px; z-index: 2; pointer-events: none; }
+.wa-media-overlay > .message-meta, .wa-media-overlay > .groups-message-meta { height: auto; margin: 0; padding: 0; color: rgba(255, 255, 255, .95) !important; text-shadow: 0 1px 2px rgba(0, 0, 0, .45); }
+.wa-media-overlay > .message-meta time { font-size: 11px; }
+.wa-media-overlay svg { color: rgba(255, 255, 255, .95) !important; filter: drop-shadow(0 1px 1px rgba(0, 0, 0, .4)); }
+.wa-media-overlay svg.read-check { color: #7cc4ff !important; }
+.wa-media-overlay button { pointer-events: auto; color: inherit; }
+.wa-video-caption { z-index: 2; }
+.wa-media-tools { position: absolute; top: 7px; right: 7px; z-index: 2; display: flex; gap: 6px; }
+.wa-media-tools .wa-file-download, .wa-media-link { width: 32px; height: 32px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 50%; background: rgba(11, 20, 26, .5); color: #fff; cursor: pointer; backdrop-filter: blur(2px); }
+.wa-media-tools .wa-file-download:hover, .wa-media-link:hover { background: rgba(11, 20, 26, .65); color: #fff; }
+.wa-video > .message-meta, .wa-video > .groups-message-meta { padding: 0 5px 1px; }
 
 .wa-audio { position: relative; display: grid; grid-template-columns: auto auto minmax(0, 1fr) auto; align-items: center; gap: 10px; width: min(300px, 68vw); padding: 8px; border-radius: 6px; background: rgba(11, 20, 26, .05); color: var(--wa-text); }
 .wa-audio-icon { width: 40px; height: 40px; display: grid; place-items: center; border-radius: 50%; background: #f39c12; color: #fff; }
@@ -3194,7 +3208,6 @@ html, body { overflow-x: hidden; }
 .dark-theme .wa-file-actions, .dark-theme .wa-file-actions button + button { border-color: rgba(255, 255, 255, .1); }
 .dark-theme .wa-file-download:hover { background: rgba(255, 255, 255, .08); }
 .dark-theme .wa-image { background: rgba(0, 0, 0, .2); }
-.wa-media-link { display: inline-grid; place-items: center; padding: 4px; border-radius: 50%; }
 
 /* ===== Full-screen media viewer (WhatsApp-style) ===== */
 .message-star { flex: none; color: currentColor; opacity: .85; }
