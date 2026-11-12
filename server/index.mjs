@@ -27,6 +27,7 @@ import { createVerifiedAccounts, createVerifiedChannels, ensureVerificationSchem
 import { ensureRegionSchema, registerRegions } from './regions.mjs';
 import { createDeliveryQueue, ensureDeliveryQueueSchema } from './deliveryQueue.mjs';
 import { clientGate, minimumClientProtocol, socketClientAllowed, updateRequiredBody } from './clientGate.mjs';
+import { registerBackups } from './backups.mjs';
 import { registerBilling } from './billing.mjs';
 import { ensureE2eSchema, registerE2e } from './e2e.mjs';
 import { registerSfu } from './sfu.mjs';
@@ -1123,6 +1124,8 @@ export function createChatServer({
   // Approximate country for the admin world map (server/regions.mjs) and the prepared billing structure.
   registerRegions({ app, db, requireSession, requireAdmin: adminAuth.requireAdmin });
   registerBilling({ app, requireAdmin: adminAuth.requireAdmin });
+  // End-to-end encrypted backups: one opaque file per account (server/backups.mjs).
+  const backups = registerBackups({ app, db, requireSession, dataDirectory });
   // The delivery queue for the dashboard: how much waits, for how many devices, since when (counts only).
   app.get('/api/admin/v1/queue', adminAuth.requireAdmin, async (request, response) => {
     response.json(await deliveryQueue.stats());
@@ -2884,6 +2887,7 @@ export function createChatServer({
       uploadSweep = setInterval(() => {
         sweep(discardStaleUploads);
         sweep(removeOrphanedMedia);
+        sweep(() => backups.removeOrphanedBackups());
       }, 60 * 60 * 1000);
       uploadSweep.unref();
       await eventPilot.publish('server:listening', server.address());

@@ -3,7 +3,9 @@ import { apiFetch, apiUrl } from './api.js';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { activateAccount, addOrActivateAccount, getAccountsState, loadAccounts, removeAccount, updateAccountUser } from './accounts.js';
 import { Bell, ChevronRight, MessageSquarePlus, Moon, Sun } from 'lucide-react';
-import { notificationPreview, useChatStore } from './store.js';
+import { notificationPreview, savedMessageCount, useChatStore } from './store.js';
+import { runScheduledBackup, shouldOfferRestore } from './cloudBackup.js';
+import RestoreBackupSheet from './components/RestoreBackupSheet.jsx';
 import { fetchStatuses } from './statusApi.js';
 import { clearMediaCache } from './media.js';
 import { clearAvatarCache } from './avatar.js';
@@ -944,6 +946,22 @@ export default function App() {
 
   initiateCallRef.current = initiateCall;
 
+  // A new or reset device with no chats of its own, on an account that has a backup: offer to restore first. Then
+  // the account backup runs when it is due (daily or weekly), checked at sign-in and every hour.
+  const [restoreOffer, setRestoreOffer] = useState(null);
+  useEffect(() => {
+    if (!userId || !sessionToken) return undefined;
+    let live = true;
+    (async () => {
+      const offer = await shouldOfferRestore(sessionToken, userId, await savedMessageCount(userId));
+      if (live && offer) setRestoreOffer(offer);
+    })().catch(() => {});
+    const tick = () => { if (document.visibilityState === 'visible') runScheduledBackup(sessionToken).catch(() => {}); };
+    const first = setTimeout(tick, 60_000);
+    const hourly = setInterval(tick, 60 * 60 * 1000);
+    return () => { live = false; clearTimeout(first); clearInterval(hourly); };
+  }, [userId, sessionToken]);
+
   // Motion preference goes on <html> so overlays rendered outside the shell follow it too.
   const appearance = useAppearance();
   useEffect(() => {
@@ -1025,6 +1043,7 @@ export default function App() {
         />
       )}
       {permissionsOpen && userId && <PermissionsSheet onDone={() => setPermissionsOpen(false)} />}
+      {restoreOffer && userId && !permissionsOpen && <RestoreBackupSheet token={sessionToken} userId={userId} info={restoreOffer} onDone={() => setRestoreOffer(null)} />}
       {authReady && (!userId || authOpen) && <UsernameGate onAuthenticated={acceptSession} onClose={userId ? () => setAuthOpen(false) : undefined} />}
       {call && callPeer && <CallOverlay
         key={call.id}

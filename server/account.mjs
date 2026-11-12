@@ -36,6 +36,10 @@ export const PERSONAL_ROWS = [
   ['verified_accounts', 'user_id = ?'],
   ['verification_requests', 'user_id = ?'],
   ['verification_tickets', 'requester_id = ?'],
+  // The encrypted backup's row; the file itself is removed by the hourly orphan sweep (server/backups.mjs).
+  ['backups', 'user_id = ?'],
+  ['message_deliveries', 'user_id = ?'],
+  ['device_events', 'user_id = ?'],
   ['catalog_items', 'user_id = ?'],
   ['label_chats', 'label_id IN (SELECT id FROM labels WHERE user_id = ?)'],
   ['labels', 'user_id = ?'],

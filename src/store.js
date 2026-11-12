@@ -52,6 +52,31 @@ let saved = { owner: null, chats: new Map() };
 const clearedChats = new Set();
 let persistChain = Promise.resolve();
 
+/** How many messages this device has saved for the account (0 on a new or reset device). */
+export async function savedMessageCount(userId) {
+  try {
+    return Number(await messageStore().count(userId)) || 0;
+  } catch {
+    return 0;
+  }
+}
+
+/**
+ * Every message saved on this device for this account (not only the window held in memory), with anything not yet
+ * written included: what a full backup contains.
+ */
+export async function loadAllSavedMessages(userId) {
+  await flushPersistedMessages();
+  const saved = await messageStore().loadAll(userId);
+  const current = useChatStore.getState().messages;
+  for (const [chat, list] of Object.entries(current)) {
+    const byId = new Map((saved[chat] ?? []).map((message) => [message.id, message]));
+    for (const message of list ?? []) if (message?.id) byId.set(message.id, message);
+    saved[chat] = [...byId.values()].sort((left, right) => String(left.timestamp).localeCompare(String(right.timestamp)));
+  }
+  return saved;
+}
+
 /** For tests: use another message store (e.g. over fake-indexeddb). */
 export function setMessageDbForTesting(db) {
   messageDb = db;

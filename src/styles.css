@@ -5226,3 +5226,21 @@ textarea.hm-input { min-height: 96px; resize: vertical; }
 .call-access-notice:hover { background: rgba(37, 109, 202, .06); }
 .dark-theme .call-access-notice { border-color: #2a3540; }
 .dark-theme .call-access-notice small { color: #8696a0; }
+
+/* Account backup (Tools › Chat backup) and the restore sheet on a new device. */
+.hm-account-backup { display: flex; flex-direction: column; gap: 12px; margin: 4px 0 18px; padding-bottom: 16px; border-bottom: 1px solid var(--wa-line, #e9edef); }
+.hm-backup-warning { display: flex; gap: 12px; align-items: flex-start; padding: 12px 14px; border-radius: 12px; background: #fff7e6; color: #5c4400; }
+.hm-backup-warning svg { flex: none; margin-top: 2px; color: #c98500; }
+.hm-backup-warning p { margin: 0; font-size: 14px; line-height: 1.45; }
+.dark-theme .hm-backup-warning { background: #3a2f17; color: #f3dfb0; }
+.hm-seg { display: inline-flex; gap: 4px; padding: 4px; border-radius: 999px; background: var(--wa-panel-2, #f0f2f5); }
+.hm-seg button { padding: 8px 14px; border: 0; border-radius: 999px; background: transparent; color: inherit; font: inherit; cursor: pointer; }
+.hm-seg button.is-active { background: #256dca; color: #fff; }
+.dark-theme .hm-seg { background: #222931; }
+.hm-recovery-key { display: block; padding: 12px; border-radius: 10px; background: var(--wa-panel-2, #f0f2f5); font-size: 16px; letter-spacing: .06em; line-height: 1.7; word-spacing: .3em; user-select: all; }
+.dark-theme .hm-recovery-key { background: #222931; }
+.hm-inline-field { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.hm-inline-field select { padding: 6px 10px; border-radius: 8px; }
+.hm-actions-row { display: flex; gap: 10px; flex-wrap: wrap; }
+.restore-field { display: flex; flex-direction: column; gap: 6px; margin: 12px 0; text-align: left; font-size: 14px; }
+.restore-field input { padding: 12px; border: 1px solid var(--wa-line, #d1d7db); border-radius: 10px; font: inherit; letter-spacing: .04em; }

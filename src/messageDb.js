@@ -158,6 +158,30 @@ export function createMessageDb({ indexedDB = globalThis.indexedDB, seal = async
       return { messages: await openRows(owner, rows), more };
     },
 
+    /** Every saved message of this account, { [chatId]: [message…] } oldest first (for a full backup). */
+    async loadAll(owner) {
+      const db = await connect();
+      const transaction = db.transaction(STORE, 'readonly');
+      const index = transaction.objectStore(STORE).index('chat');
+      const range = IDBKeyRangeFor(indexedDB).bound([owner, '', -Infinity], [owner, '￿', Infinity]);
+      const byChat = new Map();
+      await new Promise((resolve, reject) => {
+        const request = index.openCursor(range, 'next');
+        request.onerror = () => reject(request.error);
+        request.onsuccess = () => {
+          const cursor = request.result;
+          if (!cursor) return resolve();
+          const list = byChat.get(cursor.value.chat) ?? [];
+          list.push(cursor.value);
+          byChat.set(cursor.value.chat, list);
+          cursor.continue();
+        };
+      });
+      const out = {};
+      for (const [chat, rows] of byChat) out[chat] = await openRows(owner, rows);
+      return out;
+    },
+
     async count(owner) {
       const db = await connect();
       return promisify(db.transaction(STORE, 'readonly').objectStore(STORE).index('owner').count(owner));

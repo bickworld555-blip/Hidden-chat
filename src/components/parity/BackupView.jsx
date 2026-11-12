@@ -7,6 +7,7 @@ import { MIN_PASSWORD_LENGTH, buildBackupData, exportChatText, openBackup, sealB
 import { saveFile } from '../../fileSave.js';
 import { openGroupMessages } from '../../e2e/client.js';
 import Panel, { Notice } from './Panel.jsx';
+import AccountBackup from './AccountBackup.jsx';
 
 const LAST_BACKUP_KEY = 'hm:last-backup-at';
 
@@ -106,9 +107,10 @@ export default function BackupView({ token, onClose }) {
       <Notice error={error} notice={notice} />
       {!mode && (
         <>
+          <AccountBackup token={token} />
           <div className="hm-backup-summary">
             <DatabaseBackup size={40} aria-hidden="true" />
-            <p>Back up your chats, call history and chat settings to an encrypted file. Only your password can open it — Hidden Messenger can’t, and can’t recover it.</p>
+            <p>Or keep a copy yourself: back up your chats, call history and chat settings to an encrypted file. Only your password can open it — Hidden Messenger can’t, and can’t recover it.</p>
             <small>{lastBackup ? `Last backup: ${new Date(lastBackup).toLocaleString()}` : 'No backup made on this device yet.'}</small>
           </div>
           <ul className="hm-menu-list">
