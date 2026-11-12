@@ -672,7 +672,7 @@ export default function GroupsView({ token, userId, revision, onClose, onStartGr
               <SettingsRow icon={muted ? BellOff : Bell} title="Notifications" detail={muted ? 'Muted · unread count stays grey and out of the app badge' : 'All'} onClick={() => setGroupMuted(userId, selected, !muted)}>
                 <span className={`groups-switch ${muted ? '' : 'is-on'}`} role="switch" aria-checked={!muted} aria-label="Group notifications" />
               </SettingsRow>
-              <SettingsRow icon={LockKeyhole} title="Encryption" detail="Messages and attachments are end-to-end encrypted with group sender keys; the server stores only ciphertext. Calls use DTLS-SRTP between members." />
+              <SettingsRow icon={LockKeyhole} title="Encryption" detail="Messages and attachments are end-to-end encrypted with group sender keys; the server stores only ciphertext. Calls are end-to-end encrypted too: up to 4 people connect directly, larger calls go through a media server that cannot see or hear them." />
               <label className="groups-setting">
                 <Timer size={22} className="groups-setting-icon" />
                 <span className="groups-setting-copy"><strong>Disappearing messages</strong><small>{group.autoDelete ? '24 hours · applies to your new messages in this group' : 'Off'}</small></span>
