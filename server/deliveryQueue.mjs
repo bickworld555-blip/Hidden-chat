@@ -1,8 +1,8 @@
 // The server as a short-lived queue (WhatsApp-style), not an archive of chat history.
 //
-// Every new message is sealed for a set of devices: all signed-in devices of the receiver (or of every group member)
-// and the sender's other devices. Each target device gets a row in message_deliveries. A device acknowledges a
-// message once it has stored it locally (media included); when every target has done so the message row, its
+// Every new message is sealed for a set of devices: the receiver's devices (or every group member's) and the sender's
+// other devices, counting only devices with end-to-end keys that were active in the last 14 days (see devicesOf).
+// Each target device gets a row in message_deliveries. A device acknowledges a message once it has stored it locally (media included); when every target has done so the message row, its
 // reactions and its media are deleted. Nothing waits longer than QUEUE_TTL_MS (30 days).
 //
 // What stays after a message is gone is its route (message id, sender, receiver or group; no content) for 30 days,
@@ -11,9 +11,12 @@
 import { randomUUID } from 'node:crypto';
 
 export const QUEUE_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+// A device not seen for this long is no longer waited for (like WhatsApp dropping idle linked devices).
+export const INACTIVE_DEVICE_MS = 14 * 24 * 60 * 60 * 1000;
 // A user with no signed-in device yet: any device they sign in with later can claim the message.
 export const ANY_DEVICE = '*';
 const MAX_ACK = 500;
+const RELEASE_EVERY_MS = 10 * 60 * 1000;
 const MAX_EVENTS_PER_DEVICE = 2000;
 
 export function ensureDeliveryQueueSchema(db) {
@@ -48,22 +51,24 @@ const cleanIds = (ids, limit = MAX_ACK) => (Array.isArray(ids) ? [...new Set(ids
  */
 export function createDeliveryQueue({ db, onlineDevices = () => [], removeMessage, now = () => Date.now() }) {
   // The devices a message waits for: signed-in devices that published end-to-end keys (the ones messages are
-  // encrypted for). A session without keys (a script, a half-finished sign-in) can never read an encrypted message,
-  // so waiting for it would keep every message on the server for the full 30 days. Accounts with no keyed device
-  // fall back to every signed-in device.
+  // encrypted for) and were active in the last 14 days. A session without keys (a script, a half-finished sign-in)
+  // can never read an encrypted message, and an install left unused for weeks may never come back; waiting for either
+  // would keep messages on the server for the full 30 days. When none of a user's devices qualifies, the message
+  // still waits: for their keyed devices however long idle, else for any signed-in device.
   async function devicesOf(userId) {
     const at = now();
-    let rows = [];
+    const ids = (rows) => [...new Set(rows.map((row) => row.deviceId).filter(Boolean))];
+    let keyed = [];
     try {
-      rows = await db.prepare(`SELECT DISTINCT s.device_id AS "deviceId" FROM sessions s
+      keyed = await db.prepare(`SELECT s.device_id AS "deviceId", COALESCE(s.last_active_at, s.created_at, 0) AS "activeAt" FROM sessions s
         JOIN e2e_devices e ON e.user_id = s.user_id AND e.device_id = s.device_id
         WHERE s.user_id = ? AND (s.expires_at IS NULL OR s.expires_at > ?)`).all(userId, at);
-    } catch { rows = []; /* no end-to-end tables (tests, older databases) */ }
-    if (!rows.length) {
-      rows = await db.prepare(`SELECT DISTINCT device_id AS "deviceId" FROM sessions
-        WHERE user_id = ? AND device_id IS NOT NULL AND (expires_at IS NULL OR expires_at > ?)`).all(userId, at);
-    }
-    return rows.map((row) => row.deviceId).filter(Boolean);
+    } catch { keyed = []; /* no end-to-end tables (tests, older databases) */ }
+    const active = keyed.filter((row) => Number(row.activeAt) > at - INACTIVE_DEVICE_MS);
+    if (active.length) return ids(active);
+    if (keyed.length) return ids(keyed);
+    return ids(await db.prepare(`SELECT device_id AS "deviceId" FROM sessions
+      WHERE user_id = ? AND device_id IS NOT NULL AND (expires_at IS NULL OR expires_at > ?)`).all(userId, at));
   }
 
   async function addTargets(messageId, kind, userId, deviceIds, at) {
@@ -161,10 +166,46 @@ export function createDeliveryQueue({ db, onlineDevices = () => [], removeMessag
   }
 
   /**
+   * Stops waiting for devices idle for 14 days or signed out. A delivery to such a device counts as done when the same
+   * person already has the message elsewhere: they sent it (the sending device has it), another of their devices
+   * stored it, or another of their devices is still active and will. Someone whose every device is idle keeps
+   * waiting for them (the 30-day limit still applies), so nobody loses a message they never received.
+   */
+  let lastRelease = -Infinity;
+  async function releaseInactiveDevices() {
+    const at = now();
+    const idleSince = at - INACTIVE_DEVICE_MS;
+    const activeSession = (alias, row) => `EXISTS (SELECT 1 FROM sessions ${alias} WHERE ${alias}.user_id = ${row}.user_id
+      AND ${alias}.device_id = ${row}.device_id AND (${alias}.expires_at IS NULL OR ${alias}.expires_at > ?)
+      AND COALESCE(${alias}.last_active_at, ${alias}.created_at, 0) > ?)`;
+    const rows = await db.prepare(`SELECT d.message_id AS "messageId", d.device_id AS "deviceId" FROM message_deliveries d
+      WHERE d.delivered_at IS NULL AND d.device_id <> ? AND NOT ${activeSession('s', 'd')}
+        AND (EXISTS (SELECT 1 FROM message_routes r WHERE r.message_id = d.message_id AND r.sender_id = d.user_id)
+          OR EXISTS (SELECT 1 FROM message_deliveries o WHERE o.message_id = d.message_id AND o.user_id = d.user_id
+            AND o.device_id <> d.device_id AND (o.delivered_at IS NOT NULL OR o.device_id = ? OR ${activeSession('s2', 'o')})))
+      LIMIT 5000`).all(ANY_DEVICE, at, idleSince, ANY_DEVICE, at, idleSince);
+    const touched = new Set();
+    for (const { messageId, deviceId } of rows) {
+      await db.prepare('UPDATE message_deliveries SET delivered_at = ? WHERE message_id = ? AND device_id = ? AND delivered_at IS NULL')
+        .run(at, messageId, deviceId);
+      touched.add(messageId);
+    }
+    let removed = 0;
+    for (const messageId of touched) if (await finishIfDelivered(messageId)) removed += 1;
+    return { released: rows.length, removed };
+  }
+
+  /**
    * Housekeeping: anything older than 30 days goes (undelivered messages, routes, queued events), and messages
    * stored before this queue existed (no route) are deleted once delivered, or after 30 days.
    */
   async function sweep() {
+    // Idle devices are checked every 10 minutes, not on every 30-second pass.
+    let released = 0;
+    if (now() - lastRelease >= RELEASE_EVERY_MS) {
+      lastRelease = now();
+      ({ released } = await releaseInactiveDevices());
+    }
     const cutoff = now() - QUEUE_TTL_MS;
     const stale = await db.prepare('SELECT DISTINCT message_id AS "messageId" FROM message_deliveries WHERE created_at <= ?').all(cutoff);
     for (const { messageId } of stale) {
@@ -189,7 +230,7 @@ export function createDeliveryQueue({ db, onlineDevices = () => [], removeMessag
     const legacyGroup = await db.prepare(`SELECT id FROM group_messages g
       WHERE NOT EXISTS (SELECT 1 FROM message_routes r WHERE r.message_id = g.id) AND g.created_at <= ? LIMIT 2000`).all(cutoff);
     for (const { id } of legacyGroup) await removeMessage('group', id, { force: true });
-    return { expired: stale.length, legacy: legacy.length + legacyGroup.length };
+    return { expired: stale.length, legacy: legacy.length + legacyGroup.length, released };
   }
 
   /** Counts for the admin dashboard (no message ids, no content). */
@@ -206,5 +247,5 @@ export function createDeliveryQueue({ db, onlineDevices = () => [], removeMessag
     };
   }
 
-  return { trackDirect, trackGroup, routeOf, queueEvent, pending, ack, sweep, stats };
+  return { trackDirect, trackGroup, routeOf, queueEvent, pending, ack, sweep, releaseInactiveDevices, stats };
 }

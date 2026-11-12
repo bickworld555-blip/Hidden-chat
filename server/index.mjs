@@ -60,6 +60,8 @@ export function defaultDataDirectory(env = process.env, home = homedir()) {
 const PAIRING_TTL_MS = 1000 * 60 * 2;
 const deleteForEveryoneWindowMs = 24 * 60 * 60 * 1000;
 const EXPIRY_SWEEP_MS = 30 * 1000;
+// How often an API request refreshes its session's last activity (see requireSession).
+const ACTIVITY_WRITE_MS = 60 * 60 * 1000;
 // A status sealed for every device of its audience (one ciphertext per device).
 const MAX_STATUS_ENVELOPE = 900_000;
 // Bounds the request body of a "keep starred" clear; express.json already caps it at 16 kB.
@@ -651,6 +653,11 @@ export function createChatServer({
     const session = (await getSession(token));
     if (!session) return response.status(401).json({ error: 'A valid session is required.' });
     request.session = session;
+    // Any request counts as the device being in use (at most one write an hour), not only an open socket: a phone
+    // woken by push notifications stays "active" and is still waited for by the delivery queue (14-day rule).
+    if (Date.now() - Number(session.last_active_at ?? 0) > ACTIVITY_WRITE_MS) {
+      await db.prepare('UPDATE sessions SET last_active_at = ? WHERE token_hash = ?').run(Date.now(), session.token_hash);
+    }
     return next();
   }
 
