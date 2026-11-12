@@ -1845,7 +1845,8 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
               </div>
             )}
             {trayTab === 'stickers' && !editing ? (
-              <StickerPalette onPick={(key) => { sendContent(stickerContent(key)); setEmojiOpen(false); }} />
+              <StickerPalette token={sessionToken} onPick={(key) => { sendContent(stickerContent(key)); setEmojiOpen(false); }}
+                onGif={async (file) => { setEmojiOpen(false); await uploadAndSend(file, file.name); }} />
             ) : (
               <div className="composer-emoji-tray" role="listbox" aria-label="Emoji">
                 {COMPOSER_EMOJIS.map((emoji) => (

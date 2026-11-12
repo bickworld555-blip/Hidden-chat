@@ -31,6 +31,7 @@ import { registerBackups } from './backups.mjs';
 import { registerBilling } from './billing.mjs';
 import { ensureE2eSchema, registerE2e } from './e2e.mjs';
 import { registerSfu } from './sfu.mjs';
+import { gifConfigFromEnv, registerGifs } from './gifs.mjs';
 import { ensureExtrasSchema, registerExtras, statusAudienceSql } from './extras.mjs';
 import { ensureAdminSchema, registerAdmin } from './admin.mjs';
 import { adminCredentialsFrom, createAdminAuth } from './adminAuth.mjs';
@@ -139,6 +140,8 @@ export function createChatServer({
   // Oldest app version still served (server/clientGate.mjs): the current one in production, none locally.
   minClientProtocol = minimumClientProtocol(process.env),
   webPasswordSignIn = webPasswordSignInAllowed(process.env),
+  gifConfig = gifConfigFromEnv(process.env),
+  gifFetch = globalThis.fetch,
 } = {}) {
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('PORT must be an integer from 0 to 65535.');
   if (process.env.NODE_ENV === 'production' && port === 0) throw new Error('Production requires a fixed nonzero PORT.');
@@ -1146,6 +1149,8 @@ export function createChatServer({
   });
   // Group calls through an SFU when one is configured (server/sfu.mjs); mesh otherwise.
   registerSfu({ app, db, requireSession });
+  // GIF search through GIPHY, proxied so GIPHY never sees users (server/gifs.mjs).
+  registerGifs({ app, requireSession, config: gifConfig, fetchImpl: gifFetch });
 
   // WhatsApp (Business) parity features: edits, stars, archive, pins, group admin, communities, business, two-step.
   const parity = registerParity({

@@ -4329,6 +4329,20 @@ canvas.recording-wave { color: #5d6662; }
 .hm-sticker-grid button { display: grid; place-items: center; padding: 2px; border: 0; border-radius: 10px; background: transparent; cursor: pointer; }
 .hm-sticker-grid button:hover, .hm-sticker-grid button:focus-visible { background: #005ad11a; }
 .hm-sticker-empty { grid-column: 1 / -1; padding: 24px 8px; color: var(--muted); text-align: center; font-size: 13px; }
+.hm-sticker-tabs .hm-gif-tab { width: auto; padding: 0 10px; font-size: 13px; font-weight: 800; letter-spacing: .04em; }
+.hm-gif-panel { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+.hm-gif-search { display: flex; align-items: center; gap: 8px; margin: 8px 10px 0; padding: 0 12px; border-radius: 18px; background: #0000000d; color: var(--muted); }
+.dark-theme .hm-gif-search { background: #ffffff14; }
+.hm-gif-search input { flex: 1; min-width: 0; height: 36px; border: 0; background: transparent; color: inherit; font: inherit; font-size: 15px; outline: none; }
+.hm-gif-grid { columns: 3 110px; column-gap: 6px; padding: 8px 10px; overflow-y: auto; }
+.hm-gif-thumb { display: block; width: 100%; margin: 0 0 6px; padding: 0; border: 0; border-radius: 8px; overflow: hidden; background: #0000000f; cursor: pointer; break-inside: avoid; }
+.hm-gif-thumb img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.hm-gif-thumb:focus-visible { outline: 2px solid #1a73e8; outline-offset: 2px; }
+.hm-gif-thumb:disabled { opacity: .55; cursor: progress; }
+.hm-gif-loading { display: block; width: 100%; height: 100%; min-height: 60px; }
+.hm-gif-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 10px 8px; }
+.hm-gif-more { padding: 6px 14px; border: 1px solid var(--line); border-radius: 16px; background: transparent; color: inherit; font: inherit; font-size: 13px; cursor: pointer; }
+.hm-gif-attribution { margin-left: auto; color: var(--muted); font-size: 11px; }
 .hm-sticker-art { display: block; filter: drop-shadow(0 2px 4px #0003); }
 .hm-sticker-message { display: inline-flex; flex-direction: column; align-items: flex-end; gap: 2px; }
 .hm-sticker-message .message-meta { padding: 1px 6px; border-radius: 8px; background: #0000004d; color: #fff; }

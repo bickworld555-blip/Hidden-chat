@@ -812,7 +812,8 @@ export default function GroupsView({ token, userId, revision, onClose, onStartGr
               setCaret(nextCaret);
               requestAnimationFrame(() => { draftRef.current?.focus(); draftRef.current?.setSelectionRange(nextCaret, nextCaret); });
             }} />}
-            {stickersOpen && !editing && <StickerPalette onPick={(key) => { setStickersOpen(false); sendText(stickerContent(key)); }} />}
+            {stickersOpen && !editing && <StickerPalette token={token} onPick={(key) => { setStickersOpen(false); sendText(stickerContent(key)); }}
+              onGif={async (file) => { setStickersOpen(false); await sendAttachment(file); }} />}
             {groupSecurity && !groupSecurity.encrypted && (
               <p className="e2e-warning" role="status">🔓 {groupSecurity.missing.length === 1 ? '1 member hasn’t' : `${groupSecurity.missing.length} members haven’t`} opened an updated Hidden Messenger yet. Messages to this group <strong>wait on your phone</strong> and go out end-to-end encrypted as soon as they do.</p>
             )}
