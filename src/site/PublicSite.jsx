@@ -2,10 +2,10 @@
 // messenger itself lives at /app (src/App.jsx). Pages switch without reloading (history API); the Help Center reads
 // its articles from the server, where admins edit them on the admin page (src/admin/AdminConsole.jsx).
 import { useEffect, useState } from 'react';
-import { ArrowRight, BadgeCheck, Building2, Check, ChevronRight, CircleDashed, KeyRound, Lock, Megaphone, MessageCircle, Phone, Search, ShieldCheck, Smartphone, Store, UsersRound } from 'lucide-react';
+import { ArrowRight, BadgeCheck, Building2, Check, ChevronRight, CircleDashed, Download as DownloadIcon, KeyRound, Lock, Megaphone, MessageCircle, Monitor, Phone, Search, ShieldCheck, Smartphone, Store, UsersRound } from 'lucide-react';
 import ShieldMark from '../components/ShieldMark.jsx';
 import { apiFetch } from '../api.js';
-import { ANDROID_APK_URL } from './links.js';
+import { ANDROID_APK_URL, WINDOWS_APP_VERSION, WINDOWS_INSTALLER_URL, WINDOWS_PORTABLE_URL } from './links.js';
 import './site.css';
 
 const PAGES = [
@@ -116,8 +116,12 @@ function Home({ go }) {
             <p>Chats, calls, groups and channels with no phone number and no email. Everything you send is locked on your device before it leaves.</p>
             <div className="site-hero-actions">
               <Link to="/download" go={go} className="site-button is-large">Download for Android <ArrowRight size={18} /></Link>
+              <a href={WINDOWS_INSTALLER_URL} className="site-button is-large is-ghost site-windows-button" download>
+                <Monitor size={18} aria-hidden="true" /> Download for Windows (.exe)
+              </a>
               <a href="/app" className="site-button is-large is-ghost">Open in your browser</a>
             </div>
+            <p className="site-hero-note">The Windows app runs on Windows 10 and 11 (64-bit) and links to the app on your phone with a QR code. <Link to="/download" go={go} className="site-more">More download options <ChevronRight size={14} /></Link></p>
           </div>
           <ChatMock lines={[[false, 'Is the new app really private?'], [true, 'Yes: the server only sees locked data'], [false, 'And it needs no phone number?'], [true, 'Just a username 🔒']]} />
         </div>
@@ -278,8 +282,15 @@ function Download() {
           <a className="site-button is-large" href={ANDROID_APK_URL}>Download the APK</a>
         </section>
         <section className="site-card site-download">
+          <h2><Monitor size={20} /> Windows</h2>
+          <p>The desktop app for Windows 10 and 11 (64-bit). Install it, then link it to the app on your phone by scanning a QR code: Settings › Linked devices › Link a device.</p>
+          <a className="site-button is-large" href={WINDOWS_INSTALLER_URL} download><DownloadIcon size={18} aria-hidden="true" /> Download for Windows (.exe)</a>
+          <p className="site-download-alt">Version {WINDOWS_APP_VERSION} · <a href={WINDOWS_PORTABLE_URL} download>Portable version</a> (runs without installing)</p>
+          <p className="site-download-note">Windows may show a SmartScreen notice the first time, because the app is new: choose <strong>More info › Run anyway</strong>.</p>
+        </section>
+        <section className="site-card site-download">
           <h2><MessageCircle size={20} /> Web</h2>
-          <p>Use Hidden Messenger in Chrome, Edge, Firefox or Safari on your computer. Sign in with your username and password.</p>
+          <p>Use Hidden Messenger in Chrome, Edge, Firefox or Safari on your computer. Link it to the app on your phone by scanning a QR code.</p>
           <a className="site-button is-large is-ghost" href="/app">Open the web app</a>
         </section>
       </div>
