@@ -2073,7 +2073,12 @@ export function createChatServer({
     if (!status) return response.status(404).json({ error: 'This status is no longer available.' });
     const inserted = await db.prepare('INSERT INTO status_views(status_id, viewer_id, viewed_at) VALUES (?, ?, ?) ON CONFLICT DO NOTHING')
       .run(request.params.id, userId, Date.now());
-    if (inserted.changes) broadcastUser(status.userId, { type: 'status:viewed', statusId: request.params.id, viewerId: userId });
+    if (inserted.changes) {
+      const viewed = { type: 'status:viewed', statusId: request.params.id, viewerId: userId };
+      broadcastUser(status.userId, viewed);
+      // My other devices turn that person's ring grey too.
+      broadcastUser(userId, viewed);
+    }
     response.status(204).end();
   });
 
@@ -2371,6 +2376,20 @@ export function createChatServer({
         socket.idle = Boolean(event.idle);
         socket.awaitingPong = false;
         scheduleHeartbeat(socket);
+        return;
+      }
+
+      if (event.type === 'presence:typing' && typeof event.groupId === 'string') {
+        // In a group: only a member may say they are typing, and every other member hears it, with the name to show
+        // ("Ava is typing…"); the sender's own devices don't.
+        const groupId = event.groupId;
+        const sender = groupId.length < 80 ? await db.prepare(`SELECT u.name, u.username FROM group_members m JOIN users u ON u.id = m.user_id
+          WHERE m.group_id = ? AND m.user_id = ?`).get(groupId, userId) : null;
+        if (!sender) return;
+        const active = Boolean(event.active);
+        const relayed = { type: 'presence:typing', groupId, userId, active, ...(active ? { kind: event.kind === 'recording' ? 'recording' : 'typing', name: sender.name || `@${sender.username}` } : {}) };
+        const members = await db.prepare('SELECT user_id AS "userId" FROM group_members WHERE group_id = ? AND user_id <> ?').all(groupId, userId);
+        for (const member of members) broadcastUser(member.userId, relayed);
         return;
       }
 

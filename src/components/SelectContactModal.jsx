@@ -4,6 +4,7 @@ import { useChatStore } from '../store.js';
 import { linkContact, searchPeople } from '../contactsApi.js';
 import { exactHandleMatch, isSavedContact, matchesPerson, mergeSuggestions, savedContacts, unsavedThreads } from '../contactBook.js';
 import Avatar from './Avatar.jsx';
+import StatusRing from './StatusRing.jsx';
 
 const SUGGEST_DEBOUNCE_MS = 180;
 
@@ -38,7 +39,7 @@ function PersonRow({ person, online, onChat, onAdd, busy, trailing }) {
   const saved = isSavedContact(person);
   return (
     <div className="wa-sc-contact-item wa-sc-suggestion">
-      <Avatar name={person.name} initials={person.initials ?? person.name?.slice(0, 2)?.toUpperCase() ?? '?'} color={person.color} image={person.avatar} online={online} />
+      <StatusRing userId={person.id} name={person.name}><Avatar name={person.name} initials={person.initials ?? person.name?.slice(0, 2)?.toUpperCase() ?? '?'} color={person.color} image={person.avatar} online={online} /></StatusRing>
       <div className="wa-sc-contact-info">
         <strong className="wa-sc-contact-name">{person.name ?? person.username}</strong>
         <span className="wa-sc-contact-status">@{person.username}{saved ? ' · In your contacts' : person.known ? ' · Recent chat' : ''}</span>
@@ -246,7 +247,7 @@ export default function SelectContactModal({ isOpen, onClose, onSelectContact, o
           <div className="wa-sc-contacts-list">
             {filteredSaved.map((contact) => (
               <button type="button" key={contact.id} className="wa-sc-contact-item" onClick={() => chatWith(contact)} disabled={busyId === contact.id}>
-                <Avatar name={contact.name} initials={contact.initials ?? contact.name?.slice(0, 2)?.toUpperCase() ?? '?'} color={contact.color} image={contact.avatar} online={presence?.[contact.id] === 'online'} />
+                <StatusRing userId={contact.id} name={contact.name}><Avatar name={contact.name} initials={contact.initials ?? contact.name?.slice(0, 2)?.toUpperCase() ?? '?'} color={contact.color} image={contact.avatar} online={presence?.[contact.id] === 'online'} /></StatusRing>
                 <div className="wa-sc-contact-info">
                   <strong className="wa-sc-contact-name">{contact.name ?? 'Unknown'}</strong>
                   <span className="wa-sc-contact-status">{contact.username ? `@${contact.username}` : 'Hey there! I am using Hidden Messenger'}</span>

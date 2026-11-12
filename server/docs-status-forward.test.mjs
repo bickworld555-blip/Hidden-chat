@@ -42,7 +42,7 @@ test('document cards read "1 page • 0.94 MB • PDF" and open with the phone\'
   assert.ok(paths.includes('<cache-path'), 'the cached copy is shareable through the FileProvider');
 });
 
-test('status rings: green for a status I have not seen, grey once seen, none without a status', async () => {
+test('status rings: blue for a status I have not seen, grey once seen, none without a status', async () => {
   assert.deepEqual(statusRingsFrom({ others: [
     { user: { id: 'ava' }, statuses: [{ id: 1 }], allSeen: false },
     { user: { id: 'ben' }, statuses: [{ id: 2 }], allSeen: true },

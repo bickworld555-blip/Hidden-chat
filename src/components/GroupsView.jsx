@@ -25,6 +25,7 @@ import { dropPending, enqueuePending, flushPending, pendingFor, usePending } fro
 import FormattedText from './FormattedText.jsx';
 import { useChatStore } from '../store.js';
 import { formatMessageTime } from '../time.js';
+import { createActivitySender, groupActivityLabel, groupActivityPeople } from '../typing.js';
 import { cachedGroupDetails, cachedGroups, offlineGroupDetails, saveGroupDetails, saveGroups } from '../groupCache.js';
 import { isMediaContent } from '../media.js';
 import { MAX_CALL_PARTICIPANTS } from '../callRoom.js';
@@ -181,7 +182,7 @@ function SettingsRow({ icon: Icon, title, detail, danger = false, onClick, child
     : <div className={`groups-setting ${danger ? 'groups-danger' : ''}`}>{body}</div>;
 }
 
-export default function GroupsView({ token, userId, revision, onClose, onStartGroupCall, initialCreate = false, initialGroupId = '' }) {
+export default function GroupsView({ token, userId, client, revision, onClose, onStartGroupCall, initialCreate = false, initialGroupId = '' }) {
   const [groups, setGroups] = useState([]);
   const [selected, setSelected] = useState(initialCreate ? '' : initialGroupId);
   const pendingMessages = usePending(userId, selected);
@@ -208,6 +209,7 @@ export default function GroupsView({ token, userId, revision, onClose, onStartGr
   const [results, setResults] = useState([]);
   const [picked, setPicked] = useState([]);
   const [draft, setDraft] = useState('');
+  const activityRef = useRef(null);
   const [caret, setCaret] = useState(0);
   const [activeMessageId, setActiveMessageId] = useState('');
   const [editing, setEditing] = useState(null);
@@ -466,6 +468,7 @@ export default function GroupsView({ token, userId, revision, onClose, onStartGr
       if (content !== target.content) perform(() => editGroupMessage(token, selected, target.id, content));
       return;
     }
+    activityRef.current?.stop();
     perform(async () => {
       await groupRequest(token, `${groupPath}/messages`, { method: 'POST', body: { content } });
       setDraft('');
@@ -504,6 +507,23 @@ export default function GroupsView({ token, userId, revision, onClose, onStartGr
   const creator = group?.members.find((member) => member.id === group.createdBy);
   const sortedMembers = group ? [...group.members].sort((left, right) => (left.id === userId ? -1 : right.id === userId ? 1 : 0)) : [];
   const visibleMembers = sortedMembers.filter((member) => `${member.name} ${member.username}`.toLowerCase().includes(memberFilter.trim().toLowerCase()));
+
+  // "Ava is typing…" in this group: my typing goes to the other members while the conversation is open (stopped when
+  // it closes, the box empties or the message goes); theirs replaces the member list under the group name.
+  const typingGroupId = inConversation && canSend ? selected : '';
+  useEffect(() => {
+    if (!typingGroupId) return undefined;
+    const sender = createActivitySender((event) => client?.send?.(event), { groupId: typingGroupId });
+    activityRef.current = sender;
+    return () => {
+      sender.stop();
+      if (activityRef.current === sender) activityRef.current = null;
+    };
+  }, [typingGroupId, client]);
+  const busyInGroup = useChatStore((state) => (selected ? state.groupTyping[selected] : undefined));
+  const contactChats = useChatStore((state) => state.chats);
+  const groupActivity = busyInGroup ? groupActivityLabel(groupActivityPeople(busyInGroup, (id) => contactChats.find((chat) => chat.id === id && !chat.deleted)?.name
+    || group?.members.find((member) => member.id === id)?.name)) : '';
   const mediaMessages = messages.filter((message) => isMediaContent(message.content));
 
   return (
@@ -516,7 +536,9 @@ export default function GroupsView({ token, userId, revision, onClose, onStartGr
               <GroupAvatar size="small" />
               <span className="groups-title-copy">
                 <h2>{group.name}</h2>
-                <small>{group.members.map((member) => (member.id === userId ? 'You' : member.name)).join(', ')}</small>
+                {groupActivity
+                  ? <small className="groups-activity" role="status">{groupActivity}</small>
+                  : <small>{group.members.map((member) => (member.id === userId ? 'You' : member.name)).join(', ')}</small>}
               </span>
             </button>
           ) : <h2>{creating ? 'New group' : settings && group ? group.name : 'Groups'}</h2>}
@@ -822,7 +844,12 @@ export default function GroupsView({ token, userId, revision, onClose, onStartGr
               <input ref={fileInputRef} type="file" hidden onChange={(event) => { const [file] = event.target.files ?? []; event.target.value = ''; sendAttachment(file); }} />
               <span className="groups-compose-field">
                 <input ref={draftRef} aria-label="Group message" value={draft} maxLength={10000}
-                  onChange={(event) => { setDraft(event.target.value); setCaret(event.target.selectionStart ?? event.target.value.length); }}
+                  onChange={(event) => {
+                    setDraft(event.target.value);
+                    setCaret(event.target.selectionStart ?? event.target.value.length);
+                    if (editing) return;
+                    if (event.target.value) activityRef.current?.typed(); else activityRef.current?.stop();
+                  }}
                   onSelect={(event) => setCaret(event.target.selectionStart ?? 0)}
                   placeholder={uploading ? `Uploading… ${uploading}%` : editing ? 'Edit message' : 'Message'} disabled={uploading > 0} />
                 {!editing && <button type="button" className="groups-attach" onClick={() => setStickersOpen((open) => !open)} disabled={busy} aria-label="Stickers" aria-expanded={stickersOpen} title="Stickers"><Sticker size={20} /></button>}

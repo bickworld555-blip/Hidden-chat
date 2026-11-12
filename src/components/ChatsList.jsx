@@ -20,9 +20,14 @@ import MessageSearch, { SearchFilterChips } from './MessageSearch.jsx';
 import { ListEditor, ListPicker, listEntries } from './ChatLists.jsx';
 import { countUnreadConversations, mergeGroupRows, unreadBadge } from '../groupRows.js';
 import VerifiedBadge from './VerifiedBadge.jsx';
-import { activityLabel } from '../typing.js';
+import { activityLabel, groupActivityLabel, groupActivityPeople } from '../typing.js';
+import { statusRingProps } from './StatusRing.jsx';
 
 function GroupListRow({ row, onOpen, pressHandlers, labels = [], consumeLongPress = () => false }) {
+  // "Ava is typing…" in green while someone in the group is (named as saved in this phone's chats when they are).
+  const busy = useChatStore((state) => state.groupTyping[row.id]);
+  const chats = useChatStore((state) => state.chats);
+  const activity = busy ? groupActivityLabel(groupActivityPeople(busy, (id) => chats.find((chat) => chat.id === id && !chat.deleted)?.name)) : '';
   return (
     <div className="wa-row-wrapper" {...pressHandlers}>
       <button type="button" className="wa-row" onClick={() => { if (!consumeLongPress()) onOpen?.(row.id); }} aria-label={`Open group ${row.name}${row.unread > 0 ? `, ${row.unread} unread` : ''}`}>
@@ -33,7 +38,9 @@ function GroupListRow({ row, onOpen, pressHandlers, labels = [], consumeLongPres
             <time className={row.unread > 0 ? 'unread' : ''}>{row.time}</time>
           </span>
           <span className="wa-row-bottom">
-            <span className="wa-preview"><FormattedText text={row.preview} inline /></span>
+            {activity
+              ? <span className="wa-preview is-activity">{activity}</span>
+              : <span className="wa-preview"><FormattedText text={row.preview} inline /></span>}
             <span className="wa-row-indicators">
               {labels.map((label) => <Tag key={label.id} size={14} className="wa-row-badge-icon" style={{ color: labelColor(label.color) }} aria-label={`Label ${label.name}`} />)}
               {row.unread > 0 && <span className={`wa-badge ${row.muted ? 'is-muted' : ''}`}>{unreadBadge(row.unread)}</span>}
@@ -534,7 +541,8 @@ export default function ChatsList({ onOpenChat, onStartCall, onGroups, groups = 
                 className="wa-row"
                 onClick={() => handleRowClick(chat)}
               >
-                <div className={`wa-row-avatar-wrap ${statusRings?.[chat.id] ? `has-status status-${statusRings[chat.id]}` : ''}`}>
+                <div className={`wa-row-avatar-wrap ${statusRings?.[chat.id] ? `has-status status-${statusRings[chat.id]}` : ''}`}
+                  {...statusRingProps(chat.id, chat.deleted ? null : statusRings?.[chat.id], chat.name, () => !isSelectionMode && !longPress.wasFired())}>
                   <Avatar name={chat.name} initials={chat.initials ?? chat.name?.slice(0, 2)?.toUpperCase() ?? '?'} color={chat.color} image={chat.avatar} online={online} />
                   {isSelected && (
                     <div className="wa-row-check-badge">

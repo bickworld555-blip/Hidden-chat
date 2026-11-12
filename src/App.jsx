@@ -1,6 +1,6 @@
 import { acknowledgeEvents } from './deliveryAck.js';
 import { apiFetch, apiUrl, isNetworkFailure } from './api.js';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { cachedGroups, prefetchGroupDetails, saveGroups } from './groupCache.js';
 import { activateAccount, addOrActivateAccount, getAccountsState, loadAccounts, removeAccount, sessionFromAccount, updateAccountUser } from './accounts.js';
 import { Bell, ChevronRight, MessageSquarePlus, Moon, Sun } from 'lucide-react';
@@ -47,6 +47,7 @@ const AccountSwitcher = lazyComponent(() => import('./components/AccountSwitcher
 const AvatarStudio = lazyComponent(() => import('./components/AvatarStudio.jsx'));
 const PermissionsSheet = lazyComponent(() => import('./components/PermissionsSheet.jsx'));
 const NotificationSettings = lazyComponent(() => import('./components/NotificationSettings.jsx'));
+const StatusQuickView = lazyComponent(() => import('./components/UpdatesView.jsx'), (module) => module.StatusQuickView);
 const AccountSettings = lazyComponent(() => import('./components/AccountSettings.jsx'));
 const CallsView = lazyComponent(() => import('./components/CallsView.jsx'));
 const UpdatesView = lazyComponent(() => import('./components/UpdatesView.jsx'));
@@ -347,7 +348,9 @@ export default function App() {
           }
           if (event.type === 'connection:ready') event.presence.forEach((item) => setPresence(item.userId, item.status, item.lastSeenAt));
           if (event.type === 'presence:update') setPresence(event.userId, event.status, event.lastSeenAt);
-          if (event.type === 'presence:typing') setTyping(event.userId, activityFromEvent(event));
+          if (event.type === 'presence:typing' && typeof event.groupId === 'string') useChatStore.getState().setGroupTyping(event.groupId, event.userId, activityFromEvent(event), event.name);
+          else if (event.type === 'presence:typing') setTyping(event.userId, activityFromEvent(event));
+          if (event.type === 'group:message' && event.message?.senderId !== userId) useChatStore.getState().setGroupTyping(event.message?.groupId, event.message?.senderId, null);
           // Their message arrived: they stopped typing (or recording) it.
           if (event.type === 'message:new' && event.message?.senderId !== userId && !event.message?.groupId) setTyping(event.message?.senderId, null);
           if (event.type === 'message:new' || event.type === 'message:ack') {
@@ -821,6 +824,15 @@ export default function App() {
     fetchStatuses(sessionToken).then((feed) => { if (!cancelled) useChatStore.getState().setStatusRings(feed); }).catch(() => {});
     return () => { cancelled = true; };
   }, [sessionToken, statusRevision]);
+  // A ring goes when its last status expires (24 hours), even with no other change: reload the rings at that moment.
+  const statusRingsUntil = useChatStore((state) => state.statusRingsUntil ?? null);
+  useEffect(() => {
+    if (!sessionToken || !statusRingsUntil) return undefined;
+    const timer = setTimeout(() => useChatStore.getState().bumpStatusRevision(), Math.min(Math.max(0, statusRingsUntil - Date.now()) + 1000, 2 ** 31 - 1));
+    return () => clearTimeout(timer);
+  }, [sessionToken, statusRingsUntil]);
+  const statusViewerFor = useChatStore((state) => state.statusViewerFor);
+  const closeStatusViewer = useCallback(() => useChatStore.getState().openStatusOf(null), []);
   useEffect(() => onNative('pictureInPicture', ({ active }) => document.documentElement.classList.toggle('native-pip', Boolean(active))), []);
   // Group rows in the chat list come from the server listing, refreshed on every group:* socket event and reconnect.
   // The last listing is kept on this device (src/groupCache.js), so groups show at once and stay when offline.
@@ -1102,7 +1114,8 @@ export default function App() {
       {sessionToken && inviteCode && <JoinGroupSheet code={inviteCode} token={sessionToken} onClose={() => setInviteCode('')} onJoined={(groupId) => { setInviteCode(''); openGroups(false, groupId); }} />}
       {sessionToken && <TwoStepReminder token={sessionToken} />}
       <AppLockGate />
-      {groupsOpen && sessionToken && <GroupsView key={userId} token={sessionToken} userId={userId} revision={groupRevision} initialCreate={groupsCreate} initialGroupId={groupsInitialId} onStartGroupCall={initiateGroupCall} onClose={() => setGroupsOpen(false)} />}
+      {groupsOpen && sessionToken && <GroupsView key={userId} token={sessionToken} userId={userId} client={client} revision={groupRevision} initialCreate={groupsCreate} initialGroupId={groupsInitialId} onStartGroupCall={initiateGroupCall} onClose={() => setGroupsOpen(false)} />}
+      {statusViewerFor && sessionToken && <StatusQuickView key={statusViewerFor} token={sessionToken} userId={userId} ownerId={statusViewerFor} onClose={closeStatusViewer} />}
       {incomingShare && userId && sessionToken && (
         <ShareSheet
           share={incomingShare}

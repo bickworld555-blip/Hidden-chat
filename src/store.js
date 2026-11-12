@@ -287,13 +287,30 @@ export function unreadFrom(messages, peerId, userId) {
 
 const pageVisible = () => typeof document === 'undefined' || document.visibilityState === 'visible';
 
-// Ring around a contact's photo in the chat list: green while they have a status I have not seen, grey once seen.
-export function statusRingsFrom(feed) {
+// Ring around a contact's photo (chat list, contact lists): blue while they have a status I have not seen, grey once
+// all are seen, gone when the last one expires (24 hours after it was posted).
+const liveStatuses = (entry, now) => (entry?.statuses ?? []).filter((status) => !status?.expiresAt || Date.parse(status.expiresAt) > now);
+export function statusRingsFrom(feed, now = Date.now()) {
   const rings = {};
   for (const entry of feed?.others ?? []) {
-    if (entry?.user?.id && entry.statuses?.length) rings[entry.user.id] = entry.allSeen ? 'seen' : 'new';
+    const live = liveStatuses(entry, now);
+    if (!entry?.user?.id || !live.length) continue;
+    // The server's allSeen holds while nothing has expired since it answered; after that, the ones still live decide.
+    const seen = live.length === entry.statuses.length && typeof entry.allSeen === 'boolean' ? entry.allSeen : live.every((status) => status.seen);
+    rings[entry.user.id] = seen ? 'seen' : 'new';
   }
   return rings;
+}
+// When the next ring has to change because a status expires (ms since epoch), or null when none will.
+export function nextStatusExpiry(feed, now = Date.now()) {
+  let next = null;
+  for (const entry of feed?.others ?? []) {
+    for (const status of liveStatuses(entry, now)) {
+      const at = Date.parse(status.expiresAt);
+      if (Number.isFinite(at) && (next === null || at < next)) next = at;
+    }
+  }
+  return next;
 }
 
 // What a message deleted for everyone reads as, in the chat and in the chat list (WhatsApp's wording).
@@ -360,7 +377,10 @@ export const useChatStore = create((setState, getState) => ({
   bumpStatusRevision() { setState((state) => ({ statusRevision: (state.statusRevision ?? 0) + 1 })); },
   // userId → 'new' (a status I have not seen: green ring) or 'seen' (grey ring), from the statuses feed.
   statusRings: {},
-  setStatusRings(feed) { setState({ statusRings: statusRingsFrom(feed) }); },
+  setStatusRings(feed) { setState({ statusRings: statusRingsFrom(feed), statusRingsUntil: nextStatusExpiry(feed) }); },
+  // Tapping a ringed photo opens that person's status here (App shows the viewer over everything).
+  statusViewerFor: null,
+  openStatusOf(userId) { setState({ statusViewerFor: userId || null }); },
   device: null,
   sessionToken: null,
   activeChatId: null,
@@ -383,6 +403,7 @@ export const useChatStore = create((setState, getState) => ({
   // Poll message id → { [optionIndex]: [userId, …] }, filled on first view and kept live by poll:votes events.
   pollVotes: {},
   typing: {},
+  groupTyping: {},
   connection: 'connecting',
   // Live location sessions (ephemeral, keyed by session id). `me`/`peer` hold the latest fixes.
   liveSessions: {},
@@ -400,6 +421,10 @@ export const useChatStore = create((setState, getState) => ({
       callLogs: [],
       liveSessions: {},
       statusRings: {},
+      statusRingsUntil: null,
+      statusViewerFor: null,
+      typing: {},
+      groupTyping: {},
       user: userId ? state.user : null,
       sessionToken: userId ? state.sessionToken : null,
       chats: [],
@@ -599,6 +624,28 @@ export const useChatStore = create((setState, getState) => ({
       const typing = { ...state.typing };
       if (kind) typing[userId] = kind; else delete typing[userId];
       return { typing };
+    });
+  },
+  // Who is typing in each group: { [groupId]: { [userId]: { kind, name } } }, lapsing like setTyping.
+  setGroupTyping(groupId, userId, kind, name = '') {
+    if (!groupId || !userId) return;
+    const key = `${groupId}\u0000${userId}`;
+    clearTimeout(typingExpiry.get(key));
+    typingExpiry.delete(key);
+    if (kind) {
+      const timer = setTimeout(() => { typingExpiry.delete(key); getState().setGroupTyping(groupId, userId, null); }, ACTIVITY_EXPIRES_MS);
+      timer?.unref?.();
+      typingExpiry.set(key, timer);
+    }
+    setState((state) => {
+      const current = state.groupTyping[groupId] ?? {};
+      if (!kind && !current[userId]) return {};
+      if (kind && current[userId]?.kind === kind && current[userId]?.name === name) return {};
+      const people = { ...current };
+      if (kind) people[userId] = { kind, name: name || current[userId]?.name || '' }; else delete people[userId];
+      const groupTyping = { ...state.groupTyping };
+      if (Object.keys(people).length) groupTyping[groupId] = people; else delete groupTyping[groupId];
+      return { groupTyping };
     });
   },
   markRead(chatId) {

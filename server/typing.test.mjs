@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import WebSocket from 'ws';
 import { createChatServer } from './index.mjs';
-import { ACTIVITY_EXPIRES_MS, ACTIVITY_REFRESH_MS, TYPING_IDLE_MS, activityFromEvent, activityLabel, createActivitySender } from '../src/typing.js';
+import { ACTIVITY_EXPIRES_MS, ACTIVITY_REFRESH_MS, TYPING_IDLE_MS, activityFromEvent, activityLabel, createActivitySender, groupActivityLabel, groupActivityPeople } from '../src/typing.js';
 
 // A sender on a fake clock: every message it sends, with the time it was sent.
 function fakeSender() {
@@ -156,4 +156,72 @@ test('the server relays "typing", "recording" and "stopped" to the other person 
   assert.equal(calSocket.events.some((item) => item.type === 'presence:typing'), false, 'nobody else hears it');
   assert.equal(avaSocket.events.some((item) => item.type === 'presence:typing'), false, 'not echoed to the sender');
   for (const socket of [avaSocket, benSocket, calSocket]) socket.close();
+});
+
+test('a group shows who is busy in it, by name, as WhatsApp words it', () => {
+  assert.equal(groupActivityLabel([]), '');
+  assert.equal(groupActivityLabel([{ name: 'Ava', kind: 'typing' }]), 'Ava is typing…');
+  assert.equal(groupActivityLabel([{ name: 'Ava', kind: 'recording' }]), 'Ava is recording audio…');
+  assert.equal(groupActivityLabel([{ name: 'Ava', kind: 'typing' }, { name: 'Ben', kind: 'typing' }]), 'Ava and Ben are typing…');
+  assert.equal(groupActivityLabel([{ name: 'Ava', kind: 'recording' }, { name: 'Ben', kind: 'recording' }]), 'Ava and Ben are recording audio…');
+  assert.equal(groupActivityLabel([{ name: 'Ava', kind: 'typing' }, { name: 'Ben', kind: 'recording' }, { name: 'Cal', kind: 'typing' }]), '3 people are typing…');
+  assert.equal(groupActivityLabel([{ name: '', kind: 'typing' }]), 'Someone is typing…');
+  // A saved contact's name wins over the name the server sent.
+  const people = groupActivityPeople({ u1: { kind: 'typing', name: 'Ava Server' }, u2: { kind: 'typing', name: 'Ben' } }, (id) => (id === 'u1' ? 'Mum' : ''));
+  assert.deepEqual(people, [{ userId: 'u1', kind: 'typing', name: 'Mum' }, { userId: 'u2', kind: 'typing', name: 'Ben' }]);
+});
+
+test('typing in a group is addressed to the group', () => {
+  const sent = [];
+  const sender = createActivitySender((event) => sent.push(event), { groupId: 'g1' });
+  sender.typed();
+  sender.stop();
+  assert.deepEqual(sent, [
+    { type: 'presence:typing', groupId: 'g1', active: true, kind: 'typing' },
+    { type: 'presence:typing', groupId: 'g1', active: false },
+  ]);
+});
+
+test('a group\'s typing people lapse one by one; "stopped" or their message removes them', async () => {
+  mock.timers.enable({ apis: ['setTimeout'] });
+  try {
+    const { useChatStore } = await import('../src/store.js');
+    const { setGroupTyping } = useChatStore.getState();
+    setGroupTyping('g1', 'ava', 'typing', 'Ava');
+    mock.timers.tick(3000);
+    setGroupTyping('g1', 'ben', 'typing', 'Ben');
+    assert.deepEqual(Object.keys(useChatStore.getState().groupTyping.g1), ['ava', 'ben']);
+    mock.timers.tick(ACTIVITY_EXPIRES_MS - 3000);
+    assert.deepEqual(Object.keys(useChatStore.getState().groupTyping.g1), ['ben'], 'Ava lapsed, Ben is still fresh');
+    setGroupTyping('g1', 'ben', 'typing');
+    assert.equal(useChatStore.getState().groupTyping.g1.ben.name, 'Ben', 'a refresh keeps the name');
+    setGroupTyping('g1', 'ben', null);
+    assert.equal(useChatStore.getState().groupTyping.g1, undefined);
+  } finally {
+    mock.timers.reset();
+  }
+});
+
+test('the server relays group typing, with the name, to the other members only', async () => {
+  const ava = await register('gtava');
+  const ben = await register('gtben');
+  const cal = await register('gtcal');
+  const outsider = await register('gtout');
+  const created = await fetch(`${baseUrl}/api/v1/groups`, { method: 'POST', headers: { Authorization: `Bearer ${ava.token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Team', memberIds: [ben.user.id, cal.user.id] }) });
+  const group = await created.json();
+  assert.equal(created.status < 300, true, JSON.stringify(group));
+  const [avaSocket, benSocket, calSocket, outSocket] = await Promise.all([connect(ava), connect(ben), connect(cal), connect(outsider)]);
+  avaSocket.send(JSON.stringify({ type: 'presence:typing', groupId: group.id, active: true, kind: 'typing' }));
+  const heard = await benSocket.waitFor((item) => item.type === 'presence:typing');
+  assert.deepEqual(heard, { type: 'presence:typing', groupId: group.id, userId: ava.user.id, active: true, kind: 'typing', name: ava.user.name || `@${ava.user.username}` });
+  assert.ok(await calSocket.waitFor((item) => item.type === 'presence:typing' && item.groupId === group.id), 'every other member hears it');
+  avaSocket.send(JSON.stringify({ type: 'presence:typing', groupId: group.id, active: false }));
+  assert.deepEqual(await benSocket.waitFor((item) => item.type === 'presence:typing' && !item.active), { type: 'presence:typing', groupId: group.id, userId: ava.user.id, active: false });
+  // Someone outside the group can't announce themselves in it.
+  outSocket.send(JSON.stringify({ type: 'presence:typing', groupId: group.id, active: true }));
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  assert.equal(benSocket.events.some((item) => item.type === 'presence:typing' && item.userId === outsider.user.id), false);
+  assert.equal(outSocket.events.some((item) => item.type === 'presence:typing'), false, 'non-members hear nothing');
+  assert.equal(avaSocket.events.some((item) => item.type === 'presence:typing'), false, 'not echoed to the sender');
+  for (const socket of [avaSocket, benSocket, calSocket, outSocket]) socket.close();
 });

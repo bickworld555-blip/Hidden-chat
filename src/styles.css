@@ -4233,7 +4233,7 @@ html.native-pip .wa-video-tile.is-pip { width: 30% !important; height: auto !imp
 .wa-video-tile.is-pip .wa-video-off-status { font-size: 10px; }
 .wa-call-backdrop.is-pip .wa-video-tile.is-pip .wa-video-off-notice .avatar { width: 28px; height: 28px; font-size: 10px; }
 .wa-call-backdrop.is-pip .wa-video-tile.is-pip .wa-video-off-name, .wa-call-backdrop.is-pip .wa-video-tile.is-pip .wa-video-off-status { display: none; }
-/* Status ring around a contact's photo in the chat list (green: a status you have not seen; grey: seen). */
+/* Status ring around a contact's photo in the chat list (blue: a status you have not seen; grey: all seen; none once expired). */
 .wa-row-avatar-wrap.has-status > .avatar { box-shadow: 0 0 0 2px var(--wa-bg, #fff), 0 0 0 4px var(--wa-green, #1a73e8); }
 .wa-row-avatar-wrap.status-seen > .avatar { box-shadow: 0 0 0 2px var(--wa-bg, #fff), 0 0 0 4px #8696a0; }
 /* Round forward button beside photos, videos, documents and voice notes: left of yours, right of theirs (WhatsApp). */
@@ -5313,3 +5313,10 @@ textarea.hm-input { min-height: 96px; resize: vertical; }
   .recording-indicator-mic, .recording-indicator-bars span { animation: none; }
   .recording-indicator-bars span { height: 12px; }
 }
+
+/* Status ring in contact lists (src/components/StatusRing.jsx); the chat list uses .wa-row-avatar-wrap above. */
+.status-ring-wrap { display: inline-flex; flex: none; border-radius: 50%; }
+.status-ring-wrap.has-status { cursor: pointer; }
+.status-ring-wrap.has-status > .avatar { box-shadow: 0 0 0 2px var(--wa-bg, #fff), 0 0 0 4px var(--wa-green, #1a73e8); }
+.status-ring-wrap.status-seen > .avatar { box-shadow: 0 0 0 2px var(--wa-bg, #fff), 0 0 0 4px #8696a0; }
+.wa-row-avatar-wrap.has-status { cursor: pointer; }

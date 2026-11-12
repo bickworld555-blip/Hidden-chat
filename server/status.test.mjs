@@ -106,6 +106,8 @@ test('statuses reach the author\'s contacts only, track who saw them, and can be
   const authorSocket = await connect(author);
   assert.equal((await api(`/api/v1/statuses/${text.data.id}/view`, { session: friend, method: 'POST' })).status, 204);
   await authorSocket.wait('status:viewed', (event) => event.statusId === text.data.id && event.viewerId === friend.user.id);
+  // The viewer's own devices hear it too, so the ring turns grey on every one of them.
+  await friendSocket.wait('status:viewed', (event) => event.statusId === text.data.id && event.viewerId === friend.user.id);
   assert.equal((await api(`/api/v1/statuses/${photo.data.id}/view`, { session: friend, method: 'POST' })).status, 204);
   assert.equal((await api('/api/v1/statuses', { session: friend })).data.others[0].allSeen, true);
   const mine = (await api('/api/v1/statuses', { session: author })).data.mine;
@@ -139,4 +141,25 @@ test('a reaction tells the message author who reacted and to what, so it can be 
   assert.equal(own.messageContent, undefined, 'the reactor\'s own copy stays minimal');
   senderSocket.close();
   reactorSocket.close();
+});
+
+test('the ring round a photo: blue for an unseen status, grey when all are seen, gone once they expire', async () => {
+  const { nextStatusExpiry, statusRingsFrom } = await import('../src/store.js');
+  const now = Date.parse('2026-11-13T12:00:00.000Z');
+  const at = (hours) => new Date(now + hours * 3600_000).toISOString();
+  const feed = { others: [
+    { user: { id: 'ava' }, statuses: [{ id: 'a1', seen: true, expiresAt: at(2) }, { id: 'a2', seen: false, expiresAt: at(20) }] },
+    { user: { id: 'ben' }, statuses: [{ id: 'b1', seen: true, expiresAt: at(5) }] },
+    // Cal's only (unseen) one expired a minute ago: no ring at all.
+    { user: { id: 'cal' }, statuses: [{ id: 'c1', seen: false, expiresAt: at(-0.02) }] },
+    { user: { id: 'dee' }, statuses: [] },
+  ] };
+  assert.deepEqual(statusRingsFrom(feed, now), { ava: 'new', ben: 'seen' });
+  assert.equal(nextStatusExpiry(feed, now), Date.parse(at(2)), 'the rings next change when Ava\'s first one expires');
+  // Three hours on: Ava's seen one has gone, her unseen one keeps the ring blue.
+  assert.deepEqual(statusRingsFrom(feed, now + 3 * 3600_000), { ava: 'new', ben: 'seen' });
+  // A day on: nothing left, no rings, nothing to wait for.
+  assert.deepEqual(statusRingsFrom(feed, now + 24 * 3600_000), {});
+  assert.equal(nextStatusExpiry(feed, now + 24 * 3600_000), null);
+  assert.deepEqual(statusRingsFrom(null), {});
 });

@@ -422,3 +422,39 @@ function StatusViewer({ token, owner, startIndex = 0, onClose, onDeleted, muted 
     </div>
   );
 }
+
+// A contact's status opened by tapping their ringed photo elsewhere (the chat list, contact lists): the same viewer as
+// the Updates tab, from the first update not seen yet. The rings are refreshed when it opens and when it closes.
+export function StatusQuickView({ token, userId, ownerId, onClose }) {
+  const [entry, setEntry] = useState(undefined);
+  const [muted, setMuted] = useState(mutedStatusUsers);
+  const refreshRings = useCallback(() => fetchStatuses(token, userId), [token, userId]);
+  useEffect(() => {
+    let cancelled = false;
+    refreshRings().then((feed) => {
+      if (cancelled) return;
+      useChatStore.getState().setStatusRings(feed);
+      setEntry(feed.others.find((item) => item.user.id === ownerId) ?? null);
+    }).catch(() => { if (!cancelled) setEntry(null); });
+    return () => { cancelled = true; };
+  }, [refreshRings, ownerId]);
+  // Expired (or hidden) in the meantime: nothing to show.
+  useEffect(() => { if (entry === null) onClose(); }, [entry, onClose]);
+  const close = useCallback(() => {
+    refreshRings().then((feed) => useChatStore.getState().setStatusRings(feed)).catch(() => {});
+    onClose();
+  }, [refreshRings, onClose]);
+  if (!entry?.statuses?.length) return null;
+  return createPortal(
+    <StatusViewer
+      token={token}
+      owner={entry}
+      startIndex={Math.max(0, entry.statuses.findIndex((status) => !status.seen))}
+      onClose={close}
+      onDeleted={close}
+      muted={muted.includes(ownerId)}
+      onToggleMute={() => setMuted(setStatusMuted(ownerId, !muted.includes(ownerId)))}
+    />,
+    document.body,
+  );
+}

@@ -24,6 +24,8 @@ export function createLongPress(onLongPress, { delay = LONG_PRESS_MS, slop = LON
       fired = false;
       return was;
     },
+    // The same, without using it up (for a handler that lets the click pass on to one that consumes it).
+    wasFired: () => fired,
     cancel: reset,
     onPointerDown(event) {
       // Every new press starts fresh, a right-click included: otherwise a second right-click (with no left click in
