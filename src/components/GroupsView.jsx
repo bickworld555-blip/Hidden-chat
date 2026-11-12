@@ -521,7 +521,7 @@ export default function GroupsView({ token, userId, revision, onClose, onStartGr
           ) : <h2>{creating ? 'New group' : settings && group ? group.name : 'Groups'}</h2>}
           {inConversation && onStartGroupCall && (
             <span className="groups-call-menu-wrap">
-              <button type="button" className="groups-call-trigger" onClick={() => setCallMenu((open) => !open)} aria-label="Call options" aria-expanded={callMenu} aria-haspopup="menu">
+              <button type="button" className="groups-call-trigger" onClick={() => setCallMenu((open) => !open)} aria-label="Call options" aria-expanded={callMenu}>
                 <Video size={22} /><ChevronDown size={14} />
               </button>
               {callMenu && (
@@ -815,7 +815,7 @@ export default function GroupsView({ token, userId, revision, onClose, onStartGr
             {stickersOpen && !editing && <StickerPalette token={token} onPick={(key) => { setStickersOpen(false); sendText(stickerContent(key)); }}
               onGif={async (file) => { setStickersOpen(false); await sendAttachment(file); }} />}
             {groupSecurity && !groupSecurity.encrypted && (
-              <p className="e2e-warning" role="status">🔓 {groupSecurity.missing.length === 1 ? '1 member hasn’t' : `${groupSecurity.missing.length} members haven’t`} opened an updated Hidden Messenger yet. Messages to this group <strong>wait on your phone</strong> and go out end-to-end encrypted as soon as they do.</p>
+              <p className="e2e-warning is-waiting" role="status">🔒 {groupSecurity.missing.length === 1 ? '1 member hasn’t' : `${groupSecurity.missing.length} members haven’t`} opened an updated Hidden Messenger yet. Messages to this group <strong>wait on your phone</strong> and go out end-to-end encrypted as soon as they do.</p>
             )}
             <form className="groups-compose" onSubmit={(event) => { event.preventDefault(); submitDraft(); }}>
               <input ref={fileInputRef} type="file" hidden onChange={(event) => { const [file] = event.target.files ?? []; event.target.value = ''; sendAttachment(file); }} />

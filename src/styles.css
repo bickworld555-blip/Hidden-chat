@@ -5258,3 +5258,20 @@ textarea.hm-input { min-height: 96px; resize: vertical; }
 .hm-actions-row { display: flex; gap: 10px; flex-wrap: wrap; }
 .restore-field { display: flex; flex-direction: column; gap: 6px; margin: 12px 0; text-align: left; font-size: 14px; }
 .restore-field input { padding: 12px; border: 1px solid var(--wa-line, #d1d7db); border-radius: 10px; font: inherit; letter-spacing: .04em; }
+
+/* Touch targets on phones: Android asks for 48dp. These controls stay their size on screen; an invisible layer around
+   each one takes the touch (vertical only for chips and tabs that sit side by side). */
+.app-shell.is-mobile :is(.icon-button, .wa-icon-btn, .composer-icon, .display-name-pencil, .wa-chip, .wa-chip-add, .composer-tray-tabs button, .status-add-sheet) { position: relative; }
+.app-shell.is-mobile :is(.icon-button, .wa-icon-btn, .composer-icon, .display-name-pencil, .account-switch-btn, .profile-photo-edit, .status-add-sheet)::after { content: ""; position: absolute; inset: -6px; }
+.app-shell.is-mobile :is(.wa-chip, .wa-chip-add, .composer-tray-tabs button)::after { content: ""; position: absolute; inset: -8px 0; }
+
+/* Tablets and unfolded foldables (two panes): the chat list gives the conversation room on medium widths. */
+@media (min-width: 769px) and (max-width: 1100px) {
+  .app-shell:not(.is-mobile) { grid-template-columns: 64px clamp(280px, 36vw, 350px) minmax(0, 1fr); }
+  /* The tagline would wrap over three lines beside the header icons. */
+  .sidebar .brand-copy span { display: none; }
+}
+/* An unread count in a chat row sits in the row, not pinned to the sidebar's corner (that rule is for nav icons). */
+.chat-row .unread-badge { position: static; }
+/* Keyboard shortcut hints mean nothing on a touch screen. */
+@media (pointer: coarse) { .search-box kbd { display: none; } }

@@ -400,7 +400,7 @@ function ViewerFrame({
         </button>
         <button type="button" onClick={onForward} aria-label="Forward"><Forward size={22} /></button>
         <span className="wa-viewer-menu-anchor">
-          <button type="button" onClick={() => setMenuOpen((open) => !open)} aria-haspopup="menu" aria-expanded={menuOpen} aria-label="More options">
+          <button type="button" onClick={() => setMenuOpen((open) => !open)} aria-expanded={menuOpen} aria-label="More options">
             <MoreVertical size={22} />
           </button>
           {menuOpen && (

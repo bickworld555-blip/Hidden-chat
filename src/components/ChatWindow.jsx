@@ -1686,7 +1686,7 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
             <button type="button" className="icon-button header-action-secondary" onClick={openChatSearch} aria-label="Search messages"><Search size={18} /></button>
             <button type="button" className="icon-button header-action-secondary" onClick={onPair} aria-label="Linked devices"><Link2 size={18} /></button>
             <span className="header-menu-wrap">
-              <button type="button" className="icon-button" onClick={() => setHeaderMenuOpen((open) => !open)} aria-label="More options" aria-expanded={headerMenuOpen} aria-haspopup="menu"><MoreVertical size={18} /></button>
+              <button type="button" className="icon-button" onClick={() => setHeaderMenuOpen((open) => !open)} aria-label="More options" aria-expanded={headerMenuOpen}><MoreVertical size={18} /></button>
               {headerMenuOpen && (
                 <ul className="header-menu" role="menu" aria-label="Chat options">
                   {[
@@ -1821,7 +1821,7 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
                   // Computers: Enter sends, Shift+Enter starts a new line. Phones: Enter is a new line; the button sends.
                   if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && enterSends()) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); }
                 }}
-                placeholder={translate(editing ? 'Edit message' : 'Message', language)} maxLength={COMPOSER_MAX_LENGTH} />
+                placeholder={translate(editing ? 'Edit message' : 'Message', language)} aria-label={translate(editing ? 'Edit message' : 'Message', language)} maxLength={COMPOSER_MAX_LENGTH} />
               <button type="button" className="composer-icon" onClick={() => setMenuOpen(true)} aria-label="Attach" disabled={busy}><Paperclip size={20} /></button>
               {action === 'voice' && (
                 <button type="button" className="composer-icon composer-camera" onClick={() => openFilePicker('image/*,video/*', 'environment')} aria-label="Camera" disabled={busy}><Camera size={20} /></button>

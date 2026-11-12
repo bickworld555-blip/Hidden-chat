@@ -149,7 +149,7 @@ export function MemberAdminActions({ group, member, userId, token, onChanged, on
   }
   return (
     <span className="hm-member-admin">
-      <button type="button" className="icon-button" disabled={busy} aria-haspopup="menu" aria-expanded={open} aria-label={`Manage ${member.name}`} onClick={() => setOpen((value) => !value)}>
+      <button type="button" className="icon-button" disabled={busy} aria-expanded={open} aria-label={`Manage ${member.name}`} onClick={() => setOpen((value) => !value)}>
         <Crown size={16} />
       </button>
       {open && (
