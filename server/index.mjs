@@ -1919,7 +1919,13 @@ export function createChatServer({
         FROM messages WHERE id = ? AND deleted_at IS NULL`).get(id);
       if (row) rows.push(await presentMessage(row));
     }
-    response.json({ messages: await maskReceipts(userId, rows), groupMessageIds: pending.group, events: pending.events });
+    // Group messages say which group they are in, so the app can fetch, open and save that group's waiting messages.
+    const groupMessages = [];
+    for (const id of pending.group.slice(0, 500)) {
+      const row = await db.prepare('SELECT group_id AS "groupId" FROM group_messages WHERE id = ?').get(id);
+      if (row) groupMessages.push({ id, groupId: row.groupId });
+    }
+    response.json({ messages: await maskReceipts(userId, rows), groupMessageIds: pending.group, groupMessages, events: pending.events });
   });
   app.post('/api/v1/queue/ack', requireSession, async (request, response) => {
     const { user_id: userId, device_id: deviceId } = request.session;

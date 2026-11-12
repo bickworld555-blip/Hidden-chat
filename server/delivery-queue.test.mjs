@@ -168,3 +168,17 @@ test('an ordinary request counts as the device being used, so a device back afte
   assert.deepEqual((await api('/api/v1/queue', { session: bob })).data.messages.map((message) => message.id), ['act-1']);
   aliceSocket.close();
 });
+
+test('a group message waiting for a device says which group it is in, so the app can save it unopened', async () => {
+  const alice = await register('qa');
+  const bob = await register('qb');
+  const created = await api('/api/v1/groups', { session: alice, method: 'POST', body: { name: 'Queue group', memberIds: [bob.user.id] } });
+  assert.equal(created.status, 201);
+  const groupId = created.data.id;
+  const sent = await api(`/api/v1/groups/${groupId}/messages`, { session: alice, method: 'POST', body: { content: 'hello group' } });
+  assert.ok(sent.status === 200 || sent.status === 201, `sent: ${sent.status}`);
+  const queued = (await api('/api/v1/queue', { session: bob })).data;
+  assert.deepEqual(queued.groupMessages, [{ id: sent.data.id, groupId }]);
+  const done = await api('/api/v1/queue/ack', { session: bob, method: 'POST', body: { messageIds: [sent.data.id] } });
+  assert.equal(done.data.removed, 1, 'gone once the only member device saved it');
+});

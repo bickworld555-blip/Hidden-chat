@@ -18,6 +18,7 @@ import { classifyIncoming, groupNotificationText, parseConversationOpenParam, sh
 import { nativeClearSession, nativeRequestStartupPermissions, nativeSetSession, nativeShell, nativeStartBackground, nativeState, nativeStopBackground, nativeTakePendingCall, nativeMoveToBackground, nativeClearShare, nativeSetCallActive, nativeClearMessageNotifications, nativeClearMissedCalls, nativeTakeMessageActions, onNative } from './native.js';
 import { parseShare } from './shareTarget.js';
 import { onE2eEvent, startE2e, stopE2e } from './e2e/client.js';
+import { fetchGroupMessages } from './groupHistory.js';
 import { SECURITY_NOTICE } from './e2e/notices.js';
 import { LOCKED_NOTIFICATION } from './chatLock.js';
 import { handleReactionError, handleRejected, needsOpening, openEvent, openHistory, openRows, transmitDirect } from './e2e/messaging.js';
@@ -323,6 +324,8 @@ export default function App() {
           }
           // Group messages use their own channel: the group tone, vibration and a "<group>" / "<sender>: text" notification.
           if (event.type === 'group:message') {
+            // Kept on this device as it arrives (opened above), like a one-to-one message; saving acknowledges it.
+            if (typeof event.message?.groupId === 'string') useChatStore.getState().mergeGroupMessages(event.message.groupId, [event.message]);
             const alert = classifyIncoming(event, userId);
             if (event.message?.senderId !== userId) autoSaveIncoming(event.message?.content, sessionToken);
             const mentioned = mentionsUser(event.message?.content, useChatStore.getState().user?.username);
@@ -508,6 +511,17 @@ export default function App() {
             const known = new Set(useChatStore.getState().chats.map((chat) => chat.id));
             if (!contactsLoaded || [...byChat.keys()].some((chatId) => !known.has(chatId))) await loadContacts().catch(() => {});
             for (const [chatId, rows] of byChat) mergeHistory(chatId, await openHistory(chatId, rows));
+            // Group messages that waited for this device: each group's history is fetched, opened and saved here (then
+            // acknowledged once saved), whether or not the group is opened; the server keeps them until then.
+            const waitingGroups = [...new Set((queued.groupMessages ?? []).map((row) => row?.groupId).filter((id) => typeof id === 'string'))];
+            for (const groupId of waitingGroups) {
+              if (cancelled) return;
+              try {
+                useChatStore.getState().mergeGroupMessages(groupId, await fetchGroupMessages(sessionToken, groupId));
+              } catch (error) {
+                console.error('Could not save a group’s waiting messages:', error);
+              }
+            }
             const events = (queued.events ?? []).filter((event) => event?.id && event.type);
             for (const event of events) handleEvent(needsOpening(event) ? await openEvent(event) : event);
             if (events.length) await acknowledgeEvents(events.map((event) => event.id), { client: realtime, sessionToken });
@@ -562,7 +576,8 @@ export default function App() {
     }).then(async (response) => {
       if (response.ok) mergeHistory(activeChatId, await openHistory(activeChatId, await response.json()));
     }).catch((error) => {
-      if (error.name !== 'AbortError') setFatalError('Could not load this conversation.');
+      // Offline the conversation shows from this device; only a refused request is worth a notice.
+      if (error.name !== 'AbortError' && !isNetworkFailure(error)) setFatalError('Could not load this conversation.');
     });
     return () => controller.abort();
   }, [activeChatId, mergeHistory, sessionToken]);
@@ -807,8 +822,15 @@ export default function App() {
         saveGroups(userId, list).catch(() => {});
         // Each group's members and settings too (once per session), so any group opens offline.
         const headers = { Authorization: `Bearer ${sessionToken}` };
-        prefetchGroupDetails(userId, list, (groupId) => apiFetch(`/api/v1/groups/${encodeURIComponent(groupId)}`, { headers })
-          .then((response) => (response.ok ? response.json() : null))).catch(() => {});
+        prefetchGroupDetails(userId, list, async (groupId) => {
+          const response = await apiFetch(`/api/v1/groups/${encodeURIComponent(groupId)}`, { headers });
+          if (!response.ok) return null;
+          const details = await response.json();
+          // And its history: messages from before the delivery queue are not queued for this device, and the server
+          // drops them at 30 days, so they are saved here even if the group is never opened.
+          useChatStore.getState().mergeGroupMessages(groupId, await fetchGroupMessages(sessionToken, groupId));
+          return details;
+        }).catch(() => {});
       })
       .catch(() => {});
     return () => controller.abort();
