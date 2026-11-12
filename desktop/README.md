@@ -34,6 +34,10 @@ HM_APP_URL=http://localhost:5173/app npm start
 
 `HM_APP_URL` must be https, or http on localhost.
 
+Terminals inside VS Code (and other Electron-based tools) set `ELECTRON_RUN_AS_NODE=1`. With it set, Electron runs as
+plain Node and the app exits at once ("bad option"). Clear it first: `env -u ELECTRON_RUN_AS_NODE npm start`, or in
+PowerShell `Remove-Item Env:ELECTRON_RUN_AS_NODE`. A normal double-click is not affected.
+
 ## Signing
 
 The builds are not code-signed, so Windows SmartScreen warns on first launch ("More info › Run anyway"). To sign, set
