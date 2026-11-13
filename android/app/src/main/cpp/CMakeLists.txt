@@ -17,12 +17,15 @@ set(WHISPER_BUILD_SERVER OFF CACHE BOOL "" FORCE)
 set(WHISPER_CURL OFF CACHE BOOL "" FORCE)
 set(WHISPER_SDL2 OFF CACHE BOOL "" FORCE)
 set(WHISPER_ALL_WARNINGS OFF CACHE BOOL "" FORCE)
-set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
-# Portable arm64 code (NEON): runs on every 64-bit Android phone, not only the build machine's CPU.
+# The math library is built once per ARM generation (v8.0 … v9.2: dot product, FP16, int8 matmul, SVE) as
+# libggml-cpu-android_*.so; at run time ggml loads the best one this phone's CPU supports (WhisperEngine passes the
+# app's native library folder). A plain v8.0 build runs everywhere but is several times slower on modern phones.
+set(BUILD_SHARED_LIBS ON CACHE BOOL "" FORCE)
 set(GGML_NATIVE OFF CACHE BOOL "" FORCE)
+set(GGML_BACKEND_DL ON CACHE BOOL "" FORCE)
+set(GGML_CPU_ALL_VARIANTS ON CACHE BOOL "" FORCE)
 set(GGML_OPENMP OFF CACHE BOOL "" FORCE)
 set(GGML_LLAMAFILE OFF CACHE BOOL "" FORCE)
-set(GGML_BACKEND_DL OFF CACHE BOOL "" FORCE)
 
 FetchContent_Declare(
     whispercpp
@@ -32,6 +35,6 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(whispercpp)
 
 add_library(hm_whisper SHARED hm_whisper.cpp)
-target_link_libraries(hm_whisper PRIVATE whisper log)
+target_link_libraries(hm_whisper PRIVATE whisper ggml log)
 target_compile_options(hm_whisper PRIVATE -O3 -fvisibility=hidden)
 target_link_options(hm_whisper PRIVATE -Wl,--gc-sections -Wl,--exclude-libs,ALL)

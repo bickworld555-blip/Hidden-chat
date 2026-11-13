@@ -47,6 +47,8 @@ final class TranslationLab {
         final Context app;
         final byte[] audio;
         final String from;
+        /** The language of the transcript: `from`, or English when whisper wrote it. */
+        volatile String textLanguage;
         final String to;
         final boolean download;
         final boolean speak;
@@ -66,6 +68,7 @@ final class TranslationLab {
             this.app = app;
             this.audio = audio;
             this.from = from;
+            this.textLanguage = from;
             this.to = to;
             this.download = download;
             this.speak = speak;
@@ -110,6 +113,7 @@ final class TranslationLab {
                     if (text == null) { fail(code, error); return; }
                     result.put("transcript", text);
                     result.put("sttEngine", code);
+                    if (VoiceTranscriber.ENGINE_WHISPER.equals(code) && !WhisperEngine.labNative) textLanguage = WhisperEngine.OUTPUT_LANGUAGE;
                     main.post(() -> translate(text));
                 });
             } catch (IOException failed) {
@@ -122,7 +126,7 @@ final class TranslationLab {
             // download=true run fetches the two models first, timed separately.
             if (!download) { runTranslation(text); return; }
             long downloadAt = SystemClock.elapsedRealtime();
-            VoiceTranslator.download(from, (ok1, e1, c1) -> VoiceTranslator.download(to, (ok2, e2, c2) -> {
+            VoiceTranslator.download(textLanguage, (ok1, e1, c1) -> VoiceTranslator.download(to, (ok2, e2, c2) -> {
                 if (ok1 == null || ok2 == null) { fail(c1 != null ? c1 : c2, e1 != null ? e1 : e2); return; }
                 stages.put("modelDownloadMs", SystemClock.elapsedRealtime() - downloadAt);
                 runTranslation(text);
@@ -131,7 +135,7 @@ final class TranslationLab {
 
         void runTranslation(String text) {
             long at = SystemClock.elapsedRealtime();
-            VoiceTranslator.translate(text, from, to, (translated, error, code) -> {
+            VoiceTranslator.translate(text, textLanguage, to, (translated, error, code) -> {
                 stages.put("translateMs", SystemClock.elapsedRealtime() - at);
                 if (translated == null) { fail(code, error); return; }
                 result.put("translation", translated);

@@ -13,6 +13,13 @@ android {
     compileSdk = rootProject.ext.compileSdkVersion
     // whisper.cpp, the offline speech-to-text fallback (src/main/cpp): native code for 64-bit ARM phones only.
     ndkVersion = "27.1.12297006"
+    // whisper's math library picks its CPU variant by loading a file from the app's library folder, so native
+    // libraries are extracted at install time (they are otherwise read straight from the APK).
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
+        }
+    }
     externalNativeBuild {
         cmake {
             path = file("src/main/cpp/CMakeLists.txt")

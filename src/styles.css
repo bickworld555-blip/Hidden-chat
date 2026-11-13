@@ -5664,3 +5664,4 @@ button.groups-sender { padding: 0; border: 0; background: none; font: inherit; f
 .vt-step.is-ready { color: var(--wa-text, #0f1b2d); }
 .vt-action { display: inline-flex; align-items: center; gap: 4px; padding: 5px 12px; border: 0; border-radius: 14px; background: var(--wa-green, #1d4ed8); color: #fff; font: inherit; font-size: 13px; cursor: pointer; }
 .vt-action:disabled { opacity: .6; }
+.voice-transcript-note { font-style: normal; opacity: .7; }

@@ -107,7 +107,9 @@ final class VoiceLanguages {
     static void translate(Context context, byte[] audio, String from, String to, Translated done) {
         VoiceTranscriber.transcribe(context, audio, from, (text, error, code) -> {
             if (text == null) { done.done(null, null, null, error, code); return; }
-            VoiceTranslator.translate(text, from, to, (translated, failure, failureCode) -> {
+            // whisper writes English: translate from English (and nothing to do when English is wanted).
+            String source = VoiceTranscriber.ENGINE_WHISPER.equals(code) ? WhisperEngine.OUTPUT_LANGUAGE : from;
+            VoiceTranslator.translate(text, source, to, (translated, failure, failureCode) -> {
                 if (translated == null) done.done(text, null, code, failure, failureCode);
                 else done.done(text, translated, code, null, null);
             });

@@ -168,7 +168,12 @@ export default function VoiceMessage({ id, seconds, lang = '', sessionToken, sen
         </div>
         {offerTranslation && translated && <p className="voice-transcript voice-translation" lang={translateTo}>{translated.translation}</p>}
         {offerTranslation && translateError && !translated && <span className="attachment-error">{translateError} Set it up in Settings › Chats › Voice message translation.</span>}
-        {transcript && <p className="voice-transcript">{transcript}</p>}
+        {transcript && (
+          <p className="voice-transcript" lang={typeof transcript === 'string' ? lang || undefined : transcript.language}>
+            {typeof transcript === 'string' ? transcript : transcript.text}
+            {typeof transcript !== 'string' && <small className="voice-transcript-note"> · in English, made on this phone</small>}
+          </p>
+        )}
         {transcriptError && !transcript && <span className="attachment-error">{transcriptError}</span>}
         {missingPack && !transcript && (
           <button type="button" className="voice-transcribe" onClick={() => downloadSpeechPack(id)}>{missingPack.code === 'speech_model_missing' ? 'Download speech model (190 MB)' : 'Download speech pack'}</button>

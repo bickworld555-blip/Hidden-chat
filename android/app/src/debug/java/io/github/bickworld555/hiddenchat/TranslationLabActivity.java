@@ -48,6 +48,11 @@ public class TranslationLabActivity extends Activity {
         output.setMovementMethod(new ScrollingMovementMethod());
         setContentView(output);
         download = getIntent().getBooleanExtra("download", false);
+        // whisper experiments: --ei ctx N (encoder frames; 0 = full 30 s), --ez native true (write the language's own
+        // script, with a prompt, instead of English), --ef temp 0.0 (no temperature fallback).
+        WhisperEngine.labContext = getIntent().getIntExtra("ctx", -1);
+        WhisperEngine.labNative = getIntent().getBooleanExtra("native", false);
+        WhisperEngine.labTemperatureStep = getIntent().getFloatExtra("temp", 0.2f);
         speak = getIntent().getBooleanExtra("speak", false);
         file = getIntent().getStringExtra("file");
         if (getIntent().getBooleanExtra("matrix", false)) {

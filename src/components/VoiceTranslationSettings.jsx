@@ -15,7 +15,7 @@ import {
 const MB = 1024 * 1024;
 const SPEECH_LABEL = {
   system: 'Speech: Android’s offline pack',
-  whisper: 'Speech: offline speech model',
+  whisper: 'Speech: offline speech model (understands it, writes English)',
   'system-pending': 'Speech: Android pack downloading…',
   'system-download': 'Speech: Android offers an offline pack',
   'whisper-download': 'Speech: needs the offline speech model',
@@ -77,7 +77,7 @@ export default function VoiceTranslationSettings() {
       {whisper?.supported && (
         <>
           <h3>Offline speech model</h3>
-          <p className="tools-page-note">Turns speech into text for languages Android has no offline pack for (often Bangla). {Math.round((whisper.sizeBytes ?? 0) / MB)} MB, checked after download.</p>
+          <p className="tools-page-note">Understands speech in languages Android has no offline pack for (often Bangla) and writes it in English, which is then translated into your language on this phone. {Math.round((whisper.sizeBytes ?? 0) / MB)} MB, checked after download. Needs a 64-bit phone with about 1 GB of free memory while it works.</p>
           <Step ready={whisper.installed} icon={Mic} label={whisper.installed ? 'Offline speech model is ready' : whisperProgress ? `Downloading… ${Math.round(whisperProgress.received / MB)} of ${Math.round(whisperProgress.total / MB)} MB` : 'Offline speech model'}
             action="Download" busy={Boolean(busy.whisper) || whisper.downloading} onAction={downloadWhisper} onRemove={deleteWhisper} />
         </>

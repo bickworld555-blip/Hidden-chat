@@ -48,7 +48,9 @@ export async function transcribe(mediaId, sessionToken, lang = '') {
     }
     if (!result?.text) throw new Error(result?.error || 'This voice message can’t be transcribed on this phone.');
     await loadSaved();
-    const texts = { ...useTranscripts.getState().texts, [mediaId]: result.text };
+    // Text in another language than spoken (the offline speech model writes English) keeps its language.
+    const entry = result.textLanguage ? { text: result.text, language: result.textLanguage } : result.text;
+    const texts = { ...useTranscripts.getState().texts, [mediaId]: entry };
     const kept = Object.fromEntries(Object.entries(texts).slice(-MAX_KEPT));
     useTranscripts.setState({ texts: kept });
     await secureSet(KEY, kept);

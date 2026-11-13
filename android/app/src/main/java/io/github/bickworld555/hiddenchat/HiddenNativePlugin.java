@@ -539,6 +539,8 @@ public class HiddenNativePlugin extends Plugin {
         VoiceTranscriber.transcribe(getContext(), audio, call.getString("language"), (text, error, code) -> {
             JSObject result = new JSObject();
             if (text != null) result.put("text", text);
+            // The offline speech model writes English, whatever language was spoken (WhisperEngine).
+            if (text != null && VoiceTranscriber.ENGINE_WHISPER.equals(code)) result.put("textLanguage", WhisperEngine.OUTPUT_LANGUAGE);
             if (error != null) result.put("error", error);
             if (code != null) result.put("code", code);
             call.resolve(result);
