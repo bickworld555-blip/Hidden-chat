@@ -38,6 +38,7 @@ import { createMemoryRateLimiter, createTtlCache, invalidateOnWrite } from './me
 import { abuseLimitsFromEnv, clientAddress, createSharedRateLimiter, ensureRateLimitSchema, tooManyMessages, tooManySignups } from './abuse.mjs';
 import { ensureExtrasSchema, registerExtras, statusAudienceSql } from './extras.mjs';
 import { ensureAdminSchema, registerAdmin } from './admin.mjs';
+import { ensureSupportSchema, registerSupport } from './support.mjs';
 import { adminCredentialsFrom, createAdminAuth } from './adminAuth.mjs';
 import { ACCEPTED_STATUS_BACKGROUNDS } from '../src/statusColors.js';
 import { registerLinking } from './linking.mjs';
@@ -435,6 +436,7 @@ export function createChatServer({
   ensureE2eSchema(db);
   ensureExtrasSchema(db);
   ensureAdminSchema(db);
+  ensureSupportSchema(db);
   ensureVerificationSchema(db);
   ensureRegionSchema(db);
   ensureDeliveryQueueSchema(db);
@@ -1190,7 +1192,11 @@ export function createChatServer({
     mediaFileExists: async (diskName) => Boolean(diskName && await stat(join(mediaDirectory, diskName)).catch(() => null)),
     app, db, requireSession, publicUser, userColumns: USER_COLUMNS, pushEnabled: () => Boolean(push),
     closeUserSessions,
+    supportUnanswered: () => support.unanswered(),
   });
+
+  // Hidden Messenger Support: each person's conversation with the support team, answered from the admin console.
+  const support = registerSupport({ app, db, requireSession, requireAdmin: adminAuth.requireAdmin, notifyUser, publicUser, userColumns: USER_COLUMNS });
 
   registerVerification({ app, db, requireSession, requireAdmin: adminAuth.requireAdmin, verified: verifiedAccounts, verifiedChannels, publicUser, userColumns: USER_COLUMNS });
   // Approximate country for the admin world map (server/regions.mjs) and the prepared billing structure.

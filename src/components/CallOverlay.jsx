@@ -110,6 +110,7 @@ export default function CallOverlay({
   onCallChange,
   onClose,
   onOpenChat,
+  onOpenGroup,
 }) {
   const [snapshot, setSnapshot] = useState(() => ({
     status: 'idle', mode: call.mode, error: '', localStream: null, remoteStream: null,
@@ -598,7 +599,9 @@ export default function CallOverlay({
   const sendMessageToPeer = () => {
     setMoreOpen(false);
     minimizeCall();
-    onOpenChat?.(call.peerId);
+    // A group call opens the group's chat (messages, voice notes, photos and files) under the floating call window.
+    if (call.groupId && onOpenGroup) onOpenGroup(call.groupId);
+    else onOpenChat?.(call.peerId);
   };
 
   // Native picture-in-picture for the remote video (where the browser offers it).
@@ -918,6 +921,7 @@ export default function CallOverlay({
             screenSharing={screenSharing}
             onShareScreen={() => { setMoreOpen(false); toggleScreenShare(); }}
             onSendMessage={sendMessageToPeer}
+            messageLabel={call.groupId ? 'Group chat' : 'Send message'}
             noiseSuppression={noisePreference}
             onNoiseSuppression={setNoiseCancellation}
             onClose={() => setMoreOpen(false)}

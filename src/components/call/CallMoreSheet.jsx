@@ -3,7 +3,7 @@ import { CALL_REACTIONS } from '../../callEngine.js';
 
 // Loaded on first use (like WhatsApp's ViewStub panels): the call screen starts without it.
 // The ⋯ sheet: quick reactions, then Share screen, Send message and Noise cancellation.
-export default function CallMoreSheet({ onReact, canShareScreen, screenSharing, onShareScreen, onSendMessage, noiseSuppression, onNoiseSuppression, onClose }) {
+export default function CallMoreSheet({ onReact, canShareScreen, screenSharing, onShareScreen, onSendMessage, messageLabel = 'Send message', noiseSuppression, onNoiseSuppression, onClose }) {
   return (
     <div className="wa-call-more-layer" onClick={onClose} role="presentation">
       <div className="wa-call-more" onClick={(event) => event.stopPropagation()} role="dialog" aria-label="More call options">
@@ -19,7 +19,7 @@ export default function CallMoreSheet({ onReact, canShareScreen, screenSharing, 
           )}
           <button type="button" onClick={onSendMessage}>
             <span className="wa-call-more-icon"><MessageSquareText size={20} /></span>
-            <span>Send message</span>
+            <span>{messageLabel}</span>
           </button>
           <button type="button" role="switch" aria-checked={noiseSuppression} onClick={() => onNoiseSuppression(!noiseSuppression)}>
             <span className="wa-call-more-icon"><AudioLines size={20} /></span>

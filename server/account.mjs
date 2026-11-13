@@ -27,6 +27,7 @@ export const PERSONAL_ROWS = [
   ['e2e_prekeys', 'user_id = ?'],
   ['e2e_devices', 'user_id = ?'],
   ['push_devices', 'user_id = ?'],
+  ['support_messages', 'user_id = ?'],
   ['group_join_requests', 'user_id = ?'],
   ['group_members', 'user_id = ?'],
   ['message_stars', 'user_id = ?'],

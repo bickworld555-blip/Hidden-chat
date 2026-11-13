@@ -34,7 +34,7 @@ export const IMPORT_TABLES = Object.freeze([
   { name: 'message_stars', columns: ['user_id', 'message_id', 'chat_key', 'starred_at'], users: ['user_id'], key: ['user_id', 'message_id'] },
   { name: 'chat_prefs', columns: ['user_id', 'chat_key', 'archived', 'updated_at'], users: ['user_id'], key: ['user_id', 'chat_key'] },
   { name: 'pinned_messages', columns: ['chat_key', 'message_id', 'pinned_by', 'pinned_at'], users: ['pinned_by'], key: ['chat_key', 'message_id'] },
-  { name: 'business_profiles', columns: ['user_id', 'away_enabled', 'away_text', 'away_schedule', 'away_hours', 'greeting_enabled', 'greeting_text', 'updated_at', 'category', 'description', 'address', 'email', 'website', 'links', 'cover_disk_name', 'cover_type', 'away_from', 'away_until'], users: ['user_id'] },
+  { name: 'business_profiles', columns: ['user_id', 'away_enabled', 'away_text', 'away_schedule', 'away_hours', 'greeting_enabled', 'greeting_text', 'updated_at', 'category', 'description', 'address', 'email', 'website', 'links', 'cover_disk_name', 'cover_type', 'away_from', 'away_until', 'phone'], users: ['user_id'] },
   { name: 'business_auto_replies', columns: ['user_id', 'peer_id', 'kind', 'sent_at'], users: ['user_id', 'peer_id'], key: ['user_id', 'peer_id', 'kind'] },
   { name: 'catalog_items', columns: ['id', 'user_id', 'name', 'description', 'price', 'currency', 'link', 'hidden', 'image_disk_name', 'image_type', 'created_at', 'updated_at'], users: ['user_id'] },
   { name: 'labels', columns: ['id', 'user_id', 'name', 'color', 'created_at'], users: ['user_id'] },
@@ -69,6 +69,7 @@ export const IMPORT_TABLES = Object.freeze([
   { name: 'status_audience_members', columns: ['owner_id', 'user_id'], users: ['owner_id', 'user_id'], key: ['owner_id', 'user_id'] },
   { name: 'call_links', columns: ['code', 'owner_id', 'mode', 'created_at', 'revoked_at'], users: ['owner_id'], key: ['code'] },
   // Help Center and moderation (migration 013).
+  { name: 'support_messages', columns: ['id', 'user_id', 'from_admin', 'body', 'created_at', 'read_by_user_at', 'read_by_admin_at'], users: ['user_id'] },
   { name: 'help_articles', columns: ['id', 'slug', 'category', 'title', 'body', 'published', 'updated_at', 'updated_by'], users: [] },
   { name: 'user_reports', columns: ['id', 'reporter_id', 'reported_id', 'reason', 'details', 'status', 'created_at', 'resolved_at', 'resolved_by'], users: ['reporter_id', 'reported_id'] },
 ]);

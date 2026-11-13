@@ -31,7 +31,7 @@ function AvatarThumb({ persona }) {
 }
 
 // Display name (editable, shown bold) above the permanent @handle and ID.
-function DisplayNameEditor({ user, userId }) {
+export function DisplayNameEditor({ user, userId }) {
   const sessionToken = useChatStore((state) => state.sessionToken);
   const updateUserProfile = useChatStore((state) => state.updateUserProfile);
   const [editing, setEditing] = useState(false);
@@ -120,7 +120,6 @@ function Item({ icon: Icon, iconNode, title, detail, onClick, checked, disabled,
   );
 }
 
-export const HELP_CENTER_URL = 'https://hiddenmessenger.com/help';
 
 // Settings, in the order a business messenger uses: Business tools first, then Account, Privacy, Avatar, Chats,
 // Notifications, Storage and data, App language, Help, Invite a friend. Privacy, Avatar and Chats open their own
@@ -142,7 +141,8 @@ export default function ToolsView({ darkMode, onToggleTheme, onLogout, onNotific
   const inApp = nativeShell();
   const wallpaper = useWallpaper();
   const enterIsSend = useEnterSends();
-  const openHelp = () => { window.open(HELP_CENTER_URL, '_blank', 'noopener'); };
+  // The Help Center opens in the app (articles, search, Contact us → Hidden Messenger Support).
+  const openHelp = () => onSheet?.('help');
 
   const pages = {
     accessibility: ['Accessibility', (
@@ -278,7 +278,7 @@ export default function ToolsView({ darkMode, onToggleTheme, onLogout, onNotific
           <Item icon={HardDrive} title="Storage and data" detail="Manage storage, photo upload quality" onClick={onStorage} />
           <Item icon={Accessibility} title="Accessibility" detail="Contrast, motion, font size" onClick={() => setPage('accessibility')} />
           <Item icon={Languages} title="App language" detail="English, বাংলা, हिन्दी, Español" onClick={() => onSheet?.('language')} />
-          <Item icon={CircleHelp} title="Help" detail="Help Center, privacy" onClick={openHelp} />
+          <Item icon={CircleHelp} title="Help Centre" detail="Get help, contact us" onClick={openHelp} />
           <Item icon={UserPlus} title="Invite a friend" detail="Invite someone from your contacts" onClick={() => onSheet?.('invite')} />
         </div>
 

@@ -37,7 +37,7 @@ export function ensureAdminSchema(db) {
 const clean = (value, limit) => (typeof value === 'string' ? value.trim().slice(0, limit) : '');
 const day = 24 * 60 * 60 * 1000;
 
-export function registerAdmin({ app, db, requireSession, requireAdmin, publicUser, userColumns, closeUserSessions, pushEnabled = () => false, dataDirectoryBytes = async () => null, mediaFileExists = async () => true, onlineNow = () => 0 }) {
+export function registerAdmin({ app, db, requireSession, requireAdmin, publicUser, userColumns, closeUserSessions, pushEnabled = () => false, dataDirectoryBytes = async () => null, mediaFileExists = async () => true, onlineNow = () => 0, supportUnanswered = async () => 0 }) {
   const fail = (response, status, error) => response.status(status).json({ error });
 
   // The starter Help Center is set up once, at start-up.
@@ -138,6 +138,7 @@ export function registerAdmin({ app, db, requireSession, requireAdmin, publicUse
       signupsToday: await count('SELECT count(*) AS "count" FROM users WHERE created_at >= ?', createdIso ? startOfDay.toISOString() : startOfDay.getTime()),
       openReports: await count("SELECT count(*) AS \"count\" FROM user_reports WHERE status = 'open'") + await count("SELECT count(*) AS \"count\" FROM group_reports WHERE status = 'open'"),
       pendingVerifications: await count("SELECT count(*) AS \"count\" FROM verification_tickets WHERE status = 'pending'"),
+      openSupport: await supportUnanswered(),
     });
   });
 

@@ -2,7 +2,7 @@ import { apiFetch, isNetworkFailure } from '../api.js';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft, BarChart3, Bell, BellOff, CalendarClock, CalendarDays, Check, ChevronDown, Clock, Copy, Download, Flag, Link2, LockKeyhole, LogOut, Megaphone, MinusCircle, Paperclip,
-  ListPlus, Pencil, Phone, Pin, PinOff, QrCode, Search, SendHorizontal, Share2, Star, Sticker, Timer, Trash2, UserPlus, Users, Video, X,
+  ListPlus, Mic, Pencil, Phone, Pin, PinOff, QrCode, Search, SendHorizontal, Share2, Star, Sticker, Timer, Trash2, UserPlus, Users, Video, X,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { inviteUrl } from '../invites.js';
@@ -40,6 +40,9 @@ import { exportGroupChat, parseScheduledCall, scheduledCallContent, senderColor,
 import { setGroupMuted, setViewingGroup, useMutedGroups } from '../groupPrefs.js';
 import Avatar from './Avatar.jsx';
 import MediaRenderer from './MediaRenderer.jsx';
+import VoiceMessage from './VoiceMessage.jsx';
+import VoiceRecorderBar from './VoiceRecorderBar.jsx';
+import { parseVoiceContent, voiceContent, voiceExtension } from '../voice.js';
 import { useBackHandler } from '../backStack.js';
 import { nativeClearMessageNotifications, nativeShell } from '../native.js';
 import { EventBubble, EventComposer, PollBubble, PollComposer } from './RichMessages.jsx';
@@ -259,6 +262,7 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
   const [addingMember, setAddingMember] = useState(false);
   const [tagDraft, setTagDraft] = useState(null);
   const [infoSheet, setInfoSheet] = useState('');
+  const [recordingVoice, setRecordingVoice] = useState(false);
   const [memberFilter, setMemberFilter] = useState('');
   const [confirming, setConfirming] = useState('');
   const [reportReason, setReportReason] = useState('');
@@ -443,6 +447,33 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
     }
   }
 
+  // A voice note, as in a one-to-one chat: sealed on this device, uploaded to the group, its key inside the end-to-end
+  // encrypted group message. Members see "recording audio…" while it is being recorded.
+  async function sendVoiceNote(blob, seconds, type) {
+    setRecordingVoice(false);
+    activityRef.current?.recording(false);
+    if (!blob || !selected) return;
+    setError('');
+    setUploading(1);
+    try {
+      const plain = new File([blob], `voice-note.${voiceExtension(type)}`, { type: blob.type || type });
+      const { upload, descriptor } = await sealForUpload(plain);
+      const data = await uploadFile(upload, { groupId: selected, sessionToken: token, kind: 'voice', onProgress: (done, total) => setUploading(Math.max(1, Math.round((done / total) * 100))) });
+      await groupRequest(token, `${groupPath}/messages`, { method: 'POST', body: { content: voiceContent(data.id, seconds, { descriptor }) } });
+      await refresh(new AbortController().signal);
+    } catch (caught) {
+      setError(caught.message);
+    } finally {
+      setUploading(0);
+    }
+  }
+  const startVoiceNote = () => {
+    setError('');
+    setStickersOpen(false);
+    setRecordingVoice(true);
+    activityRef.current?.recording(true);
+  };
+
   // Android Back walks the same levels as the on-screen back arrow (picker → settings → conversation → list → close).
   useBackHandler(true, () => goBack());
 
@@ -472,7 +503,7 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
     setCallPicker('');
     setCallMenu(false);
     const chosen = group.members.filter((member) => memberIds.includes(member.id));
-    onStartGroupCall?.({ mode, members: chosen, groupName: group.name });
+    onStartGroupCall?.({ mode, members: chosen, groupName: group.name, groupId: group.id });
     onClose();
   };
 
@@ -880,6 +911,7 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
                 const event = parseEventContent(message.content);
                 const productId = parseProductContent(message.content);
                 const sticker = isStickerContent(message.content);
+                const voice = !isMedia ? parseVoiceContent(message.content) : null;
                 const active = activeMessageId === message.id;
                 const mediaShown = isMedia && !relayCard && !scheduled && !message.e2eError;
                 // The time (and pin, star, Edited, delete): on a photo or video it sits on the media's corner, as on WhatsApp.
@@ -913,6 +945,7 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
                           {onStartGroupCall && <button type="button" onClick={() => setCallPicker(scheduled.mode)}>{scheduled.at > Date.now() ? 'Start early' : 'Start call'}</button>}
                         </div>
                       ) : message.e2eError ? <p className="deleted-text"><span aria-hidden="true">🔒</span> Waiting for this message. It is end-to-end encrypted.</p>
+                        : voice?.id ? <VoiceMessage id={voice.id} seconds={voice.seconds} sessionToken={token} sender={sender ?? group.members.find((member) => member.id === message.senderId)} played />
                         : isMedia ? <MediaRenderer mediaRef={message.content} sessionToken={token} meta={meta} />
                         : poll ? <PollBubble messageId={message.id} poll={poll} sessionToken={token} userId={userId} nameFor={(id) => group.members.find((member) => member.id === id)?.name} context={{ groupId: selected }} />
                         : event ? <EventBubble messageId={message.id} event={event} />
@@ -969,6 +1002,9 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
             {groupSecurity && !groupSecurity.encrypted && (
               <p className="e2e-warning is-waiting" role="status">🔒 {groupSecurity.missing.length === 1 ? '1 member hasn’t' : `${groupSecurity.missing.length} members haven’t`} opened an updated Hidden Messenger yet. Messages to this group <strong>wait on your phone</strong> and go out end-to-end encrypted as soon as they do.</p>
             )}
+            {recordingVoice ? (
+              <div className="groups-recorder"><VoiceRecorderBar onSend={sendVoiceNote} onCancel={() => { setRecordingVoice(false); activityRef.current?.recording(false); }} onError={(message) => { setRecordingVoice(false); activityRef.current?.recording(false); setError(message); }} /></div>
+            ) : (
             <form className="groups-compose" onSubmit={(event) => { event.preventDefault(); submitDraft(); }}>
               <input ref={fileInputRef} type="file" hidden onChange={(event) => { const [file] = event.target.files ?? []; event.target.value = ''; sendAttachment(file); }} />
               <span className="groups-compose-field">
@@ -988,8 +1024,11 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
                 <button type="button" className="groups-attach" onClick={() => setRichComposer('poll')} disabled={busy} aria-label="Create poll" title="Poll"><BarChart3 size={20} /></button>
                 <button type="button" className="groups-attach" onClick={() => setRichComposer('event')} disabled={busy} aria-label="Create event" title="Event"><CalendarDays size={20} /></button>
               </span>
-              <button type="submit" className="groups-send" disabled={busy || uploading > 0 || !draft.trim()} aria-label={editing ? 'Save edit' : 'Send'}>{editing ? <Check size={20} /> : <SendHorizontal size={20} />}</button>
+              {!editing && !draft.trim()
+                ? <button type="button" className="groups-send groups-mic" onClick={startVoiceNote} disabled={busy || uploading > 0} aria-label="Record voice note" title="Record a voice note"><Mic size={20} /></button>
+                : <button type="submit" className="groups-send" disabled={busy || uploading > 0 || !draft.trim()} aria-label={editing ? 'Save edit' : 'Send'}>{editing ? <Check size={20} /> : <SendHorizontal size={20} />}</button>}
             </form>
+            )}
             </>)}
           </>
         )}

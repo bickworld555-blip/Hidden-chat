@@ -1,7 +1,9 @@
 // Business tools, laid out like a business messenger's: manage the business (profile, catalog, hours, labels)
 // and messaging tools (greeting, away, quick replies). Profile, hours and auto-replies share /api/v1/business.
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { CalendarClock, ChevronRight, Clock, Copy, FolderOpen, Hand, ImagePlus, Link2, Megaphone, MessageSquareText, Pencil, Plus, QrCode, Share2, ShoppingBag, Store, Tag, Trash2, X, Zap } from 'lucide-react';
+import { AtSign, CalendarClock, ChevronRight, CircleHelp, Clock, Copy, FileText, FolderOpen, Globe, Hand, ImagePlus, Link2, ListChecks, Mail, MapPin, Megaphone, MessageSquareText, Pencil, Phone, Plus, QrCode, Share2, ShoppingBag, Store, Tag, Trash2, X, Zap } from 'lucide-react';
+import ProfilePhoto from '../ProfilePhoto.jsx';
+import { DisplayNameEditor } from '../ToolsView.jsx';
 import { QRCodeSVG } from 'qrcode.react';
 import { useChatStore } from '../../store.js';
 import { apiFetch } from '../../api.js';
@@ -12,25 +14,29 @@ import { CatalogImage, formatPrice } from './ProductCard.jsx';
 import Panel, { Notice } from './Panel.jsx';
 import TabMenu from '../TabMenu.jsx';
 
-// Grouped the way a business messenger's Tools tab is: selling, organising chats, then the business itself.
+// Grouped the way a business messenger's Tools tab is: grow the business, organise chats, manage the account.
+// `sheet` opens an app-wide sheet; `target` opens another section; `hidden` sections open from elsewhere (Profile).
 const GROUPS = [
-  ['Sell and promote', [
-    { id: 'catalog', label: 'Catalog', detail: 'Show products and services', icon: ShoppingBag },
+  ['Grow your business', [
+    { id: 'catalog', label: 'Catalogue', detail: 'Show products and services', icon: ShoppingBag },
     { id: 'broadcasts', label: 'Broadcast lists', detail: 'One message to many customers', icon: Megaphone, sheet: 'broadcasts' },
+    { id: 'link', label: 'Short link', detail: 'A link and QR code that open a chat with you', icon: QrCode },
   ]],
-  ['Organise chats', [
+  ['Organise your chats', [
+    { id: 'lists', label: 'Lists', detail: 'Manage people and groups', icon: ListChecks, sheet: 'lists' },
     { id: 'labels', label: 'Labels', detail: 'Organise chats and customers', icon: Tag },
     { id: 'greeting', label: 'Greeting message', detail: 'Welcome new customers automatically', icon: Hand },
     { id: 'away', label: 'Away message', detail: 'Reply automatically when you’re away', icon: Clock },
-    { id: 'quick', label: 'Quick replies', detail: 'Type / in a chat to reuse messages', icon: Zap },
+    { id: 'quick', label: 'Quick replies', detail: 'Reuse frequent messages', icon: Zap },
   ]],
-  ['Your business', [
-    { id: 'profile', label: 'Business profile', detail: 'Description, address, website, links', icon: Store },
-    { id: 'hours', label: 'Business hours', detail: 'When you’re open, shown on your profile', icon: CalendarClock },
-    { id: 'link', label: 'Short link', detail: 'A link and QR code that open a chat with you', icon: QrCode },
+  ['Manage your account', [
+    { id: 'profile', label: 'Profile', detail: 'Manage address, hours and websites', icon: Store },
+    { id: 'social', label: 'Instagram & Facebook', detail: 'Show your pages on your profile', icon: AtSign, target: 'profile' },
+    { id: 'hours', label: 'Business hours', detail: 'When you’re open, shown on your profile', icon: CalendarClock, hidden: true },
+    { id: 'help', label: 'Help Centre', detail: 'Get help, contact us', icon: CircleHelp, sheet: 'help' },
   ]],
 ];
-export const BUSINESS_SECTIONS = GROUPS.flatMap(([, items]) => items).filter((item) => !item.sheet);
+export const BUSINESS_SECTIONS = GROUPS.flatMap(([, items]) => items).filter((item) => !item.sheet && !item.target);
 
 // inline: the Tools tab (the menu sits in the tab; each tool opens full screen over it).
 export default function BusinessTools({ token, userId, onClose, onSheet, onSettings, initialSection = null, inline = false }) {
@@ -43,18 +49,19 @@ export default function BusinessTools({ token, userId, onClose, onSheet, onSetti
     return () => clearTimeout(timer);
   }, [notice]);
   const current = BUSINESS_SECTIONS.find((item) => item.id === section);
+  const title = section === 'profile' ? 'Edit profile' : current?.label;
   const feedback = { onError: (message) => { setNotice(''); setError(message); }, onNotice: (message) => { setError(''); setNotice(message); } };
   return (
-    <Panel inline={inline && !section} title={current?.label ?? (inline ? 'Tools' : 'Business tools')} onClose={onClose} onBack={section && !initialSection ? () => { setSection(null); setError(''); } : undefined}
+    <Panel inline={inline && !section} title={title ?? (inline ? 'Tools' : 'Business tools')} onClose={onClose} onBack={section && !initialSection ? () => { setSection(null); setError(''); } : undefined}
       actions={inline && !section ? <TabMenu items={[{ label: 'Short link', onClick: () => setSection('link') }, { label: 'Verified', onClick: () => onSheet?.('verified') }, { label: 'Settings', onClick: () => onSettings?.() }]} /> : null}>
       <Notice error={error} notice={notice} />
       {!section && GROUPS.map(([title, items]) => (
         <section key={title} className="hm-menu-group">
           <h3 className="hm-section">{title}</h3>
           <ul className="hm-menu-list">
-            {items.map((item) => (
+            {items.filter((item) => !item.hidden).map((item) => (
               <li key={item.id}>
-                <button type="button" onClick={() => (item.sheet ? onSheet?.(item.sheet) : setSection(item.id))}>
+                <button type="button" onClick={() => (item.sheet ? onSheet?.(item.sheet) : setSection(item.target ?? item.id))}>
                   <item.icon size={22} aria-hidden="true" />
                   <span><strong>{item.label}</strong><small>{item.detail}</small></span>
                   <ChevronRight size={16} aria-hidden="true" />
@@ -64,7 +71,7 @@ export default function BusinessTools({ token, userId, onClose, onSheet, onSetti
           </ul>
         </section>
       ))}
-      {section === 'profile' && <BusinessProfileForm token={token} {...feedback} />}
+      {section === 'profile' && <BusinessProfileForm token={token} userId={userId} onOpenSection={setSection} {...feedback} />}
       {section === 'hours' && <BusinessHoursForm token={token} {...feedback} />}
       {section === 'link' && <ShortLink {...feedback} />}
       {section === 'catalog' && <CatalogManager token={token} userId={userId} {...feedback} />}
@@ -418,9 +425,34 @@ function useBusinessSettings(token, onError) {
   return [settings, setSettings];
 }
 
-function BusinessProfileForm({ token, onError, onNotice }) {
+// Edit profile, laid out like a business messenger's: cover photo with the round profile photo over it (tap to
+// change), the business name, then rows grouped as Business information, Products and services, Links and Contact
+// information. Tap a row to edit it; Save stores the whole profile.
+function ProfileRow({ icon: Icon, label, value, placeholder, editing, onEdit, onOpen, children }) {
+  if (editing) {
+    return (
+      <div className="bp-row is-editing">
+        <Icon size={22} aria-hidden="true" />
+        <label className="bp-row-edit"><small>{label}</small>{children}</label>
+      </div>
+    );
+  }
+  return (
+    <button type="button" className="bp-row" onClick={onOpen ?? onEdit}>
+      <Icon size={22} aria-hidden="true" />
+      <span className="bp-row-copy">
+        {value ? <><strong>{value}</strong><small>{label}</small></> : <strong className="bp-row-placeholder">{placeholder ?? label}</strong>}
+      </span>
+      {onOpen ? <ChevronRight size={18} aria-hidden="true" /> : <Pencil size={16} aria-hidden="true" className="bp-row-pencil" />}
+    </button>
+  );
+}
+
+function BusinessProfileForm({ token, userId, onOpenSection, onError, onNotice }) {
   const [settings, setSettings] = useBusinessSettings(token, onError);
+  const user = useChatStore((state) => state.user);
   const [busy, setBusy] = useState(false);
+  const [editing, setEditing] = useState('');
   if (!settings) return <p className="hm-muted hm-padded">Loading…</p>;
   const profile = settings.profile;
   const update = (patch) => setSettings({ ...settings, profile: { ...profile, ...patch } });
@@ -430,6 +462,7 @@ function BusinessProfileForm({ token, onError, onNotice }) {
     try {
       const { cover: _cover, ...editable } = profile;
       setSettings(await api.saveBusinessProfile(token, { profile: { ...editable, links: (editable.links ?? []).filter((link) => link.url.trim()) } }));
+      setEditing('');
       onNotice('Business profile saved.');
     } catch (caught) {
       onError(caught.message);
@@ -437,27 +470,40 @@ function BusinessProfileForm({ token, onError, onNotice }) {
       setBusy(false);
     }
   }
+  const row = (field, props, input) => (
+    <ProfileRow {...props} editing={editing === field} onEdit={() => setEditing(field)}>{input}</ProfileRow>
+  );
+  const text = (field, { max, ...rest } = {}) => (
+    <input value={profile[field] ?? ''} maxLength={max} autoFocus onChange={(event) => update({ [field]: event.target.value })} {...rest} />
+  );
   return (
-    <form className="hm-form" onSubmit={save}>
-      <p className="hm-muted">People who chat with you see this in your contact info.</p>
-      <CoverPicker token={token} cover={profile.cover} onChanged={(next) => { setSettings(next); onNotice('Cover photo updated.'); }} onError={onError} />
+    <form className="hm-form bp-edit" onSubmit={save}>
+      <div className="bp-hero">
+        <CoverPicker token={token} cover={profile.cover} onChanged={(next) => { setSettings(next); onNotice('Cover photo updated.'); }} onError={onError} />
+        <div className="bp-photo"><ProfilePhoto size="large" /></div>
+        <div className="bp-name"><DisplayNameEditor user={user} userId={userId} /></div>
+      </div>
+
       <h4 className="hm-form-section">Business information</h4>
-      <label>Category<input list="business-categories" value={profile.category} maxLength={60} onChange={(event) => update({ category: event.target.value })} placeholder="Choose or type a category" /></label>
-      <datalist id="business-categories">{BUSINESS_CATEGORIES.map((name) => <option key={name} value={name} />)}</datalist>
-      <label>Description<textarea value={profile.description} maxLength={512} rows={3} onChange={(event) => update({ description: event.target.value })} placeholder="What your business does" /></label>
-      <h4 className="hm-form-section">Contact information</h4>
-      <label>Address<input value={profile.address} maxLength={256} onChange={(event) => update({ address: event.target.value })} placeholder="Street, city" autoComplete="street-address" /></label>
-      <label>Email<input type="email" value={profile.email} maxLength={128} onChange={(event) => update({ email: event.target.value })} placeholder="name@example.com" autoComplete="email" /></label>
-      <label>Website<input value={profile.website} maxLength={256} onChange={(event) => update({ website: event.target.value })} placeholder="example.com" inputMode="url" autoComplete="url" /></label>
+      {row('category', { icon: Store, label: 'Category', value: profile.category, placeholder: 'Choose a category' }, <>
+        {text('category', { max: 60, list: 'business-categories', placeholder: 'Choose or type a category' })}
+        <datalist id="business-categories">{BUSINESS_CATEGORIES.map((name) => <option key={name} value={name} />)}</datalist>
+      </>)}
+      <ProfileRow icon={CalendarClock} label="Business hours" value={settings.away.hours ? hoursSummary(settings.away.hours) : ''} placeholder="Add business hours" onOpen={() => onOpenSection?.('hours')} />
+      {row('description', { icon: FileText, label: 'Description', value: profile.description, placeholder: 'Add a description' },
+        <textarea value={profile.description} maxLength={512} rows={3} autoFocus onChange={(event) => update({ description: event.target.value })} placeholder="What your business does" />)}
+      {row('address', { icon: MapPin, label: 'Address', value: profile.address, placeholder: 'Add an address' }, text('address', { max: 256, placeholder: 'Street, city', autoComplete: 'street-address' }))}
+
+      <h4 className="hm-form-section">Products and services</h4>
+      <ProfileRow icon={ShoppingBag} label="Show products and services" value="Catalogue" onOpen={() => onOpenSection?.('catalog')} />
+
       <h4 className="hm-form-section">Links</h4>
-      {/* Instagram and Facebook have their own fields; they're saved as labelled links (up to MAX_LINKS in all). */}
-      {SOCIAL_LINKS.map((social) => (
-        <label key={social.label}>{social.label}
-          <span className="hm-prefixed"><span aria-hidden="true">{social.host}/</span>
-            <input value={socialHandle(profile.links, social)} maxLength={80} placeholder="yourbusiness" autoCapitalize="none" inputMode="url"
-              onChange={(event) => update({ links: withSocial(profile.links, social, event.target.value) })} /></span>
-        </label>
-      ))}
+      {row('website', { icon: Globe, label: 'Website', value: profile.website?.replace(/^https?:\/\//, '').replace(/\/$/, ''), placeholder: 'Add website' },
+        text('website', { max: 256, placeholder: 'example.com', inputMode: 'url', autoComplete: 'url' }))}
+      {SOCIAL_LINKS.map((social) => row(social.label, { icon: AtSign, label: social.label, value: socialHandle(profile.links, social) && `${social.host}/${socialHandle(profile.links, social)}`, placeholder: `Add ${social.label}` },
+        <span className="hm-prefixed"><span aria-hidden="true">{social.host}/</span>
+          <input value={socialHandle(profile.links, social)} maxLength={80} placeholder="yourbusiness" autoCapitalize="none" inputMode="url" autoFocus
+            onChange={(event) => update({ links: withSocial(profile.links, social, event.target.value) })} /></span>))}
       <fieldset className="hm-radio-list hm-links"><legend>Other links</legend>
         {(profile.links ?? []).map((link, index) => (isSocial(link) ? null : (
           <div key={index} className="hm-link-row">
@@ -468,8 +514,12 @@ function BusinessProfileForm({ token, onError, onNotice }) {
         )))}
         {(profile.links ?? []).length < MAX_LINKS && <button type="button" className="groups-secondary" onClick={() => update({ links: [...(profile.links ?? []), { label: '', url: '' }] })}><Link2 size={16} /> Add link</button>}
       </fieldset>
-      <p className="hm-muted">Business hours: {settings.away.hours ? hoursSummary(settings.away.hours) : 'not set'} (Business tools › Business hours)</p>
-      <button type="submit" className="groups-primary" disabled={busy}>{busy ? 'Saving…' : 'Save'}</button>
+
+      <h4 className="hm-form-section">Contact information</h4>
+      {row('email', { icon: Mail, label: 'Business email', value: profile.email, placeholder: 'Add business email' }, text('email', { max: 128, type: 'email', placeholder: 'name@example.com', autoComplete: 'email' }))}
+      {row('phone', { icon: Phone, label: 'Phone', value: profile.phone, placeholder: 'Add a contact number' }, text('phone', { max: 32, type: 'tel', placeholder: '+880 1712 345678', autoComplete: 'tel' }))}
+      <p className="hm-muted">People who chat with you see this in your contact info.</p>
+      <button type="submit" className="groups-primary bp-save" disabled={busy}>{busy ? 'Saving…' : 'Save'}</button>
     </form>
   );
 }

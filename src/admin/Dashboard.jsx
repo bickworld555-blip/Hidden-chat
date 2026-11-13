@@ -1,11 +1,12 @@
 // The admin dashboard shell: sidebar navigation, live status tickers, and the sections. Each section loads its
 // own counts from /api/admin/v1; nothing is kept in browser storage, and no message or media content exists here.
 import { useEffect, useState } from 'react';
-import { BadgeCheck, CreditCard, FileText, Flag, LayoutDashboard, Lock, LogOut, ShieldCheck, Users } from 'lucide-react';
+import { BadgeCheck, CreditCard, FileText, Flag, LayoutDashboard, LifeBuoy, Lock, LogOut, ShieldCheck, Users } from 'lucide-react';
 import { adminRequest } from './adminApi.js';
 import Overview from './Overview.jsx';
 import VerificationHub from './VerificationHub.jsx';
 import Billing from './Billing.jsx';
+import Support from './Support.jsx';
 import { HelpTab, ReportsTab, UsersTab } from './AdminConsole.jsx';
 
 const SECTIONS = [
@@ -13,10 +14,11 @@ const SECTIONS = [
   { id: 'verification', label: 'Verification', icon: BadgeCheck, count: 'pendingVerifications', tone: 'is-gold' },
   { id: 'users', label: 'Users', icon: Users },
   { id: 'reports', label: 'Reports', icon: Flag, count: 'openReports', tone: 'is-alert' },
+  { id: 'support', label: 'Support', icon: LifeBuoy, count: 'openSupport', tone: 'is-alert' },
   { id: 'help', label: 'Help Center', icon: FileText },
   { id: 'billing', label: 'Subscriptions', icon: CreditCard, tag: 'Soon' },
 ];
-const TITLES = { overview: 'Overview', verification: 'Verification', users: 'Users', reports: 'Reports', help: 'Help Center', billing: 'Subscriptions' };
+const TITLES = { overview: 'Overview', verification: 'Verification', users: 'Users', reports: 'Reports', support: 'Support', help: 'Help Center', billing: 'Subscriptions' };
 const sectionFromHash = () => {
   const id = window.location.hash.replace('#', '');
   return SECTIONS.some((section) => section.id === id) ? id : 'overview';
@@ -80,7 +82,7 @@ export default function Dashboard({ username, onSignOut }) {
           ))}
         </nav>
         <div className="ad-sidebar-foot">
-          <p className="ad-privacy"><Lock size={13} aria-hidden="true" /> Message contents and media are end-to-end encrypted and never visible here.</p>
+          <p className="ad-privacy"><Lock size={13} aria-hidden="true" /> Chat messages and media are end-to-end encrypted and never visible here. Support conversations are not encrypted.</p>
           <div className="ad-me"><span>{username}</span><button type="button" className="ad-btn is-small" onClick={onSignOut}><LogOut size={14} /> Sign out</button></div>
         </div>
       </aside>
@@ -94,6 +96,7 @@ export default function Dashboard({ username, onSignOut }) {
           {section === 'verification' && <VerificationHub onChanged={refresh} />}
           {section === 'users' && <div className="ad-card ad-legacy"><UsersTab /></div>}
           {section === 'reports' && <div className="ad-card ad-legacy"><ReportsTab /></div>}
+          {section === 'support' && <Support onChanged={refresh} />}
           {section === 'help' && <div className="ad-card ad-legacy"><HelpTab /></div>}
           {section === 'billing' && <Billing />}
         </main>

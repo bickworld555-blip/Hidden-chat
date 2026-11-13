@@ -84,8 +84,8 @@ const bool = (value) => (value ? 1 : 0);
 
 /** Business profile text fields and their lengths (the business_profiles columns of the same names). */
 export const MEMBER_TAG_MAX = 30;
-export const BUSINESS_PROFILE_FIELDS = ['category', 'description', 'address', 'email', 'website'];
-const BUSINESS_PROFILE_LIMITS = { category: 60, description: 512, address: 256, email: 128, website: 256 };
+export const BUSINESS_PROFILE_FIELDS = ['category', 'description', 'address', 'email', 'website', 'phone'];
+const BUSINESS_PROFILE_LIMITS = { category: 60, description: 512, address: 256, email: 128, website: 256, phone: 32 };
 
 export const MAX_BUSINESS_LINKS = 4;
 /** Extra links on a business profile (shop, Instagram, Facebook…): up to MAX_BUSINESS_LINKS { label, url }, or null. */
@@ -115,6 +115,8 @@ export function parseBusinessProfile(value = {}) {
     profile[field] = text;
   }
   if (profile.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(profile.email)) return { problem: 'email' };
+  // A contact number customers can call (the account itself has no phone number): digits, spaces, + ( ) -.
+  if (profile.phone && !/^\+?[0-9][0-9 ()-]{3,31}$/.test(profile.phone)) return { problem: 'phone' };
   if (profile.website) {
     const withScheme = /^https?:\/\//i.test(profile.website) ? profile.website : `https://${profile.website}`;
     try { const url = new URL(withScheme); if (!url.hostname.includes('.')) return { problem: 'website' }; profile.website = url.href; } catch { return { problem: 'website' }; }
@@ -1183,7 +1185,7 @@ export function registerParity(ctx) {
     const links = request.body?.profile?.links === undefined ? current.profile.links : parseBusinessLinks(request.body.profile.links);
     if (links === null) return response.status(400).json({ error: `Add up to ${MAX_BUSINESS_LINKS} links, each a web address like example.com.` });
     const { profile, problem } = parseBusinessProfile({ ...current.profile, ...(request.body?.profile ?? {}) });
-    if (problem) return response.status(400).json({ error: problem === 'email' ? 'Enter an email address like name@example.com.' : problem === 'website' ? 'Enter a website address like example.com.' : `The ${problem} is too long.` });
+    if (problem) return response.status(400).json({ error: problem === 'email' ? 'Enter an email address like name@example.com.' : problem === 'website' ? 'Enter a website address like example.com.' : problem === 'phone' ? 'Enter a phone number with digits, like +880 1712 345678.' : `The ${problem} is too long.` });
     await db.prepare(`INSERT INTO business_profiles(user_id, away_enabled, away_text, away_schedule, away_hours, greeting_enabled, greeting_text, updated_at, ${BUSINESS_PROFILE_FIELDS.join(', ')})
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ${BUSINESS_PROFILE_FIELDS.map(() => '?').join(', ')}) ON CONFLICT(user_id) DO UPDATE SET away_enabled = excluded.away_enabled, away_text = excluded.away_text,
       away_schedule = excluded.away_schedule, away_hours = excluded.away_hours, greeting_enabled = excluded.greeting_enabled, greeting_text = excluded.greeting_text, updated_at = excluded.updated_at,

@@ -64,6 +64,8 @@ const Channels = lazyComponent(extrasPanels, (module) => module.Channels);
 const ScheduledMessages = lazyComponent(extrasPanels, (module) => module.ScheduledMessages);
 const CallLinks = lazyComponent(extrasPanels, (module) => module.CallLinks);
 const InviteFriend = lazyComponent(() => import('./components/parity/InviteFriend.jsx'));
+import { SUPPORT_EVENT } from './supportApi.js';
+const HelpCenter = lazyComponent(() => import('./components/HelpCenter.jsx'));
 const ListsManager = lazyComponent(() => import('./components/ChatLists.jsx'), (module) => module.ListsManager);
 const JoinCallLink = lazyComponent(extrasPanels, (module) => module.JoinCallLink);
 const StatusPrivacy = lazyComponent(extrasPanels, (module) => module.StatusPrivacy);
@@ -316,6 +318,8 @@ export default function App() {
             store.applyServerBlocks(event.blocked ? [...others, event.userId] : others);
           }
           if (event.type === 'account:deleted' && typeof event.userId === 'string') useChatStore.getState().markAccountDeleted(event.userId);
+          // Hidden Messenger Support answered (or this account wrote from another device): the open support chat shows it.
+          if (event.type === 'support:message' && event.message?.id) window.dispatchEvent(new CustomEvent(SUPPORT_EVENT, { detail: event.message }));
           if (event.type === 'message:edited') updateMessage(event.messageId, { content: event.content, editedAt: event.editedAt, ...(event.e2eError ? { e2eError: event.e2eError } : {}) });
           // Reconnected after a drop: catch up on anything that changed meanwhile (the first connect already loaded history).
           if (event.type === 'connection:ready') {
@@ -673,7 +677,7 @@ export default function App() {
   }
 
   // A group call: the first chosen member is rung directly; the rest are invited into the room once connected.
-  function initiateGroupCall({ mode, members, groupName }) {
+  function initiateGroupCall({ mode, members, groupName, groupId = '' }) {
     const active = callRef.current;
     if (active && !TERMINAL_STATUSES.includes(active.status)) return;
     const [first, ...rest] = members.filter((member) => member.id !== userId);
@@ -682,7 +686,7 @@ export default function App() {
     const callId = crypto.randomUUID();
     const outgoing = {
       id: callId, roomId: callId, peerId: first.id, mode, direction: 'outgoing', status: 'idle', peerInfo: first,
-      members, groupName, pendingInvites: rest.map((member) => member.id),
+      members, groupName, groupId, pendingInvites: rest.map((member) => member.id),
     };
     callRef.current = outgoing;
     setCall(outgoing);
@@ -1121,6 +1125,7 @@ export default function App() {
       {sessionToken && paritySheet === 'channels' && <Channels token={sessionToken} initialChannelId={channelToOpen} onClose={() => { setParitySheet(null); setChannelToOpen(''); }} />}
       {sessionToken && paritySheet === 'scheduled' && <ScheduledMessages token={sessionToken} userId={userId} onClose={() => setParitySheet(null)} />}
       {sessionToken && paritySheet === 'lists' && <ListsManager groups={groupRows} onClose={() => setParitySheet(null)} />}
+      {sessionToken && (paritySheet === 'help' || paritySheet === 'support') && <HelpCenter token={sessionToken} initialView={paritySheet} onClose={() => setParitySheet(null)} />}
       {sessionToken && paritySheet === 'invite' && <InviteFriend username={useChatStore.getState().user?.username} onClose={() => setParitySheet(null)} />}
       {sessionToken && paritySheet === 'calllinks' && <CallLinks token={sessionToken} onClose={() => setParitySheet(null)} />}
       {sessionToken && paritySheet === 'statusprivacy' && <StatusPrivacy token={sessionToken} onClose={() => setParitySheet(null)} />}
@@ -1162,6 +1167,7 @@ export default function App() {
         onCallChange={setCall}
         onClose={handleCallEnd}
         onOpenChat={(id) => openChatRef.current?.(id)}
+        onOpenGroup={(id) => openGroupRef.current?.(id)}
       />}
     </main>
   );
