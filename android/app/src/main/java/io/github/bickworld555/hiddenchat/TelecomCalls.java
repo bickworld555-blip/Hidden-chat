@@ -295,9 +295,9 @@ final class TelecomCalls {
             answered.setActive();
         }
         String callId = answered.callId;
-        MainActivity.answeredFromOutside();
+        AppActivity.answeredFromOutside();
         Alerts.cancelIncomingCall(context);
-        Intent open = new Intent(context, MainActivity.class)
+        Intent open = new Intent(context, AppActivity.class)
             .setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP)
             .putExtra(Alerts.EXTRA_CALL, true)
             .putExtra(Alerts.EXTRA_CALL_ID, callId);

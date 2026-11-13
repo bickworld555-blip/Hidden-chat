@@ -14,7 +14,7 @@ import { uploadFile } from '../upload.js';
 import { attachmentContent, sealForUpload } from '../mediaCrypto.js';
 import Avatar from './Avatar.jsx';
 import SelectContactModal from './SelectContactModal.jsx';
-import ShieldMark from './ShieldMark.jsx';
+import BrandMark from './BrandMark.jsx';
 import FormattedText from './FormattedText.jsx';
 import MessageSearch, { SearchFilterChips } from './MessageSearch.jsx';
 import { ListEditor, ListPicker, listEntries } from './ChatLists.jsx';
@@ -442,7 +442,7 @@ export default function ChatsList({ onOpenChat, onStartCall, onGroups, groups = 
               <button type="button" className="wa-icon-btn" onClick={() => setShowArchived(false)} aria-label="Back to chats"><ArrowLeft size={20} /></button>
               <h1>{t('Archived')}</h1>
             </div>
-          ) : <div className="wa-list-brand"><ShieldMark className="wa-list-brand-mark" /><h1>Hidden Messenger</h1></div>}
+          ) : <div className="wa-list-brand"><BrandMark className="wa-list-brand-mark" /><h1>Hidden Messenger</h1></div>}
           <span className="wa-list-header-actions">
             <button type="button" className="wa-icon-btn" onClick={() => onGroups?.()} disabled={!sessionToken} aria-label="Groups"><Users size={20} /></button>
             <button type="button" className="wa-icon-btn" onClick={() => { setCameraError(''); cameraInputRef.current?.click(); }} aria-label="Camera" title="Take a photo and send it"><Camera size={20} /></button>

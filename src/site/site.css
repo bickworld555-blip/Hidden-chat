@@ -24,7 +24,7 @@
 .site-header { position: sticky; top: 0; z-index: 20; background: color-mix(in srgb, var(--s-bg) 88%, transparent); backdrop-filter: blur(10px); border-bottom: 1px solid var(--s-line); }
 .site-header-row { display: flex; align-items: center; gap: 24px; min-height: 68px; }
 .site-brand { display: inline-flex; align-items: center; gap: 10px; font-family: var(--s-display); font-weight: 700; font-size: 18px; }
-.site-brand-mark { width: 32px; height: 36px; }
+.site-brand-mark { width: 34px; height: 34px; }
 .site-nav { display: flex; gap: 22px; margin-left: 12px; }
 .site-nav a { color: var(--s-muted); font-weight: 600; font-size: 15px; padding: 6px 0; border-bottom: 2px solid transparent; }
 .site-nav a:hover, .site-nav a.is-active { color: var(--s-ink); border-color: var(--s-accent); }
@@ -145,3 +145,4 @@
 .site-steps li::before { content: counter(step); grid-row: span 2; width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; background: var(--s-chip); color: var(--s-accent); font-weight: 700; }
 .site-steps span { color: var(--s-muted); }
 .site-page h2 { margin-top: 32px; }
+.site-terms-section { margin: 22px 0; } .site-terms-section h2 { margin: 0 0 6px; font-size: 18px; } .site-terms-section p { margin: 0; line-height: 1.6; }

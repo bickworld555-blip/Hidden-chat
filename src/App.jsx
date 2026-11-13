@@ -22,7 +22,7 @@ import { fetchGroupMessages } from './groupHistory.js';
 import { SECURITY_NOTICE } from './e2e/notices.js';
 import { LOCKED_NOTIFICATION } from './chatLock.js';
 import { handleReactionError, handleRejected, needsOpening, openEvent, openHistory, openRows, transmitDirect } from './e2e/messaging.js';
-import { connectAccountSettings } from './settings.js';
+import { appSettings, connectAccountSettings } from './settings.js';
 import { getPrivacy, setPrivacy } from './accountApi.js';
 import ShareSheet from './components/ShareSheet.jsx';
 import { publishShareShortcuts } from './shareShortcuts.js';
@@ -75,7 +75,7 @@ const StorageView = lazyComponent(() => import('./components/parity/StorageView.
 const JoinGroupSheet = lazyComponent(() => import('./components/parity/GroupAdmin.jsx'), (module) => module.JoinGroupSheet);
 const TwoStepReminder = lazyComponent(() => import('./components/parity/SecurityViews.jsx'), (module) => module.TwoStepReminder);
 import { AppLockGate } from './components/parity/SecurityViews.jsx';
-import { connectAccountData, handleAccountEvent } from './accountData.js';
+import { connectAccountData, groupChatKey, handleAccountEvent, unarchiveOnMessage } from './accountData.js';
 import { applyScreenSecurity, startAppLock } from './appLock.js';
 import { mentionsUser } from './mentions.js';
 
@@ -106,7 +106,7 @@ import { fetchBlocks } from './blocksApi.js';
 import { activityFromEvent } from './typing.js';
 import { TERMINAL_STATUSES } from './callEngine.js';
 import { isRoomOffer } from './callRoom.js';
-import { animationsAttribute, callAnimationsAttribute, startsDark, THEME_KEY, useAppearance } from './appearance.js';
+import { animationsAttribute, callAnimationsAttribute, resolveDark, startsDark, THEME_KEY, themeChoice, useAppearance, watchSystemTheme } from './appearance.js';
 import { useFontSize, useHighContrast } from './displayPrefs.js';
 import { linkContact, searchPeople } from './contactsApi.js';
 import { deviceStorage } from './deviceStorage.js';
@@ -193,7 +193,11 @@ export default function App() {
   const removingRef = useRef(new Set());
   const [authOpen, setAuthOpen] = useState(false);
   // Light unless this device chose dark (src/appearance.js).
-  const [darkMode, setDarkMode] = useState(() => startsDark(deviceStorage));
+  // App theme: Light, Dark or System default (src/appearance.js); dark when chosen or when the phone is dark.
+  const [themePref, setThemePref] = useState(() => themeChoice(deviceStorage));
+  const [systemDark, setSystemDark] = useState(() => startsDark({ getItem: () => 'system' }));
+  useEffect(() => watchSystemTheme(setSystemDark), []);
+  const darkMode = resolveDark(themePref, systemDark);
   const [fatalError, setFatalError] = useState('');
   const [mobileListOpen, setMobileListOpen] = useState(true);
   const [authReady, setAuthReady] = useState(false);
@@ -213,6 +217,8 @@ export default function App() {
     if (event.type !== 'identity-changed') return;
     const state = useChatStore.getState();
     if (!state.userId || !state.chats.some((chat) => chat.id === event.userId)) return;
+    // Account › Security notifications switched off: no notice (the code still changes; Contact info shows it).
+    if (!appSettings().get('security.notifications')) return;
     // A notice in the conversation, kept on this device only (never sent).
     state.addMessage({ id: crypto.randomUUID(), senderId: state.userId, receiverId: event.userId, timestamp: new Date().toISOString(), content: SECURITY_NOTICE, status: 'read' });
   }), []);
@@ -342,6 +348,7 @@ export default function App() {
             if (typeof event.message?.groupId === 'string') useChatStore.getState().mergeGroupMessages(event.message.groupId, [event.message]);
             const alert = classifyIncoming(event, userId);
             if (event.message?.senderId !== userId) autoSaveIncoming(event.message?.content, sessionToken);
+            if (event.message?.senderId !== userId && typeof event.message?.groupId === 'string') unarchiveOnMessage(groupChatKey(event.message.groupId));
             const mentioned = mentionsUser(event.message?.content, useChatStore.getState().user?.username);
             const mutedGroupIds = readMutedGroups(userId).filter((id) => !(mentioned && id === alert?.conversation.id));
             if (alert && shouldAlertGroup({ groupId: alert.conversation.id, mutedGroupIds, viewingGroupId: getViewingGroup(), pageVisible: document.visibilityState === 'visible' })) {
@@ -360,6 +367,7 @@ export default function App() {
           if (event.type === 'message:new' || event.type === 'message:ack') {
             const { blockedChats, mutedChatIds } = useChatStore.getState();
             const incoming = event.type === 'message:new' && event.message.senderId !== userId;
+            if (incoming && !event.message.groupId) unarchiveOnMessage(event.message.senderId);
             const silenced = mutedChatIds.includes(event.message.senderId)
               || hiddenByBlock(event.message, blockedChats[event.message.senderId], userId);
             addMessage(event.message);
@@ -439,6 +447,12 @@ export default function App() {
             if (event.signal.type === 'offer' && (!active || active.id !== event.callId)) {
               // A blocked contact's call never rings on this device.
               if (isBlocked(useChatStore.getState().blockedChats[event.from])) return;
+              // Privacy › Silence unknown callers (the server decides): no ringing, a silenced call in Calls instead.
+              if (event.silenced) {
+                if (event.fromUser && !useChatStore.getState().chats.some((c) => c.id === event.from)) useChatStore.getState().addContact(event.fromUser);
+                useChatStore.getState().logCall(event.from, { mode: event.mode, status: 'silenced', direction: 'incoming' });
+                return;
+              }
               if (active && !TERMINAL_STATUSES.includes(active.status)) {
                 // Already on a call: the caller hears busy instead of ringing forever.
                 realtime.send({ type: 'call:signal', targetId: event.from, callId: event.callId, mode: event.mode, signalId: crypto.randomUUID(), signal: { type: 'end', reason: 'busy' } });
@@ -696,9 +710,12 @@ export default function App() {
   useEffect(() => { nativeSetSystemBarsTheme(darkMode ? 'dark' : 'light'); }, [darkMode]);
 
   function toggleTheme() {
-    const next = !darkMode;
-    setDarkMode(next);
-    deviceStorage.setItem(THEME_KEY, next ? 'dark' : 'light');
+    chooseTheme(darkMode ? 'light' : 'dark');
+  }
+
+  function chooseTheme(choice) {
+    setThemePref(choice);
+    deviceStorage.setItem(THEME_KEY, choice);
   }
 
   // Activates a session in the store and remembers it in the device's account list.
@@ -1097,7 +1114,7 @@ export default function App() {
               onSheet={(id) => (id === 'linked' ? setAccountSettingsOpen('devices') : setParitySheet(id))} />
             : <ChatWindow key={chat.id} chat={chat} connection={connection} client={client} onPair={() => setAccountSettingsOpen('devices')} onBack={() => setMobileListOpen(true)} onStartCall={(mode) => initiateCall(chat.id, mode)} onGroups={openGroups} />
         ) : activeTab === 'calls' ? (
-          <CallsView onCall={initiateCall} onSheet={setParitySheet} onSettings={() => setActiveTab('tools')} />
+          <CallsView onCall={initiateCall} onSheet={setParitySheet} onSettings={() => setActiveTab('tools')} onOpenChat={(id) => openChat({ id })} />
         ) : activeTab === 'updates' ? (
           <UpdatesView onOpenChannels={(id) => { setChannelToOpen(id ?? ''); setParitySheet('channels'); }} onSheet={setParitySheet} onSettings={() => setActiveTab('tools')} />
         ) : activeTab === 'business' && sessionToken ? (
@@ -1105,7 +1122,7 @@ export default function App() {
         ) : activeTab === 'communities' && sessionToken ? (
           <CommunitiesView inline token={sessionToken} revision={groupRevision} onClose={() => setActiveTab('chats')} onOpenGroup={(id) => openGroups(false, id)} />
         ) : activeTab === 'tools' ? (
-          <ToolsView darkMode={darkMode} onToggleTheme={toggleTheme} onLogout={() => { logout(); }} onNotifications={() => setNotificationsOpen(true)} onAccountSettings={(section) => setAccountSettingsOpen(section === 'privacy' || section === 'devices' ? section : 'account')} onAccounts={() => setAccountsOpen(true)} onAvatarStudio={() => setAvatarStudioOpen(true)} onGroups={() => openGroups()}
+          <ToolsView darkMode={darkMode} themePref={themePref} onChooseTheme={chooseTheme} onToggleTheme={toggleTheme} onLogout={() => { logout(); }} onNotifications={() => setNotificationsOpen(true)} onAccountSettings={(section) => setAccountSettingsOpen(section === 'privacy' || section === 'devices' ? section : 'account')} onAccounts={() => setAccountsOpen(true)} onAvatarStudio={() => setAvatarStudioOpen(true)} onGroups={() => openGroups()}
             onCommunities={() => setParitySheet('communities')} onBusinessTools={() => setParitySheet('business')} onStarred={() => setParitySheet('starred')}
             onBackup={() => setParitySheet('backup')} onStorage={() => setParitySheet('storage')} onSheet={setParitySheet} onBack={isMobile ? () => setActiveTab('chats') : undefined} />
         ) : null}
@@ -1115,7 +1132,7 @@ export default function App() {
       {isMobile && !chatOpenOnMobile && activeTab !== 'tools' && <MobileBottomNav activeTab={mobileActiveTab} onTabChange={setMobileActiveTab} unreadCount={unreadChats} missedCalls={activeTab === 'calls' ? 0 : missedCallsUnseen} />}
       {fatalError && <div className="status-toast"><Bell size={15} /><span>{fatalError}</span><button onClick={() => setFatalError('')}>Dismiss</button></div>}
       {notificationsOpen && <NotificationSettings onClose={() => setNotificationsOpen(false)} />}
-      {accountSettingsOpen && <AccountSettings section={accountSettingsOpen === 'privacy' ? 'privacy' : 'account'} initialView={accountSettingsOpen === 'devices' ? 'devices' : null} onClose={() => setAccountSettingsOpen(false)}
+      {accountSettingsOpen && <AccountSettings onAccounts={() => { setAccountSettingsOpen(false); setAccountsOpen(true); }} section={accountSettingsOpen === 'privacy' ? 'privacy' : 'account'} initialView={accountSettingsOpen === 'devices' ? 'devices' : null} onClose={() => setAccountSettingsOpen(false)}
         onOpenSheet={(id) => { setAccountSettingsOpen(false); setParitySheet(id); }} onAccountDeleted={() => { setAccountSettingsOpen(false); logout(); }} />}
       {accountsOpen && <AccountSwitcher busyId={switchingId} onSwitch={switchAccount} onRemove={removeAccountFromDevice} onAdd={() => { setAccountsOpen(false); setAuthOpen(true); }} onClose={() => setAccountsOpen(false)} />}
       {avatarStudioOpen && <AvatarStudio onClose={() => setAvatarStudioOpen(false)} />}

@@ -7,7 +7,7 @@ import { SETTINGS, appSettings, useSetting } from '../../settings.js';
 import { nativeShell } from '../../native.js';
 import { disableTwoStep, enableTwoStep, verifyTwoStep } from '../../parityApi.js';
 import { refreshTwoStep, useAccountData } from '../../accountData.js';
-import ShieldMark from '../ShieldMark.jsx';
+import BrandMark from '../BrandMark.jsx';
 import { deviceStorage } from '../../deviceStorage.js';
 
 /** Covers the app while it is locked. */
@@ -32,7 +32,7 @@ export function AppLockGate() {
   if (!locked) return null;
   return (
     <div className="hm-lock-screen" role="dialog" aria-modal="true" aria-label="Hidden Messenger is locked">
-      <ShieldMark className="hm-lock-mark" />
+      <BrandMark className="hm-lock-mark" />
       <h2>Hidden Messenger is locked</h2>
       {method === 'biometric' ? (
         <button type="button" className="groups-primary" onClick={nativeUnlock}><Fingerprint size={20} /> Unlock</button>

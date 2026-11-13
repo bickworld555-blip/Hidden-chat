@@ -45,7 +45,7 @@ import { registerLinking } from './linking.mjs';
 import { registerAccount } from './account.mjs';
 import { BUNDLED_APP_ORIGIN } from '../scripts/configure-android.mjs';
 import { effectiveRouting, isEnvelope, MAX_DIRECT_ENVELOPE, parseRouting, routingFor } from '../src/e2e/envelope.js';
-import { audienceAllows, canSeePresence, deviceNameFromUserAgent, isLastSeenPrivacy, parsePrivacyPatch, presenceFor, visibleStatus } from './presence.mjs';
+import { ABOUT_MAX, audienceAllows, canSeePresence, deviceNameFromUserAgent, isLastSeenPrivacy, parsePrivacyPatch, presenceFor, visibleStatus } from './presence.mjs';
 
 const directory = dirname(fileURLToPath(import.meta.url));
 
@@ -417,6 +417,11 @@ export function createChatServer({
     db.exec("ALTER TABLE users ADD COLUMN photo_privacy TEXT NOT NULL DEFAULT 'everyone' CHECK (photo_privacy IN ('everyone', 'contacts', 'nobody'))");
   }
   if (!userColumns.has('read_receipts')) db.exec('ALTER TABLE users ADD COLUMN read_receipts INTEGER NOT NULL DEFAULT 1 CHECK (read_receipts IN (0, 1))');
+  // About (and who sees it), Silence unknown callers, Default message timer (Postgres: migration 025).
+  if (!userColumns.has('about')) db.exec("ALTER TABLE users ADD COLUMN about TEXT NOT NULL DEFAULT ''");
+  if (!userColumns.has('about_privacy')) db.exec("ALTER TABLE users ADD COLUMN about_privacy TEXT NOT NULL DEFAULT 'everyone' CHECK (about_privacy IN ('everyone', 'contacts', 'nobody'))");
+  if (!userColumns.has('silence_unknown_callers')) db.exec('ALTER TABLE users ADD COLUMN silence_unknown_callers INTEGER NOT NULL DEFAULT 0 CHECK (silence_unknown_callers IN (0, 1))');
+  if (!userColumns.has('default_message_timer')) db.exec('ALTER TABLE users ADD COLUMN default_message_timer INTEGER NOT NULL DEFAULT 0');
   const sessionColumns = new Set(db.prepare("PRAGMA table_info(sessions)").all().map((column) => column.name));
   if (!sessionColumns.has('created_at')) db.exec('ALTER TABLE sessions ADD COLUMN created_at INTEGER');
   if (!sessionColumns.has('last_active_at')) db.exec('ALTER TABLE sessions ADD COLUMN last_active_at INTEGER');
@@ -566,6 +571,14 @@ export function createChatServer({
   }
 
   // Two people may call and signal each other when they are contacts, have chatted, or share a group.
+  // Silence unknown callers: on for the callee, and the caller is not in the callee's contact book.
+  const silenceRow = db.prepare('SELECT silence_unknown_callers AS "on" FROM users WHERE id = ?');
+  const savedLink = db.prepare('SELECT saved FROM contacts WHERE owner_id = ? AND contact_id = ?');
+  async function silencesCaller(calleeId, callerId) {
+    if (Number((await silenceRow.get(calleeId))?.on ?? 0) !== 1) return false;
+    return Number((await savedLink.get(calleeId, callerId))?.saved ?? 0) !== 1;
+  }
+
   async function areLinked(left, right) {
     return Boolean((await db.prepare(`SELECT 1 FROM contacts
       WHERE (owner_id = ? AND contact_id = ?) OR (owner_id = ? AND contact_id = ?) LIMIT 1`)
@@ -1496,10 +1509,15 @@ export function createChatServer({
   }
 
   const privacyRow = db.prepare(`SELECT last_seen_privacy AS "lastSeen", online_privacy AS "online", photo_privacy AS "profilePhoto",
-    read_receipts AS "readReceipts" FROM users WHERE id = ?`);
+    read_receipts AS "readReceipts", about_privacy AS "about", silence_unknown_callers AS "silenceUnknownCallers",
+    default_message_timer AS "defaultTimer" FROM users WHERE id = ?`);
   async function privacyOf(userId) {
     const row = await privacyRow.get(userId);
-    return { lastSeen: row?.lastSeen ?? 'everyone', online: row?.online ?? 'same_as_last_seen', profilePhoto: row?.profilePhoto ?? 'everyone', readReceipts: row ? Number(row.readReceipts) === 1 : true };
+    return {
+      lastSeen: row?.lastSeen ?? 'everyone', online: row?.online ?? 'same_as_last_seen', profilePhoto: row?.profilePhoto ?? 'everyone',
+      readReceipts: row ? Number(row.readReceipts) === 1 : true, about: row?.about ?? 'everyone',
+      silenceUnknownCallers: Number(row?.silenceUnknownCallers ?? 0) === 1, defaultTimer: Number(row?.defaultTimer ?? 0),
+    };
   }
 
   app.get('/api/v1/me/privacy', requireSession, async (request, response) => {
@@ -1511,9 +1529,12 @@ export function createChatServer({
     const { patch, error } = parsePrivacyPatch(request.body);
     if (error) return response.status(400).json({ error });
     const userId = request.session.user_id;
-    const columns = { lastSeen: 'last_seen_privacy', online: 'online_privacy', profilePhoto: 'photo_privacy', readReceipts: 'read_receipts' };
+    const columns = {
+      lastSeen: 'last_seen_privacy', online: 'online_privacy', profilePhoto: 'photo_privacy', readReceipts: 'read_receipts',
+      about: 'about_privacy', silenceUnknownCallers: 'silence_unknown_callers', defaultTimer: 'default_message_timer',
+    };
     for (const [name, value] of Object.entries(patch)) {
-      await db.prepare(`UPDATE users SET ${columns[name]} = ? WHERE id = ?`).run(name === 'readReceipts' ? (value ? 1 : 0) : value, userId);
+      await db.prepare(`UPDATE users SET ${columns[name]} = ? WHERE id = ?`).run(typeof value === 'boolean' ? (value ? 1 : 0) : value, userId);
     }
     if ('lastSeen' in patch || 'online' in patch) await broadcastPresence(userId);
     response.json(await privacyOf(userId));
@@ -1601,6 +1622,26 @@ export function createChatServer({
     (await db.prepare("UPDATE users SET avatar_disk_name = NULL, avatar_type = NULL, avatar_updated_at = ? WHERE id = ?").run(Date.now(), userId));
     if (previous) await unlink(join(avatarDirectory, previous)).catch(() => {});
     response.json({ user: (await broadcastProfile(userId)) });
+  });
+
+  // About: your own line (any length up to ABOUT_MAX), and someone else's when their About privacy lets you see it.
+  app.get('/api/v1/me/about', requireSession, async (request, response) => {
+    response.json({ about: (await db.prepare('SELECT about FROM users WHERE id = ?').get(request.session.user_id))?.about ?? '' });
+  });
+  app.put('/api/v1/me/about', requireSession, async (request, response) => {
+    const about = typeof request.body?.about === 'string' ? request.body.about.replace(/\s+/g, ' ').trim() : null;
+    if (about === null || about.length > ABOUT_MAX) return response.status(400).json({ error: `About can be up to ${ABOUT_MAX} characters.` });
+    await db.prepare('UPDATE users SET about = ? WHERE id = ?').run(about, request.session.user_id);
+    response.json({ about });
+  });
+  app.get('/api/v1/users/:id/about', requireSession, async (request, response) => {
+    const row = await db.prepare('SELECT about, about_privacy, deleted_at FROM users WHERE id = ?').get(request.params.id);
+    if (!row || row.deleted_at) return response.status(404).json({ error: 'No such account.' });
+    const audience = row.about_privacy ?? 'everyone';
+    const contactIds = audience === 'contacts' ? new Set((await savedContactIds.all(request.params.id)).map((item) => item.id)) : null;
+    const visible = audienceAllows({ ownerId: request.params.id, viewerId: request.session.user_id, audience, ownerContactIds: contactIds })
+      && !(await blocks.between(request.params.id, request.session.user_id));
+    response.json({ about: visible ? row.about ?? '' : null });
   });
 
   app.get('/api/v1/users/:id/avatar', requireSession, async (request, response) => {
@@ -2533,7 +2574,14 @@ export function createChatServer({
           const callerRecord = (await db.prepare(`SELECT ${USER_COLUMNS} FROM users WHERE id = ?`).get(userId));
           fromUser = callerRecord ? publicUser(callerRecord) : null;
         }
-        const signalEvent = { type: 'call:signal', from: userId, fromUser, callId, mode, signal, signalId, ...(roomId ? { roomId } : {}) };
+        // Privacy › Calls › Silence unknown callers: someone the callee hasn't saved reaches their devices without ringing
+        // (shown as a silenced call) and gets no ringing push. Group-call pairs (roomId) are never silenced.
+        if (initialOffer && !roomId && (await silencesCaller(targetId, userId))) {
+          const silencedCall = activeCalls.get(callId);
+          if (silencedCall) silencedCall.silenced = true;
+        }
+        const silenced = Boolean(activeCalls.get(callId)?.silenced);
+        const signalEvent = { type: 'call:signal', from: userId, fromUser, callId, mode, signal, signalId, ...(roomId ? { roomId } : {}), ...(silenced ? { silenced: true } : {}) };
         const current = activeCalls.get(callId);
         const delivered = deliverCallSignal(current, targetId, signalEvent);
         // Until a callee device answers, the caller's offer and candidates are kept (bounded) for a phone that
@@ -2544,7 +2592,7 @@ export function createChatServer({
         const ringing = () => json(socket, { type: 'call:signal', from: targetId, callId, mode, signal: { type: 'ringing' }, signalId: randomUUID() });
         // Only the caller's own socket learns that a callee device is ringing; an offline callee yields no signal.
         if (initialOffer && delivered > 0) ringing();
-        if (initialOffer && current && needsPush(targetId)) {
+        if (initialOffer && current && !current.silenced && needsPush(targetId)) {
           // Not awaited: the caller's candidates keep flowing while Firebase is asked to ring the phone.
           current.pushed = true;
           trackSocketTask(pushToUser(targetId, { t: 'call', callId, from: userId, callerName: fromUser?.name || `@${fromUser?.username ?? 'someone'}`, avatar: fromUser?.avatar ?? null, mode }, { ttlSeconds: 45, collapseKey: `call:${callId}` })

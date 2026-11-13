@@ -81,10 +81,10 @@ test('a sound picked from the phone list plays and rings natively, and falls bac
 test('the Android app wires Back, picture-in-picture, earpiece calls, phone sounds, badges and Media Save', async () => {
   const read = (file) => readFile(new URL(`android/app/src/main/java/io/github/bickworld555/hiddenchat/${file}`, root), 'utf8');
   const manifest = await readFile(new URL('android/app/src/main/AndroidManifest.xml', root), 'utf8');
-  assert.match(manifest, /android:name="\.MainActivity"[\s\S]*android:supportsPictureInPicture="true"/);
+  assert.match(manifest, /android:name="\.AppActivity"[\s\S]*android:supportsPictureInPicture="true"/);
   assert.ok(manifest.includes('android.permission.WAKE_LOCK'));
   assert.match(manifest, /WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28"/, 'storage permission only for Android 9 and older');
-  const activity = await read('MainActivity.java');
+  const activity = await read('AppActivity.java');
   assert.match(activity, /handleOnBackPressed\(\) \{\s*if \(!HiddenNativePlugin\.emitBack\(\)\) leaveApp\(\);/, 'Back never destroys the app');
   assert.match(activity, /void leaveApp\(\) \{\s*if \(!enterCallPictureInPicture\(\)\) moveTaskToBack\(true\);/, 'Back during a video call opens the floating window');
   assert.ok((await read('HiddenNativePlugin.java')).includes('activity.runOnUiThread(activity::leaveApp);'), "the web app's go-to-background does the same");

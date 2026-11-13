@@ -259,7 +259,7 @@ test('encrypted attachments ("emedia:") follow the same server rules as ordinary
 });
 
 test('call window: the hand-back after a call answered from outside is reset per call and dropped when unused', async () => {
-  const activity = await source('android/app/src/main/java/io/github/bickworld555/hiddenchat/MainActivity.java');
+  const activity = await source('android/app/src/main/java/io/github/bickworld555/hiddenchat/AppActivity.java');
   assert.match(activity, /static void callRinging\(Context context\) \{[\s\S]*?returnAfterCall = false;/, 'a new call decides afresh');
   assert.match(activity, /forgetUnusedHandBack = \(\) -> \{\s*if \(!MessagingService\.isCallActive\(\)\) returnAfterCall = false;/, 'an answer that never connects forgets it');
   assert.match(activity, /Intent\.ACTION_MAIN\.equals\(intent\.getAction\(\)\) && intent\.hasCategory\(Intent\.CATEGORY_LAUNCHER\)\) \{\s*returnAfterCall = false;/, 'opening the app during a call keeps it open after');

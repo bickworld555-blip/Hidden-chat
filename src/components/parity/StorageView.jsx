@@ -2,7 +2,7 @@
 // review and delete), Network usage (what this device sent and received, by kind), photo upload quality, and the
 // media auto-download rules for mobile data, Wi-Fi and roaming.
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
-import { ArrowUpDown, Check, ChevronRight, CloudUpload, FileText, Folder, HardDrive, Image, Images, MessageSquare, Mic, Phone, Search, Trash2, Users, Video } from 'lucide-react';
+import { ArrowUpDown, Check, ChevronRight, CloudUpload, FileText, Folder, Globe, HardDrive, Image, Images, MessageSquare, Mic, Phone, Search, Shield, Trash2, Users, Video } from 'lucide-react';
 import { localStoreStatus, useChatStore } from '../../store.js';
 import { clearMediaCache, formatFileSize, mediaCacheStats } from '../../media.js';
 import { forgetMedia, listStoredMedia } from '../../mediaVault.js';
@@ -13,6 +13,7 @@ import { readUsage, resetUsage, subscribeUsage, usageTotals } from '../../networ
 import { cachedGroups } from '../../groupCache.js';
 import { fetchGroupMessages } from '../../groupHistory.js';
 import Avatar from '../Avatar.jsx';
+import { nativeGetProxy, nativeSetProxy, nativeShell } from '../../native.js';
 import Panel, { Notice } from './Panel.jsx';
 
 const KIND_ICON = { photos: Image, videos: Video, audio: Mic, documents: FileText };
@@ -239,12 +240,16 @@ function ManageStorage({ onBack }) {
 
 // --- Network usage ---
 
+// WhatsApp's rows in its order. "Backup storage" stands where WhatsApp has Google storage: Hidden Messenger's
+// encrypted chat backup goes to its own server, not to Google Drive. Roaming is the part of the rest that moved
+// while roaming (not added to the total).
 const USAGE_ROWS = [
   { id: 'calls', icon: Phone, title: 'Calls' },
   { id: 'media', icon: Image, title: 'Media' },
+  { id: 'backup', icon: HardDrive, title: 'Backup storage', note: 'Encrypted chat backup' },
   { id: 'messages', icon: MessageSquare, title: 'Messages' },
   { id: 'status', icon: CloudUpload, title: 'Status' },
-  { id: 'backup', icon: HardDrive, title: 'Chat backup' },
+  { id: 'roaming', icon: Globe, title: 'Roaming', note: 'Included above' },
 ];
 
 function NetworkUsage({ onBack }) {
@@ -255,7 +260,7 @@ function NetworkUsage({ onBack }) {
     const row = usage[id];
     if (id === 'calls') return `${row.outgoing} outgoing · ${row.incoming} incoming`;
     if (id === 'messages') return `${row.countSent.toLocaleString()} sent · ${row.countReceived.toLocaleString()} received`;
-    return null;
+    return USAGE_ROWS.find((item) => item.id === id)?.note ?? null;
   };
   return (
     <Panel title="Network usage" onBack={onBack} onClose={onBack}>
@@ -314,13 +319,50 @@ function QualityDialog({ onClose }) {
   return (
     <>
       <div className="hm-sd-scrim" onClick={onClose} aria-hidden="true" />
-      <div className="hm-sd-dialog" role="dialog" aria-modal="true" aria-label="Photo upload quality">
-        <h3>Photo upload quality</h3>
+      <div className="hm-sd-dialog" role="dialog" aria-modal="true" aria-label="Media upload quality">
+        <h3>Media upload quality</h3>
         {SETTINGS['media.uploadQuality'].options.map((option) => (
           <label key={option.id}><input type="radio" name="upload-quality" checked={quality === option.id} onChange={() => { appSettings().set('media.uploadQuality', option.id); onClose(); }} /> {option.label}</label>
         ))}
         <p className="hm-muted">{SETTINGS['media.uploadQuality'].hint}</p>
       </div>
+    </>
+  );
+}
+
+// Proxy (WhatsApp: Storage and data › Proxy): an HTTP proxy for when Hidden Messenger can't connect directly.
+function ProxyDialog({ current, onClose, onSaved }) {
+  const [host, setHost] = useState(current?.host ?? '');
+  const [port, setPort] = useState(current?.port ? String(current.port) : '');
+  const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
+  async function save(clear = false) {
+    setBusy(true);
+    setError('');
+    try {
+      const saved = await nativeSetProxy(clear ? '' : host.trim(), clear ? 0 : port);
+      onSaved(saved);
+      onClose();
+    } catch (caught) {
+      setError(caught?.message || 'The proxy could not be saved.');
+      setBusy(false);
+    }
+  }
+  return (
+    <>
+      <div className="hm-sd-scrim" onClick={onClose} aria-hidden="true" />
+      <form className="hm-sd-dialog" role="dialog" aria-modal="true" aria-label="Proxy" onSubmit={(event) => { event.preventDefault(); save(); }}>
+        <h3>Set proxy</h3>
+        <p className="hm-muted">Use a proxy only if Hidden Messenger can't connect on this network. Your messages stay end-to-end encrypted; the proxy sees only that you use Hidden Messenger.</p>
+        <label className="hm-sd-field">Proxy host<input value={host} onChange={(event) => setHost(event.target.value)} placeholder="proxy.example.com" autoCapitalize="none" autoCorrect="off" spellCheck={false} /></label>
+        <label className="hm-sd-field">Port<input value={port} onChange={(event) => setPort(event.target.value.replace(/[^0-9]/g, '').slice(0, 5))} inputMode="numeric" placeholder="8080" /></label>
+        {error && <p className="hm-error" role="alert">{error}</p>}
+        <div className="hm-sd-dialog-actions">
+          {current?.host && <button type="button" onClick={() => save(true)} disabled={busy}>Remove</button>}
+          <button type="button" onClick={onClose} disabled={busy}>Cancel</button>
+          <button type="submit" disabled={busy || !host.trim() || !port}>Save</button>
+        </div>
+      </form>
     </>
   );
 }
@@ -335,6 +377,8 @@ export default function StorageView({ onClose }) {
   const wifi = useSetting(AUTO_DOWNLOAD_KEYS.wifi);
   const roaming = useSetting(AUTO_DOWNLOAD_KEYS.roaming);
   const usage = useNetworkUsage();
+  const [proxy, setProxy] = useState(null);
+  useEffect(() => { if (nativeShell()) nativeGetProxy().then(setProxy).catch(() => {}); }, []);
   const [storedBytes, setStoredBytes] = useState(null);
   useEffect(() => { listStoredMedia().then((list) => setStoredBytes(list.reduce((total, item) => total + item.size, 0))).catch(() => {}); }, [view]);
 
@@ -348,7 +392,10 @@ export default function StorageView({ onClose }) {
         <Row icon={ArrowUpDown} title="Network usage" detail={`${formatFileSize(totals.sent) || '0 B'} sent · ${formatFileSize(totals.received) || '0 B'} received`} onClick={() => setView('network')} />
       </div>
       <div className="hm-sd-list">
-        <Row icon={Image} title="Photo upload quality" detail={optionLabel('media.uploadQuality', quality)} onClick={() => setDialog('quality')} />
+        <Row icon={Shield} title="Proxy" detail={!nativeShell() ? 'In the Android app' : proxy?.host ? `On · ${proxy.host}:${proxy.port}` : 'Off'} onClick={() => { if (nativeShell()) setDialog('proxy'); }} />
+      </div>
+      <div className="hm-sd-list">
+        <Row icon={Image} title="Media upload quality" detail={optionLabel('media.uploadQuality', quality)} onClick={() => setDialog('quality')} />
       </div>
       <h4 className="hm-sd-heading">Media auto-download</h4>
       <p className="hm-muted hm-sd-note">Voice messages are always automatically downloaded. Media left off waits for a tap, and the server keeps it for 30 days.</p>
@@ -358,7 +405,8 @@ export default function StorageView({ onClose }) {
         <Row title="When roaming" detail={ruleSummary(roaming)} onClick={() => setDialog(AUTO_DOWNLOAD_KEYS.roaming)} chevron={false} />
       </div>
       {dialog === 'quality' && <QualityDialog onClose={() => setDialog('')} />}
-      {dialog && dialog !== 'quality' && <RuleDialog settingKey={dialog} onClose={() => setDialog('')} />}
+      {dialog === 'proxy' && <ProxyDialog current={proxy} onClose={() => setDialog('')} onSaved={setProxy} />}
+      {dialog && dialog !== 'quality' && dialog !== 'proxy' && <RuleDialog settingKey={dialog} onClose={() => setDialog('')} />}
     </Panel>
   );
 }

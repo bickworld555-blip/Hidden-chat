@@ -91,7 +91,7 @@ public class MessagingService extends Service {
         public void run() {
             MessagingService service = instance;
             if (service != null) service.settle();
-            else if (!syncing() && !MainActivity.isAlive()) NativeRelay.stopUnlessLegacy();
+            else if (!syncing() && !AppActivity.isAlive()) NativeRelay.stopUnlessLegacy();
             if (syncing()) timers.postDelayed(this, 5_000);
         }
     };
@@ -127,14 +127,14 @@ public class MessagingService extends Service {
     /** Called by the web app when a call starts and ends (HiddenNative.setCallActive). */
     static void setCall(Context context, boolean active, boolean video, String name) {
         if (active && !callActive) callStartedAt = System.currentTimeMillis();
-        if (!active && callActive) MainActivity.callEnded();
+        if (!active && callActive) AppActivity.callEnded();
         // Only a change reaches Android: a stray "not in a call" must not drop a call that is still ringing.
         if (active || callActive) TelecomCalls.live(context, active, video, name);
         callActive = active;
         callVideo = active && video;
         callName = active && name != null && !name.trim().isEmpty() ? name.trim() : null;
-        MainActivity.videoCallChanged(callVideo);
-        MainActivity.callWindowChanged();
+        AppActivity.videoCallChanged(callVideo);
+        AppActivity.callWindowChanged();
         MessagingService service = instance;
         if (service != null) new Handler(Looper.getMainLooper()).post(service::settle);
         else if (active) start(context);
@@ -159,7 +159,7 @@ public class MessagingService extends Service {
             @Override
             public void run() {
                 if (!callActive) return;
-                if (!MainActivity.isAlive()) {
+                if (!AppActivity.isAlive()) {
                     endOrphanedCall(context, "no screen holds the call");
                     return;
                 }
@@ -235,7 +235,7 @@ public class MessagingService extends Service {
 
     /** (Re)posts the ongoing notification with the service types the current state needs. */
     private void promote() {
-        Intent open = new Intent(this, MainActivity.class).setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        Intent open = new Intent(this, AppActivity.class).setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);
         PendingIntent content = PendingIntent.getActivity(this, 0, open, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
         Notification notification = callActive ? callNotification(content) : new NotificationCompat.Builder(this, NotificationChannels.CONNECTION)
             .setSmallIcon(R.drawable.ic_stat_hidden)
@@ -300,7 +300,7 @@ public class MessagingService extends Service {
             promote();
             return;
         }
-        if (!isLegacy(this) && !MainActivity.isAlive()) NativeRelay.stop();
+        if (!isLegacy(this) && !AppActivity.isAlive()) NativeRelay.stop();
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE);
         stopSelf();
     }
@@ -320,7 +320,7 @@ public class MessagingService extends Service {
         boolean sync = intent != null && ACTION_SYNC.equals(intent.getAction());
         boolean legacy = isLegacy(this);
         // A push sync, or the always-on mode restarted by Android after the process was killed: connect ourselves.
-        if (!MainActivity.isAlive() && (sync || legacy)) NativeRelay.start(this);
+        if (!AppActivity.isAlive() && (sync || legacy)) NativeRelay.start(this);
         if (!needed(this)) {
             settle();
             return START_NOT_STICKY;

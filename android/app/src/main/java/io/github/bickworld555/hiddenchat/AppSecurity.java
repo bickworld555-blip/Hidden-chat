@@ -40,7 +40,7 @@ final class AppSecurity {
         activity.runOnUiThread(() -> apply(activity));
     }
 
-    /** Applies the saved choice to the activity's window (called from MainActivity.onCreate too). */
+    /** Applies the saved choice to the activity's window (called from AppActivity.onCreate too). */
     static void apply(Activity activity) {
         if (secureScreen(activity)) activity.getWindow().setFlags(WindowManager.LayoutParams.FLAG_SECURE, WindowManager.LayoutParams.FLAG_SECURE);
         else activity.getWindow().clearFlags(WindowManager.LayoutParams.FLAG_SECURE);

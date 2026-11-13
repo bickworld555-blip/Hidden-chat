@@ -212,7 +212,7 @@ public class IncomingCallActivity extends Activity {
 
     /** Opens the app straight into the call, still over the lock screen (it shows there while a call is on). */
     private void accept(String callId) {
-        Intent accept = new Intent(this, MainActivity.class)
+        Intent accept = new Intent(this, AppActivity.class)
             .setAction(Alerts.ACTION_ACCEPT)
             .setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP)
             .putExtra(Alerts.EXTRA_CALL, true)

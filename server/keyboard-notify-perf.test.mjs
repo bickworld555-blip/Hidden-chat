@@ -92,7 +92,7 @@ test('a call that ended never leaves its timer on the lock screen', async () => 
   const service = await java('MessagingService.java');
   assert.match(service, /static void endOrphanedCall\(Context context, String why\) \{\s*if \(!callActive\) return;[\s\S]*?setCall\(context, false, false, null\);\s*CallAudio\.stop\(context\);/);
   assert.ok(service.includes('if (active || callActive) TelecomCalls.live(context, active, video, name);'), 'a stray "no call" does not drop a ringing call');
-  const activity = await java('MainActivity.java');
+  const activity = await java('AppActivity.java');
   assert.ok(activity.includes('if (!isChangingConfigurations()) MessagingService.endOrphanedCall(this, "screen closed");'), 'app swiped away mid-call');
   const plugin = await java('HiddenNativePlugin.java');
   assert.match(plugin, /onPageStarted\(android\.webkit\.WebView webView\) \{\s*MessagingService\.endOrphanedCall\(getContext\(\), "page reloaded"\);/);
@@ -104,7 +104,7 @@ test('a call that ended never leaves its timer on the lock screen', async () => 
 
 test('watchdogs: no Android call or call notification outlives the call in the app', async () => {
   const service = await java('MessagingService.java');
-  assert.match(service, /if \(!MainActivity\.isAlive\(\)\) \{\s*endOrphanedCall\(context, "no screen holds the call"\);/, 'live call with no app screen ends');
+  assert.match(service, /if \(!AppActivity\.isAlive\(\)\) \{\s*endOrphanedCall\(context, "no screen holds the call"\);/, 'live call with no app screen ends');
   assert.ok(service.includes('else androidx.core.app.NotificationManagerCompat.from(context).cancel(NOTIFICATION_ID);'), 'call notification cancelled even with no service running');
   const calls = await java('TelecomCalls.java');
   assert.ok(calls.includes('boolean backed = state == Connection.STATE_RINGING ? Alerts.isRinging() || MessagingService.isCallActive() : MessagingService.isCallActive();'));

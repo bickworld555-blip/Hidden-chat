@@ -84,7 +84,7 @@ public class HiddenNativePlugin extends Plugin {
     protected void handleOnStop() {
         super.handleOnStop();
         // Only a ringing or ongoing call may show over the lock screen; leaving the app otherwise ends that.
-        if (!MainActivity.wantsCallWindow()) setCallWindow(false);
+        if (!AppActivity.wantsCallWindow()) setCallWindow(false);
     }
 
     private void handleIntent(Intent intent) {
@@ -170,10 +170,10 @@ public class HiddenNativePlugin extends Plugin {
     }
 
     private void setCallWindow(boolean visibleOverLock) {
-        if (!(getActivity() instanceof MainActivity)) return;
-        MainActivity activity = (MainActivity) getActivity();
+        if (!(getActivity() instanceof AppActivity)) return;
+        AppActivity activity = (AppActivity) getActivity();
         // Never drop the lock-screen window while a call still rings or is in progress.
-        activity.runOnUiThread(() -> activity.applyCallWindow(visibleOverLock || MainActivity.wantsCallWindow()));
+        activity.runOnUiThread(() -> activity.applyCallWindow(visibleOverLock || AppActivity.wantsCallWindow()));
     }
 
     private boolean granted(String alias) {
@@ -233,6 +233,115 @@ public class HiddenNativePlugin extends Plugin {
      * How the phone is online, for Storage and data › Media auto-download: "wifi" (Wi-Fi or Ethernet), "mobile",
      * "roaming" (mobile data abroad) or "none". Needs only ACCESS_NETWORK_STATE (granted at install).
      */
+    // Settings › Appearance › App icon: each icon is a launcher alias of AppActivity (AndroidManifest.xml).
+    private static final String[][] APP_ICONS = { { "default", "MainActivity" }, { "midnight", "IconMidnight" }, { "teal", "IconTeal" } };
+
+    private android.content.ComponentName iconComponent(String alias) {
+        return new android.content.ComponentName(getContext().getPackageName(), AppActivity.class.getPackage().getName() + "." + alias);
+    }
+
+    /** The icon whose launcher entry is enabled ("default" when only the manifest's choice applies). */
+    @PluginMethod
+    public void getAppIcon(PluginCall call) {
+        android.content.pm.PackageManager manager = getContext().getPackageManager();
+        String current = "default";
+        for (String[] icon : APP_ICONS) {
+            int state = manager.getComponentEnabledSetting(iconComponent(icon[1]));
+            if (state == android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_ENABLED && !"default".equals(icon[0])) current = icon[0];
+        }
+        JSObject result = new JSObject();
+        result.put("id", current);
+        call.resolve(result);
+    }
+
+    /** Switches the launcher icon: the chosen alias is enabled first, then the others disabled, so one always shows. */
+    @PluginMethod
+    public void setAppIcon(PluginCall call) {
+        String id = call.getString("id", "default");
+        String chosen = null;
+        for (String[] icon : APP_ICONS) if (icon[0].equals(id)) chosen = icon[1];
+        if (chosen == null) {
+            call.reject("Unknown app icon.");
+            return;
+        }
+        android.content.pm.PackageManager manager = getContext().getPackageManager();
+        manager.setComponentEnabledSetting(iconComponent(chosen), android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_ENABLED, android.content.pm.PackageManager.DONT_KILL_APP);
+        for (String[] icon : APP_ICONS) {
+            if (icon[1].equals(chosen)) continue;
+            manager.setComponentEnabledSetting(iconComponent(icon[1]), android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DISABLED, android.content.pm.PackageManager.DONT_KILL_APP);
+        }
+        JSObject result = new JSObject();
+        result.put("id", id);
+        call.resolve(result);
+    }
+
+    /** Settings › Storage and data › Proxy: { supported, host, port } as saved on this phone. */
+    @PluginMethod
+    public void getProxy(PluginCall call) {
+        JSObject result = new JSObject();
+        result.put("supported", AppProxy.supported());
+        result.put("host", AppProxy.host(getContext()));
+        result.put("port", AppProxy.port(getContext()));
+        call.resolve(result);
+    }
+
+    /** Saves and applies a proxy ({ host, port }), or removes it ({ host: "" }). The background connection picks it up when it reconnects. */
+    @PluginMethod
+    public void setProxy(PluginCall call) {
+        String host = call.getString("host", "").trim();
+        int port = call.getInt("port", 0);
+        if (host.isEmpty()) {
+            AppProxy.clear(getContext());
+        } else if (!AppProxy.valid(host, port)) {
+            call.reject("Enter a host name and a port between 1 and 65535.");
+            return;
+        } else if (!AppProxy.supported()) {
+            call.reject("This phone's web view can't use a proxy. Update Android System WebView and try again.");
+            return;
+        } else {
+            AppProxy.save(getContext(), host, port);
+        }
+        JSObject result = new JSObject();
+        result.put("host", AppProxy.host(getContext()));
+        result.put("port", AppProxy.port(getContext()));
+        call.resolve(result);
+    }
+
+    /**
+     * Media upload quality › Standard for videos: { path } (relative to the app's cache folder, written by the web
+     * side) is re-encoded to { path, bytes } next to it. The input stays; the caller deletes both when done.
+     */
+    @PluginMethod
+    public void compressVideo(PluginCall call) {
+        String path = call.getString("path", "");
+        java.io.File cache = getContext().getCacheDir();
+        java.io.File input = new java.io.File(cache, path);
+        try {
+            if (path.isEmpty() || path.contains("..") || !input.getCanonicalPath().startsWith(cache.getCanonicalPath()) || !input.isFile()) {
+                call.reject("No such video.");
+                return;
+            }
+        } catch (java.io.IOException unreadable) {
+            call.reject("No such video.");
+            return;
+        }
+        java.io.File output = new java.io.File(input.getParentFile(), input.getName() + ".standard.mp4");
+        VideoCompressor.compress(getContext(), input, output, call.getInt("shortSide", 720), call.getInt("bitrate", 2_000_000), new VideoCompressor.Done() {
+            @Override
+            public void ok(java.io.File file) {
+                JSObject result = new JSObject();
+                result.put("path", path + ".standard.mp4");
+                result.put("bytes", file.length());
+                call.resolve(result);
+            }
+
+            @Override
+            public void fail(String reason) {
+                call.reject(reason);
+            }
+        });
+    }
+
     @PluginMethod
     public void networkState(PluginCall call) {
         JSObject result = new JSObject();
@@ -693,8 +802,8 @@ public class HiddenNativePlugin extends Plugin {
     /** Nothing left to close on Back: leave the app running in the background, like WhatsApp. */
     @PluginMethod
     public void moveToBackground(PluginCall call) {
-        if (getActivity() instanceof MainActivity) {
-            MainActivity activity = (MainActivity) getActivity();
+        if (getActivity() instanceof AppActivity) {
+            AppActivity activity = (AppActivity) getActivity();
             activity.runOnUiThread(activity::leaveApp);
         } else if (getActivity() != null) {
             getActivity().runOnUiThread(() -> getActivity().moveTaskToBack(true));

@@ -109,7 +109,7 @@ export function registerAccount({ app, db, requireSession, verifyPassword, close
     // A placeholder keeps other people's groups and chats consistent; the username is freed.
     const tombstone = `deleted_${randomUUID().replace(/-/g, '').slice(0, 12)}`;
     await db.prepare(`UPDATE users SET username = ?, name = 'Deleted account', initials = '?', dob = NULL, password_hash = NULL, two_step_hash = NULL,
-      avatar_disk_name = NULL, avatar_type = NULL, is_admin = 0, country = NULL, country_updated_at = NULL, deleted_at = ? WHERE id = ?`).run(tombstone, Date.now(), userId);
+      avatar_disk_name = NULL, avatar_type = NULL, is_admin = 0, country = NULL, country_updated_at = NULL, about = '', deleted_at = ? WHERE id = ?`).run(tombstone, Date.now(), userId);
     if (row.avatar) await unlink(join(avatarDirectory, row.avatar)).catch(() => {});
     for (const file of [...catalogFiles.map((item) => item.file), cover?.file].filter(Boolean)) await unlink(join(catalogDirectory, file)).catch(() => {});
     response.status(204).end();

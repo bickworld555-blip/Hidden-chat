@@ -30,20 +30,35 @@ export const SETTINGS = Object.freeze({
     default: 'same_as_last_seen',
   },
   'privacy.profilePhoto': { section: 'privacy', scope: 'account', remote: 'profilePhoto', type: 'choice', label: 'Profile photo', options: AUDIENCE, default: 'everyone' },
+  'privacy.about': { section: 'privacy', scope: 'account', remote: 'about', type: 'choice', label: 'About', options: AUDIENCE, default: 'everyone' },
   'privacy.readReceipts': {
     section: 'privacy', scope: 'account', remote: 'readReceipts', type: 'switch', label: 'Read receipts', default: true,
     hint: "If you turn off read receipts, you won't be able to send or receive read receipts.",
+  },
+  'privacy.defaultTimer': {
+    section: 'privacy', scope: 'account', remote: 'defaultTimer', type: 'choice', label: 'Default message timer',
+    options: Object.freeze([{ id: 86400, label: '24 hours' }, { id: 604800, label: '7 days' }, { id: 7776000, label: '90 days' }, { id: 0, label: 'Off' }]),
+    default: 0, hint: 'Start new chats with disappearing messages set to your timer.',
+  },
+  'privacy.silenceUnknownCallers': {
+    section: 'privacy', scope: 'account', remote: 'silenceUnknownCallers', type: 'switch', label: 'Silence unknown callers', default: false,
+    hint: 'Calls from people you haven’t saved won’t ring. They still show in Calls.',
   },
   // --- Calls (this device) ---
   'calls.noiseCancellation': {
     section: 'calls', scope: 'device', type: 'switch', label: 'Noise cancellation', default: true,
     legacyKey: 'hm:noise-cancellation',
   },
+  // --- Chats (this device) ---
+  'chats.keepArchived': {
+    section: 'chats', scope: 'device', type: 'switch', label: 'Keep chats archived', default: true,
+    hint: 'Archived chats stay archived when you get a new message.',
+  },
   // --- Storage and data (this device) ---
   'media.uploadQuality': {
-    section: 'storage', scope: 'device', type: 'choice', label: 'Photo upload quality',
+    section: 'storage', scope: 'device', type: 'choice', label: 'Media upload quality',
     options: Object.freeze([{ id: 'standard', label: 'Standard quality' }, { id: 'hd', label: 'HD quality' }]),
-    default: 'standard', hint: 'Standard sends faster and uses less data; HD sends photos at full resolution.',
+    default: 'standard', hint: 'For photos and videos. Standard sends faster and uses less data (videos up to 720p in the Android app); HD sends them at full resolution.',
   },
   // Media auto-download (WhatsApp's rules): which kinds download on their own on each kind of connection. Voice
   // messages always do. A kind left off downloads when tapped; the server keeps it for 30 days until then.
@@ -58,6 +73,10 @@ export const SETTINGS = Object.freeze({
       { id: '1m', label: 'After 1 minute' }, { id: '30m', label: 'After 30 minutes' },
     ]),
     default: 'off',
+  },
+  'security.notifications': {
+    section: 'security', scope: 'device', type: 'switch', label: 'Security notifications', default: true,
+    hint: 'A notice in the chat when a contact’s security code changes.',
   },
   'security.screenSecurity': {
     section: 'security', scope: 'device', type: 'switch', label: 'Screen security', default: false,

@@ -33,7 +33,7 @@ final class Alerts {
     }
 
     static PendingIntent openIntent(Context context, String open, int requestCode) {
-        Intent intent = new Intent(context, MainActivity.class)
+        Intent intent = new Intent(context, AppActivity.class)
             .setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP)
             .putExtra(EXTRA_OPEN, open == null ? "" : open);
         return PendingIntent.getActivity(context, requestCode, intent, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
@@ -152,7 +152,7 @@ final class Alerts {
         // app's web screen to load (which left a black screen over the lock screen while the ringtone played).
         Intent show = IncomingCallActivity.intent(context, id, name, video, avatar);
         lastCallScreen = show;
-        Intent accept = new Intent(context, MainActivity.class)
+        Intent accept = new Intent(context, AppActivity.class)
             .setAction(ACTION_ACCEPT)
             .setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP)
             .putExtra(EXTRA_CALL, true)
@@ -191,10 +191,10 @@ final class Alerts {
             ringingCallId = id;
             // Android hears about it too (headset / car / watch can answer; call waiting with SIM calls).
             TelecomCalls.incoming(context, id, name, video);
-            MainActivity.callRinging(context);
+            AppActivity.callRinging(context);
             wakeScreen(context);
             // App on screen (or in the background): light the screen and show the call over the lock screen now.
-            MainActivity.callWindowChanged();
+            AppActivity.callWindowChanged();
             return true;
         } catch (SecurityException missingPermission) {
             return false;
@@ -322,7 +322,7 @@ final class Alerts {
         String name = caller.name == null || caller.name.isEmpty() ? "Hidden Messenger" : caller.name;
         String text = count > 1 ? count + " missed calls" : caller.video ? "Missed video call" : "Missed voice call";
         String open = "chat:" + caller.id;
-        Intent back = new Intent(context, MainActivity.class)
+        Intent back = new Intent(context, AppActivity.class)
             .setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP)
             .putExtra(EXTRA_CALL_BACK, caller.id)
             .putExtra(EXTRA_CALL_BACK_MODE, caller.video ? "video" : "audio");
@@ -378,7 +378,7 @@ final class Alerts {
         releaseScreen();
         IncomingCallActivity.dismiss();
         ringingCaller = null;
-        MainActivity.callWindowChanged();
+        AppActivity.callWindowChanged();
         TelecomCalls.ringingStopped();
     }
 
@@ -462,7 +462,7 @@ final class Alerts {
 
     static void setAppRinging(boolean value) {
         appRinging = value;
-        MainActivity.callWindowChanged();
+        AppActivity.callWindowChanged();
         if (!value) TelecomCalls.ringingStopped();
     }
 }

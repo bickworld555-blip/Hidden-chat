@@ -1,7 +1,7 @@
 import { apiFetch } from '../api.js';
 import { useEffect, useState } from 'react';
 import { ArrowRight, AtSign, Copy, Eye, EyeOff, Facebook, Instagram, ShieldCheck } from 'lucide-react';
-import ShieldMark from './ShieldMark.jsx';
+import BrandMark from './BrandMark.jsx';
 import { LinkWithPhone } from './LinkDevice.jsx';
 import { nativeShell } from '../native.js';
 import { companionOnly } from '../companion.js';
@@ -36,7 +36,7 @@ function SocialLinks() {
 function IdentityBrand() {
   return (
     <header className="identity-brand">
-      <ShieldMark className="identity-mark" />
+      <BrandMark className="identity-mark" />
       <div className="identity-wordmark">HIDDEN MESSENGER</div>
       <p>No Email. No Number. Only Privacy.</p>
     </header>
@@ -211,7 +211,7 @@ function PasswordGate({ onAuthenticated, onClose }) {
               onChange={(event) => setPin(event.target.value.replace(/\D/g, '').slice(0, 6))} placeholder="6-digit PIN" />
           </>}
           <button className="identity-submit" type="submit" disabled={!canSubmit || submitting}>
-            {submitting ? 'One moment…' : mode === 'register' ? 'Create account' : 'Sign in'}<ShieldMark className="button-mark" />
+            {submitting ? 'One moment…' : mode === 'register' ? 'Create account' : 'Sign in'}<BrandMark className="button-mark" />
           </button>
           {error && <div className="auth-error" role="alert">{error}</div>}
         </form>

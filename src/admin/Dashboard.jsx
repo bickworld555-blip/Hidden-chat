@@ -1,7 +1,8 @@
 // The admin dashboard shell: sidebar navigation, live status tickers, and the sections. Each section loads its
 // own counts from /api/admin/v1; nothing is kept in browser storage, and no message or media content exists here.
 import { useEffect, useState } from 'react';
-import { BadgeCheck, CreditCard, FileText, Flag, LayoutDashboard, LifeBuoy, Lock, LogOut, ShieldCheck, Users } from 'lucide-react';
+import { BadgeCheck, CreditCard, FileText, Flag, LayoutDashboard, LifeBuoy, Lock, LogOut, Users } from 'lucide-react';
+import BrandMark from '../components/BrandMark.jsx';
 import { adminRequest } from './adminApi.js';
 import Overview from './Overview.jsx';
 import VerificationHub from './VerificationHub.jsx';
@@ -71,7 +72,7 @@ export default function Dashboard({ username, onSignOut }) {
   return (
     <div className="ad-shell">
       <aside className="ad-sidebar">
-        <div className="ad-brand"><span className="ad-brand-mark"><ShieldCheck size={18} /></span><span>Hidden Messenger<small>Admin</small></span></div>
+        <div className="ad-brand"><BrandMark className="ad-brand-mark" /><span>Hidden Messenger<small>Admin</small></span></div>
         <nav aria-label="Sections">
           {SECTIONS.map(({ id, label, icon: Icon, count, tone, tag }) => (
             <button key={id} type="button" className={`ad-nav${section === id ? ' is-on' : ''}`} aria-current={section === id ? 'page' : undefined} onClick={() => go(id)}>

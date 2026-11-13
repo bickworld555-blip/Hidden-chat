@@ -37,6 +37,17 @@ function remember(state) {
 export const nativeState = async () => remember(await invoke('getState'));
 // "wifi", "mobile", "roaming", "none" or "unknown" (HiddenNativePlugin.networkState), or null outside the app.
 export const nativeNetworkKind = async () => (await invoke('networkState'))?.kind ?? null;
+// Settings › Appearance › App icon (HiddenNativePlugin.getAppIcon / setAppIcon): 'default', 'midnight' or 'teal'.
+export const nativeGetAppIcon = async () => (await invoke('getAppIcon'))?.id ?? null;
+export const nativeSetAppIcon = async (id) => (await invoke('setAppIcon', { id }))?.id ?? null;
+// Settings › Storage and data › Proxy (HiddenNativePlugin.getProxy / setProxy, AppProxy.java). setProxy throws the
+// phone's reason when it refuses (bad host or port, a web view without proxy support).
+export const nativeGetProxy = () => invoke('getProxy');
+export async function nativeSetProxy(host, port) {
+  const native = (await plugin())?.native;
+  if (!native) throw new Error('A proxy can be set in the Android app.');
+  return native.setProxy({ host, port: Number(port) || 0 });
+}
 // Status and navigation bar icons follow the app's theme (dark icons on the light theme).
 export const nativeSetSystemBarsTheme = (theme) => invoke('setSystemBarsTheme', { theme });
 // Invite a friend (android Invites.java): contacts stay on the phone; invites go out as a text from it.

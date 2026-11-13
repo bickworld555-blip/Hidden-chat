@@ -48,7 +48,7 @@ test('the Android shell declares the channels, service, call receiver and runtim
   assert.match(manifest, /android:name="\.CallActionReceiver"\s+android:exported="false"/);
   const channels = await readFile(new URL('android/app/src/main/java/io/github/bickworld555/hiddenchat/NotificationChannels.java', root), 'utf8');
   for (const id of ['"direct_messages"', '"group_messages"', '"incoming_calls"']) assert.ok(channels.includes(id), id);
-  const activity = await readFile(new URL('android/app/src/main/java/io/github/bickworld555/hiddenchat/MainActivity.java', root), 'utf8');
+  const activity = await readFile(new URL('android/app/src/main/java/io/github/bickworld555/hiddenchat/AppActivity.java', root), 'utf8');
   assert.ok(activity.indexOf('registerPlugin(HiddenNativePlugin.class)') < activity.indexOf('super.onCreate'), 'plugin registered before the bridge starts');
 });
 
@@ -72,7 +72,7 @@ test('without push (fallback), a swipe-away hands over to the service\'s own bac
   const read = (file) => readFile(new URL(`android/app/src/main/java/io/github/bickworld555/hiddenchat/${file}`, root), 'utf8');
   const service = await read('MessagingService.java');
   const relay = await read('NativeRelay.java');
-  const activity = await read('MainActivity.java');
+  const activity = await read('AppActivity.java');
   assert.match(service, /public void onTaskRemoved[\s\S]*?if \(isLegacy\(this\)\) NativeRelay\.start\(this\);/, 'swiping away hands over to the native connection');
   assert.ok(service.includes('return legacy ? START_STICKY : START_NOT_STICKY;'), 'Android restarts the always-on service if it kills the process');
   assert.ok(relay.includes('relay.background'), 'the native connection never makes the user "online"');

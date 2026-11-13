@@ -45,7 +45,7 @@ final class ShareShortcuts {
             if (id.isEmpty() || name.isEmpty()) continue;
             String open = kind + ":" + id;
             IconCompat icon = IconCompat.createWithAdaptiveBitmap(iconFor(target, name));
-            Intent intent = new Intent(context, MainActivity.class)
+            Intent intent = new Intent(context, AppActivity.class)
                 .setAction(Intent.ACTION_VIEW)
                 .putExtra(Alerts.EXTRA_OPEN, open)
                 .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP);

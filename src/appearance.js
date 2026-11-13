@@ -98,7 +98,32 @@ export function settleThemeDefault(storage, { signedIn, phone }) {
   storage.setItem(THEME_SETTLED, '1');
 }
 
-/** Whether the app opens dark: only when this device chose (or kept) the dark theme. */
-export function startsDark(storage) {
-  return storage.getItem(THEME_KEY) === 'dark';
+// Settings › Appearance › App theme (WhatsApp's three choices): Light, Dark, or System default (follows the phone).
+export const THEME_CHOICES = Object.freeze([
+  { id: 'light', label: 'Light' }, { id: 'dark', label: 'Dark' }, { id: 'system', label: 'System default' },
+]);
+
+export function themeChoice(storage) {
+  const value = storage.getItem(THEME_KEY);
+  return THEME_CHOICES.some((choice) => choice.id === value) ? value : 'light';
+}
+
+export function resolveDark(choice, systemDark) {
+  return choice === 'dark' || (choice === 'system' && Boolean(systemDark));
+}
+
+const systemPrefersDark = () => Boolean(globalThis.matchMedia?.('(prefers-color-scheme: dark)').matches);
+
+/** Whether the app opens dark: the device chose (or kept) Dark, or System default while the phone is dark. */
+export function startsDark(storage, systemDark = systemPrefersDark()) {
+  return resolveDark(themeChoice(storage), systemDark);
+}
+
+/** Follows the phone's light/dark switch (for System default). */
+export function watchSystemTheme(onChange) {
+  const query = globalThis.matchMedia?.('(prefers-color-scheme: dark)');
+  if (!query) return () => {};
+  const listener = (event) => onChange(event.matches);
+  query.addEventListener?.('change', listener);
+  return () => query.removeEventListener?.('change', listener);
 }

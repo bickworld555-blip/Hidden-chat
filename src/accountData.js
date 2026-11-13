@@ -3,6 +3,7 @@
 // events, and applied optimistically with rollback when the server refuses a change.
 import { create } from 'zustand';
 import * as api from './parityApi.js';
+import { appSettings } from './settings.js';
 
 export const groupChatKey = (groupId) => `group:${groupId}`;
 
@@ -87,6 +88,15 @@ export async function uploadLocalStars(ids) {
   const known = getState().starred;
   for (const id of ids) if (!known[id]) await api.setStar(token, id, true).catch(() => {});
   if (ids.length) await loadStars().catch(() => {});
+}
+
+/**
+ * Settings › Chats › Keep chats archived switched off (WhatsApp): a new message brings an archived chat back to the
+ * chat list. On (the default) it stays archived.
+ */
+export function unarchiveOnMessage(chatKey) {
+  if (!chatKey || appSettings().get('chats.keepArchived') || !getState().archived.includes(chatKey)) return;
+  setChatArchived(chatKey, false).catch(() => {});
 }
 
 export async function setChatArchived(chatKey, archived) {

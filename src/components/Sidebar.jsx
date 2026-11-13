@@ -6,7 +6,7 @@ import ProfilePhoto from './ProfilePhoto.jsx';
 import { useAccounts } from '../accounts.js';
 import { presentName } from '../profile.js';
 import { linkContact, searchPeople } from '../contactsApi.js';
-import ShieldMark from './ShieldMark.jsx';
+import BrandMark from './BrandMark.jsx';
 import { mergeGroupRows, unreadBadge } from '../groupRows.js';
 
 export default function Sidebar({ onPair, onSounds, onNotifications, onAccountSettings, onSelectChat, onOpenAuth, onLogout, onAccounts, onGroups, groups = [], onOpenGroup }) {
@@ -87,7 +87,7 @@ export default function Sidebar({ onPair, onSounds, onNotifications, onAccountSe
   return (
     <aside className="sidebar">
       <header className="sidebar-top">
-        <ShieldMark className="brand-mark" />
+        <BrandMark className="brand-mark" />
         <div className="brand-copy"><strong>Hidden Messenger</strong><span>No Email. No Number. Only Privacy.</span></div>
         <div className="top-actions">
           <button className="icon-button" title="Linked devices" onClick={onPair}><Settings2 size={18} /></button>

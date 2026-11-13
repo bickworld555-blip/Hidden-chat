@@ -6,12 +6,15 @@ import { deviceStorage } from './deviceStorage.js';
 
 export const USAGE_KEY = 'hm:network-usage';
 export const USAGE_CATEGORIES = Object.freeze(['calls', 'media', 'messages', 'status', 'backup']);
+// Roaming (as WhatsApp): the part of the traffic above that moved while the phone was roaming; not added to totals.
+export const ROAMING = 'roaming';
+const ALL_ROWS = Object.freeze([...USAGE_CATEGORIES, ROAMING]);
 const COUNTERS = Object.freeze({ calls: ['outgoing', 'incoming'], messages: ['countSent', 'countReceived'] });
 const SAVE_DELAY_MS = 2000;
 
 export function emptyUsage(now = Date.now()) {
   const usage = { since: now };
-  for (const category of USAGE_CATEGORIES) {
+  for (const category of ALL_ROWS) {
     usage[category] = { sent: 0, received: 0 };
     for (const counter of COUNTERS[category] ?? []) usage[category][counter] = 0;
   }
@@ -21,7 +24,7 @@ export function emptyUsage(now = Date.now()) {
 /** A stored value, made whole: unknown categories dropped, missing or broken numbers as 0. */
 export function normalizeUsage(raw, now = Date.now()) {
   const usage = emptyUsage(Number.isFinite(raw?.since) ? raw.since : now);
-  for (const category of USAGE_CATEGORIES) {
+  for (const category of ALL_ROWS) {
     for (const field of Object.keys(usage[category])) {
       const value = Number(raw?.[category]?.[field]);
       if (Number.isFinite(value) && value > 0) usage[category][field] = value;
@@ -32,7 +35,7 @@ export function normalizeUsage(raw, now = Date.now()) {
 
 /** Adds a delta ({ sent, received, outgoing, … }) to one category; returns a new value. */
 export function addUsage(usage, category, delta) {
-  if (!USAGE_CATEGORIES.includes(category)) return usage;
+  if (!ALL_ROWS.includes(category)) return usage;
   const row = { ...usage[category] };
   for (const [field, amount] of Object.entries(delta ?? {})) {
     const value = Number(amount);
@@ -100,8 +103,16 @@ function changed() {
 }
 
 /** Counts traffic: recordUsage('media', { received: blob.size }). Saved a moment later, in one write. */
+let roamingNow = false;
+/** Told by src/autoDownload.js whenever it learns the connection: bytes counted while roaming also count as Roaming. */
+export function setRoaming(roaming) {
+  roamingNow = Boolean(roaming);
+}
+
 export function recordUsage(category, delta) {
-  const next = addUsage(load(), category, delta);
+  if (!USAGE_CATEGORIES.includes(category)) return;
+  let next = addUsage(load(), category, delta);
+  if (roamingNow) next = addUsage(next, ROAMING, { sent: delta?.sent, received: delta?.received });
   if (next === current) return;
   current = next;
   if (!saveTimer) {

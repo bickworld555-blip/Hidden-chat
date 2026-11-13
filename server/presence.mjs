@@ -1,5 +1,6 @@
 // Pure rules for presence ("online" / last seen), its privacy setting, and naming signed-in devices.
 
+import { isDisappearingDuration } from '../src/disappearing.js';
 export const LAST_SEEN_PRIVACY = Object.freeze(['everyone', 'contacts', 'nobody']);
 
 export function isLastSeenPrivacy(value) {
@@ -12,7 +13,13 @@ export const PHOTO_PRIVACY = LAST_SEEN_PRIVACY;
 // Who can see when I'm online: everyone, or the same people who can see my last seen.
 export const ONLINE_PRIVACY = Object.freeze(['everyone', 'same_as_last_seen']);
 // Online defaults to "same as last seen": before this setting existed, last seen privacy also hid online.
-export const DEFAULT_PRIVACY = Object.freeze({ lastSeen: 'everyone', online: 'same_as_last_seen', profilePhoto: 'everyone', readReceipts: true });
+export const DEFAULT_PRIVACY = Object.freeze({
+  lastSeen: 'everyone', online: 'same_as_last_seen', profilePhoto: 'everyone', readReceipts: true,
+  about: 'everyone', silenceUnknownCallers: false, defaultTimer: 0,
+});
+
+// "About": a short line under the name, at most 139 characters as on WhatsApp.
+export const ABOUT_MAX = 139;
 
 /** Validates a partial privacy update; returns { patch } or { error }. */
 export function parsePrivacyPatch(body) {
@@ -33,6 +40,20 @@ export function parsePrivacyPatch(body) {
   if ('readReceipts' in body) {
     if (typeof body.readReceipts !== 'boolean') return { error: 'Read receipts are on or off.' };
     patch.readReceipts = body.readReceipts;
+  }
+  if ('about' in body) {
+    if (!PHOTO_PRIVACY.includes(body.about)) return { error: 'Choose Everyone, My contacts or Nobody.' };
+    patch.about = body.about;
+  }
+  // Calls from people who are not saved contacts don't ring; they show as silenced in Calls.
+  if ('silenceUnknownCallers' in body) {
+    if (typeof body.silenceUnknownCallers !== 'boolean') return { error: 'Silence unknown callers is on or off.' };
+    patch.silenceUnknownCallers = body.silenceUnknownCallers;
+  }
+  // Default message timer: new chats you start get this disappearing-messages timer (0 = off).
+  if ('defaultTimer' in body) {
+    if (!Number.isInteger(body.defaultTimer) || !isDisappearingDuration(body.defaultTimer)) return { error: 'Choose 24 hours, 7 days, 90 days or Off.' };
+    patch.defaultTimer = body.defaultTimer;
   }
   if (Object.keys(patch).length === 0) return { error: 'Nothing to change.' };
   return { patch };

@@ -34,7 +34,7 @@ test('sharing through an Android share-sheet shortcut preselects that chat', () 
 
 test('Android share sheet shows recent chats (with photos) as Hidden Messenger direct-share targets', async () => {
   const xml = await source('android/app/src/main/res/xml/shortcuts.xml');
-  assert.match(xml, /<share-target android:targetClass="io\.github\.bickworld555\.hiddenchat\.MainActivity">[\s\S]*mimeType="text\/plain"[\s\S]*category\.SHARE_TARGET/);
+  assert.match(xml, /<share-target android:targetClass="io\.github\.bickworld555\.hiddenchat\.AppActivity">[\s\S]*mimeType="text\/plain"[\s\S]*category\.SHARE_TARGET/);
   const manifest = await source('android/app/src/main/AndroidManifest.xml');
   assert.ok(manifest.includes('android:name="android.app.shortcuts" android:resource="@xml/shortcuts"'));
   const shortcuts = await source('android/app/src/main/java/io/github/bickworld555/hiddenchat/ShareShortcuts.java');

@@ -3,6 +3,7 @@
 // Anything else waits for a tap; until then the message stays unacknowledged, so the server keeps it (30 days).
 import { appSettings } from './settings.js';
 import { nativeNetworkKind } from './native.js';
+import { setRoaming } from './networkUsage.js';
 
 export const AUTO_DOWNLOAD_KEYS = Object.freeze({
   mobile: 'media.autoDownload.mobile',
@@ -52,7 +53,18 @@ export async function currentNetwork() {
     ? native
     : networkFromConnection(globalThis.navigator?.connection, globalThis.navigator?.onLine !== false);
   cached = { kind, at: Date.now() };
+  setRoaming(kind === 'roaming');
   return kind;
+}
+
+/** Keeps the connection known (for Network usage › Roaming): checked now, every 30 seconds, and on going online. */
+export function watchNetwork(win = globalThis.window) {
+  if (!win) return () => {};
+  const check = () => { cached = null; currentNetwork().catch(() => {}); };
+  check();
+  const timer = win.setInterval(check, 30_000);
+  win.addEventListener('online', check);
+  return () => { win.clearInterval(timer); win.removeEventListener('online', check); };
 }
 
 export async function mayAutoDownload(contentType, { voice = false } = {}) {

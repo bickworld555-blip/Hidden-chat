@@ -3,7 +3,7 @@
 // its articles from the server, where admins edit them on the admin page (src/admin/AdminConsole.jsx).
 import { useEffect, useState } from 'react';
 import { ArrowRight, BadgeCheck, Building2, Check, ChevronRight, CircleDashed, Download as DownloadIcon, KeyRound, Lock, Megaphone, MessageCircle, Monitor, Phone, Search, ShieldCheck, Smartphone, Store, UsersRound } from 'lucide-react';
-import ShieldMark from '../components/ShieldMark.jsx';
+import BrandMark from '../components/BrandMark.jsx';
 import { apiFetch } from '../api.js';
 import { ANDROID_APK_URL, WINDOWS_APP_VERSION, WINDOWS_INSTALLER_URL, WINDOWS_PORTABLE_URL } from './links.js';
 import './site.css';
@@ -43,7 +43,7 @@ function Header({ path, go }) {
   return (
     <header className="site-header">
       <div className="site-wrap site-header-row">
-        <Link to="/" go={go} className="site-brand"><ShieldMark className="site-brand-mark" /><span>Hidden Messenger</span></Link>
+        <Link to="/" go={go} className="site-brand"><BrandMark className="site-brand-mark" /><span>Hidden Messenger</span></Link>
         <nav className={`site-nav${open ? ' is-open' : ''}`} aria-label="Main">
           {PAGES.map(([to, label]) => <Link key={to} to={to} go={(next) => { setOpen(false); go(next); }} className={path.startsWith(to) ? 'is-active' : ''}>{label}</Link>)}
         </nav>
@@ -60,13 +60,13 @@ function Header({ path, go }) {
 function Footer({ go }) {
   const groups = [
     ['Product', [['/messaging', 'Messaging'], ['/calling', 'Calling'], ['/features', 'All features'], ['/business', 'For business'], ['/download', 'Download'], ['/app', 'Open web app']]],
-    ['Trust', [['/privacy', 'Privacy & encryption'], ['/help/end-to-end-encryption', 'How encryption works'], ['/help/report-and-block', 'Report abuse']]],
+    ['Trust', [['/privacy', 'Privacy & encryption'], ['/terms', 'Terms of Service'], ['/help/end-to-end-encryption', 'How encryption works'], ['/help/report-and-block', 'Report abuse']]],
     ['Help', [['/help', 'Help Center'], ['/help/create-account', 'Create an account'], ['/help/install-android', 'Install on Android']]],
   ];
   return (
     <footer className="site-footer">
       <div className="site-wrap site-footer-grid">
-        <div className="site-footer-brand"><ShieldMark className="site-brand-mark" /><p>Private messaging without a phone number. Your messages are locked on your device.</p></div>
+        <div className="site-footer-brand"><BrandMark className="site-brand-mark" /><p>Private messaging without a phone number. Your messages are locked on your device.</p></div>
         {groups.map(([title, links]) => (
           <div key={title}>
             <h4>{title}</h4>
@@ -155,7 +155,7 @@ function Home({ go }) {
 
 function Features() {
   const groups = [
-    [MessageCircle, 'Messaging', ['Text, photos, videos, documents', 'Voice notes with waveforms and speed control', 'Edit within 10 minutes, delete for everyone', 'View once photos, videos and voice notes', 'Stickers, including ones you make from photos', 'Pins, stars, replies, reactions and mentions', 'Scheduled messages']],
+    [MessageCircle, 'Messaging', ['Text, photos, videos, documents', 'Voice notes with waveforms and speed control', 'Edit within 15 minutes, delete for everyone', 'View once photos, videos and voice notes', 'Stickers, including ones you make from photos', 'Pins, stars, replies, reactions and mentions', 'Scheduled messages']],
     [Phone, 'Calls', ['Voice and video calls', 'Group calls', 'Call links', 'Calls ring on your phone even when the app is closed']],
     [UsersRound, 'Groups & communities', ['Admins, permissions and invite links', 'Join requests and approvals', 'Communities with announcements', 'Polls and events']],
     [Megaphone, 'Updates', ['Status for 24 hours with privacy controls', 'Replies and muting', 'Channels you follow or run', 'Broadcast lists']],
@@ -174,6 +174,28 @@ function Features() {
           </section>
         ))}
       </div>
+    </div>
+  );
+}
+
+// Terms of Service in plain words (Settings › Help and feedback › Terms of Service opens this page).
+function Terms() {
+  const sections = [
+    ['Who can use Hidden Messenger', 'You need to be old enough to use online services where you live (at least 13). One account is for one person or one business, and you are responsible for what is sent from it.'],
+    ['Your account', 'Keep your password and two-step PIN to yourself. You can sign out other devices in Settings › Linked devices and delete your account at any time in Settings › Account; deleting it removes your profile, contacts and messages waiting on the server.'],
+    ['Your messages', 'Messages, calls and files are end-to-end encrypted: we cannot read them and we do not sell or share your content. Messages wait on the server only until your devices receive them (at most 30 days).'],
+    ['Acceptable use', 'Do not use Hidden Messenger to break the law, harass or threaten people, send spam or bulk messages people did not ask for, spread malware, impersonate others, or share content that exploits children. Reported accounts can be reviewed and suspended.'],
+    ['Business features', 'Business tools (catalogue, orders, broadcast lists, away and greeting messages) must describe real products and services. Payments agreed in a chat are between you and the customer.'],
+    ['Changes and availability', 'We keep improving the app and may change or remove features. We try to keep the service running but cannot promise it will always be available or free of errors.'],
+    ['Ending use', 'You can stop using Hidden Messenger at any time. We may suspend accounts that break these terms; you can ask for a review through Help Centre › Contact us.'],
+    ['Contact', 'Questions about these terms: Settings › Help and feedback › Send feedback, or Help Centre › Contact us in the app.'],
+  ];
+  return (
+    <div className="site-wrap site-page">
+      <h1>Terms of Service</h1>
+      <p className="site-lede">The short version: use Hidden Messenger to talk to people who want to hear from you, keep your account safe, and don’t use it to hurt anyone. Your messages stay private.</p>
+      {sections.map(([title, body]) => <section key={title} className="site-terms-section"><h2>{title}</h2><p>{body}</p></section>)}
+      <p className="site-muted">Last updated {new Date(2026, 10, 13).toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' })}.</p>
     </div>
   );
 }
@@ -223,7 +245,7 @@ function Messaging({ go }) {
       <h1>Say it any way you like, privately</h1>
       <p className="site-lede">Text, voice notes, photos, videos, documents, stickers and polls, on your phone and in your browser, all end-to-end encrypted.</p>
       <div className="site-grid">
-        {[[MessageCircle, 'Messages that keep up', 'Edit for 10 minutes, delete for everyone, reply, react, pin, star and forward. Schedule a message to go out later.'],
+        {[[MessageCircle, 'Messages that keep up', 'Edit for 15 minutes, delete for everyone, reply, react, pin, star and forward. Schedule a message to go out later.'],
           [Smartphone, 'Voice notes and video notes', 'Record a voice note with a live waveform, or a round video note up to a minute. Send either as view once.'],
           [UsersRound, 'Groups that stay organised', 'Mentions, polls, events, admins and invite links. Communities bring related groups together with announcements.'],
           [Lock, 'Locked chats', 'Move your most private chats into a folder that opens only with your fingerprint, screen lock or passcode.']].map(([Icon, title, text]) => (
@@ -370,6 +392,7 @@ export default function PublicSite() {
         : path.startsWith('/calling') ? <Calling go={go} />
       : path.startsWith('/features') ? <Features />
         : path.startsWith('/privacy') ? <Privacy go={go} />
+        : path.startsWith('/terms') ? <Terms />
           : path.startsWith('/business') ? <Business go={go} />
             : path.startsWith('/download') ? <Download />
               : <Home go={go} />;

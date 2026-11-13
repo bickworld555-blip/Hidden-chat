@@ -24,7 +24,10 @@ async function start() {
     location.replace(`/app${location.search}`);
     return;
   }
-  if (entry === 'app') watchKeyboard();
+  if (entry === 'app') {
+    watchKeyboard();
+    import('./autoDownload.js').then(({ watchNetwork }) => watchNetwork()).catch(() => {});
+  }
   // Imported only now, so no screen can read a setting before the store above is loaded.
   const { default: App } = entry === 'site' ? { default: null } : await import('./App.jsx');
   createRoot(document.getElementById('root')).render(

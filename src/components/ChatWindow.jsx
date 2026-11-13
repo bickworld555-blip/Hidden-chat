@@ -56,6 +56,20 @@ import VoiceRecorderBar from './VoiceRecorderBar.jsx';
 import { presenceLine } from '../presence.js';
 import PendingUpload from './PendingUpload.jsx';
 import { EventBubble, EventComposer, PollBubble, PollComposer, ViewOnceVoice } from './RichMessages.jsx';
+import { parseScheduledCall } from '../groupChat.js';
+
+// A call scheduled from Calls › Schedule (the same card groups use): its name, when, and a button to start it.
+function ScheduledCallBubble({ call, onStart, children }) {
+  const when = new Date(call.at);
+  return (
+    <div className="groups-scheduled-card scheduled-call-bubble">
+      <span className="groups-scheduled-icon" aria-hidden="true">{call.mode === 'video' ? <Video size={22} /> : <Phone size={22} />}</span>
+      <span><strong>{call.title}</strong><small>{call.mode === 'video' ? 'Video call' : 'Voice call'} · {when.toLocaleString([], { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' })}</small></span>
+      <button type="button" onClick={onStart}>{call.at > Date.now() ? 'Start early' : 'Start call'}</button>
+      {children}
+    </div>
+  );
+}
 import { parsePollContent } from '../polls.js';
 import { parseEventContent } from '../calendarEvents.js';
 import { editDirectMessage } from '../parityApi.js';
@@ -339,6 +353,7 @@ function MessageBubble({
   const poll = parsePollContent(content);
   const event = parseEventContent(content);
   const productId = parseProductContent(content);
+  const scheduledCall = parseScheduledCall(content);
 
   const meta = (
     <span className="message-meta">
@@ -454,6 +469,8 @@ function MessageBubble({
                 useChatStore.getState().updateMessage(message.id, { played: true, status: 'read' });
               }}
             >{meta}</VoiceMessage>
+          ) : scheduledCall ? (
+            <ScheduledCallBubble call={scheduledCall} onStart={() => shared.callBack?.(scheduledCall.mode)}>{meta}</ScheduledCallBubble>
           ) : poll ? (
             <PollBubble messageId={message.id} poll={poll} sessionToken={sessionToken} userId={shared.userId} nameFor={shared.nameFor} context={shared.pollContext}>{meta}</PollBubble>
           ) : event ? (
@@ -1078,11 +1095,16 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
 
   const sendContent = useCallback((content, customReplyTo = null) => {
     if (!chatId || !content) return;
+    // Privacy › Default message timer: the first message of a chat you start turns on disappearing messages.
+    const defaultTimer = Number(appSettings().get('privacy.defaultTimer')) || 0;
+    if (defaultTimer > 0 && messages.length === 0 && !chat?.disappearSeconds && client?.send?.({ type: 'chat:disappearing', peerId: chatId, seconds: defaultTimer })) {
+      useChatStore.getState().setDisappearing(chatId, defaultTimer);
+    }
     const replyTo = customReplyTo ?? replyingTo;
     sendToChat(chatId, content, replyTo ? { replyTo } : {});
     playNotificationTone('sent');
     if (!customReplyTo && replyingTo) setReplyingTo(null);
-  }, [chatId, sendToChat, replyingTo]);
+  }, [chatId, sendToChat, replyingTo, messages.length, chat?.disappearSeconds, client]);
 
   const closeForwardPicker = useCallback(() => setForwardSource(null), []);
 
@@ -1436,8 +1458,8 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
     if (targets.length === 1 && targets[0].id !== chatId) setActiveChat(targets[0].id);
   }
 
-  // Edit (own text messages, for 10 minutes): the text goes back into the composer; saving shows it at once
-  // and reverts if the server refuses (e.g. the 10 minutes ran out meanwhile).
+  // Edit (own text messages, for 15 minutes, as on WhatsApp): the text goes back into the composer; saving shows it at once
+  // and reverts if the server refuses (e.g. the 15 minutes ran out meanwhile).
   function startEdit(target) {
     clearSelection();
     setReplyingTo(null);

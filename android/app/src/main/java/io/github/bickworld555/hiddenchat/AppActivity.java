@@ -15,9 +15,9 @@ import androidx.activity.OnBackPressedCallback;
 import com.getcapacitor.BridgeActivity;
 import java.util.Collections;
 
-public class MainActivity extends BridgeActivity {
+public class AppActivity extends BridgeActivity {
     private static volatile boolean alive;
-    private static MainActivity current;
+    private static AppActivity current;
     private static volatile boolean visible;
     // The call was answered from the lock screen, the call screen or a notification while the app was not in front:
     // when it ends the phone goes back to where it was (lock screen, home, the other app), not to the chat list.
@@ -54,6 +54,8 @@ public class MainActivity extends BridgeActivity {
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
+        // Settings › Storage and data › Proxy: in effect before the web view makes its first request.
+        AppProxy.apply(this);
         // Local plugins must be registered before the bridge starts.
         registerPlugin(HiddenNativePlugin.class);
         TelecomCalls.register(this);
@@ -120,7 +122,7 @@ public class MainActivity extends BridgeActivity {
     private static final Runnable handBack = new Runnable() {
         @Override
         public void run() {
-            MainActivity activity = current;
+            AppActivity activity = current;
             if (!returnAfterCall || MessagingService.isCallActive() || Alerts.isRinging() || activity == null) return;
             returnAfterCall = false;
             activity.moveTaskToBack(true);
@@ -141,7 +143,7 @@ public class MainActivity extends BridgeActivity {
 
     /** Ringing started/stopped or a call started/ended: update the lock-screen and keep-screen-on flags. */
     static void callWindowChanged() {
-        MainActivity activity = current;
+        AppActivity activity = current;
         if (activity != null) activity.runOnUiThread(() -> activity.applyCallWindow(wantsCallWindow()));
     }
 
@@ -172,7 +174,7 @@ public class MainActivity extends BridgeActivity {
 
     /** A video call started or ended: Android 12+ then enters picture-in-picture by itself on Home / app switch. */
     static void videoCallChanged(boolean active) {
-        MainActivity activity = current;
+        AppActivity activity = current;
         if (activity == null || Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return;
         activity.runOnUiThread(() -> {
             try { activity.setPictureInPictureParams(pipParams(activity, active)); } catch (IllegalStateException ignored) { }

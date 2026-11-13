@@ -30,8 +30,8 @@
 }
 
 .identity-mark {
-  width: 84px;
-  height: 94px;
+  width: 88px;
+  height: 88px;
   filter: drop-shadow(0 5px 3px #000915) drop-shadow(0 0 12px #a5c9f855);
 }
 
@@ -246,7 +246,7 @@
   opacity: .75;
   cursor: not-allowed;
 }
-.button-mark { width: 27px; height: 30px; filter: drop-shadow(0 2px 2px #000a17); }
+.button-mark { width: 26px; height: 26px; filter: drop-shadow(0 1px 2px #000a17); }
 
 .identity-backdrop .identity-switch {
   margin-top: 21px;
@@ -287,7 +287,7 @@
 @media (max-width: 480px) {
   .identity-backdrop.identity-backdrop { padding: 24px 14px; }
   .identity-backdrop .identity-brand { margin-bottom: 18px; }
-  .identity-mark { width: 67px; height: 75px; }
+  .identity-mark { width: 72px; height: 72px; }
   .identity-backdrop .identity-card { padding: 24px 20px; }
 }
 

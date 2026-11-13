@@ -29,7 +29,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid #28528a; outline-
 .app-shell { display: grid; grid-template-columns: 350px minmax(0, 1fr); height: 100dvh; min-height: 580px; max-width: 1760px; margin: auto; overflow: hidden; background: var(--paper); box-shadow: var(--shadow); }
 .sidebar { display: flex; flex-direction: column; min-width: 0; border-right: 1px solid var(--line); background: #fbfbfc; position: relative; z-index: 2; }
 .sidebar-top { min-height: 76px; padding: 9px 10px 9px 12px; display: flex; align-items: center; gap: 7px; border-bottom: 1px solid var(--line); }
-.brand-mark { width: 37px; height: 42px; flex: none; filter: drop-shadow(0 2px 2px #001e4555); }
+.brand-mark { width: 40px; height: 40px; flex: none; filter: drop-shadow(0 2px 3px #001e4544); }
 .brand-copy { min-width: 0; flex: 1 1 auto; overflow: hidden; display: flex; flex-direction: column; gap: 4px; }
 .brand-copy strong { font-family: Georgia, "Times New Roman", serif; font-size: 14px; font-weight: 700; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .brand-copy span { color: #717984; font-size: 8px; line-height: 1.3; }
@@ -1568,7 +1568,7 @@ html, body { overflow-x: hidden; }
 .wa-list { flex: 1; min-height: 0; display: flex; flex-direction: column; position: relative; background: var(--wa-bg); color: var(--wa-text); }
 .wa-list-header { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px 6px; }
 .wa-list-brand { min-width: 0; flex: 1 1 auto; display: flex; align-items: center; gap: 7px; }
-.wa-list-brand-mark { width: 29px; height: 33px; flex: none; filter: drop-shadow(0 2px 2px #001e4555); }
+.wa-list-brand-mark { width: 32px; height: 32px; flex: none; filter: drop-shadow(0 1px 2px #001e4533); }
 /* With very large text (Android font size up to 200%) the title ends in an ellipsis instead of running under the icons. */
 .wa-list-brand h1 { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wa-list-header-actions { display: flex; align-items: center; gap: 4px; flex: none; }
@@ -5569,3 +5569,48 @@ button.groups-sender { padding: 0; border: 0; background: none; font: inherit; f
 .hm-lang-row strong { font-size: 16px; font-weight: 500; }
 .hm-lang-row small { color: #8696a0; font-size: 13.5px; }
 .hm-lang-note { margin: 8px 20px; }
+
+/* Calls › Schedule and Keypad. */
+.calls-schedule-body, .calls-keypad-body { display: flex; flex-direction: column; gap: 14px; padding: 8px 20px 20px; }
+.calls-schedule-with { display: flex; align-items: center; gap: 12px; margin: 0; font-weight: 600; }
+.calls-schedule-body label { display: flex; flex-direction: column; gap: 6px; color: var(--wa-sub); font-size: 13px; }
+.calls-schedule-body input, .calls-keypad-input { padding: 12px 14px; border: 1px solid var(--wa-line, rgba(134, 150, 160, .35)); border-radius: 12px; background: var(--wa-input); color: var(--wa-text); font: inherit; font-size: 16px; }
+.calls-schedule-mode { display: flex; gap: 10px; }
+.calls-schedule-mode button { display: inline-flex; align-items: center; gap: 6px; padding: 9px 16px; border: 1px solid var(--wa-line, rgba(134, 150, 160, .35)); border-radius: 20px; background: transparent; color: var(--wa-text); font: inherit; cursor: pointer; }
+.calls-schedule-mode button[aria-checked="true"] { border-color: #0b57d0; background: rgba(11, 87, 208, .12); color: #0b57d0; }
+.calls-schedule-send { display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 12px; border: 0; border-radius: 24px; background: #0b57d0; color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
+.calls-keypad-input { font-size: 26px; text-align: center; letter-spacing: .5px; }
+.calls-keypad-actions { display: flex; justify-content: center; gap: 28px; margin-top: 8px; }
+.calls-keypad-actions button { display: grid; place-items: center; width: 64px; height: 64px; border: 0; border-radius: 50%; background: #0b57d0; color: #fff; cursor: pointer; }
+.calls-keypad-actions button:disabled { opacity: .45; cursor: default; }
+.scheduled-call-bubble button { padding: 6px 14px; border: 0; border-radius: 16px; background: #0b57d0; color: #fff; font: inherit; font-size: 13px; cursor: pointer; }
+.wa-info-about { display: flex; flex-direction: column; gap: 2px; margin: 6px 24px 0; text-align: center; }
+.wa-info-about small { color: var(--wa-sub, #8696a0); font-size: 12px; }
+.about-row { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%; padding: 10px 20px; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.about-row small { color: #8696a0; font-size: 12.5px; }
+.about-editor { display: flex; flex-direction: column; gap: 10px; padding: 10px 20px 14px; }
+.about-editor label { display: flex; flex-direction: column; gap: 4px; color: #8696a0; }
+.about-editor input { padding: 10px 12px; border: 1px solid rgba(134, 150, 160, .4); border-radius: 10px; background: transparent; color: inherit; font: inherit; }
+.about-count { align-self: flex-end; color: #8696a0; font-size: 12px; }
+.about-suggestions { display: flex; flex-wrap: wrap; gap: 8px; }
+.about-suggestions button, .about-actions button { padding: 6px 12px; border: 1px solid rgba(134, 150, 160, .4); border-radius: 16px; background: transparent; color: inherit; font: inherit; font-size: 13px; cursor: pointer; }
+.about-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.about-actions button[type="submit"] { border-color: #0b57d0; background: #0b57d0; color: #fff; }
+
+/* Settings › Appearance › App icon, Events, App info. */
+.tool-item-appicon { width: 26px; height: 26px; flex: none; }
+.app-icon-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; padding: 8px 16px 12px; }
+.app-icon-option { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 14px 6px; border: 2px solid transparent; border-radius: 18px; background: rgba(134, 150, 160, .1); color: inherit; font: inherit; cursor: pointer; }
+.app-icon-option svg { width: 64px; height: 64px; }
+.app-icon-option.is-on { border-color: #0b57d0; background: rgba(11, 87, 208, .1); }
+.app-icon-option:disabled { opacity: .55; cursor: default; }
+.events-empty { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 28px 24px; color: #8696a0; text-align: center; }
+.events-empty strong { color: var(--wa-text, inherit); font-size: 16px; }
+.events-row { cursor: default; }
+.app-info { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 24px 0; text-align: center; }
+.app-info > strong { font-size: 20px; }
+.app-info > small { color: #8696a0; }
+.app-info > p { max-width: 320px; margin: 6px 24px 10px; color: #8696a0; font-size: 14px; }
+.app-info .tool-item { align-self: stretch; text-align: left; }
+.app-info-mark { width: 84px; height: 84px; }
+.hm-sd-field { display: flex; flex-direction: column; gap: 4px; padding: 6px 0 !important; font-size: 13px !important; color: #8696a0; } .hm-sd-field input { padding: 10px 12px; border: 1px solid rgba(134, 150, 160, .45); border-radius: 10px; background: transparent; color: inherit; font: inherit; font-size: 16px; }

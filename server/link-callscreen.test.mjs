@@ -74,10 +74,10 @@ test('ringing call screen: swipe up to accept, "Turn off your video", Message wi
 });
 
 test('a call answered from the lock screen or another app hands back there when it ends', async () => {
-  const activity = await java('MainActivity.java');
+  const activity = await java('AppActivity.java');
   assert.match(activity, /static void callRinging\(Context context\) \{[\s\S]*?ringingWhileAway = !visible \|\| \(keyguard != null && keyguard\.isKeyguardLocked\(\)\);/);
   assert.match(activity, /static void callEnded\(\) \{[\s\S]*?handler\.postDelayed\(handBack, 1500\);/);
   assert.match(activity, /handBack = new Runnable\(\) \{[\s\S]*?if \(!returnAfterCall \|\| MessagingService\.isCallActive\(\) \|\| Alerts\.isRinging\(\) \|\| activity == null\) return;[\s\S]*?activity\.moveTaskToBack\(true\);/);
   const service = await java('MessagingService.java');
-  assert.ok(service.includes('if (!active && callActive) MainActivity.callEnded();'));
+  assert.ok(service.includes('if (!active && callActive) AppActivity.callEnded();'));
 });

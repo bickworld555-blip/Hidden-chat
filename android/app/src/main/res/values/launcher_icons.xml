@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 7 (no adaptive icons): the alternative app icons fall back to the standard one. Android 8+ uses the
+     adaptive versions in mipmap-anydpi-v26 (same mark, different background). -->
+<resources>
+    <item name="ic_launcher_midnight" type="mipmap">@mipmap/ic_launcher</item>
+    <item name="ic_launcher_midnight_round" type="mipmap">@mipmap/ic_launcher_round</item>
+    <item name="ic_launcher_teal" type="mipmap">@mipmap/ic_launcher</item>
+    <item name="ic_launcher_teal_round" type="mipmap">@mipmap/ic_launcher_round</item>
+</resources>

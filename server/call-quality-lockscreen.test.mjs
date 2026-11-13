@@ -48,19 +48,19 @@ test('Android asks only for what a feature uses, when it is used (WhatsApp-style
 });
 
 test('Android: ringing calls show over the lock screen at once and stay there while the call lasts', async () => {
-  const activity = await java('MainActivity.java');
+  const activity = await java('AppActivity.java');
   assert.match(activity, /super\.onCreate\(savedInstanceState\);[\s\S]*getBooleanExtra\(Alerts\.EXTRA_CALL, false\)\) applyCallWindow\(true\)/, 'before the web app loads');
   assert.match(activity, /onNewIntent[\s\S]*applyCallWindow\(true\)/);
   assert.ok(activity.includes('setShowWhenLocked(overLock)') && activity.includes('setTurnScreenOn(overLock)'));
   assert.ok(activity.includes('FLAG_KEEP_SCREEN_ON'));
   assert.match(activity, /return Alerts\.isRinging\(\) \|\| MessagingService\.isCallActive\(\);/);
   const plugin = await java('HiddenNativePlugin.java');
-  assert.match(plugin, /handleOnStop\(\) \{[\s\S]*?if \(!MainActivity\.wantsCallWindow\(\)\) setCallWindow\(false\);/, 'a call that opened the app behind the lock screen is not hidden again');
+  assert.match(plugin, /handleOnStop\(\) \{[\s\S]*?if \(!AppActivity\.wantsCallWindow\(\)\) setCallWindow\(false\);/, 'a call that opened the app behind the lock screen is not hidden again');
   assert.ok(plugin.includes('notifications.canUseFullScreenIntent()'), 'Android 14+ full-screen permission is checked');
   assert.ok(plugin.includes('Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT'));
   const alerts = await java('Alerts.java');
   assert.ok(alerts.includes('.setFullScreenIntent(showIntent, true)'));
-  assert.match(alerts, /ringing = true;\s*ringingCallId = id;\s*\/\/[^\n]*\n\s*TelecomCalls\.incoming\(context, id, name, video\);\s*MainActivity\.callRinging\(context\);\s*wakeScreen\(context\);\s*\/\/[^\n]*\n\s*MainActivity\.callWindowChanged\(\);/);
+  assert.match(alerts, /ringing = true;\s*ringingCallId = id;\s*\/\/[^\n]*\n\s*TelecomCalls\.incoming\(context, id, name, video\);\s*AppActivity\.callRinging\(context\);\s*wakeScreen\(context\);\s*\/\/[^\n]*\n\s*AppActivity\.callWindowChanged\(\);/);
   // The full-screen call is native (no black screen while the web app loads) and the screen lights even where
   // full-screen notifications are switched off; both end when the call stops ringing.
   assert.ok(alerts.includes('Intent show = IncomingCallActivity.intent(context, id, name, video, avatar);'));
@@ -79,7 +79,7 @@ test('Android: ringing calls show over the lock screen at once and stay there wh
 });
 
 test('Android: Home during a video call opens the floating window even where auto-enter is ignored', async () => {
-  const activity = await java('MainActivity.java');
+  const activity = await java('AppActivity.java');
   assert.match(activity, /onUserLeaveHint\(\) \{[\s\S]*?enterCallPictureInPicture\(\);/);
   assert.match(activity, /boolean enterCallPictureInPicture\(\) \{\s*if \(!MessagingService\.isVideoCallActive\(\) \|\| Build\.VERSION\.SDK_INT < Build\.VERSION_CODES\.O\) return false;[\s\S]*?enterPictureInPictureMode\(pipParams\(this, false\)\)/);
   const plugin = await java('HiddenNativePlugin.java');

@@ -21,7 +21,7 @@ export function groupCallLogs(logs = []) {
       last.count += 1;
       continue;
     }
-    rows.push({ key: log.id, peerId: log.peerId, direction: log.direction, answered: isAnswered, mode: log.mode, timestamp: log.timestamp, duration: log.duration, count: 1, logs: [log] });
+    rows.push({ key: log.id, peerId: log.peerId, direction: log.direction, answered: isAnswered, silenced: log.status === 'silenced', mode: log.mode, timestamp: log.timestamp, duration: log.duration, count: 1, logs: [log] });
   }
   return rows;
 }

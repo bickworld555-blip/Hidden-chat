@@ -105,9 +105,17 @@ function PrivacyChoice({ settingKey, onChange, onBack }) {
 }
 
 // The privacy section: one row per registered privacy setting (choices open their screen, switches toggle).
-function PrivacyRows({ onOpen, onToggle }) {
+// WhatsApp's Privacy groups: who sees my info, read receipts, disappearing messages, calls.
+const PRIVACY_GROUPS = Object.freeze({
+  info: ['privacy.lastSeen', 'privacy.online', 'privacy.profilePhoto', 'privacy.about'],
+  receipts: ['privacy.readReceipts'],
+  disappearing: ['privacy.defaultTimer'],
+  calls: ['privacy.silenceUnknownCallers'],
+});
+
+function PrivacyRows({ group, onOpen, onToggle }) {
   const loaded = useAccountSettingsLoaded();
-  return SECTIONS.privacy.keys.map((key) => <PrivacyRow key={key} settingKey={key} loaded={loaded} onOpen={onOpen} onToggle={onToggle} />);
+  return PRIVACY_GROUPS[group].filter((key) => SECTIONS.privacy.keys.includes(key)).map((key) => <PrivacyRow key={key} settingKey={key} loaded={loaded} onOpen={onOpen} onToggle={onToggle} />);
 }
 
 function PrivacyRow({ settingKey, loaded, onOpen, onToggle }) {
@@ -160,8 +168,9 @@ function DeleteAccount({ sessionToken, username, onDeleted }) {
 }
 
 // section "account": security, linked devices, account info, deletion. section "privacy": who sees what, status, app lock.
-export default function AccountSettings({ onClose, section = 'account', initialView = null, onOpenSheet, onAccountDeleted }) {
+export default function AccountSettings({ onClose, section = 'account', initialView = null, onOpenSheet, onAccountDeleted, onAccounts }) {
   const username = useChatStore((state) => state.user?.username ?? '');
+  const securityNotices = useSetting('security.notifications');
   const [scanning, setScanning] = useState(false);
   const sessionToken = useChatStore((state) => state.sessionToken);
   const blockedCount = useChatStore((state) => Object.values(state.blockedChats).filter(isBlocked).length);
@@ -270,11 +279,23 @@ export default function AccountSettings({ onClose, section = 'account', initialV
             <>
               <section className="wa-info-section">
                 <h3>Who can see my personal info</h3>
-                <PrivacyRows onOpen={setView} onToggle={changeSetting} />
+                <PrivacyRows group="info" onOpen={setView} onToggle={changeSetting} />
+                <Row title="Status" subtitle="Who sees your status updates, muted updates" onClick={() => onOpenSheet?.('statusprivacy')} />
                 <p className="account-hint account-hint-padded">If you hide your last seen, people you hide it from won&apos;t see when you were last online. Online can stay visible to everyone or follow your last seen setting.</p>
               </section>
               <section className="wa-info-section">
-                <Row title="Status" subtitle="Who sees your status updates, muted updates" onClick={() => onOpenSheet?.('statusprivacy')} />
+                <PrivacyRows group="receipts" onOpen={setView} onToggle={changeSetting} />
+              </section>
+              <section className="wa-info-section">
+                <h3>Disappearing messages</h3>
+                <PrivacyRows group="disappearing" onOpen={setView} onToggle={changeSetting} />
+              </section>
+              <section className="wa-info-section">
+                <h3>Calls</h3>
+                <PrivacyRows group="calls" onOpen={setView} onToggle={changeSetting} />
+              </section>
+              <section className="wa-info-section">
+                <h3>Contacts</h3>
                 <Row title="Blocked contacts" subtitle={blockedCount ? `${blockedCount} blocked` : 'None'} onClick={() => setView('blocked')} />
               </section>
               <section className="wa-info-section">
@@ -284,10 +305,22 @@ export default function AccountSettings({ onClose, section = 'account', initialV
             </>
           ) : (
             <>
+              {onAccounts && (
+                <section className="wa-info-section">
+                  <Row title="Add account" subtitle="Use another account on this device" onClick={onAccounts} />
+                </section>
+              )}
               <section className="wa-info-section">
-                <h3>Security</h3>
-                <Row title="Change password" subtitle="Signs you out everywhere else" onClick={() => setView('password')} />
+                <h3>Login and security</h3>
+                <Row title="Password" subtitle="Change your password · signs you out everywhere else" onClick={() => setView('password')} />
                 <TwoStepSettings token={sessionToken} />
+                <Row title="Security notifications" subtitle={securityNotices ? 'On · a notice in the chat when a contact’s security code changes' : 'Off'} onClick={() => appSettings().set('security.notifications', !securityNotices)}>
+                  <span className={`wa-switch${securityNotices ? ' on' : ''}`} aria-hidden="true"><span /></span>
+                </Row>
+              </section>
+              <section className="wa-info-section">
+                <h3>Your account</h3>
+                <Row title="Username" subtitle={username ? `@${username} · people find you by it; no phone number needed` : 'Loading…'} onClick={() => navigator.clipboard?.writeText(`@${username}`).then(() => setNotice('Username copied.')).catch(() => {})} />
               </section>
               <section className="wa-info-section">
                 <h3>Devices</h3>

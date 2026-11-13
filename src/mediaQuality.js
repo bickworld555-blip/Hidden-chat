@@ -1,8 +1,10 @@
 // Photo quality when sending, like WhatsApp's Standard / HD choice:
 //   • standard — the longest side is scaled to at most 1600 px and saved as JPEG (quality 0.8): quick to send;
 //   • hd — the original file is sent unchanged (only images larger than 4096 px are scaled to 4096 at 0.92).
-// Animated GIFs, SVGs and anything that is not a photo are always sent as they are. Videos are sent as recorded:
-// re-encoding video needs a native transcoder, which the app does not ship.
+// Animated GIFs, SVGs and documents are always sent as they are. Videos: Standard re-encodes big ones on the phone
+// (src/videoCompress.js, Android app only); HD sends them as recorded.
+import { compressVideoForUpload, needsVideoCompression } from './videoCompress.js';
+
 export const QUALITY = Object.freeze({
   standard: { maxSide: 1600, quality: 0.8 },
   hd: { maxSide: 4096, quality: 0.92 },
@@ -32,6 +34,7 @@ const replaceExtension = (filename, extension) => {
  */
 export async function prepareForSend(file, filename, quality = 'standard') {
   const preset = QUALITY[quality] ?? QUALITY.standard;
+  if (needsVideoCompression({ type: file?.type, size: file?.size, quality })) return compressVideoForUpload(file, filename);
   if (!isResizablePhoto(file?.type) || typeof createImageBitmap !== 'function') return { blob: file, filename };
   let bitmap;
   try {

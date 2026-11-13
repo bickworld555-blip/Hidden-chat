@@ -32,6 +32,7 @@ import Avatar from './Avatar.jsx';
 import BusinessInfoCard from './BusinessInfoCard.jsx';
 import { safetyNumberWith } from '../e2e/client.js';
 import { apiFetch } from '../api.js';
+import { fetchAbout } from '../aboutApi.js';
 import { GalleryTile } from './MediaViewer.jsx';
 import VerifiedBadge from './VerifiedBadge.jsx';
 
@@ -131,6 +132,14 @@ export default function ContactInfoDrawer({
   const userId = useChatStore((state) => state.userId);
   const user = useChatStore((state) => state.user);
   const sessionToken = useChatStore((state) => state.sessionToken);
+  // Their About line, when their privacy lets you see it (null: hidden or not set).
+  const [about, setAbout] = useState(null);
+  useEffect(() => {
+    if (!sessionToken || !chatId) return undefined;
+    let cancelled = false;
+    fetchAbout(sessionToken, chatId).then((text) => { if (!cancelled) setAbout(text || null); }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [sessionToken, chatId]);
   const muted = useChatStore((state) => state.mutedChatIds.includes(chatId));
   const favourite = useChatStore((state) => state.favouriteChatIds.includes(chatId));
   const blocked = useChatStore((state) => isBlocked(state.blockedChats[chatId]));
@@ -378,6 +387,7 @@ export default function ContactInfoDrawer({
             )}
             {chat.username && <p className="wa-info-handle">@{chat.username}{hasCustomDisplayName(chat) ? '' : ' · No display name yet'}</p>}
             {!blocked && status && <p className="wa-info-status">{status}</p>}
+            {!blocked && about && <p className="wa-info-about"><small>About</small>{about}</p>}
             <div className="wa-info-quick">
               <button type="button" onClick={() => leaveTo(() => onStartCall?.('audio'))} disabled={blocked}><Phone size={20} /><span>Voice</span></button>
               <button type="button" onClick={() => leaveTo(() => onStartCall?.('video'))} disabled={blocked}><Video size={20} /><span>Video</span></button>

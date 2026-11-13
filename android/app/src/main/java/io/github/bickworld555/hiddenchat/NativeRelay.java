@@ -36,10 +36,7 @@ final class NativeRelay extends WebSocketListener {
 
     private final Context context;
     private final Handler handler = new Handler(Looper.getMainLooper());
-    private final OkHttpClient client = new OkHttpClient.Builder()
-        .pingInterval(25, TimeUnit.SECONDS)
-        .retryOnConnectionFailure(true)
-        .build();
+    private final OkHttpClient client;
     private WebSocket socket;
     private boolean running;
     private int attempt;
@@ -47,6 +44,12 @@ final class NativeRelay extends WebSocketListener {
 
     private NativeRelay(Context context) {
         this.context = context.getApplicationContext();
+        // Through the proxy from Settings › Storage and data › Proxy, when one is set (AppProxy).
+        this.client = new OkHttpClient.Builder()
+            .pingInterval(25, TimeUnit.SECONDS)
+            .retryOnConnectionFailure(true)
+            .proxy(AppProxy.javaProxy(this.context))
+            .build();
     }
 
     static synchronized void start(Context context) {
@@ -304,6 +307,8 @@ final class NativeRelay extends WebSocketListener {
         if (signal == null) return;
         String callId = event.optString("callId");
         String signalType = signal.optString("type");
+        // Privacy › Silence unknown callers: the server marks a call from someone not saved; it never rings here.
+        if ("offer".equals(signalType) && event.optBoolean("silenced", false)) return;
         synchronized (NativeRelay.class) {
             if ("offer".equals(signalType) && (pendingCall == null || !callId.equals(pendingCall.optString("callId")))) {
                 pendingCall = event;

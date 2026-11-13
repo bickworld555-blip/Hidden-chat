@@ -177,10 +177,10 @@ test('server: privacy settings API, online visible to everyone, profile photo au
   await api('/api/v1/contacts', { session: friend, method: 'POST', body: { userId: owner.user.id } });
   await api('/api/v1/contacts', { session: stranger, method: 'POST', body: { userId: owner.user.id } });
 
-  assert.deepEqual((await api('/api/v1/me/privacy', { session: owner })).body, { lastSeen: 'everyone', online: 'same_as_last_seen', profilePhoto: 'everyone', readReceipts: true });
+  assert.deepEqual((await api('/api/v1/me/privacy', { session: owner })).body, { lastSeen: 'everyone', online: 'same_as_last_seen', profilePhoto: 'everyone', readReceipts: true, about: 'everyone', silenceUnknownCallers: false, defaultTimer: 0 });
   assert.equal((await api('/api/v1/me/privacy', { session: owner, method: 'PUT', body: { online: 'sometimes' } })).status, 400);
   const updated = await api('/api/v1/me/privacy', { session: owner, method: 'PUT', body: { lastSeen: 'nobody', online: 'everyone' } });
-  assert.deepEqual(updated.body, { lastSeen: 'nobody', online: 'everyone', profilePhoto: 'everyone', readReceipts: true });
+  assert.deepEqual(updated.body, { lastSeen: 'nobody', online: 'everyone', profilePhoto: 'everyone', readReceipts: true, about: 'everyone', silenceUnknownCallers: false, defaultTimer: 0 });
 
   // Online "Everyone" with last seen "Nobody": others see the owner online, never a last seen time.
   const watcher = await connect(stranger);
