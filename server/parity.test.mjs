@@ -208,6 +208,22 @@ test('group admins manage roles, removals, permissions; only admins send when re
   assert.equal((await api(`/api/v1/groups/${groupId}`, { session: ben })).body.role, 'admin');
 });
 
+test('member tags: each member sets their own, every member sees it, 30 characters at most', async () => {
+  const ana = await register('mt');
+  const ben = await register('mt');
+  const outsider = await register('mt');
+  const groupId = await createGroup(ana, [ben]);
+  const set = await api(`/api/v1/groups/${groupId}/members/me/tag`, { session: ben, method: 'PUT', body: { tag: '  Trail leader  ' } });
+  assert.deepEqual([set.status, set.body], [200, { tag: 'Trail leader' }]);
+  const seen = (await api(`/api/v1/groups/${groupId}`, { session: ana })).body.members;
+  assert.equal(seen.find((member) => member.id === ben.user.id).tag, 'Trail leader', 'other members see it');
+  assert.equal(seen.find((member) => member.id === ana.user.id).tag, '', 'no tag yet');
+  assert.equal((await api(`/api/v1/groups/${groupId}/members/me/tag`, { session: ben, method: 'PUT', body: { tag: 'x'.repeat(31) } })).status, 400);
+  assert.equal((await api(`/api/v1/groups/${groupId}/members/me/tag`, { session: outsider, method: 'PUT', body: { tag: 'Hi' } })).status, 404, 'only members');
+  assert.equal((await api(`/api/v1/groups/${groupId}/members/me/tag`, { session: ben, method: 'PUT', body: { tag: '' } })).body.tag, '', 'empty removes it');
+  assert.equal((await api(`/api/v1/groups/${groupId}`, { session: ana })).body.members.find((member) => member.id === ben.user.id).tag, '');
+});
+
 test('invite links: preview, join, approval requests, reset', async () => {
   const ana = await register('in');
   const ben = await register('in');

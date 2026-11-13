@@ -83,6 +83,7 @@ function boundedText(value, max, { required = false } = {}) {
 const bool = (value) => (value ? 1 : 0);
 
 /** Business profile text fields and their lengths (the business_profiles columns of the same names). */
+export const MEMBER_TAG_MAX = 30;
 export const BUSINESS_PROFILE_FIELDS = ['category', 'description', 'address', 'email', 'website'];
 const BUSINESS_PROFILE_LIMITS = { category: 60, description: 512, address: 256, email: 128, website: 256 };
 
@@ -136,6 +137,8 @@ export function ensureParitySchema(db) {
   if (!groups.has('invite_code')) db.exec('ALTER TABLE groups ADD COLUMN invite_code TEXT');
   if (!groups.has('community_id')) db.exec('ALTER TABLE groups ADD COLUMN community_id TEXT');
   if (!groups.has('is_announcement')) db.exec('ALTER TABLE groups ADD COLUMN is_announcement INTEGER NOT NULL DEFAULT 0');
+  const groupMembers = columns('group_members');
+  if (!groupMembers.has('member_tag')) db.exec("ALTER TABLE group_members ADD COLUMN member_tag TEXT NOT NULL DEFAULT ''");
   const users = columns('users');
   if (!users.has('two_step_hash')) db.exec('ALTER TABLE users ADD COLUMN two_step_hash TEXT');
   if (!users.has('two_step_set_at')) db.exec('ALTER TABLE users ADD COLUMN two_step_set_at INTEGER');
@@ -549,6 +552,17 @@ export function registerParity(ctx) {
     await changed(group.id);
     const updated = await groupOf(group.id);
     response.json({ onlyAdminsSend: updated.onlyAdminsSend, onlyAdminsEdit: updated.onlyAdminsEdit, approveJoins: updated.approveJoins });
+  });
+
+  // Member tags (WhatsApp's "Add member tag"): a short label each member sets for themselves in one group, shown to
+  // every member under their name. Plain text, up to MEMBER_TAG_MAX characters; empty removes it.
+  app.put('/api/v1/groups/:groupId/members/me/tag', requireSession, async (request, response) => {
+    if (!await requireMember(request, response)) return;
+    const tag = boundedText(request.body?.tag ?? '', MEMBER_TAG_MAX);
+    if (tag === undefined) return response.status(400).json({ error: `A member tag is up to ${MEMBER_TAG_MAX} characters.` });
+    await db.prepare('UPDATE group_members SET member_tag = ? WHERE group_id = ? AND user_id = ?').run(tag, request.params.groupId, request.session.user_id);
+    await changed(request.params.groupId);
+    response.json({ tag });
   });
 
   app.put('/api/v1/groups/:groupId/members/:memberId/role', requireSession, async (request, response) => {

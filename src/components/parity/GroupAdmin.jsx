@@ -1,6 +1,6 @@
 // Group administration (WhatsApp's "Group settings", invite links and member management).
 import { useEffect, useState } from 'react';
-import { Check, Copy, Crown, Link2, Pencil, RefreshCw, ShieldCheck, UserMinus, Users, X } from 'lucide-react';
+import { Check, Copy, EllipsisVertical, Link2, Pencil, RefreshCw, ShieldCheck, UserMinus, Users, X } from 'lucide-react';
 import * as api from '../../parityApi.js';
 import Avatar from '../Avatar.jsx';
 import { inviteCodeFrom, inviteUrl } from '../../invites.js';
@@ -150,7 +150,7 @@ export function MemberAdminActions({ group, member, userId, token, onChanged, on
   return (
     <span className="hm-member-admin">
       <button type="button" className="icon-button" disabled={busy} aria-expanded={open} aria-label={`Manage ${member.name}`} onClick={() => setOpen((value) => !value)}>
-        <Crown size={16} />
+        <EllipsisVertical size={18} />
       </button>
       {open && (
         <ul className="hm-popover-menu" role="menu">

@@ -2,9 +2,9 @@ import { readFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import pg from 'pg';
 
-export const DATABASE_SCHEMA_VERSION = 22;
+export const DATABASE_SCHEMA_VERSION = 23;
 // Additive migrations applied in order to reach each version from the one before it.
-const MIGRATIONS = { 2: '002_groups.sql', 3: '003_group_media.sql', 4: '004_presence_polls.sql', 5: '005_voice_played.sql', 6: '006_statuses.sql', 7: '007_push_devices.sql', 8: '008_identity_keys.sql', 9: '009_privacy_settings.sql', 10: '010_parity.sql', 11: '011_e2e_devices.sql', 12: '012_stage_a.sql', 13: '013_admin_help.sql', 14: '014_business_profile.sql', 15: '015_channel_directory.sql', 16: '016_business_account.sql', 17: '017_verified.sql', 18: '018_admin_dashboard.sql', 19: '019_delivery_queue.sql', 20: '020_delivery_targets_per_user.sql', 21: '021_rate_limits.sql', 22: '022_blocks.sql' };
+const MIGRATIONS = { 2: '002_groups.sql', 3: '003_group_media.sql', 4: '004_presence_polls.sql', 5: '005_voice_played.sql', 6: '006_statuses.sql', 7: '007_push_devices.sql', 8: '008_identity_keys.sql', 9: '009_privacy_settings.sql', 10: '010_parity.sql', 11: '011_e2e_devices.sql', 12: '012_stage_a.sql', 13: '013_admin_help.sql', 14: '014_business_profile.sql', 15: '015_channel_directory.sql', 16: '016_business_account.sql', 17: '017_verified.sql', 18: '018_admin_dashboard.sql', 19: '019_delivery_queue.sql', 20: '020_delivery_targets_per_user.sql', 21: '021_rate_limits.sql', 22: '022_blocks.sql', 23: '023_member_tags.sql' };
 
 let chatEventsPool;
 

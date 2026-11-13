@@ -1021,10 +1021,10 @@ export function createChatServer({
     if (!await groupMembership.get(groupId, request.session.user_id)) return response.status(404).json({ error: 'Group not found.' });
     const group = await db.prepare('SELECT id, name, created_by AS "createdBy", created_at AS "createdAt" FROM groups WHERE id = ?').get(groupId);
     const members = await db.prepare(`SELECT u.id, u.username, u.name, u.initials, u.color, u.avatar_disk_name,
-      u.avatar_type, u.avatar_updated_at, m.role, m.joined_at AS "joinedAt" FROM group_members m
+      u.avatar_type, u.avatar_updated_at, m.role, m.member_tag AS "tag", m.joined_at AS "joinedAt" FROM group_members m
       JOIN users u ON u.id = m.user_id WHERE m.group_id = ? ORDER BY m.joined_at, u.id`).all(groupId);
     const own = await groupMembership.get(groupId, request.session.user_id);
-    response.json({ ...group, ...(await parity.groupExtras(groupId, own.role)), role: own.role, autoDelete: Boolean(own.autoDelete), members: members.map((member) => ({ ...publicUser(member), role: member.role, joinedAt: member.joinedAt })) });
+    response.json({ ...group, ...(await parity.groupExtras(groupId, own.role)), role: own.role, autoDelete: Boolean(own.autoDelete), members: members.map((member) => ({ ...publicUser(member), role: member.role, tag: member.tag ?? '', joinedAt: member.joinedAt })) });
   });
 
   app.post('/api/v1/groups/:groupId/members', requireSession, async (request, response) => {

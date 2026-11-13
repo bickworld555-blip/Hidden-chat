@@ -2,9 +2,12 @@ import { apiFetch, isNetworkFailure } from '../api.js';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft, BarChart3, Bell, BellOff, CalendarClock, CalendarDays, Check, ChevronDown, Clock, Copy, Download, Flag, Link2, LockKeyhole, LogOut, Megaphone, MinusCircle, Paperclip,
-  Pencil, Phone, Pin, PinOff, Search, SendHorizontal, Star, Sticker, Timer, Trash2, UserPlus, Users, Video, X,
+  ListPlus, Pencil, Phone, Pin, PinOff, QrCode, Search, SendHorizontal, Share2, Star, Sticker, Timer, Trash2, UserPlus, Users, Video, X,
 } from 'lucide-react';
-import { editGroupMessage } from '../parityApi.js';
+import { QRCodeSVG } from 'qrcode.react';
+import { inviteUrl } from '../invites.js';
+import { LIST_NAME_MAX, listEntries } from './ChatLists.jsx';
+import { editGroupMessage, resetInvite } from '../parityApi.js';
 import { groupChatKey, loadPins, setMessagePinned, toggleStar, useAccountData } from '../accountData.js';
 import { canEditMessage } from '../selection.js';
 import { appSettings } from '../settings.js';
@@ -169,6 +172,64 @@ function ScheduleCallSheet({ busy, onSchedule, onClose }) {
   );
 }
 
+// Member tags: a short label each member sets for themselves in a group (server/parity.mjs MEMBER_TAG_MAX).
+const MEMBER_TAG_MAX = 30;
+
+// "Add to lists" from group info: tick the chat lists this group belongs to, or start a new one with it.
+function GroupListsSheet({ groupKey, onClose }) {
+  const lists = useChatStore((state) => state.chatLists);
+  const saveChatList = useChatStore((state) => state.saveChatList);
+  const [name, setName] = useState('');
+  const entries = listEntries(lists);
+  const toggle = (id, list) => {
+    const keys = new Set(list.keys ?? []);
+    if (keys.has(groupKey)) keys.delete(groupKey); else keys.add(groupKey);
+    saveChatList(id, { name: list.name, keys: [...keys] });
+  };
+  const taken = entries.some(([, list]) => list.name.trim().toLowerCase() === name.trim().toLowerCase());
+  return (
+    <div className="groups-sheet" role="dialog" aria-modal="true" aria-label="Add to lists">
+      <header>
+        <strong>Add to lists</strong>
+        <button type="button" onClick={onClose} aria-label="Close"><X size={18} /></button>
+      </header>
+      {entries.length === 0 && <p>No lists yet. Lists sort your chats into tabs on the chat list.</p>}
+      {entries.map(([id, list]) => (
+        <label className="groups-list-pick" key={id}>
+          <input type="checkbox" checked={(list.keys ?? []).includes(groupKey)} onChange={() => toggle(id, list)} />
+          <span>{list.name}</span>
+        </label>
+      ))}
+      <form className="groups-list-new" onSubmit={(event) => { event.preventDefault(); if (name.trim() && !taken) { saveChatList('', { name, keys: [groupKey] }); setName(''); } }}>
+        <input value={name} maxLength={LIST_NAME_MAX} onChange={(event) => setName(event.target.value)} placeholder="New list name" aria-label="New list name" />
+        <button type="submit" className="groups-primary" disabled={!name.trim() || taken}>Create</button>
+      </form>
+      {taken && <p className="groups-field-error">A list with that name already exists.</p>}
+    </div>
+  );
+}
+
+// The group's QR code (its invite link, admins only), as on WhatsApp's group info header.
+function GroupQrSheet({ group, onShare, onClose }) {
+  const link = inviteUrl(group.inviteCode);
+  return (
+    <div className="groups-sheet groups-qr-sheet" role="dialog" aria-modal="true" aria-label="Group QR code">
+      <header>
+        <strong>Group QR code</strong>
+        <button type="button" onClick={onClose} aria-label="Close"><X size={18} /></button>
+      </header>
+      <div className="groups-qr-card">
+        <GroupAvatar size="small" />
+        <strong>{group.name}</strong>
+        <small>Group · {group.members.length} {group.members.length === 1 ? 'member' : 'members'}</small>
+        <span className="groups-qr-code"><QRCodeSVG value={link} size={196} level="M" bgColor="#ffffff" fgColor="#0b1628" includeMargin aria-label="QR code to join this group" /></span>
+      </div>
+      <p>Anyone with Hidden Messenger can scan this code to join this group. Only share it with people you trust.</p>
+      <button type="button" className="groups-primary" onClick={onShare}><Share2 size={16} /> Share link</button>
+    </div>
+  );
+}
+
 function SettingsRow({ icon: Icon, title, detail, danger = false, onClick, children, disabled = false }) {
   const body = (
     <>
@@ -193,6 +254,11 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
   const [creating, setCreating] = useState(initialCreate);
   const [settings, setSettings] = useState(false);
   const [infoTab, setInfoTab] = useState('members');
+  const [infoCallMenu, setInfoCallMenu] = useState(false);
+  const [memberSearchOpen, setMemberSearchOpen] = useState(false);
+  const [addingMember, setAddingMember] = useState(false);
+  const [tagDraft, setTagDraft] = useState(null);
+  const [infoSheet, setInfoSheet] = useState('');
   const [memberFilter, setMemberFilter] = useState('');
   const [confirming, setConfirming] = useState('');
   const [reportReason, setReportReason] = useState('');
@@ -500,8 +566,26 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
 
   const openMemberSearch = () => {
     setInfoTab('members');
+    setMemberSearchOpen(true);
     setTimeout(() => memberSearchRef.current?.focus(), 0);
   };
+
+  // Share and QR use the group's invite link (admins only); the first use creates it.
+  const ensureInvite = async () => group.inviteCode || (await resetInvite(token, group.id)).inviteCode;
+  const shareGroup = () => perform(async () => {
+    const link = inviteUrl(await ensureInvite());
+    if (navigator.share) {
+      try { await navigator.share({ title: group.name, text: `Join "${group.name}" on Hidden Messenger`, url: link }); } catch (caught) { if (caught?.name !== 'AbortError') throw caught; }
+    } else {
+      await navigator.clipboard.writeText(link);
+      setNotice('Invite link copied.');
+    }
+  });
+  const openGroupQr = () => perform(async () => { await ensureInvite(); setInfoSheet('qr'); });
+  const saveMemberTag = () => perform(async () => {
+    await groupRequest(token, `${groupPath}/members/me/tag`, { method: 'PUT', body: { tag: tagDraft ?? '' } });
+    setTagDraft(null);
+  });
 
   const inConversation = Boolean(group && !settings && !creating);
   const creator = group?.members.find((member) => member.id === group.createdBy);
@@ -541,7 +625,12 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
                   : <small>{group.members.map((member) => (member.id === userId ? 'You' : member.name)).join(', ')}</small>}
               </span>
             </button>
-          ) : <h2>{creating ? 'New group' : settings && group ? group.name : 'Groups'}</h2>}
+          ) : settings && group && !creating ? (
+            <span className="groups-info-header-tools">
+              <button type="button" onClick={() => setInfoSheet('lists')} aria-label="Add to lists" title="Add to lists"><ListPlus size={22} /></button>
+              {group.role === 'admin' && <button type="button" onClick={openGroupQr} disabled={busy} aria-label="Group QR code" title="Group QR code"><QrCode size={22} /></button>}
+            </span>
+          ) : <h2>{creating ? 'New group' : 'Groups'}</h2>}
           {inConversation && onStartGroupCall && (
             <span className="groups-call-menu-wrap">
               <button type="button" className="groups-call-trigger" onClick={() => setCallMenu((open) => !open)} aria-label="Call options" aria-expanded={callMenu}>
@@ -640,12 +729,26 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
               <GroupAvatar size="large" />
               <h3>{group.name}</h3>
               <small>Group · {group.members.length} {group.members.length === 1 ? 'member' : 'members'}</small>
+              {group.description && <p className="groups-info-description">{group.description}</p>}
               <div className="groups-info-actions">
-                {onStartGroupCall && <button type="button" onClick={() => setCallPicker('audio')}><Phone size={20} /><span>Voice</span></button>}
-                {onStartGroupCall && <button type="button" onClick={() => setCallPicker('video')}><Video size={20} /><span>Video</span></button>}
-                <button type="button" onClick={openMemberSearch}><Search size={20} /><span>Search</span></button>
+                {onStartGroupCall && (
+                  <span className="groups-info-call">
+                    <button type="button" onClick={() => setInfoCallMenu((open) => !open)} aria-expanded={infoCallMenu} aria-label="Call">
+                      <span className="groups-info-action-icon"><Video size={22} /><ChevronDown size={13} /></span><span>Call</span>
+                    </button>
+                    {infoCallMenu && (
+                      <ul className="groups-call-menu" role="menu" aria-label="Call options">
+                        <li><button type="button" role="menuitem" onClick={() => { setInfoCallMenu(false); setCallPicker('audio'); }}><Phone size={18} /> Voice call</button></li>
+                        <li><button type="button" role="menuitem" onClick={() => { setInfoCallMenu(false); setCallPicker('video'); }}><Video size={18} /> Video call</button></li>
+                      </ul>
+                    )}
+                  </span>
+                )}
+                {group.role === 'admin' && <button type="button" onClick={shareGroup} disabled={busy}><span className="groups-info-action-icon"><Share2 size={22} /></span><span>Share</span></button>}
+                <button type="button" onClick={openMemberSearch}><span className="groups-info-action-icon"><Search size={22} /></span><span>Search</span></button>
               </div>
             </div>
+            <button type="button" className="groups-info-row" onClick={() => setInfoSheet('lists')}><ListPlus size={22} /><span>Add to lists</span></button>
             <div className="groups-tabs" role="tablist" aria-label="Group information">
               <button type="button" role="tab" aria-selected={infoTab === 'members'} onClick={() => { setInfoTab('members'); setQuery(''); }}>Members</button>
               <button type="button" role="tab" aria-selected={infoTab === 'media'} onClick={() => { setInfoTab('media'); setQuery(''); }}>Media</button>
@@ -655,13 +758,19 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
             {infoTab === 'members' && <div className="groups-tab-body">
               <div className="groups-members-head">
                 <span>{group.members.length} {group.members.length === 1 ? 'member' : 'members'}</span>
-                <label className="groups-member-search">
-                  <Search size={18} />
-                  <input ref={memberSearchRef} value={memberFilter} onChange={(event) => setMemberFilter(event.target.value)} placeholder="Search members" aria-label="Search members" />
-                </label>
+                {memberSearchOpen || memberFilter ? (
+                  <label className="groups-member-search">
+                    <Search size={18} />
+                    <input ref={memberSearchRef} value={memberFilter} onChange={(event) => setMemberFilter(event.target.value)} placeholder="Search members" aria-label="Search members" />
+                    <button type="button" className="groups-icon-button" onClick={() => { setMemberFilter(''); setMemberSearchOpen(false); }} aria-label="Close member search"><X size={16} /></button>
+                  </label>
+                ) : <button type="button" className="groups-icon-button groups-members-search" onClick={openMemberSearch} aria-label="Search members"><Search size={21} /></button>}
               </div>
               {group.role === 'admin' && <>
-                <label className="groups-add-member"><UserPlus size={18} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Add member by username" aria-label="Add a member" /></label>
+                <button type="button" className="groups-add-row" onClick={() => setAddingMember((open) => !open)} aria-expanded={addingMember}>
+                  <span className="groups-add-icon"><UserPlus size={22} /></span><strong>Add members</strong>
+                </button>
+                {addingMember && <label className="groups-add-member"><Search size={18} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Add member by username" aria-label="Add a member" autoFocus /></label>}
                 {results.filter((person) => !group.members.some((item) => item.id === person.id)).map((person) => (
                   <button type="button" className="groups-row" key={person.id} disabled={busy} onClick={() => perform(async () => { await groupRequest(token, `${groupPath}/members`, { method: 'POST', body: { userId: person.id } }); setQuery(''); })}>
                     <Avatar {...person} size="small" /><span><strong>Add {person.name}</strong><small>@{person.username}</small></span>
@@ -671,7 +780,22 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
               {visibleMembers.map((member) => (
                 <div className="groups-member" key={member.id}>
                   <Avatar {...member} />
-                  <span><strong>{member.id === userId ? 'You' : member.name}</strong><small>@{member.username}</small></span>
+                  <span>
+                    <strong>{member.id === userId ? 'You' : member.name}</strong>
+                    {member.id === userId ? (
+                      tagDraft !== null ? (
+                        <form className="groups-tag-form" onSubmit={(event) => { event.preventDefault(); saveMemberTag(); }}>
+                          <input value={tagDraft} maxLength={MEMBER_TAG_MAX} onChange={(event) => setTagDraft(event.target.value)} placeholder="Member tag" aria-label="Your member tag in this group" autoFocus />
+                          <button type="submit" disabled={busy} aria-label="Save member tag"><Check size={16} /></button>
+                          <button type="button" onClick={() => setTagDraft(null)} aria-label="Cancel"><X size={16} /></button>
+                        </form>
+                      ) : (
+                        <button type="button" className={`groups-member-tag ${member.tag ? 'has-tag' : ''}`} onClick={() => setTagDraft(member.tag ?? '')}>
+                          {member.tag || 'Add member tag'}
+                        </button>
+                      )
+                    ) : <small className={member.tag ? 'groups-member-tag-text' : ''}>{member.tag || `@${member.username}`}</small>}
+                  </span>
                   {member.role === 'admin' && <span className="groups-admin-tag">Group Admin</span>}
                   <MemberAdminActions group={group} member={member} userId={userId} token={token}
                     onChanged={() => refresh(new AbortController().signal)} onNotice={setNotice} onError={setError} />
@@ -871,6 +995,8 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
         )}
         {joinCode && <JoinGroupSheet code={joinCode} token={token} onClose={() => setJoinCode('')} onJoined={(groupId) => { setJoinCode(''); setSelected(groupId); }} />}
         {group && callPicker && <CallPeoplePicker members={group.members} userId={userId} mode={callPicker} busy={busy} onStart={startCall} onClose={() => setCallPicker('')} />}
+        {infoSheet === 'lists' && group && <GroupListsSheet groupKey={`group:${group.id}`} onClose={() => setInfoSheet('')} />}
+        {infoSheet === 'qr' && group?.inviteCode && <GroupQrSheet group={group} onShare={shareGroup} onClose={() => setInfoSheet('')} />}
         {group && scheduling && <ScheduleCallSheet busy={busy} onSchedule={scheduleCall} onClose={() => setScheduling(false)} />}
         {group && richComposer && (() => {
           const Composer = richComposer === 'poll' ? PollComposer : EventComposer;
