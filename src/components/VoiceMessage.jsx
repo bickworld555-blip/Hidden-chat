@@ -1,10 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { AudioLines, Mic, Pause, Play } from 'lucide-react';
+import { AudioLines, Languages, Mic, Pause, Play, Square } from 'lucide-react';
 import { checkTranscription, downloadSpeechPack, transcribe, useTranscripts } from '../transcripts.js';
 import { formatClock, voiceMimeFromDisposition, waveformPeaks } from '../voice.js';
 import { loadMediaBlob, loadMediaInfo } from '../media.js';
 import { playExclusiveAudio, stopExclusiveAudio } from '../audioManager.js';
 import Avatar from './Avatar.jsx';
+import { nativeShell } from '../native.js';
+import { useSetting } from '../settings.js';
+import { resolveVoiceLanguage, voiceLanguageLabel } from '../voiceLanguage.js';
+import { loadSaved as loadTranslations, needsTranslation, playTranslated, stopTranslated, translationKey, useVoiceTranslation } from '../voiceTranslation.js';
 
 const SPEEDS = [1, 1.5, 2];
 
@@ -20,6 +24,16 @@ export default function VoiceMessage({ id, seconds, lang = '', sessionToken, sen
   const canTranscribe = useTranscripts((state) => state.available);
   const missingPack = useTranscripts((state) => state.missingPacks[id]);
   useEffect(() => { checkTranscription(); }, []);
+  // Voice message translation (Android app, Settings › Chats): "Play in Hindi" for a note spoken in another language.
+  const translateOn = useSetting('chats.translateVoice');
+  const translateTo = resolveVoiceLanguage(useSetting('chats.translateTo'));
+  const offerTranslation = Boolean(translateOn && nativeShell() && id && needsTranslation(lang, translateTo));
+  const tKey = translationKey(id, translateTo);
+  const translated = useVoiceTranslation((state) => state.results[tKey]);
+  const translating = useVoiceTranslation((state) => Boolean(state.busy[tKey]));
+  const speakingTranslation = useVoiceTranslation((state) => state.playing === tKey);
+  const translateError = useVoiceTranslation((state) => state.errors[tKey]);
+  useEffect(() => { if (offerTranslation) loadTranslations(); }, [offerTranslation]);
   const urlRef = useRef('');
   const speedRef = useRef(1);
   const [playing, setPlaying] = useState(false);
@@ -142,12 +156,22 @@ export default function VoiceMessage({ id, seconds, lang = '', sessionToken, sen
               <AudioLines size={14} aria-hidden="true" /> {transcribing ? 'Transcribing…' : 'Transcribe'}
             </button>
           )}
+          {offerTranslation && (
+            <button type="button" className="voice-transcribe voice-translate" disabled={translating && !speakingTranslation}
+              onClick={() => (speakingTranslation ? stopTranslated() : playTranslated(id, sessionToken, lang, translateTo))}
+              aria-label={speakingTranslation ? 'Stop the translation' : `Play in ${voiceLanguageLabel(translateTo)}`}>
+              {speakingTranslation ? <Square size={12} aria-hidden="true" /> : <Languages size={14} aria-hidden="true" />}
+              {speakingTranslation ? 'Stop' : translating ? 'Translating…' : `Play in ${voiceLanguageLabel(translateTo).split(' ')[0]}`}
+            </button>
+          )}
           {children}
         </div>
+        {offerTranslation && translated && <p className="voice-transcript voice-translation" lang={translateTo}>{translated.translation}</p>}
+        {offerTranslation && translateError && !translated && <span className="attachment-error">{translateError} Set it up in Settings › Chats › Voice message translation.</span>}
         {transcript && <p className="voice-transcript">{transcript}</p>}
         {transcriptError && !transcript && <span className="attachment-error">{transcriptError}</span>}
         {missingPack && !transcript && (
-          <button type="button" className="voice-transcribe" onClick={() => downloadSpeechPack(id)}>Download speech pack</button>
+          <button type="button" className="voice-transcribe" onClick={() => downloadSpeechPack(id)}>{missingPack.code === 'speech_model_missing' ? 'Download speech model (190 MB)' : 'Download speech pack'}</button>
         )}
         {error && <span className="attachment-error">{error}</span>}
       </div>

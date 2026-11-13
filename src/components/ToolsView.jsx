@@ -11,6 +11,7 @@ import BrandMark from './BrandMark.jsx';
 import packageInfo from '../../package.json';
 import { Archive, AudioLines, CalendarDays, FileText, Info, MessageCircleQuestion, Palette, Scale, Share2 } from 'lucide-react';
 import { VOICE_LANGUAGE_AUTO, VOICE_LANGUAGES, resolveVoiceLanguage, voiceLanguageLabel } from '../voiceLanguage.js';
+import VoiceTranslationSettings from './VoiceTranslationSettings.jsx';
 import { Accessibility, ArrowLeft, ChevronDown, MonitorSmartphone, QrCode, Bell, Check, ChevronRight, Contrast, CornerDownLeft, ListChecks, Type, CircleHelp, Clock, DatabaseBackup, Download, HardDrive, KeyRound, Languages, Link2, Lock, LogOut, Megaphone, MessageSquare, Moon, Pencil, Radio, ScanFace, ShieldCheck, Sparkles, Star, Store, Sun, UserPlus, Users, Video, X } from 'lucide-react';
 import { useChatStore } from '../store.js';
 import { WALLPAPERS, setWallpaper, useWallpaper } from '../wallpaper.js';
@@ -267,6 +268,7 @@ export default function ToolsView({ darkMode, themePref = 'light', onChooseTheme
   const enterIsSend = useEnterSends();
   const keepArchived = useSetting('chats.keepArchived');
   const voiceLanguage = useSetting('chats.voiceLanguage');
+  const translateVoice = useSetting('chats.translateVoice');
   // App icon (Android app only): which launcher icon is on.
   const [appIcon, setAppIcon] = useState('default');
   const [iconNote, setIconNote] = useState('');
@@ -300,6 +302,7 @@ export default function ToolsView({ darkMode, themePref = 'light', onChooseTheme
         ))}
       </div>
     )],
+    voicetranslate: ['Voice message translation', <VoiceTranslationSettings />],
     voicelang: ['Voice message language', (
       <div className="tools-section" role="radiogroup" aria-label="Voice message language">
         <p className="tools-page-note">The language you speak in voice messages. It travels inside the end-to-end encryption, so the people you send voice messages to can transcribe them on their own phone. The server never sees it.</p>
@@ -339,6 +342,9 @@ export default function ToolsView({ darkMode, themePref = 'light', onChooseTheme
         <Item icon={AudioLines} title="Voice message language"
           detail={voiceLanguage === VOICE_LANGUAGE_AUTO ? `Same as the phone · ${voiceLanguageLabel(resolveVoiceLanguage(voiceLanguage))}` : voiceLanguageLabel(voiceLanguage)}
           onClick={() => setPage('voicelang')} />
+        <Item icon={Languages} title="Voice message translation"
+          detail={!inApp ? 'In the Android app' : translateVoice ? `On · play voice messages in ${voiceLanguageLabel(resolveVoiceLanguage(appSettings().get('chats.translateTo')))}, on this phone` : 'Off · hear voice messages in your language, translated on this phone'}
+          disabled={!inApp} onClick={() => setPage('voicetranslate')} />
         <h3>Archived chats</h3>
         <Item icon={Archive} title="Keep chats archived" checked={keepArchived}
           detail={keepArchived ? 'Archived chats stay archived when you get a new message' : 'A new message brings an archived chat back to the list'}

@@ -58,6 +58,18 @@ public class TranslationLabActivity extends Activity {
             queue.add(new String[] { from == null ? "bn-BD" : from, to == null ? "en-US" : to });
         }
         say("HM Lab: " + queue.size() + " run(s), download=" + download + "\n");
+        // --ez whisper true: first download and verify the offline speech model (190 MB), timed.
+        if (getIntent().getBooleanExtra("whisper", false) && !WhisperModels.installed(this)) {
+            say("Downloading the whisper model (190 MB)…");
+            long at = android.os.SystemClock.elapsedRealtime();
+            WhisperModels.download(this, (received, total) -> { }, (ok, error) -> runOnUiThread(() -> {
+                long ms = android.os.SystemClock.elapsedRealtime() - at;
+                say(ok ? "Model ready in " + ms / 1000 + " s" : "Model download failed: " + error);
+                android.util.Log.i(TranslationLab.TAG, "{\"whisperDownload\":" + ok + ",\"ms\":" + ms + "}");
+                next();
+            }));
+            return;
+        }
         next();
     }
 
@@ -98,7 +110,7 @@ public class TranslationLabActivity extends Activity {
         TextToSpeech[] holder = new TextToSpeech[1];
         holder[0] = new TextToSpeech(this, status -> {
             TextToSpeech tts = holder[0];
-            Voice voice = status == TextToSpeech.SUCCESS ? TranslationLab.offlineVoice(tts, Locale.forLanguageTag(language)) : null;
+            Voice voice = status == TextToSpeech.SUCCESS ? VoiceSpeaker.offlineVoice(tts, Locale.forLanguageTag(language)) : null;
             if (voice == null) { tts.shutdown(); runOnUiThread(() -> done.ready(null)); return; }
             tts.setVoice(voice);
             File out = new File(TranslationLab.labDirectory(this), "sample-" + language + ".wav");

@@ -1,9 +1,10 @@
-// On-device voice transcripts and the translation lab (Phase 0 and Phase 1):
+// On-device voice transcripts and voice message translation:
 //   * the language a voice message was spoken in travels inside the end-to-end encrypted message, never in the part
 //     the server routes on;
 //   * transcripts use only Android's ON-DEVICE recogniser (no createSpeechRecognizer fallback that may use a server)
 //     and report a missing language pack instead of guessing;
-//   * the translation lab (ML Kit) exists only in debug builds: release APKs carry neither the library nor the code.
+//   * whisper.cpp (pinned, model checked) covers languages without an Android pack; translation and speech run on the
+//     phone with no network step; the measurement lab exists only in debug builds.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
@@ -52,17 +53,51 @@ test('transcripts use only the on-device recogniser and name a missing language 
   assert.ok(code.includes('triggerModelDownload('), 'the app can ask for the pack');
 });
 
-test('the translation lab and ML Kit exist only in debug builds', () => {
+test('the measurement lab exists only in debug builds; translation and speech ship in the app', () => {
   const gradle = read('android/app/build.gradle');
-  assert.match(gradle, /debugImplementation 'com\.google\.mlkit:translate:/);
-  assert.equal(/^\s*implementation 'com\.google\.mlkit/m.test(gradle), false, 'never a release dependency');
-  assert.match(gradle, /applicationIdSuffix "\.lab"/, 'installs beside the real app');
+  assert.match(gradle, /^\s*implementation 'com\.google\.mlkit:translate:/m, 'ML Kit on-device translation ships');
+  assert.match(gradle, /applicationIdSuffix "\.lab"/, 'the lab installs beside the real app');
   assert.ok(existsSync(new URL('../android/app/src/debug/java/io/github/bickworld555/hiddenchat/TranslationLab.java', import.meta.url)));
   assert.equal(existsSync(new URL(`../${JAVA}/TranslationLab.java`, import.meta.url)), false);
   assert.equal(read('android/app/src/main/AndroidManifest.xml').includes('TranslationLab'), false);
   const plugin = read(`${JAVA}/HiddenNativePlugin.java`);
-  assert.match(plugin, /public void translateVoice\(PluginCall call\) \{\n\s+if \(\(getContext\(\)\.getApplicationInfo\(\)\.flags & android\.content\.pm\.ApplicationInfo\.FLAG_DEBUGGABLE\) == 0\) \{/);
+  assert.match(plugin, /public void translationLab\(PluginCall call\) \{\r?\n\s+if \(\(getContext\(\)\.getApplicationInfo\(\)\.flags & android\.content\.pm\.ApplicationInfo\.FLAG_DEBUGGABLE\) == 0\) \{/);
   const lab = read('android/app/src/debug/java/io/github/bickworld555/hiddenchat/TranslationLab.java');
-  assert.ok(lab.includes('isNetworkConnectionRequired()') && lab.includes('KEY_FEATURE_NOT_INSTALLED'), 'offline voices only');
-  assert.ok(lab.includes('VoiceTranscriber.recognise('), 'the lab reuses the on-device-only recogniser');
+  assert.ok(lab.includes('VoiceTranscriber.recognise(') && lab.includes('VoiceTranslator.translate(') && lab.includes('VoiceSpeaker.offlineVoice('), 'the lab measures the shipped code');
+});
+
+test('whisper.cpp is pinned and its model checked; Bangla falls back to it, never to a server', () => {
+  const cmake = read('android/app/src/main/cpp/CMakeLists.txt');
+  assert.match(cmake, /URL https:\/\/github\.com\/ggml-org\/whisper\.cpp\/archive\/refs\/tags\/v\d+\.\d+\.\d+\.tar\.gz/);
+  assert.match(cmake, /URL_HASH SHA256=[0-9a-f]{64}/, 'the source archive is pinned by hash');
+  const models = read(`${JAVA}/WhisperModels.java`);
+  assert.match(models, /static final String SHA256 = "[0-9a-f]{64}";/);
+  assert.ok(models.includes('digest.digest()') && models.includes('part.delete()'), 'a download that fails the checksum is deleted');
+  const transcriber = read(`${JAVA}/VoiceTranscriber.java`);
+  assert.ok(transcriber.includes('WhisperEngine.transcribe(') && transcriber.includes('speech_model_missing'));
+  const jni = read('android/app/src/main/cpp/hm_whisper.cpp').replace(/\/\/.*$/gm, '');
+  assert.equal(/curl|http|socket/i.test(jni), false, 'the native bridge has no network code');
+  assert.match(read('android/app/build.gradle'), /abiFilters 'arm64-v8a'/);
+});
+
+test('translations never download by themselves, and speech uses offline voices only', () => {
+  const translator = read(`${JAVA}/VoiceTranslator.java`);
+  const translate = translator.slice(translator.indexOf('static void translate('), translator.indexOf('static void download('));
+  assert.equal(/\.download\(|downloadModel/.test(translate), false, 'translating never downloads a model');
+  assert.ok(translate.includes('MODEL_MISSING'));
+  const speaker = read(`${JAVA}/VoiceSpeaker.java`);
+  assert.ok(speaker.includes('isNetworkConnectionRequired()') && speaker.includes('KEY_FEATURE_NOT_INSTALLED') && speaker.includes('ACTION_INSTALL_TTS_DATA'));
+});
+
+test('“Play in …” appears only for another language, when turned on, and keeps results on the phone', async () => {
+  const { needsTranslation, missingFor } = await import('../src/voiceTranslation.js');
+  assert.equal(needsTranslation('bn-BD', 'hi-IN'), true);
+  assert.equal(needsTranslation('bn-BD', 'bn-IN'), false, 'same language, different country');
+  assert.equal(needsTranslation('', 'hi-IN'), false, 'older notes without a language');
+  const status = { languages: { 'hi-IN': { speech: 'whisper', translation: true, voice: '' }, 'bn-BD': { speech: 'whisper-download', translation: false, voice: 'bn' } } };
+  assert.deepEqual(missingFor(status, 'hi-IN'), ['voice']);
+  assert.deepEqual(missingFor(status, 'bn-BD'), ['speech:whisper-download', 'translation']);
+  const code = read('src/voiceTranslation.js');
+  assert.ok(code.includes('secureSet(KEY') && !/apiFetch|fetch\(/.test(code), 'kept encrypted on the phone; no network calls');
+  assert.match(read('src/components/VoiceMessage.jsx'), /translateOn && nativeShell\(\) && id && needsTranslation\(lang, translateTo\)/);
 });

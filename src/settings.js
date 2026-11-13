@@ -63,6 +63,17 @@ export const SETTINGS = Object.freeze({
     options: Object.freeze([{ id: VOICE_LANGUAGE_AUTO, label: 'Same as the phone' }, ...VOICE_LANGUAGES]),
     default: 'auto', hint: 'The language you speak in voice messages, so people you send them to can transcribe them on their phone.',
   },
+  // Voice message translation (Android app): a voice message in another language gets "Play in …", translated and
+  // spoken on this phone (src/voiceTranslation.js). Off until the person sets it up.
+  'chats.translateVoice': {
+    section: 'chats', scope: 'device', type: 'switch', label: 'Voice message translation', default: false,
+    hint: 'Translate voice messages into your language and play them, all on this phone.',
+  },
+  'chats.translateTo': {
+    section: 'chats', scope: 'device', type: 'choice', label: 'Translate voice messages into',
+    options: Object.freeze([{ id: VOICE_LANGUAGE_AUTO, label: 'Same as the phone' }, ...VOICE_LANGUAGES]),
+    default: VOICE_LANGUAGE_AUTO,
+  },
   'chats.keepArchived': {
     section: 'chats', scope: 'device', type: 'switch', label: 'Keep chats archived', default: true,
     hint: 'Archived chats stay archived when you get a new message.',

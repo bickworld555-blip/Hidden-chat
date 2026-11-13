@@ -2,7 +2,7 @@
 // (encrypted with the rest of local storage), like WhatsApp's.
 import { create } from 'zustand';
 import { secureGet, secureSet } from './secureStorage.js';
-import { nativeDownloadSpeechLanguage, nativeSecurityStatus, nativeShell, nativeTranscribeAudio } from './native.js';
+import { nativeDownloadSpeechLanguage, nativeDownloadWhisperModel, nativeSecurityStatus, nativeShell, nativeTranscribeAudio } from './native.js';
 import { blobToBase64 } from './fileSave.js';
 import { loadMediaBlob } from './media.js';
 import { VOICE_LANGUAGE_AUTO, cleanVoiceLang, resolveVoiceLanguage } from './voiceLanguage.js';
@@ -42,8 +42,9 @@ export async function transcribe(mediaId, sessionToken, lang = '') {
     const blob = await loadMediaBlob(mediaId, sessionToken);
     const language = cleanVoiceLang(lang) || resolveVoiceLanguage(VOICE_LANGUAGE_AUTO);
     const result = await nativeTranscribeAudio(await blobToBase64(blob), language);
-    if (result?.code === 'language_pack_missing') {
-      useTranscripts.setState((current) => ({ missingPacks: { ...current.missingPacks, [mediaId]: language } }));
+    // Something to download first: Android's pack for the language, or (no pack exists) the offline speech model.
+    if (result?.code === 'language_pack_missing' || result?.code === 'speech_model_missing') {
+      useTranscripts.setState((current) => ({ missingPacks: { ...current.missingPacks, [mediaId]: { language, code: result.code } } }));
     }
     if (!result?.text) throw new Error(result?.error || 'This voice message can’t be transcribed on this phone.');
     await loadSaved();
@@ -67,9 +68,19 @@ export async function transcribe(mediaId, sessionToken, lang = '') {
  * (it shows its own progress), then the person taps Transcribe again. Transcripts never fall back to a server.
  */
 export async function downloadSpeechPack(mediaId) {
-  const language = useTranscripts.getState().missingPacks[mediaId];
-  if (!language) return;
-  const result = await nativeDownloadSpeechLanguage(language).catch(() => null);
+  const missing = useTranscripts.getState().missingPacks[mediaId];
+  if (!missing) return;
+  if (missing.code === 'speech_model_missing') {
+    useTranscripts.setState((current) => ({ errors: { ...current.errors, [mediaId]: 'Downloading the offline speech model (190 MB)…' } }));
+    const done = await nativeDownloadWhisperModel().catch(() => null);
+    useTranscripts.setState((current) => {
+      const missingPacks = { ...current.missingPacks };
+      delete missingPacks[mediaId];
+      return { missingPacks, errors: { ...current.errors, [mediaId]: done?.ok ? 'The speech model is ready. Tap Transcribe again.' : (done?.error || 'The speech model could not be downloaded.') } };
+    });
+    return;
+  }
+  const result = await nativeDownloadSpeechLanguage(missing.language).catch(() => null);
   useTranscripts.setState((current) => {
     const missingPacks = { ...current.missingPacks };
     delete missingPacks[mediaId];

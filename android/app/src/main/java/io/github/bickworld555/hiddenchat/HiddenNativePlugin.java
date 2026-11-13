@@ -557,20 +557,126 @@ public class HiddenNativePlugin extends Plugin {
         });
     }
 
+    // --- Voice message translation (Settings › Chats › Voice message translation) -----------------------------
+    // Everything runs on the phone: on-device speech-to-text (Android's pack, or whisper.cpp), ML Kit translation and
+    // an offline voice. Models are downloaded only by the methods named download*, which the person starts.
+
+    private static String[] languagesOf(PluginCall call) {
+        com.getcapacitor.JSArray list = call.getArray("languages");
+        java.util.List<String> tags = new java.util.ArrayList<>();
+        try {
+            if (list != null) for (Object item : list.toList()) if (item instanceof String) tags.add((String) item);
+        } catch (org.json.JSONException ignored) { }
+        if (tags.isEmpty()) java.util.Collections.addAll(tags, "bn-BD", "en-US", "hi-IN", "ar-SA");
+        return tags.toArray(new String[0]);
+    }
+
+    /** { languages? } → { whisper: { supported, installed, downloading, sizeBytes }, languages: { tag: { speech, translation, voice } } }. */
+    @PluginMethod
+    public void voiceLanguageStatus(PluginCall call) {
+        VoiceLanguages.status(getContext(), languagesOf(call), call::resolve);
+    }
+
+    /** Downloads the offline speech model (190 MB); "whisperDownload" events report { received, total }. */
+    @PluginMethod
+    public void downloadWhisperModel(PluginCall call) {
+        WhisperModels.download(getContext(), (received, total) -> {
+            JSObject progress = new JSObject();
+            progress.put("received", received);
+            progress.put("total", total);
+            notifyListeners("whisperDownload", progress);
+        }, (ok, error) -> {
+            JSObject result = new JSObject();
+            result.put("ok", ok);
+            if (error != null) result.put("error", error);
+            call.resolve(result);
+        });
+    }
+
+    @PluginMethod
+    public void deleteWhisperModel(PluginCall call) {
+        WhisperModels.delete(getContext());
+        call.resolve();
+    }
+
+    private static JSObject reply(String text, String error, String code) {
+        JSObject result = new JSObject();
+        result.put("ok", text != null);
+        if (error != null) result.put("error", error);
+        if (code != null) result.put("code", code);
+        return result;
+    }
+
+    @PluginMethod
+    public void downloadTranslationModel(PluginCall call) {
+        VoiceTranslator.download(call.getString("language", ""), (text, error, code) -> call.resolve(reply(text, error, code)));
+    }
+
+    @PluginMethod
+    public void deleteTranslationModel(PluginCall call) {
+        VoiceTranslator.delete(call.getString("language", ""), (text, error, code) -> call.resolve(reply(text, error, code)));
+    }
+
+    /** Opens Android's offline voice installer (for Hindi, Arabic… voices). */
+    @PluginMethod
+    public void openVoiceInstaller(PluginCall call) {
+        JSObject result = new JSObject();
+        result.put("opened", VoiceSpeaker.openInstaller(getContext()));
+        call.resolve(result);
+    }
+
+    /** { audio (base64, decrypted), from, to } → { transcript?, translation?, engine?, error?, code? }. */
+    @PluginMethod
+    public void translateVoice(PluginCall call) {
+        byte[] audio;
+        try {
+            audio = android.util.Base64.decode(call.getString("audio", ""), android.util.Base64.DEFAULT);
+        } catch (IllegalArgumentException broken) {
+            call.reject("No audio.");
+            return;
+        }
+        VoiceLanguages.translate(getContext(), audio, call.getString("from", ""), call.getString("to", "en-US"), (transcript, translation, engine, error, code) -> {
+            JSObject result = new JSObject();
+            if (transcript != null) result.put("transcript", transcript);
+            if (translation != null) result.put("translation", translation);
+            if (engine != null) result.put("engine", engine);
+            if (error != null) result.put("error", error);
+            if (code != null) result.put("code", code);
+            call.resolve(result);
+        });
+    }
+
+    /** { text, language } → speaks it with an offline voice; resolves { ok, error?, code? } when it ends. */
+    @PluginMethod
+    public void speakText(PluginCall call) {
+        VoiceSpeaker.speak(getContext(), call.getString("text", ""), call.getString("language", "en-US"), (ok, error, code) -> {
+            JSObject result = new JSObject();
+            result.put("ok", ok);
+            if (error != null) result.put("error", error);
+            if (code != null) result.put("code", code);
+            call.resolve(result);
+        });
+    }
+
+    @PluginMethod
+    public void stopSpeaking(PluginCall call) {
+        VoiceSpeaker.stop();
+        call.resolve();
+    }
+
     /** A translation lab run's report (TranslationLab, debug builds only). */
     interface LabReport {
         void done(JSObject report);
     }
 
     /**
-     * Phase 1 proof of concept, DEBUG BUILDS ONLY ("HM Lab"): { audio (base64), from, to, download?, speak? } →
-     * the lab report (per-stage timings, transcript, translation, voice, memory, network). Everything runs on the
-     * phone (src/debug TranslationLab.java); release builds don't contain it and refuse.
+     * The measurement lab, DEBUG BUILDS ONLY ("HM Lab"): { audio (base64), from, to, download?, speak? } → per-stage
+     * timings, transcript, translation, voice, memory and network. Release builds don't contain it and refuse.
      */
     @PluginMethod
-    public void translateVoice(PluginCall call) {
+    public void translationLab(PluginCall call) {
         if ((getContext().getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) == 0) {
-            call.reject("Voice translation is only in the lab build.", "unavailable");
+            call.reject("The translation lab is only in the lab build.", "unavailable");
             return;
         }
         byte[] audio;

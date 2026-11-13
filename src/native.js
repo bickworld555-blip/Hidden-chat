@@ -204,3 +204,13 @@ export async function nativeSaveBytes({ data, filename, mimeType = '' }) {
 export const nativeTranscribeAudio = (data, language = '') => invoke('transcribeAudio', { data, language });
 // The on-device speech pack for a language (Android's own speech service downloads it; nothing else is sent).
 export const nativeDownloadSpeechLanguage = (language) => invoke('downloadSpeechLanguage', { language });
+// Voice message translation, all on the phone (VoiceLanguages/VoiceTranslator/VoiceSpeaker/WhisperEngine.java).
+export const nativeVoiceLanguageStatus = (languages) => invoke('voiceLanguageStatus', { languages });
+export const nativeDownloadWhisperModel = () => invoke('downloadWhisperModel');
+export const nativeDeleteWhisperModel = () => invoke('deleteWhisperModel');
+export const nativeDownloadTranslationModel = (language) => invoke('downloadTranslationModel', { language });
+export const nativeDeleteTranslationModel = (language) => invoke('deleteTranslationModel', { language });
+export const nativeOpenVoiceInstaller = () => invoke('openVoiceInstaller');
+export const nativeTranslateVoice = (audio, from, to) => invoke('translateVoice', { audio, from, to });
+export const nativeSpeakText = (text, language) => invoke('speakText', { text, language });
+export const nativeStopSpeaking = () => invoke('stopSpeaking');

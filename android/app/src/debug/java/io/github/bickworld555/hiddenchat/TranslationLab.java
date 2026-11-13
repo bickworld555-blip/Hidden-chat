@@ -14,19 +14,10 @@ import android.speech.tts.UtteranceProgressListener;
 import android.speech.tts.Voice;
 import android.util.Log;
 import com.getcapacitor.JSObject;
-import com.google.mlkit.common.model.DownloadConditions;
-import com.google.mlkit.common.model.RemoteModelManager;
-import com.google.mlkit.nl.translate.TranslateLanguage;
-import com.google.mlkit.nl.translate.TranslateRemoteModel;
-import com.google.mlkit.nl.translate.Translation;
-import com.google.mlkit.nl.translate.Translator;
-import com.google.mlkit.nl.translate.TranslatorOptions;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
-import java.util.HashSet;
 import java.util.Locale;
-import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -118,6 +109,7 @@ final class TranslationLab {
                     stages.put("sttMs", SystemClock.elapsedRealtime() - sttAt);
                     if (text == null) { fail(code, error); return; }
                     result.put("transcript", text);
+                    result.put("sttEngine", code);
                     main.post(() -> translate(text));
                 });
             } catch (IOException failed) {
@@ -126,34 +118,25 @@ final class TranslationLab {
         }
 
         void translate(String text) {
-            String source = TranslateLanguage.fromLanguageTag(Locale.forLanguageTag(from).getLanguage());
-            String target = TranslateLanguage.fromLanguageTag(Locale.forLanguageTag(to).getLanguage());
-            if (source == null || target == null) { fail("translation_unsupported", "ML Kit can't translate " + from + " to " + to + "."); return; }
-            if (source.equals(target)) { result.put("translation", text); stages.put("translateMs", 0); main.post(() -> synthesize(text)); return; }
-            Translator translator = Translation.getClient(new TranslatorOptions.Builder().setSourceLanguage(source).setTargetLanguage(target).build());
-            RemoteModelManager models = RemoteModelManager.getInstance();
-            models.getDownloadedModels(TranslateRemoteModel.class).addOnSuccessListener(downloaded -> {
-                Set<String> have = new HashSet<>();
-                for (TranslateRemoteModel model : downloaded) have.add(model.getLanguage());
-                boolean ready = (have.contains(source) || source.equals(TranslateLanguage.ENGLISH)) && (have.contains(target) || target.equals(TranslateLanguage.ENGLISH));
-                result.put("translationModelsInstalled", ready);
-                if (!ready && !download) {
-                    translator.close();
-                    fail("translation_model_missing", "Download the " + source + "/" + target + " translation models first (run once with download=true, online).");
-                    return;
-                }
-                long downloadAt = SystemClock.elapsedRealtime();
-                translator.downloadModelIfNeeded(new DownloadConditions.Builder().build()).addOnSuccessListener(ignored -> {
-                    if (!ready) stages.put("modelDownloadMs", SystemClock.elapsedRealtime() - downloadAt);
-                    long at = SystemClock.elapsedRealtime();
-                    translator.translate(text).addOnSuccessListener(translated -> {
-                        stages.put("translateMs", SystemClock.elapsedRealtime() - at);
-                        result.put("translation", translated);
-                        translator.close();
-                        synthesize(translated);
-                    }).addOnFailureListener(failed -> { translator.close(); fail("translation_failed", failed.getMessage()); });
-                }).addOnFailureListener(failed -> { translator.close(); fail("translation_model_missing", failed.getMessage()); });
-            }).addOnFailureListener(failed -> { translator.close(); fail("translation_failed", failed.getMessage()); });
+            // The app's own translator (VoiceTranslator): it never downloads during a translation. The lab's
+            // download=true run fetches the two models first, timed separately.
+            if (!download) { runTranslation(text); return; }
+            long downloadAt = SystemClock.elapsedRealtime();
+            VoiceTranslator.download(from, (ok1, e1, c1) -> VoiceTranslator.download(to, (ok2, e2, c2) -> {
+                if (ok1 == null || ok2 == null) { fail(c1 != null ? c1 : c2, e1 != null ? e1 : e2); return; }
+                stages.put("modelDownloadMs", SystemClock.elapsedRealtime() - downloadAt);
+                runTranslation(text);
+            }));
+        }
+
+        void runTranslation(String text) {
+            long at = SystemClock.elapsedRealtime();
+            VoiceTranslator.translate(text, from, to, (translated, error, code) -> {
+                stages.put("translateMs", SystemClock.elapsedRealtime() - at);
+                if (translated == null) { fail(code, error); return; }
+                result.put("translation", translated);
+                main.post(() -> synthesize(translated));
+            });
         }
 
         void synthesize(String text) {
@@ -163,7 +146,7 @@ final class TranslationLab {
                 TextToSpeech tts = holder[0];
                 stages.put("ttsInitMs", SystemClock.elapsedRealtime() - initAt);
                 if (status != TextToSpeech.SUCCESS) { tts.shutdown(); fail("tts_unavailable", "This phone has no text-to-speech engine."); return; }
-                Voice voice = offlineVoice(tts, Locale.forLanguageTag(to));
+                Voice voice = VoiceSpeaker.offlineVoice(tts, Locale.forLanguageTag(to));
                 if (voice == null) { tts.shutdown(); fail("tts_voice_missing", "No installed offline " + Locale.forLanguageTag(to).getDisplayLanguage(Locale.ENGLISH) + " voice. Install one in Android's text-to-speech settings."); return; }
                 tts.setVoice(voice);
                 result.put("ttsVoice", voice.getName());
@@ -225,26 +208,6 @@ final class TranslationLab {
             }
             main.post(() -> report.done(result));
         }
-    }
-
-    /** An installed voice for the language that needs no network (never a cloud voice). */
-    static Voice offlineVoice(TextToSpeech tts, Locale locale) {
-        Voice best = null;
-        Set<Voice> voices = tts.getVoices();
-        if (voices == null) return null;
-        for (Voice voice : voices) {
-            if (!voice.getLocale().getLanguage().equals(locale.getLanguage())) continue;
-            if (voice.isNetworkConnectionRequired()) continue;
-            if (voice.getFeatures() != null && voice.getFeatures().contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED)) continue;
-            if (best == null || score(voice, locale) > score(best, locale)) best = voice;
-        }
-        return best;
-    }
-
-    /** The requested country first (bn-BD over bn-IN), then the engine's own quality rating. */
-    private static int score(Voice voice, Locale locale) {
-        boolean sameCountry = !locale.getCountry().isEmpty() && voice.getLocale().getCountry().equals(locale.getCountry());
-        return (sameCountry ? 1000 : 0) + voice.getQuality();
     }
 
     static File labDirectory(Context context) {

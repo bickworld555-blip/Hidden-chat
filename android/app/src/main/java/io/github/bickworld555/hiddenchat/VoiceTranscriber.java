@@ -37,7 +37,11 @@ import java.util.concurrent.Executors;
  * phone. There is no fallback to {@code SpeechRecognizer.createSpeechRecognizer}, whose default service may send audio
  * to a server. When the phone has no on-device recogniser, or no installed pack for the language the sender spoke,
  * the result says so with a code (on_device_unavailable, language_pack_missing, language_pack_downloading,
- * language_unsupported) and the app offers {@link #downloadLanguage} instead of transcribing elsewhere.
+ * language_unsupported, speech_model_missing) and the app offers a download instead of transcribing elsewhere.
+ *
+ * <p>Order: Android's on-device recogniser when it has the language installed; otherwise whisper.cpp (WhisperEngine,
+ * also on the phone) when its model is downloaded, which covers Bangla on phones whose recogniser has no Bangla.
+ * On success the code names the engine that ran: "system" or "whisper".
  */
 final class VoiceTranscriber {
     interface Result {
@@ -49,7 +53,10 @@ final class VoiceTranscriber {
     static final String PACK_MISSING = "language_pack_missing";
     static final String PACK_DOWNLOADING = "language_pack_downloading";
     static final String UNSUPPORTED = "language_unsupported";
+    static final String MODEL_MISSING = "speech_model_missing";
     static final String NO_SPEECH = "no_speech";
+    static final String ENGINE_SYSTEM = "system";
+    static final String ENGINE_WHISPER = "whisper";
     static final String FAILED = "failed";
 
     private static final ExecutorService decoder = Executors.newSingleThreadExecutor();
@@ -57,17 +64,14 @@ final class VoiceTranscriber {
 
     private VoiceTranscriber() {}
 
-    /** Whether this phone can transcribe at all without sending audio anywhere. */
+    /** Whether this phone can transcribe at all without sending audio anywhere (now, or after a download). */
     static boolean available(Context context) {
+        if (WhisperEngine.supported()) return true;
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return false;
         return SpeechRecognizer.isOnDeviceRecognitionAvailable(context);
     }
 
     static void transcribe(Context context, byte[] audio, String language, Result result) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
-            result.done(null, "Transcripts need Android 13 or newer.", UNAVAILABLE);
-            return;
-        }
         Context app = context.getApplicationContext();
         decoder.execute(() -> {
             try {
@@ -211,15 +215,11 @@ final class VoiceTranscriber {
      * The installed packs are checked first, so a missing pack is reported instead of guessed at.
      */
     static void recognise(Context context, Pcm pcm, String language, Result result) throws IOException {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
-            result.done(null, "Transcripts need Android 13 or newer.", UNAVAILABLE);
-            return;
-        }
-        if (!SpeechRecognizer.isOnDeviceRecognitionAvailable(context)) {
-            result.done(null, "This phone has no on-device speech recognition, so voice messages can’t be transcribed privately here.", UNAVAILABLE);
-            return;
-        }
         String wanted = tagOrDefault(language);
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU || !SpeechRecognizer.isOnDeviceRecognitionAvailable(context)) {
+            fallBack(context, pcm, wanted, result, null);
+            return;
+        }
         Handler main = new Handler(Looper.getMainLooper());
         Executor onMain = main::post;
         main.post(() -> {
@@ -230,15 +230,11 @@ final class VoiceTranscriber {
                     String installed = match(support.getInstalledOnDeviceLanguages(), wanted);
                     if (installed != null) {
                         listen(context, recognizer, pcm, installed, result);
-                    } else if (match(support.getPendingOnDeviceLanguages(), wanted) != null) {
-                        recognizer.destroy();
-                        result.done(null, "The " + displayName(wanted) + " speech pack is still downloading. Try again in a few minutes.", PACK_DOWNLOADING);
-                    } else if (match(support.getSupportedOnDeviceLanguages(), wanted) != null) {
-                        recognizer.destroy();
-                        result.done(null, "Download the " + displayName(wanted) + " speech pack to transcribe this on your phone.", PACK_MISSING);
                     } else {
                         recognizer.destroy();
-                        result.done(null, displayName(wanted) + " voice messages can’t be transcribed on this phone.", UNSUPPORTED);
+                        String instead = match(support.getPendingOnDeviceLanguages(), wanted) != null ? PACK_DOWNLOADING
+                            : match(support.getSupportedOnDeviceLanguages(), wanted) != null ? PACK_MISSING : null;
+                        fallBack(context, pcm, wanted, result, instead);
                     }
                 }
 
@@ -249,6 +245,28 @@ final class VoiceTranscriber {
                 }
             });
         });
+    }
+
+    /**
+     * No installed system pack: whisper when its model is here; otherwise the most useful download to offer. A system
+     * pack (smaller, `systemPack` = PACK_MISSING or PACK_DOWNLOADING) comes first; whisper's model when there is none.
+     */
+    private static void fallBack(Context context, Pcm pcm, String tag, Result result, String systemPack) {
+        if (WhisperEngine.ready(context)) {
+            decoder.execute(() -> {
+                String text = WhisperEngine.transcribe(context, pcm, tag);
+                if (text == null) result.done(null, "No speech was recognised in this voice message.", NO_SPEECH);
+                else result.done(text, null, ENGINE_WHISPER);
+            });
+        } else if (PACK_DOWNLOADING.equals(systemPack)) {
+            result.done(null, "The " + displayName(tag) + " speech pack is still downloading. Try again in a few minutes.", PACK_DOWNLOADING);
+        } else if (PACK_MISSING.equals(systemPack)) {
+            result.done(null, "Download the " + displayName(tag) + " speech pack to transcribe this on your phone.", PACK_MISSING);
+        } else if (WhisperEngine.supported()) {
+            result.done(null, "Download the offline speech model (190 MB) to transcribe " + displayName(tag) + " on your phone.", MODEL_MISSING);
+        } else {
+            result.done(null, displayName(tag) + " voice messages can’t be transcribed privately on this phone.", UNSUPPORTED);
+        }
     }
 
     /** Runs on the main thread: feeds the PCM to an on-device recogniser through a pipe. */
@@ -270,7 +288,7 @@ final class VoiceTranscriber {
             closeQuietly(pipe[0]);
             String text = transcript.toString().trim();
             if (text.isEmpty()) result.done(null, "No speech was recognised in this voice message.", NO_SPEECH);
-            else result.done(text, null, null);
+            else result.done(text, null, ENGINE_SYSTEM);
         };
         recognizer.setRecognitionListener(new RecognitionListener() {
             @Override public void onReadyForSpeech(Bundle params) { }
@@ -309,9 +327,9 @@ final class VoiceTranscriber {
                 recognizer.destroy();
                 closeQuietly(pipe[0]);
                 if (error == SpeechRecognizer.ERROR_LANGUAGE_UNAVAILABLE) {
-                    result.done(null, "Download the " + displayName(tag) + " speech pack to transcribe this on your phone.", PACK_MISSING);
+                    fallBack(context, pcm, tag, result, PACK_MISSING);
                 } else if (error == SpeechRecognizer.ERROR_LANGUAGE_NOT_SUPPORTED) {
-                    result.done(null, displayName(tag) + " voice messages can’t be transcribed on this phone.", UNSUPPORTED);
+                    fallBack(context, pcm, tag, result, null);
                 } else {
                     result.done(null, "No speech was recognised in this voice message.", NO_SPEECH);
                 }
