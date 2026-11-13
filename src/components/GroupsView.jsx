@@ -1,13 +1,13 @@
 import { apiFetch, isNetworkFailure } from '../api.js';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ArrowLeft, MessageCircle, Bell, BellOff, CalendarClock, Check, ChevronDown, Clock, Copy, Download, Flag, Link2, LockKeyhole, LogOut, Megaphone, MinusCircle, Paperclip,
+  ArrowLeft, MessageCircle, ShieldCheck, UserMinus, Bell, BellOff, CalendarClock, Check, ChevronDown, Clock, Copy, Download, Flag, Link2, LockKeyhole, LogOut, Megaphone, MinusCircle, Paperclip,
   Camera, ListPlus, Mic, Smile, Pencil, Phone, Pin, PinOff, QrCode, Search, SendHorizontal, Share2, Star, Timer, Trash2, UserPlus, Users, Video, X,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { inviteUrl } from '../invites.js';
 import { LIST_NAME_MAX, listEntries } from './ChatLists.jsx';
-import { editGroupMessage, resetInvite } from '../parityApi.js';
+import { editGroupMessage, removeMember as removeMemberApi, resetInvite, setMemberRole as setMemberRoleApi } from '../parityApi.js';
 import { groupChatKey, loadPins, setMessagePinned, toggleStar, useAccountData } from '../accountData.js';
 import { canEditMessage } from '../selection.js';
 import { appSettings } from '../settings.js';
@@ -43,6 +43,7 @@ import MediaRenderer from './MediaRenderer.jsx';
 import VoiceMessage from './VoiceMessage.jsx';
 import VoiceRecorderBar from './VoiceRecorderBar.jsx';
 import AttachmentMenu from './AttachmentMenu.jsx';
+import CameraCapture from './CameraCapture.jsx';
 import { parseVoiceContent, voiceContent, voiceExtension } from '../voice.js';
 import { useBackHandler } from '../backStack.js';
 import { nativeClearMessageNotifications, nativeShell } from '../native.js';
@@ -219,9 +220,24 @@ function GroupListsSheet({ groupKey, onClose }) {
 // The group's QR code (its invite link, admins only), as on WhatsApp's group info header.
 // WhatsApp: tap a member (in the member list, or their name or photo on a message) → message or call them one to one,
 // even when they are not a saved contact.
-function MemberSheet({ member, onMessage, onCall, onClose }) {
+function MemberSheet({ member, group, userId, token, onMessage, onCall, onChanged, onClose }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [removing, setRemoving] = useState(false);
+  // WhatsApp: an admin also sees Make group admin / Dismiss as admin and Remove from group here.
+  const canManage = group?.role === 'admin' && member.id !== userId && member.id !== group?.createdBy;
+  async function manage(action, notice) {
+    setBusy(true);
+    setError('');
+    try {
+      await action();
+      onChanged?.(notice);
+      onClose();
+    } catch (caught) {
+      setError(caught.message);
+      setBusy(false);
+    }
+  }
   async function message() {
     setBusy(true);
     setError('');
@@ -238,9 +254,28 @@ function MemberSheet({ member, onMessage, onCall, onClose }) {
           </span>
           <button type="button" onClick={onClose} aria-label="Close"><X size={18} /></button>
         </header>
-        <button type="button" className="groups-member-sheet-row" disabled={busy} onClick={message}><MessageCircle size={20} /> Message {member.name || `@${member.username}`}</button>
-        {onCall && <button type="button" className="groups-member-sheet-row" disabled={busy} onClick={() => onCall(member, 'audio')}><Phone size={20} /> Voice call</button>}
-        {onCall && <button type="button" className="groups-member-sheet-row" disabled={busy} onClick={() => onCall(member, 'video')}><Video size={20} /> Video call</button>}
+        <div className="groups-member-sheet-tiles">
+          <button type="button" disabled={busy} onClick={message}><MessageCircle size={22} /><span>Message</span></button>
+          {onCall && <button type="button" disabled={busy} onClick={() => onCall(member, 'audio')}><Phone size={22} /><span>Voice</span></button>}
+          {onCall && <button type="button" disabled={busy} onClick={() => onCall(member, 'video')}><Video size={22} /><span>Video</span></button>}
+        </div>
+        {canManage && (
+          <>
+            <button type="button" className="groups-member-sheet-row" disabled={busy}
+              onClick={() => manage(() => setMemberRoleApi(token, group.id, member.id, member.role === 'admin' ? 'member' : 'admin'), member.role === 'admin' ? `${member.name} is no longer an admin.` : `${member.name} is now an admin.`)}>
+              <ShieldCheck size={20} /> {member.role === 'admin' ? 'Dismiss as admin' : 'Make group admin'}
+            </button>
+            {removing ? (
+              <div className="groups-confirm" role="group" aria-label="Confirm removing member">
+                <p>Remove {member.name} from “{group.name}”?</p>
+                <button type="button" disabled={busy} onClick={() => setRemoving(false)}>Cancel</button>
+                <button type="button" className="groups-danger" disabled={busy} onClick={() => manage(() => removeMemberApi(token, group.id, member.id), `${member.name} was removed.`)}>Remove</button>
+              </div>
+            ) : (
+              <button type="button" className="groups-member-sheet-row is-danger" disabled={busy} onClick={() => setRemoving(true)}><UserMinus size={20} /> Remove from group</button>
+            )}
+          </>
+        )}
         {error && <p role="alert">{error}</p>}
       </div>
     </>
@@ -300,7 +335,7 @@ function PendingGroupBody({ content, token, self }) {
 export default function GroupsView({ token, userId, client, revision, onClose, onStartGroupCall, onMessagePerson, onCallPerson, initialCreate = false, initialGroupId = '' }) {
   // The member whose Message / Voice call / Video call sheet is open.
   const [personSheet, setPersonSheet] = useState(null);
-  const openPerson = (member) => { if (member && member.id !== userId && onMessagePerson) setPersonSheet(member); };
+  const openPerson = (member) => { if (member && member.id !== userId && (onMessagePerson || group?.role === 'admin')) setPersonSheet(member); };
   const [groups, setGroups] = useState([]);
   const [selected, setSelected] = useState(initialCreate ? '' : initialGroupId);
   const pendingMessages = usePending(userId, selected);
@@ -318,6 +353,7 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
   const [infoSheet, setInfoSheet] = useState('');
   const [recordingVoice, setRecordingVoice] = useState(false);
   const [attachOpen, setAttachOpen] = useState(false);
+  const [cameraOpen, setCameraOpen] = useState(false);
   const sendQueueRef = useRef(Promise.resolve());
   const [memberFilter, setMemberFilter] = useState('');
   const [confirming, setConfirming] = useState('');
@@ -539,7 +575,7 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
   function attachFrom(option) {
     setError('');
     if (option === 'document') pickFiles('');
-    else if (option === 'camera') pickFiles('image/*,video/*', 'environment');
+    else if (option === 'camera') setCameraOpen(true);
     else if (option === 'gallery') pickFiles('image/*,video/*');
     else if (option === 'audio') pickFiles('audio/*');
     else if (option === 'poll' || option === 'event') setRichComposer(option);
@@ -881,7 +917,7 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
                   </label>
                 ) : <button type="button" className="groups-icon-button groups-members-search" onClick={openMemberSearch} aria-label="Search members"><Search size={21} /></button>}
               </div>
-              {group.role === 'admin' && <>
+              {(group.role === 'admin' || group.membersCanAdd) && <>
                 <button type="button" className="groups-add-row" onClick={() => setAddingMember((open) => !open)} aria-expanded={addingMember}>
                   <span className="groups-add-icon"><UserPlus size={22} /></span><strong>Add members</strong>
                 </button>
@@ -952,15 +988,23 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
                   {group.role === 'admin' && <button type="button" className="groups-danger" disabled={busy} onClick={() => perform(async () => { await groupRequest(token, `${groupPath}/clear`, { method: 'POST', body: { everyone: true } }); setConfirming(''); setNotice('Chat cleared for everyone.'); })}>Clear for everyone</button>}
                 </div>
               ) : <SettingsRow icon={MinusCircle} title="Clear chat" danger onClick={() => setConfirming('clear')} />}
-              {confirming === 'leave' ? (
-                <div className="groups-confirm" role="group" aria-label="Confirm leaving group">
-                  <p>{group.role === 'admin' && !group.members.some((member) => member.role === 'admin' && member.id !== userId)
-                    ? 'Leave this group? You are its only admin, so the longest-standing member becomes admin.'
-                    : 'Leave this group? You will lose access to its messages.'}</p>
-                  <button type="button" disabled={busy} onClick={() => setConfirming('')}>Cancel</button>
-                  <button type="button" className="groups-danger" disabled={busy} onClick={() => perform(() => groupRequest(token, `${groupPath}/membership`, { method: 'DELETE' }))}>Confirm leave group</button>
-                </div>
-              ) : <SettingsRow icon={LogOut} title="Leave group" danger onClick={() => setConfirming('leave')} />}
+              {/* WhatsApp's "Exit group": a dialog naming the group, then out (the last admin hands over first). */}
+              <SettingsRow icon={LogOut} title="Exit group" danger onClick={() => setConfirming('leave')} />
+              {confirming === 'leave' && (
+                <>
+                  <div className="groups-sheet-scrim" onClick={() => setConfirming('')} aria-hidden="true" />
+                  <div className="groups-exit-dialog" role="alertdialog" aria-modal="true" aria-labelledby="groups-exit-title">
+                    <h3 id="groups-exit-title">Exit “{group.name}”?</h3>
+                    <p>{group.role === 'admin' && !group.members.some((member) => member.role === 'admin' && member.id !== userId)
+                      ? 'You are the only admin, so the longest-standing member becomes admin. You will stop getting this group’s messages.'
+                      : 'You will stop getting this group’s messages. The group and its members stay.'}</p>
+                    <div className="groups-exit-actions">
+                      <button type="button" disabled={busy} onClick={() => setConfirming('')}>Cancel</button>
+                      <button type="button" className="groups-danger" disabled={busy} onClick={() => perform(() => groupRequest(token, `${groupPath}/membership`, { method: 'DELETE' }))}>Exit group</button>
+                    </div>
+                  </div>
+                </>
+              )}
               {confirming === 'report' ? (
                 <form className="groups-confirm" aria-label="Report group" onSubmit={(event) => { event.preventDefault(); perform(async () => { await groupRequest(token, `${groupPath}/report`, { method: 'POST', body: { reason: reportReason } }); setConfirming(''); setReportReason(''); setNotice('Report sent. Thank you.'); }); }}>
                   <label>Why are you reporting this group?<textarea value={reportReason} maxLength={500} rows={3} onChange={(event) => setReportReason(event.target.value)} /></label>
@@ -1107,7 +1151,7 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
                 <button type="button" className="groups-attach" onClick={() => { setStickersOpen(false); setAttachOpen(true); }} disabled={busy || uploading > 0} aria-label="Attach" title="Document, camera, gallery, audio, poll, event">
                   <Paperclip size={20} />
                 </button>
-                {!draft.trim() && <button type="button" className="groups-attach" onClick={() => pickFiles('image/*,video/*', 'environment')} disabled={busy || uploading > 0} aria-label="Camera" title="Camera"><Camera size={20} /></button>}
+                {!draft.trim() && <button type="button" className="groups-attach" onClick={() => setCameraOpen(true)} disabled={busy || uploading > 0} aria-label="Camera" title="Camera"><Camera size={20} /></button>}
               </span>
               {!editing && !draft.trim()
                 ? <button type="button" className="groups-send groups-mic" onClick={startVoiceNote} disabled={busy || uploading > 0} aria-label="Record voice note" title="Record a voice note"><Mic size={20} /></button>
@@ -1117,11 +1161,18 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
             </>)}
           </>
         )}
+        {cameraOpen && selected && (
+          <CameraCapture onClose={() => setCameraOpen(false)}
+            onGallery={() => { setCameraOpen(false); pickFiles('image/*,video/*'); }}
+            onUnavailable={() => { setCameraOpen(false); setError('The camera isn’t available. Allow camera access for Hidden Messenger, or pick from the gallery.'); }}
+            onSend={async (file, caption) => { setCameraOpen(false); await sendAttachment(file); if (caption) sendText(caption); }} />
+        )}
         <AttachmentMenu isOpen={attachOpen} options={GROUP_ATTACH_OPTIONS} onSelect={attachFrom} onClose={() => setAttachOpen(false)} />
         {joinCode && <JoinGroupSheet code={joinCode} token={token} onClose={() => setJoinCode('')} onJoined={(groupId) => { setJoinCode(''); setSelected(groupId); }} />}
         {group && callPicker && <CallPeoplePicker members={group.members} userId={userId} mode={callPicker} busy={busy} onStart={startCall} onClose={() => setCallPicker('')} />}
         {infoSheet === 'lists' && group && <GroupListsSheet groupKey={`group:${group.id}`} onClose={() => setInfoSheet('')} />}
-        {personSheet && <MemberSheet member={personSheet} onMessage={onMessagePerson} onCall={onCallPerson} onClose={() => setPersonSheet(null)} />}
+        {personSheet && <MemberSheet member={personSheet} group={group} userId={userId} token={token} onMessage={onMessagePerson} onCall={onCallPerson}
+          onChanged={(notice) => { setNotice(notice); refresh(new AbortController().signal); }} onClose={() => setPersonSheet(null)} />}
         {infoSheet === 'qr' && group?.inviteCode && <GroupQrSheet group={group} onShare={shareGroup} onClose={() => setInfoSheet('')} />}
         {group && scheduling && <ScheduleCallSheet busy={busy} onSchedule={scheduleCall} onClose={() => setScheduling(false)} />}
         {group && richComposer && (() => {

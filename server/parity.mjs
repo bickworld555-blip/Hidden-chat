@@ -135,6 +135,8 @@ export function ensureParitySchema(db) {
   if (!groups.has('description')) db.exec("ALTER TABLE groups ADD COLUMN description TEXT NOT NULL DEFAULT ''");
   if (!groups.has('only_admins_send')) db.exec('ALTER TABLE groups ADD COLUMN only_admins_send INTEGER NOT NULL DEFAULT 0');
   if (!groups.has('only_admins_edit')) db.exec('ALTER TABLE groups ADD COLUMN only_admins_edit INTEGER NOT NULL DEFAULT 0');
+  // Group permissions › Members can › Add other members (WhatsApp); off keeps adding to admins (Postgres: 026).
+  if (!groups.has('members_can_add')) db.exec('ALTER TABLE groups ADD COLUMN members_can_add INTEGER NOT NULL DEFAULT 0');
   if (!groups.has('approve_joins')) db.exec('ALTER TABLE groups ADD COLUMN approve_joins INTEGER NOT NULL DEFAULT 0');
   if (!groups.has('invite_code')) db.exec('ALTER TABLE groups ADD COLUMN invite_code TEXT');
   if (!groups.has('community_id')) db.exec('ALTER TABLE groups ADD COLUMN community_id TEXT');
@@ -288,7 +290,7 @@ export function registerParity(ctx) {
   // --- Shared lookups ---------------------------------------------------------------------------------------
   const userExists = db.prepare('SELECT 1 FROM users WHERE id = ?');
   const groupRow = db.prepare(`SELECT id, name, description, created_by AS "createdBy", only_admins_send AS "onlyAdminsSend",
-    only_admins_edit AS "onlyAdminsEdit", approve_joins AS "approveJoins", invite_code AS "inviteCode",
+    only_admins_edit AS "onlyAdminsEdit", approve_joins AS "approveJoins", members_can_add AS "membersCanAdd", invite_code AS "inviteCode",
     community_id AS "communityId", is_announcement AS "isAnnouncement" FROM groups WHERE id = ?`);
   const memberCount = db.prepare('SELECT count(*) AS "count" FROM group_members WHERE group_id = ?');
   const adminCount = db.prepare("SELECT count(*) AS \"count\" FROM group_members WHERE group_id = ? AND role = 'admin'");
@@ -303,6 +305,7 @@ export function registerParity(ctx) {
     onlyAdminsSend: Number(row.onlyAdminsSend) === 1,
     onlyAdminsEdit: Number(row.onlyAdminsEdit) === 1,
     approveJoins: Number(row.approveJoins) === 1,
+    membersCanAdd: Number(row.membersCanAdd) === 1,
     isAnnouncement: Number(row.isAnnouncement) === 1,
   });
   async function groupOf(groupId) {
@@ -511,6 +514,7 @@ export function registerParity(ctx) {
       onlyAdminsSend: group.onlyAdminsSend,
       onlyAdminsEdit: group.onlyAdminsEdit,
       approveJoins: group.approveJoins,
+      membersCanAdd: group.membersCanAdd,
       communityId: group.communityId ?? null,
       isAnnouncement: group.isAnnouncement,
       ...(role === 'admin' ? { inviteCode: group.inviteCode ?? null, pendingRequests: pending } : {}),
@@ -543,7 +547,7 @@ export function registerParity(ctx) {
     if (!await requireMember(request, response, { admin: true })) return;
     const group = await groupOf(request.params.groupId);
     const next = {};
-    for (const [field, column] of [['onlyAdminsSend', 'only_admins_send'], ['onlyAdminsEdit', 'only_admins_edit'], ['approveJoins', 'approve_joins']]) {
+    for (const [field, column] of [['onlyAdminsSend', 'only_admins_send'], ['onlyAdminsEdit', 'only_admins_edit'], ['approveJoins', 'approve_joins'], ['membersCanAdd', 'members_can_add']]) {
       if (request.body?.[field] === undefined) continue;
       if (typeof request.body[field] !== 'boolean') return response.status(400).json({ error: `${field} must be true or false.` });
       if (group.isAnnouncement && field === 'onlyAdminsSend' && !request.body[field]) return response.status(409).json({ error: 'Only admins send in a community’s announcement group.' });
@@ -553,7 +557,7 @@ export function registerParity(ctx) {
     for (const [column, value] of Object.entries(next)) await db.prepare(`UPDATE groups SET ${column} = ? WHERE id = ?`).run(bool(value), group.id);
     await changed(group.id);
     const updated = await groupOf(group.id);
-    response.json({ onlyAdminsSend: updated.onlyAdminsSend, onlyAdminsEdit: updated.onlyAdminsEdit, approveJoins: updated.approveJoins });
+    response.json({ onlyAdminsSend: updated.onlyAdminsSend, onlyAdminsEdit: updated.onlyAdminsEdit, approveJoins: updated.approveJoins, membersCanAdd: updated.membersCanAdd });
   });
 
   // Member tags (WhatsApp's "Add member tag"): a short label each member sets for themselves in one group, shown to

@@ -49,5 +49,7 @@ export function selectionActions(selected, userId, now = Date.now()) {
     hasMedia: selected.some((message) => /^(media|voice):/.test(message.content ?? '')),
     canEdit: Boolean(single) && canEditMessage(single, userId, now),
     canPin: Boolean(single) && !isInert(single) && single.status !== 'failed',
+    // Share (to other apps, through the phone's share sheet): plain text messages only.
+    canShare: count > 0 && selected.every((message) => !message.deleted && !isInert(message) && !STRUCTURED.test(message.content ?? '')),
   };
 }

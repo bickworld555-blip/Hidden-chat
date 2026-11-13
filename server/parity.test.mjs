@@ -187,7 +187,7 @@ test('group admins manage roles, removals, permissions; only admins send when re
 
   assert.equal((await api(`/api/v1/groups/${groupId}/permissions`, { session: ben, method: 'PUT', body: { onlyAdminsSend: true } })).status, 403);
   const permissions = await api(`/api/v1/groups/${groupId}/permissions`, { session: ana, method: 'PUT', body: { onlyAdminsSend: true, onlyAdminsEdit: true } });
-  assert.deepEqual(permissions.body, { onlyAdminsSend: true, onlyAdminsEdit: true, approveJoins: false });
+  assert.deepEqual(permissions.body, { onlyAdminsSend: true, onlyAdminsEdit: true, approveJoins: false, membersCanAdd: false });
   assert.equal((await api(`/api/v1/groups/${groupId}/messages`, { session: ben, method: 'POST', body: { content: 'hi' } })).status, 403);
   assert.equal((await api(`/api/v1/groups/${groupId}/messages`, { session: ana, method: 'POST', body: { content: 'announcement' } })).status, 201);
   assert.equal((await api(`/api/v1/groups/${groupId}/info`, { session: ben, method: 'PUT', body: { name: 'Mine now' } })).status, 403);

@@ -9,7 +9,7 @@ import { isNotice, noticeText } from '../e2e/notices.js';
 import { isMediaContent } from '../media.js';
 import { LOAD_OLDER_STEP, RENDER_WINDOW, renderCountFor, windowedMessages } from '../messageWindow.js';
 import { attachmentContent, sealForUpload } from '../mediaCrypto.js';
-import { ArrowLeft, Ban, Camera, Check, CheckCheck, ChevronDown, ChevronUp, Clock, CornerUpLeft, FileText, Forward, Image as ImageIcon, Info, Link2, Mic, MoreVertical, Paperclip, Pencil, Phone, Pin, PinOff, Search, Send, ShoppingCart, Smile, Star, Timer, Trash2, Video, X } from 'lucide-react';
+import { ArrowLeft, Ban, Camera, Check, CheckCheck, ChevronDown, ChevronUp, Clock, CornerUpLeft, FileText, Forward, Image as ImageIcon, Info, Link2, Mic, MoreVertical, Paperclip, Pencil, Phone, Pin, PinOff, Search, Send, Share2, ShoppingCart, Smile, Star, Timer, Trash2, Video, X } from 'lucide-react';
 import { parseVoiceContent, voiceContent, voiceExtension } from '../voice.js';
 import { COMPOSER_EMOJIS, COMPOSER_MAX_LENGTH, composerAction, insertAtCaret } from '../composer.js';
 import { playNotificationTone } from '../sounds.js';
@@ -57,6 +57,7 @@ import { presenceLine } from '../presence.js';
 import PendingUpload from './PendingUpload.jsx';
 import { EventBubble, EventComposer, PollBubble, PollComposer, ViewOnceVoice } from './RichMessages.jsx';
 import { parseScheduledCall } from '../groupChat.js';
+import CameraCapture from './CameraCapture.jsx';
 
 // A call scheduled from Calls › Schedule (the same card groups use): its name, when, and a button to start it.
 function ScheduledCallBubble({ call, onStart, children }) {
@@ -1201,7 +1202,7 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
     else if (option === 'videonote') setPicker('videonote');
     else if (option === 'mysticker') setPicker('stickermaker');
     else if (option === 'order') setPicker('order');
-    else if (option === 'camera') openFilePicker('image/*,video/*', 'environment');
+    else if (option === 'camera') setPicker('camera');
     else if (option === 'audio') openFilePicker('audio/*');
     else if (option === 'location') setPicker('location');
     else if (option === 'contact') setPicker('contact');
@@ -1674,6 +1675,16 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
             >
               <Forward size={18} />
             </button>
+            {actions.canShare && typeof navigator.share === 'function' && (
+              <button type="button" className="icon-button" title="Share" aria-label="Share"
+                onClick={() => {
+                  const text = selectedMessages.map((item) => item.content).join('\n\n');
+                  clearSelection();
+                  navigator.share({ text }).catch(() => {});
+                }}>
+                <Share2 size={18} />
+              </button>
+            )}
             <button
               type="button"
               className="icon-button"
@@ -1900,7 +1911,7 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
                 placeholder={translate(editing ? 'Edit message' : 'Message', language)} aria-label={translate(editing ? 'Edit message' : 'Message', language)} maxLength={COMPOSER_MAX_LENGTH} />
               <button type="button" className="composer-icon" onClick={() => setMenuOpen(true)} aria-label="Attach" disabled={busy}><Paperclip size={20} /></button>
               {action === 'voice' && (
-                <button type="button" className="composer-icon composer-camera" onClick={() => openFilePicker('image/*,video/*', 'environment')} aria-label="Camera" disabled={busy}><Camera size={20} /></button>
+                <button type="button" className="composer-icon composer-camera" onClick={() => setPicker('camera')} aria-label="Camera" disabled={busy}><Camera size={20} /></button>
               )}
             </div>
             {editing ? (
@@ -1965,6 +1976,17 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
       {picker === 'contact' && <ContactSharePicker contacts={shareable} onSelect={handleContact} onClose={() => setPicker(null)} />}
       {picker === 'poll' && <PollComposer onSend={(content) => { sendContent(content); setPicker(null); }} onClose={() => setPicker(null)} />}
       {picker === 'event' && <EventComposer onSend={(content) => { sendContent(content); setPicker(null); }} onClose={() => setPicker(null)} />}
+      {picker === 'camera' && (
+        <CameraCapture onClose={() => setPicker(null)}
+          onGallery={() => { setPicker(null); openFilePicker('image/*,video/*'); }}
+          onUnavailable={() => { setPicker(null); setError('The camera isn’t available. Allow camera access for Hidden Messenger, or pick from the gallery.'); }}
+          onSend={async (file, caption) => {
+            setPicker(null);
+            const prepared = await prepareForSend(file, file.name, appSettings().get('media.uploadQuality'));
+            await uploadAndSend(prepared.blob, prepared.filename, 'media');
+            if (caption) sendContent(caption);
+          }} />
+      )}
       {picker === 'videonote' && (
         <VideoNoteRecorder onClose={() => setPicker(null)} onSend={(blob, seconds) => uploadAndSend(blob, `video-note.${blob.type.includes('mp4') ? 'mp4' : 'webm'}`, 'vnote', seconds)} />
       )}

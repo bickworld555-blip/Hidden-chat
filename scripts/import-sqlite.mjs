@@ -12,7 +12,7 @@ export const IMPORT_TABLES = Object.freeze([
   { name: 'sessions', columns: ['token_hash', 'user_id', 'device_id', 'device_name', 'expires_at', 'created_at', 'last_active_at'], users: ['user_id'] },
   { name: 'contacts', columns: ['owner_id', 'contact_id', 'created_at', 'saved', 'hidden'], users: ['owner_id', 'contact_id'], key: ['owner_id', 'contact_id'] },
   // Groups precede media and uploads, whose group_id references them.
-  { name: 'groups', columns: ['id', 'name', 'created_by', 'created_at', 'description', 'only_admins_send', 'only_admins_edit', 'approve_joins', 'invite_code', 'community_id', 'is_announcement'], users: ['created_by'] },
+  { name: 'groups', columns: ['id', 'name', 'created_by', 'created_at', 'description', 'only_admins_send', 'only_admins_edit', 'approve_joins', 'invite_code', 'community_id', 'is_announcement', 'members_can_add'], users: ['created_by'] },
   { name: 'group_members', columns: ['group_id', 'user_id', 'role', 'auto_delete', 'joined_at', 'last_read_at', 'cleared_at', 'member_tag'], users: ['user_id'], key: ['group_id', 'user_id'] },
   { name: 'messages', columns: ['id', 'sender_id', 'receiver_id', 'created_at', 'content', 'status', 'deleted_at', 'reply_to_id', 'forwarded', 'expires_at', 'played_at', 'edited_at'], users: ['sender_id', 'receiver_id'] },
   { name: 'media', columns: ['id', 'sender_id', 'receiver_id', 'group_id', 'filename', 'content_type', 'byte_size', 'disk_name', 'created_at'], users: ['sender_id', 'receiver_id'] },

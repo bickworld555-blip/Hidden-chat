@@ -1050,10 +1050,12 @@ export function createChatServer({
     if (!await groupMembership.get(groupId, userId)) return response.status(404).json({ error: 'Group not found.' });
     const inserted = await db.prepare(`INSERT INTO group_members(group_id, user_id, role, auto_delete, joined_at)
       SELECT ?, u.id, 'member', 0, ? FROM users u WHERE u.id = ?
-      AND EXISTS (SELECT 1 FROM group_members WHERE group_id = ? AND user_id = ? AND role = 'admin')
+      AND EXISTS (SELECT 1 FROM group_members m JOIN groups g ON g.id = m.group_id
+        WHERE m.group_id = ? AND m.user_id = ? AND (m.role = 'admin' OR g.members_can_add = 1))
       ON CONFLICT(group_id, user_id) DO NOTHING`).run(groupId, Date.now(), memberId, groupId, userId);
     if (!inserted.changes) {
-      if ((await groupMembership.get(groupId, userId))?.role !== 'admin') return response.status(403).json({ error: 'Only group admins can add members.' });
+      const adder = await db.prepare("SELECT m.role, g.members_can_add AS \"membersCanAdd\" FROM group_members m JOIN groups g ON g.id = m.group_id WHERE m.group_id = ? AND m.user_id = ?").get(groupId, userId);
+      if (adder?.role !== 'admin' && Number(adder?.membersCanAdd) !== 1) return response.status(403).json({ error: 'Only group admins can add members.' });
       if (!await db.prepare('SELECT 1 FROM users WHERE id = ?').get(memberId)) return response.status(404).json({ error: 'User not found.' });
       return response.status(409).json({ error: 'User is already a group member.' });
     }

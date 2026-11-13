@@ -27,6 +27,7 @@ export function GroupAdminSettings({ group, token, onChanged, onNotice, onError 
   const [busy, setBusy] = useState(false);
   const [requests, setRequests] = useState([]);
   const [copied, setCopied] = useState(false);
+  const [editingAdmins, setEditingAdmins] = useState(false);
 
   useEffect(() => {
     if (!isAdmin || !group.approveJoins && !group.pendingRequests) { setRequests([]); return; }
@@ -78,16 +79,44 @@ export function GroupAdminSettings({ group, token, onChanged, onNotice, onError 
 
       {isAdmin && (
         <section aria-label="Group permissions">
+          {/* WhatsApp's Group permissions: what members can do, what only admins do, and who the admins are. */}
           <h4>Group permissions</h4>
-          <Toggle title="Only admins can send messages" detail={group.isAnnouncement ? 'Always on in a community’s announcement group' : 'Members can still read and react'}
-            checked={group.onlyAdminsSend} disabled={busy || group.isAnnouncement}
-            onChange={(value) => run(() => api.updateGroupPermissions(token, group.id, { onlyAdminsSend: value }), value ? 'Only admins can send messages now.' : 'Everyone can send messages now.')} />
-          <Toggle title="Only admins can edit group info" detail="Name, description and pinned messages"
-            checked={group.onlyAdminsEdit} disabled={busy}
-            onChange={(value) => run(() => api.updateGroupPermissions(token, group.id, { onlyAdminsEdit: value }))} />
+          <p className="hm-group-admin-label">Members can:</p>
+          <Toggle title="Edit group settings" detail="Change the group's name, photo and description, and pin messages"
+            checked={!group.onlyAdminsEdit} disabled={busy}
+            onChange={(value) => run(() => api.updateGroupPermissions(token, group.id, { onlyAdminsEdit: !value }))} />
+          <Toggle title="Send new messages" detail={group.isAnnouncement ? 'Always off in a community’s announcement group' : 'Off: only admins send; members still read and react'}
+            checked={!group.onlyAdminsSend} disabled={busy || group.isAnnouncement}
+            onChange={(value) => run(() => api.updateGroupPermissions(token, group.id, { onlyAdminsSend: !value }), value ? 'Everyone can send messages now.' : 'Only admins can send messages now.')} />
+          <Toggle title="Add other members" detail="Members can add people to the group"
+            checked={Boolean(group.membersCanAdd)} disabled={busy}
+            onChange={(value) => run(() => api.updateGroupPermissions(token, group.id, { membersCanAdd: value }))} />
+          <p className="hm-group-admin-label">Admins can:</p>
           <Toggle title="Approve new members" detail="People who join with a link wait for an admin"
             checked={group.approveJoins} disabled={busy}
             onChange={(value) => run(() => api.updateGroupPermissions(token, group.id, { approveJoins: value }))} />
+          <p className="hm-group-admin-label">Group admins</p>
+          <button type="button" className="hm-group-admins-toggle" onClick={() => setEditingAdmins((open) => !open)} aria-expanded={editingAdmins}>
+            <ShieldCheck size={18} aria-hidden="true" /> Edit group admins
+          </button>
+          {editingAdmins && (
+            <ul className="hm-group-admins" aria-label="Group admins">
+              {(group.members ?? []).map((member) => {
+                const admin = member.role === 'admin';
+                const locked = member.id === group.createdBy;
+                return (
+                  <li key={member.id}>
+                    <label>
+                      <input type="checkbox" checked={admin} disabled={busy || locked}
+                        onChange={() => run(() => api.setMemberRole(token, group.id, member.id, admin ? 'member' : 'admin'), admin ? `${member.name} is no longer an admin.` : `${member.name} is now an admin.`)} />
+                      <Avatar {...member} size="small" />
+                      <span><strong>{member.name}</strong><small>{locked ? 'Group creator' : admin ? 'Admin' : 'Member'}</small></span>
+                    </label>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
         </section>
       )}
 

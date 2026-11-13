@@ -42,7 +42,7 @@ function AvatarThumb({ persona }) {
 
 // Display name (editable, shown bold) above the permanent @handle and ID.
 // About: a short line under your name (WhatsApp's "About"), with its ready-made choices. Who sees it: Privacy › About.
-function AboutEditor() {
+export function AboutEditor() {
   const sessionToken = useChatStore((state) => state.sessionToken);
   const [about, setAbout] = useState(null);
   const [editing, setEditing] = useState(false);
@@ -452,6 +452,11 @@ export default function ToolsView({ darkMode, themePref = 'light', onChooseTheme
             </button>
           </div>
           <AboutEditor />
+          {/* WhatsApp Business: tapping your profile in Settings opens Edit profile. */}
+          <button type="button" className="about-row profile-edit-row" onClick={() => onSheet?.('businessprofile')}>
+            <small>Edit profile</small>
+            <span>Photo, cover, business information, links and contact details</span>
+          </button>
           {accounts.length > 1 && (
             <div className="account-strip" aria-label="Signed-in accounts">
               {accounts.map((account) => (

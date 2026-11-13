@@ -41,7 +41,7 @@ test('canDeleteForEveryone allows only my own server messages within the window'
 
 test('selectionActions matches WhatsApp single and bulk selection actions', () => {
   const single = selectionActions([msg('a')], 'me', NOW);
-  assert.deepEqual(single, { count: 1, canReply: true, canInfo: true, canForward: true, canStar: true, allStarred: false, deleteForEveryone: true, hasMedia: false, canEdit: true, canPin: true });
+  assert.deepEqual(single, { count: 1, canReply: true, canInfo: true, canForward: true, canStar: true, allStarred: false, deleteForEveryone: true, hasMedia: false, canEdit: true, canPin: true, canShare: true });
 
   const bulk = selectionActions([msg('a', { starred: true }), msg('b', { starred: true, content: 'media:x:photo.png' })], 'me', NOW);
   assert.equal(bulk.count, 2);
@@ -58,7 +58,7 @@ test('selectionActions matches WhatsApp single and bulk selection actions', () =
 
   // "You deleted this message": only Delete for me is left.
   const deleted = selectionActions([msg('d', { content: '', deleted: true })], 'me', NOW);
-  assert.deepEqual(deleted, { count: 1, canReply: false, canInfo: false, canForward: false, canStar: false, allStarred: false, deleteForEveryone: false, hasMedia: false, canEdit: false, canPin: false });
+  assert.deepEqual(deleted, { count: 1, canReply: false, canInfo: false, canForward: false, canStar: false, allStarred: false, deleteForEveryone: false, hasMedia: false, canEdit: false, canPin: false, canShare: false });
 });
 
 test('chat window keeps selection and reactions isolated and resets cleanly', () => {

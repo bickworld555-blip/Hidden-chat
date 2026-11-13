@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AtSign, CalendarClock, ChevronRight, CircleHelp, Clock, Copy, FileText, FolderOpen, Globe, Hand, ImagePlus, Link2, ListChecks, Mail, MapPin, Megaphone, MessageSquareText, Pencil, Phone, Plus, QrCode, Share2, ShoppingBag, Store, Tag, Trash2, X, Zap } from 'lucide-react';
 import ProfilePhoto from '../ProfilePhoto.jsx';
-import { DisplayNameEditor } from '../ToolsView.jsx';
+import { AboutEditor, DisplayNameEditor } from '../ToolsView.jsx';
 import { QRCodeSVG } from 'qrcode.react';
 import { useChatStore } from '../../store.js';
 import { apiFetch } from '../../api.js';
@@ -485,6 +485,7 @@ function BusinessProfileForm({ token, userId, onOpenSection, onError, onNotice }
       </div>
 
       <h4 className="hm-form-section">Business information</h4>
+      {user?.username && <ProfileRow icon={AtSign} label="Username · people find you by it" value={`@${user.username}`} onOpen={() => navigator.clipboard?.writeText(`@${user.username}`).then(() => onNotice('Username copied.')).catch(() => {})} />}
       {row('category', { icon: Store, label: 'Category', value: profile.category, placeholder: 'Choose a category' }, <>
         {text('category', { max: 60, list: 'business-categories', placeholder: 'Choose or type a category' })}
         <datalist id="business-categories">{BUSINESS_CATEGORIES.map((name) => <option key={name} value={name} />)}</datalist>
@@ -518,7 +519,8 @@ function BusinessProfileForm({ token, userId, onOpenSection, onError, onNotice }
       <h4 className="hm-form-section">Contact information</h4>
       {row('email', { icon: Mail, label: 'Business email', value: profile.email, placeholder: 'Add business email' }, text('email', { max: 128, type: 'email', placeholder: 'name@example.com', autoComplete: 'email' }))}
       {row('phone', { icon: Phone, label: 'Phone', value: profile.phone, placeholder: 'Add a contact number' }, text('phone', { max: 32, type: 'tel', placeholder: '+880 1712 345678', autoComplete: 'tel' }))}
-      <p className="hm-muted">People who chat with you see this in your contact info.</p>
+      <div className="bp-about"><AboutEditor /></div>
+      <p className="hm-muted">People who chat with you see this in your contact info. Who sees About: Settings › Privacy › About.</p>
       <button type="submit" className="groups-primary bp-save" disabled={busy}>{busy ? 'Saving…' : 'Save'}</button>
     </form>
   );

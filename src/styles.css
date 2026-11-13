@@ -5614,3 +5614,49 @@ button.groups-sender { padding: 0; border: 0; background: none; font: inherit; f
 .app-info .tool-item { align-self: stretch; text-align: left; }
 .app-info-mark { width: 84px; height: 84px; }
 .hm-sd-field { display: flex; flex-direction: column; gap: 4px; padding: 6px 0 !important; font-size: 13px !important; color: #8696a0; } .hm-sd-field input { padding: 10px 12px; border: 1px solid rgba(134, 150, 160, .45); border-radius: 10px; background: transparent; color: inherit; font: inherit; font-size: 16px; }
+/* Group permissions (WhatsApp's layout) and Edit group admins. */
+.hm-group-admin-label { margin: 14px 0 4px; color: #8696a0; font-size: 13px; font-weight: 600; }
+.hm-group-admins-toggle { display: flex; align-items: center; gap: 12px; width: 100%; padding: 12px 4px; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.hm-group-admins { margin: 0; padding: 0; list-style: none; }
+.hm-group-admins label { display: flex; align-items: center; gap: 12px; padding: 8px 4px; cursor: pointer; }
+.hm-group-admins input { width: 20px; height: 20px; accent-color: #0b57d0; }
+.hm-group-admins span { display: flex; flex-direction: column; }
+.hm-group-admins small { color: #8696a0; }
+/* Group member sheet: WhatsApp's Message / Voice / Video tiles, admin rows; the Exit group dialog. */
+.groups-member-sheet-tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin: 6px 0 10px; }
+.groups-member-sheet-tiles button { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 12px 6px; border: 1px solid rgba(134, 150, 160, .3); border-radius: 14px; background: transparent; color: #0b57d0; font: inherit; cursor: pointer; }
+.groups-member-sheet-tiles span { color: var(--wa-text, #111b21); font-size: 13px; }
+.dark-theme .groups-member-sheet-tiles button { color: #7cacf8; }
+.groups-member-sheet-row.is-danger, .groups-member-sheet-row.is-danger svg { color: #d93025; }
+.groups-exit-dialog { position: absolute; left: 50%; top: 50%; z-index: 7; width: min(340px, calc(100% - 40px)); padding: 22px 22px 12px; border-radius: 24px; background: var(--wa-panel, #fff); color: var(--wa-text, #111b21); box-shadow: 0 12px 40px rgba(0, 0, 0, .35); transform: translate(-50%, -50%); }
+.dark-theme .groups-exit-dialog { background: #1d2733; color: #e2e6eb; }
+.groups-exit-dialog h3 { margin: 0 0 10px; font-size: 19px; font-weight: 500; }
+.groups-exit-dialog p { margin: 0 0 14px; color: #8696a0; font-size: 14px; line-height: 1.45; }
+.groups-exit-actions { display: flex; justify-content: flex-end; gap: 6px; }
+.groups-exit-actions button { padding: 10px 14px; border: 0; border-radius: 18px; background: transparent; color: #0b57d0; font: inherit; font-weight: 600; cursor: pointer; }
+.groups-exit-actions .groups-danger { color: #d93025; }
+
+/* In-app camera (CameraCapture): full-screen viewfinder, shutter (tap photo, hold video), modes, preview + caption. */
+.camera-capture { position: fixed; inset: 0; z-index: 2000; display: flex; flex-direction: column; background: #000; color: #fff; }
+.camera-viewfinder, .camera-preview { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; background: #000; }
+.camera-preview { object-fit: contain; }
+.camera-viewfinder.is-mirrored { transform: scaleX(-1); }
+.camera-top { position: relative; z-index: 1; display: flex; justify-content: space-between; padding: calc(12px + env(safe-area-inset-top)) 14px 0; }
+.camera-top button, .camera-round { display: grid; place-items: center; width: 48px; height: 48px; border: 0; border-radius: 50%; background: rgba(0, 0, 0, .35); color: #fff; cursor: pointer; }
+.camera-round:disabled { opacity: .4; }
+.camera-timer { position: relative; z-index: 1; display: flex; align-items: center; gap: 8px; align-self: center; margin: 10px 0 0; padding: 4px 12px; border-radius: 14px; background: rgba(0, 0, 0, .45); font-variant-numeric: tabular-nums; }
+.camera-timer span { width: 10px; height: 10px; border-radius: 50%; background: #ea4335; }
+.camera-error { position: relative; z-index: 1; align-self: center; margin: 10px 16px; padding: 8px 12px; border-radius: 10px; background: rgba(217, 48, 37, .85); }
+.camera-bottom { position: relative; z-index: 1; margin-top: auto; padding: 0 0 calc(16px + env(safe-area-inset-bottom)); background: linear-gradient(transparent, rgba(0, 0, 0, .55)); }
+.camera-controls { display: flex; align-items: center; justify-content: space-around; padding: 18px 24px 10px; }
+.camera-shutter { width: 76px; height: 76px; border: 5px solid #fff; border-radius: 50%; background: transparent; cursor: pointer; touch-action: none; transition: transform .15s; }
+.camera-shutter.is-video { background: rgba(234, 67, 53, .25); }
+.camera-shutter.is-recording { transform: scale(1.15); border-color: #ea4335; background: #ea4335; }
+.camera-modes { display: flex; justify-content: center; gap: 28px; }
+.camera-modes button { padding: 6px 10px; border: 0; border-radius: 14px; background: transparent; color: rgba(255, 255, 255, .7); font: inherit; font-weight: 600; cursor: pointer; }
+.camera-modes button[aria-selected="true"] { background: rgba(255, 255, 255, .2); color: #fff; }
+.camera-hint { margin: 8px 0 0; color: rgba(255, 255, 255, .75); font-size: 13px; text-align: center; }
+.camera-send { position: absolute; left: 0; right: 0; bottom: 0; z-index: 1; display: flex; gap: 10px; padding: 12px 14px calc(14px + env(safe-area-inset-bottom)); background: linear-gradient(transparent, rgba(0, 0, 0, .65)); }
+.camera-send input { flex: 1; min-width: 0; padding: 12px 16px; border: 0; border-radius: 24px; background: rgba(32, 44, 51, .92); color: #fff; font: inherit; font-size: 16px; outline: none; }
+.camera-send button { display: grid; place-items: center; width: 52px; height: 52px; border: 0; border-radius: 50%; background: #0b57d0; color: #fff; cursor: pointer; }
+.profile-edit-row span { color: #0b57d0; font-size: 14px; } .dark-theme .profile-edit-row span { color: #7cacf8; } .bp-about .about-row, .bp-about .about-editor { padding-left: 4px; padding-right: 4px; }
