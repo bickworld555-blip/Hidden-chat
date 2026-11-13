@@ -35,6 +35,8 @@ function remember(state) {
 }
 
 export const nativeState = async () => remember(await invoke('getState'));
+// "wifi", "mobile", "roaming", "none" or "unknown" (HiddenNativePlugin.networkState), or null outside the app.
+export const nativeNetworkKind = async () => (await invoke('networkState'))?.kind ?? null;
 // Status and navigation bar icons follow the app's theme (dark icons on the light theme).
 export const nativeSetSystemBarsTheme = (theme) => invoke('setSystemBarsTheme', { theme });
 // Invite a friend (android Invites.java): contacts stay on the phone; invites go out as a text from it.

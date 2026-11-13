@@ -1,6 +1,7 @@
 // Framework-free WebRTC call engine. Owns one RTCPeerConnection, local/remote streams,
 // the inbound signal queue, perfect negotiation, ICE restart and all call timers.
 // The UI only subscribes to snapshots; Node tests drive it with @roamhq/wrtc.
+import { recordUsage, transportBytes } from './networkUsage.js';
 import {
   AUDIO_MAX_BITRATE,
   VIDEO_MAX_BITRATE,
@@ -130,6 +131,31 @@ export function createCallEngine({
   };
 
   let connection = null;
+  // Network usage › Calls: the connection's byte counters, sampled while connected (each sample adds what moved since
+  // the last one), and the call counted once as outgoing or incoming.
+  let usageTimer = null;
+  const usageSeen = new WeakMap(); // connection → bytes already counted (an ICE restart's new connection starts at 0)
+  let usageCounted = false;
+  const USAGE_SAMPLE_MS = 5000;
+  function sampleUsage(pc) {
+    if (typeof pc?.getStats !== 'function') return;
+    pc.getStats().then((report) => {
+      const now = transportBytes(report);
+      const seen = usageSeen.get(pc) ?? { sent: 0, received: 0 };
+      recordUsage('calls', { sent: now.sent - seen.sent, received: now.received - seen.received });
+      usageSeen.set(pc, { sent: Math.max(now.sent, seen.sent), received: Math.max(now.received, seen.received) });
+    }).catch(() => {});
+  }
+  function startUsage(pc) {
+    if (!usageCounted) {
+      usageCounted = true;
+      recordUsage('calls', direction === 'incoming' ? { incoming: 1 } : { outgoing: 1 });
+    }
+    if (usageTimer == null) {
+      usageTimer = setInterval(() => sampleUsage(pc), USAGE_SAMPLE_MS);
+      usageTimer?.unref?.(); // never keeps a Node test process alive
+    }
+  }
   let closed = false;
   let connectedAnnounced = false;
   let peerConnected = false;
@@ -183,7 +209,10 @@ export function createCallEngine({
   function releaseConnection() {
     const current = connection;
     connection = null;
+    clearInterval(usageTimer);
+    usageTimer = null;
     if (!current) return;
+    sampleUsage(current); // the last few seconds (before close() ends the counters)
     current.onicecandidate = null;
     current.ontrack = null;
     current.onnegotiationneeded = null;
@@ -466,6 +495,7 @@ export function createCallEngine({
       log('connectionState', next);
       if (next === 'connected') {
         markConnected({ announce: true });
+        startUsage(pc);
       } else if (next === 'disconnected') {
         if (state.status === 'connected') set({ status: 'reconnecting' });
         if (timers.reconnect == null) {

@@ -229,6 +229,30 @@ public class HiddenNativePlugin extends Plugin {
         call.resolve();
     }
 
+    /**
+     * How the phone is online, for Storage and data › Media auto-download: "wifi" (Wi-Fi or Ethernet), "mobile",
+     * "roaming" (mobile data abroad) or "none". Needs only ACCESS_NETWORK_STATE (granted at install).
+     */
+    @PluginMethod
+    public void networkState(PluginCall call) {
+        JSObject result = new JSObject();
+        String kind = "none";
+        try {
+            android.net.ConnectivityManager manager = (android.net.ConnectivityManager) getContext().getSystemService(Context.CONNECTIVITY_SERVICE);
+            android.net.NetworkCapabilities caps = manager == null ? null : manager.getNetworkCapabilities(manager.getActiveNetwork());
+            if (caps != null) {
+                if (caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI) || caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_ETHERNET)) kind = "wifi";
+                else if (caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_CELLULAR)) {
+                    kind = caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_NOT_ROAMING) ? "mobile" : "roaming";
+                } else kind = "wifi"; // VPN over an unknown link, Bluetooth tethering…: treated like Wi-Fi
+            }
+        } catch (RuntimeException unavailable) {
+            kind = "unknown";
+        }
+        result.put("kind", kind);
+        call.resolve(result);
+    }
+
     @PluginMethod
     public void getState(PluginCall call) {
         call.resolve(state());

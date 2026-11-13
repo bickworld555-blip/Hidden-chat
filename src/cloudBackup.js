@@ -6,6 +6,7 @@
 // The secret is kept on this device, encrypted at rest (src/secureStorage.js), so backups can run daily or weekly
 // without asking again; it is never sent anywhere.
 import { apiFetch } from './api.js';
+import { recordUsage } from './networkUsage.js';
 import { MIN_PASSWORD_LENGTH, buildBackupData, openBackup, sealBackup, validateBackupData } from './backup.js';
 import { secureDel, secureGet, secureSet } from './secureStorage.js';
 import { loadAllSavedMessages, useChatStore } from './store.js';
@@ -81,6 +82,7 @@ export async function backUpNow(token, { onStage } = {}) {
     body: new Blob([text], { type: 'application/octet-stream' }),
   });
   if (!response.ok) throw new Error((await response.json().catch(() => null))?.error ?? 'The backup could not be uploaded.');
+  recordUsage('backup', { sent: text.length });
   const saved = await response.json();
   await secureSet(SETTINGS_KEY(state.userId), { ...settings, lastAt: saved.updatedAt ?? Date.now() });
   return saved;
@@ -107,7 +109,9 @@ export async function restoreFromAccountBackup(token, typed, kind) {
   if (!response.ok) throw new Error(response.status === 404 ? 'No backup has been made for this account.' : 'The backup could not be downloaded.');
   const secret = normalizeSecret(typed, kind);
   const state = useChatStore.getState();
-  const data = validateBackupData(await openBackup(await response.text(), secret), state.userId);
+  const sealed = await response.text();
+  recordUsage('backup', { received: sealed.length });
+  const data = validateBackupData(await openBackup(sealed, secret), state.userId);
   const result = state.restoreBackup(data);
   // The same secret keeps future backups going on this device.
   await saveBackupSettings(state.userId, { secret, kind, frequency: (await backupSettings(state.userId))?.frequency ?? 'daily' });

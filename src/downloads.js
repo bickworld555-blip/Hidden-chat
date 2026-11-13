@@ -7,6 +7,7 @@ import { PREVIEW_LIMIT_BYTES } from './transfer.js';
 import { downloadMedia, isEncryptedMedia, loadMediaBlob, loadMediaInfo, saveBlob } from './media.js';
 import { nativeShell, onNative } from './native.js';
 import { saveMediaToPhone } from './mediaSave.js';
+import { recordUsage } from './networkUsage.js';
 
 const downloads = new Map();
 const listeners = new Set();
@@ -173,6 +174,7 @@ export async function downloadWithProgress(id, filename, sessionToken) {
       return;
     }
     finish(id, { status: 'done', fraction: 1, received: total });
+    recordUsage('media', { received: total });
   } catch (error) {
     if (error?.name === 'AbortError') finish(id, { status: 'cancelled' });
     else finish(id, { status: 'error', error: error?.message || 'Download failed.' });

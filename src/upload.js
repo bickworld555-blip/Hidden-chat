@@ -5,6 +5,7 @@ import { apiFetch, apiUrl } from './api.js';
 import { MAX_TRANSFER_BYTES, UPLOAD_CHUNK_BYTES, uploadPlan } from './transfer.js';
 import { createUploadQueue, uploadPriority } from './uploadQueue.js';
 import { nativeSetUploads } from './native.js';
+import { recordUsage } from './networkUsage.js';
 
 const MAX_CHUNK_ATTEMPTS = 6;
 const RETRY_BASE_MS = 800;
@@ -175,7 +176,7 @@ export function uploadFile(file, options = {}) {
   }, { priority: priority ?? uploadPriority({ size: file?.size ?? 0, kind }), label: file?.name || 'attachment', size: file?.size ?? 0 });
 }
 
-async function uploadFileNow(file, { receiverId, groupId, sessionToken, signal, onProgress } = {}) {
+async function uploadFileNow(file, { receiverId, groupId, sessionToken, signal, onProgress, usage = 'media' } = {}) {
   const filename = file.name || 'attachment';
   const sizeError = uploadSizeError(filename, file.size);
   if (sizeError) throw new Error(sizeError);
@@ -186,5 +187,7 @@ async function uploadFileNow(file, { receiverId, groupId, sessionToken, signal, 
     ? await chunkedUpload(file, filename, { receiverId, groupId, sessionToken, signal, onProgress })
     : await singleRequest(file, filename, { receiverId, groupId, sessionToken, signal, onProgress });
   onProgress?.(file.size, file.size);
+  // Network usage: a status photo or video counts under Status, everything else under Media.
+  recordUsage(usage === 'status' ? 'status' : 'media', { sent: file.size });
   return result;
 }

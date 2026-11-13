@@ -7,9 +7,10 @@
 //                reference row in the encrypted SQLite database (src/sqliteMessageDb.js: local_file_path,
 //                file_hash, decryption_key, server_blob_path).
 //   Web:         IndexedDB ("hm-media-vault").
-import { createStore, del, get, set } from 'idb-keyval';
+import { createStore, del, entries, get, set } from 'idb-keyval';
 import { nativeShell } from './native.js';
 import { classifyStorageError, reportStorageFailure } from './storageHealth.js';
+import { recordUsage } from './networkUsage.js';
 
 // Attachments bigger than this are fetched ahead of time only by the Android app, straight to disk, on Wi-Fi and
 // with room to spare (src/media.js largeDownloadPlan); otherwise they are kept once opened.
@@ -99,6 +100,44 @@ export async function readStoredMedia(id) {
   }
 }
 
+/**
+ * Every attachment kept on this device, for Settings › Storage and data › Manage storage: [{ id, size, contentType,
+ * storedAt }]. On the phone from the SQLite records (no file is read); in a browser from the IndexedDB vault.
+ */
+export async function listStoredMedia() {
+  const parts = await native();
+  const found = new Map();
+  if (parts) {
+    try {
+      for (const row of await parts.refs.listMediaRefs()) {
+        found.set(row.id, { id: row.id, size: Number(row.byte_size) || 0, contentType: row.content_type ?? '', storedAt: Number(row.stored_at) || 0 });
+      }
+    } catch { /* the web store below */ }
+  }
+  const target = vault();
+  if (target) {
+    try {
+      for (const [name, value] of await entries(target)) {
+        const id = String(name).replace(/^media:/, '');
+        if (!found.has(id) && value?.blob instanceof Blob) found.set(id, { id, size: value.blob.size, contentType: value.blob.type || value.info?.contentType || '', storedAt: 0 });
+      }
+    } catch { /* unavailable */ }
+  }
+  return [...found.values()];
+}
+
+/** Whether this attachment is kept here, without reading it (the phone checks its record only). */
+export async function isStoredLocally(id) {
+  if (!id) return false;
+  const parts = await native();
+  if (parts) {
+    try { if (await parts.refs.readMediaRef(id)) return true; } catch { /* web store below */ }
+  }
+  const target = vault();
+  if (!target) return false;
+  try { return Boolean((await get(key(id), target))?.blob); } catch { return false; }
+}
+
 export async function hasStoredMedia(id) {
   return Boolean((await readStoredMedia(id))?.blob);
 }
@@ -153,6 +192,7 @@ export async function downloadMediaToDevice(id, url, info = null, { descriptor =
     await parts.Filesystem.downloadFile({ url, path, directory: parts.Directory.Data, recursive: true });
     const stat = await parts.Filesystem.stat({ path, directory: parts.Directory.Data });
     if (size && Number(stat.size) !== Number(size)) throw new Error(`Downloaded ${stat.size} of ${size} bytes.`);
+    recordUsage('media', { received: Number(stat.size) });
     await parts.refs.writeMediaRef({
       id, localFilePath: path, fileHash: null, decryptionKey: descriptor ? JSON.stringify(descriptor) : null,
       serverBlobPath: `/api/v1/media/${id}`, contentType: info?.contentType ?? 'application/octet-stream', byteSize: Number(stat.size), info,

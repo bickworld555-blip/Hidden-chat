@@ -940,6 +940,15 @@ export default function App() {
     setGroupsInitialId(typeof groupId === 'string' ? groupId : '');
     setGroupsOpen(true);
   }
+  // A person met in a group (WhatsApp: tap a member → Message): opens a one-to-one chat even when they are not a
+  // saved contact; linking them allows the chat without adding them to the contact book.
+  async function openPerson(person) {
+    const existing = useChatStore.getState().chats.find((chat) => chat.id === person.id);
+    const contact = existing ?? await linkContact(sessionToken, person.id, { save: false });
+    if (!existing) await useChatStore.getState().addContact(contact);
+    setGroupsOpen(false);
+    openChat(contact);
+  }
   openChatRef.current = (id) => openChat({ id });
   openGroupRef.current = (id) => openGroups(false, id);
 
@@ -1133,7 +1142,7 @@ export default function App() {
       {sessionToken && inviteCode && <JoinGroupSheet code={inviteCode} token={sessionToken} onClose={() => setInviteCode('')} onJoined={(groupId) => { setInviteCode(''); openGroups(false, groupId); }} />}
       {sessionToken && <TwoStepReminder token={sessionToken} />}
       <AppLockGate />
-      {groupsOpen && sessionToken && <GroupsView key={userId} token={sessionToken} userId={userId} client={client} revision={groupRevision} initialCreate={groupsCreate} initialGroupId={groupsInitialId} onStartGroupCall={initiateGroupCall} onClose={() => setGroupsOpen(false)} />}
+      {groupsOpen && sessionToken && <GroupsView key={userId} token={sessionToken} userId={userId} client={client} revision={groupRevision} initialCreate={groupsCreate} initialGroupId={groupsInitialId} onStartGroupCall={initiateGroupCall} onMessagePerson={openPerson} onCallPerson={(person, mode) => { setGroupsOpen(false); initiateCall(person.id, mode); }} onClose={() => setGroupsOpen(false)} />}
       {statusViewerFor && sessionToken && <StatusQuickView key={statusViewerFor} token={sessionToken} userId={userId} ownerId={statusViewerFor} onClose={closeStatusViewer} />}
       {incomingShare && userId && sessionToken && (
         <ShareSheet

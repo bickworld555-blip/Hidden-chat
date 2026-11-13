@@ -4,6 +4,8 @@ import { MAX_TRANSFER_BYTES, PREVIEW_LIMIT_BYTES } from './transfer.js';
 import { decryptMedia, parseEncryptedMediaRef } from './mediaCrypto.js';
 import { apiFetch, apiUrl } from './api.js';
 import { PREFETCH_LIMIT_BYTES, canDownloadToDevice, downloadMediaToDevice, readStoredMedia, storeMedia, storeMediaInfo } from './mediaVault.js';
+import { recordUsage } from './networkUsage.js';
+import { mayAutoDownload } from './autoDownload.js';
 
 export const MAX_UPLOAD_BYTES = MAX_TRANSFER_BYTES;
 
@@ -142,6 +144,12 @@ async function fetchMediaInfo(id, sessionToken, signal) {
 
 // Downloads the exact stored bytes; onProgress receives a 0..1 fraction when the size is known.
 async function fetchMediaBlob(id, sessionToken, { signal, onProgress } = {}) {
+  const blob = await fetchMediaBytes(id, sessionToken, { signal, onProgress });
+  recordUsage('media', { received: blob.size });
+  return blob;
+}
+
+async function fetchMediaBytes(id, sessionToken, { signal, onProgress } = {}) {
   const response = await apiFetch(mediaUrl(id), { headers: { Authorization: `Bearer ${sessionToken}` }, signal });
   if (!response.ok) throw new Error(response.status === 404 ? 'File is no longer available.' : 'Download failed.');
   const type = essence(response.headers.get('content-type'));
@@ -252,11 +260,13 @@ export function largeDownloadPlan({ size, connection = null, estimate = null }) 
  * Fetches an attachment into this device's store ahead of time (a message is acknowledged to the server only once
  * its attachment is kept here). True when it is kept; big files are left until opened.
  */
-export async function storeMediaLocally(id, sessionToken) {
+export async function storeMediaLocally(id, sessionToken, { voice = false } = {}) {
   if (!id || !sessionToken) return false;
   if ((await readStoredMedia(id))?.blob) return true;
   try {
     const info = await fetchMediaInfo(id, sessionToken);
+    // Media auto-download (Storage and data): a kind switched off for this connection waits for a tap.
+    if (!(await mayAutoDownload(info?.contentType, { voice }))) return false;
     const size = Number(info?.size ?? 0);
     if (size > PREFETCH_LIMIT_BYTES) {
       // Big files: on the phone, fetched straight to disk while on Wi-Fi with room to spare, so the server can let go

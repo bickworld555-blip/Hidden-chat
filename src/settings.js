@@ -17,6 +17,10 @@ const AUDIENCE = Object.freeze([
   { id: 'nobody', label: 'Nobody' },
 ]);
 
+const MEDIA_KINDS = Object.freeze([
+  { id: 'photos', label: 'Photos' }, { id: 'audio', label: 'Audio' }, { id: 'videos', label: 'Videos' }, { id: 'documents', label: 'Documents' },
+]);
+
 export const SETTINGS = Object.freeze({
   // --- Privacy (account, enforced by the server) ---
   'privacy.lastSeen': { section: 'privacy', scope: 'account', remote: 'lastSeen', type: 'choice', label: 'Last seen', options: AUDIENCE, default: 'everyone' },
@@ -41,6 +45,11 @@ export const SETTINGS = Object.freeze({
     options: Object.freeze([{ id: 'standard', label: 'Standard quality' }, { id: 'hd', label: 'HD quality' }]),
     default: 'standard', hint: 'Standard sends faster and uses less data; HD sends photos at full resolution.',
   },
+  // Media auto-download (WhatsApp's rules): which kinds download on their own on each kind of connection. Voice
+  // messages always do. A kind left off downloads when tapped; the server keeps it for 30 days until then.
+  'media.autoDownload.mobile': { section: 'storage', scope: 'device', type: 'set', label: 'When using mobile data', options: MEDIA_KINDS, default: Object.freeze(['photos']) },
+  'media.autoDownload.wifi': { section: 'storage', scope: 'device', type: 'set', label: 'When connected on Wi-Fi', options: MEDIA_KINDS, default: Object.freeze(['photos', 'audio', 'videos', 'documents']) },
+  'media.autoDownload.roaming': { section: 'storage', scope: 'device', type: 'set', label: 'When roaming', options: MEDIA_KINDS, default: Object.freeze([]) },
   // --- Security (this device) ---
   'security.appLock': {
     section: 'security', scope: 'device', type: 'choice', label: 'App lock',
@@ -75,6 +84,8 @@ export function validSetting(key, value) {
   if (!definition) throw new Error(`Unknown setting ${key}`);
   if (definition.type === 'switch') return typeof value === 'boolean' ? value : definition.default;
   if (definition.type === 'choice') return definition.options.some((option) => option.id === value) ? value : definition.default;
+  // 'set': several options at once, kept in the options' order (an empty set is a valid choice: "No media").
+  if (definition.type === 'set') return Array.isArray(value) ? definition.options.map((option) => option.id).filter((id) => value.includes(id)) : definition.default;
   return definition.default;
 }
 
@@ -170,7 +181,8 @@ export function createSettings({ storage = deviceStorage, remote = null } = {}) 
     async set(key, value) {
       const definition = SETTINGS[key];
       if (!definition) throw new Error(`Unknown setting ${key}`);
-      if (validSetting(key, value) !== value) throw new Error(`Invalid value for ${definition.label}.`);
+      const valid = validSetting(key, value);
+      if (definition.type === 'set' ? JSON.stringify(valid) !== JSON.stringify(value) : valid !== value) throw new Error(`Invalid value for ${definition.label}.`);
       if (definition.scope === 'device') {
         loadDevice();
         device = { ...device, [key]: value };

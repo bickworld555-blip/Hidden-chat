@@ -48,7 +48,8 @@ export async function acknowledgeSaved(messages, context) {
   for (const message of messages) {
     if (!acknowledgeable(message)) continue;
     const mediaId = attachmentToKeep(message.content);
-    if (mediaId && !(await storeMediaLocally(mediaId, context.sessionToken))) continue;
+    const voice = parseRouting(routingFor(message.content))?.kind === 'voice';
+    if (mediaId && !(await storeMediaLocally(mediaId, context.sessionToken, { voice }))) continue;
     ready.push(message.id);
   }
   for (let start = 0; start < ready.length; start += 200) {

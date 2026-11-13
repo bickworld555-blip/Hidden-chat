@@ -275,7 +275,7 @@ export default function ToolsView({ darkMode, onToggleTheme, onLogout, onNotific
           <Item icon={ListChecks} title="Lists" detail="Your own lists of people and groups" onClick={() => onSheet?.('lists')} />
           <Item icon={MessageSquare} title="Chats" detail="Theme, animations, media save, backup" onClick={() => setPage('chats')} />
           <Item icon={Bell} title="Notifications" detail="Message, group and call tones" onClick={onNotifications} />
-          <Item icon={HardDrive} title="Storage and data" detail="Manage storage, photo upload quality" onClick={onStorage} />
+          <Item icon={HardDrive} title="Storage and data" detail="Network usage, auto-download" onClick={onStorage} />
           <Item icon={Accessibility} title="Accessibility" detail="Contrast, motion, font size" onClick={() => setPage('accessibility')} />
           <Item icon={Languages} title="App language" detail="English, বাংলা, हिन्दी, Español" onClick={() => onSheet?.('language')} />
           <Item icon={CircleHelp} title="Help Centre" detail="Get help, contact us" onClick={openHelp} />

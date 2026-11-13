@@ -98,7 +98,7 @@ export async function postMediaStatus(token, userId, picked, { onProgress, onSta
   onStage?.('encrypting');
   const { upload, descriptor } = await sealForUpload(file);
   onStage?.('uploading');
-  const data = await uploadFile(upload, { receiverId: userId, sessionToken: token, onProgress });
+  const data = await uploadFile(upload, { receiverId: userId, sessionToken: token, onProgress, usage: 'status' });
   const content = attachmentContent(data.id, descriptor ? file.name || 'status' : data.filename || file.name || 'status', descriptor);
   return request('', token, { method: 'POST', body: { content: await sealStatus(content) } });
 }

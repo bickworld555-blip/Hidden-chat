@@ -1,8 +1,9 @@
 // One list of structured (not editable) formats, shared with the server (src/e2e/envelope.js).
 import { STRUCTURED } from './e2e/envelope.js';
 export const DELETE_FOR_EVERYONE_WINDOW_MS = 24 * 60 * 60 * 1000;
-// WhatsApp lets you edit a text message for 15 minutes after sending it (server/parity.mjs EDIT_WINDOW_MS).
-export const EDIT_WINDOW_MS = 15 * 60 * 1000;
+// A text message can be corrected for 10 minutes after sending it (server/parity.mjs EDIT_WINDOW_MS). WhatsApp allows
+// 15; Hidden Messenger keeps the window shorter, as asked.
+export const EDIT_WINDOW_MS = 10 * 60 * 1000;
 
 /** Whether the sender may still edit this message's text. */
 export function canEditMessage(message, userId, now = Date.now()) {

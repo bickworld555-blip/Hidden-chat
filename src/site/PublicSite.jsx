@@ -155,7 +155,7 @@ function Home({ go }) {
 
 function Features() {
   const groups = [
-    [MessageCircle, 'Messaging', ['Text, photos, videos, documents', 'Voice notes with waveforms and speed control', 'Edit within 15 minutes, delete for everyone', 'View once photos, videos and voice notes', 'Stickers, including ones you make from photos', 'Pins, stars, replies, reactions and mentions', 'Scheduled messages']],
+    [MessageCircle, 'Messaging', ['Text, photos, videos, documents', 'Voice notes with waveforms and speed control', 'Edit within 10 minutes, delete for everyone', 'View once photos, videos and voice notes', 'Stickers, including ones you make from photos', 'Pins, stars, replies, reactions and mentions', 'Scheduled messages']],
     [Phone, 'Calls', ['Voice and video calls', 'Group calls', 'Call links', 'Calls ring on your phone even when the app is closed']],
     [UsersRound, 'Groups & communities', ['Admins, permissions and invite links', 'Join requests and approvals', 'Communities with announcements', 'Polls and events']],
     [Megaphone, 'Updates', ['Status for 24 hours with privacy controls', 'Replies and muting', 'Channels you follow or run', 'Broadcast lists']],
@@ -223,7 +223,7 @@ function Messaging({ go }) {
       <h1>Say it any way you like, privately</h1>
       <p className="site-lede">Text, voice notes, photos, videos, documents, stickers and polls, on your phone and in your browser, all end-to-end encrypted.</p>
       <div className="site-grid">
-        {[[MessageCircle, 'Messages that keep up', 'Edit for 15 minutes, delete for everyone, reply, react, pin, star and forward. Schedule a message to go out later.'],
+        {[[MessageCircle, 'Messages that keep up', 'Edit for 10 minutes, delete for everyone, reply, react, pin, star and forward. Schedule a message to go out later.'],
           [Smartphone, 'Voice notes and video notes', 'Record a voice note with a live waveform, or a round video note up to a minute. Send either as view once.'],
           [UsersRound, 'Groups that stay organised', 'Mentions, polls, events, admins and invite links. Communities bring related groups together with announcements.'],
           [Lock, 'Locked chats', 'Move your most private chats into a folder that opens only with your fingerprint, screen lock or passcode.']].map(([Icon, title, text]) => (

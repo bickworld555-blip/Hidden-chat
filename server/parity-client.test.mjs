@@ -60,11 +60,11 @@ test('quick replies match "/" shortcuts at the start of the draft only', () => {
   assert.deepEqual(quickReplyMatches('/th ', replies), []);
 });
 
-test('edits: own text messages for 15 minutes; not stickers, media or deleted messages', () => {
+test('edits: own text messages for 10 minutes; not stickers, media or deleted messages', () => {
   const now = Date.parse('2026-11-10T12:00:00Z');
-  const base = { id: 'm', senderId: 'me', content: 'hello', timestamp: '2026-11-10T11:50:00Z' };
+  const base = { id: 'm', senderId: 'me', content: 'hello', timestamp: '2026-11-10T11:55:00Z' };
   assert.equal(canEditMessage(base, 'me', now), true);
-  assert.equal(canEditMessage({ ...base, timestamp: '2026-11-10T11:40:00Z' }, 'me', now), false, 'after 15 minutes');
+  assert.equal(canEditMessage({ ...base, timestamp: '2026-11-10T11:49:00Z' }, 'me', now), false, 'after 10 minutes');
   assert.equal(canEditMessage(base, 'you', now), false);
   assert.equal(canEditMessage({ ...base, content: 'sticker:moods/lol' }, 'me', now), false);
   assert.equal(canEditMessage({ ...base, content: 'media:x:a.jpg' }, 'me', now), false);
@@ -147,7 +147,11 @@ test('invite links: codes are read from links or pasted codes', () => {
 
 test('new device settings: photo quality, app lock and screen security', () => {
   assert.deepEqual(SECTIONS.security.keys, ['security.appLock', 'security.screenSecurity']);
-  assert.deepEqual(SECTIONS.storage.keys, ['media.uploadQuality']);
+  assert.deepEqual(SECTIONS.storage.keys, ['media.uploadQuality', 'media.autoDownload.mobile', 'media.autoDownload.wifi', 'media.autoDownload.roaming']);
+  // Auto-download rules: several kinds at once, in the options' order; anything else falls back to the default.
+  assert.deepEqual(validSetting('media.autoDownload.mobile', ['videos', 'photos', 'zip']), ['photos', 'videos']);
+  assert.deepEqual(validSetting('media.autoDownload.roaming', []), []);
+  assert.deepEqual(validSetting('media.autoDownload.wifi', 'all'), ['photos', 'audio', 'videos', 'documents']);
   assert.equal(validSetting('media.uploadQuality', 'hd'), 'hd');
   assert.equal(validSetting('media.uploadQuality', '4k'), 'standard');
   assert.equal(appLockDelayMs('off'), null);

@@ -1,7 +1,7 @@
 import { apiFetch, isNetworkFailure } from '../api.js';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ArrowLeft, Bell, BellOff, CalendarClock, Check, ChevronDown, Clock, Copy, Download, Flag, Link2, LockKeyhole, LogOut, Megaphone, MinusCircle, Paperclip,
+  ArrowLeft, MessageCircle, Bell, BellOff, CalendarClock, Check, ChevronDown, Clock, Copy, Download, Flag, Link2, LockKeyhole, LogOut, Megaphone, MinusCircle, Paperclip,
   Camera, ListPlus, Mic, Smile, Pencil, Phone, Pin, PinOff, QrCode, Search, SendHorizontal, Share2, Star, Timer, Trash2, UserPlus, Users, Video, X,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
@@ -217,6 +217,36 @@ function GroupListsSheet({ groupKey, onClose }) {
 }
 
 // The group's QR code (its invite link, admins only), as on WhatsApp's group info header.
+// WhatsApp: tap a member (in the member list, or their name or photo on a message) → message or call them one to one,
+// even when they are not a saved contact.
+function MemberSheet({ member, onMessage, onCall, onClose }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  async function message() {
+    setBusy(true);
+    setError('');
+    try { await onMessage(member); } catch (caught) { setError(caught.message || 'Could not open this chat.'); setBusy(false); }
+  }
+  return (
+    <>
+      <div className="groups-sheet-scrim" onClick={onClose} aria-hidden="true" />
+      <div className="groups-sheet groups-member-sheet" role="dialog" aria-modal="true" aria-label={`${member.name || member.username}`}>
+        <header>
+          <span className="groups-member-sheet-who">
+            <Avatar {...member} />
+            <span><strong>{member.name || `@${member.username}`}</strong>{member.username && member.name !== `@${member.username}` && <small>@{member.username}</small>}</span>
+          </span>
+          <button type="button" onClick={onClose} aria-label="Close"><X size={18} /></button>
+        </header>
+        <button type="button" className="groups-member-sheet-row" disabled={busy} onClick={message}><MessageCircle size={20} /> Message {member.name || `@${member.username}`}</button>
+        {onCall && <button type="button" className="groups-member-sheet-row" disabled={busy} onClick={() => onCall(member, 'audio')}><Phone size={20} /> Voice call</button>}
+        {onCall && <button type="button" className="groups-member-sheet-row" disabled={busy} onClick={() => onCall(member, 'video')}><Video size={20} /> Video call</button>}
+        {error && <p role="alert">{error}</p>}
+      </div>
+    </>
+  );
+}
+
 function GroupQrSheet({ group, onShare, onClose }) {
   const link = inviteUrl(group.inviteCode);
   return (
@@ -267,7 +297,10 @@ function PendingGroupBody({ content, token, self }) {
   return <p className="groups-message-text"><FormattedText text={content} /></p>;
 }
 
-export default function GroupsView({ token, userId, client, revision, onClose, onStartGroupCall, initialCreate = false, initialGroupId = '' }) {
+export default function GroupsView({ token, userId, client, revision, onClose, onStartGroupCall, onMessagePerson, onCallPerson, initialCreate = false, initialGroupId = '' }) {
+  // The member whose Message / Voice call / Video call sheet is open.
+  const [personSheet, setPersonSheet] = useState(null);
+  const openPerson = (member) => { if (member && member.id !== userId && onMessagePerson) setPersonSheet(member); };
   const [groups, setGroups] = useState([]);
   const [selected, setSelected] = useState(initialCreate ? '' : initialGroupId);
   const pendingMessages = usePending(userId, selected);
@@ -861,9 +894,9 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
               </>}
               {visibleMembers.map((member) => (
                 <div className="groups-member" key={member.id}>
-                  <Avatar {...member} />
+                  {member.id === userId ? <Avatar {...member} /> : <button type="button" className="groups-member-photo" onClick={() => openPerson(member)} aria-label={`Message or call ${member.name}`}><Avatar {...member} /></button>}
                   <span>
-                    <strong>{member.id === userId ? 'You' : member.name}</strong>
+                    {member.id === userId ? <strong>You</strong> : <button type="button" className="groups-member-name" onClick={() => openPerson(member)}><strong>{member.name}</strong></button>}
                     {member.id === userId ? (
                       tagDraft !== null ? (
                         <form className="groups-tag-form" onSubmit={(event) => { event.preventDefault(); saveMemberTag(); }}>
@@ -978,11 +1011,13 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
                 );
                 return (
                   <div className={`groups-message-row ${mine ? 'mine' : 'theirs'}${active ? ' is-active' : ''}`} key={item.key} data-group-message-id={message.id}>
-                    {!mine && (sender ? <Avatar {...sender} size="small" /> : <span className="groups-avatar groups-avatar-small" aria-hidden="true" />)}
+                    {!mine && (sender ? <button type="button" className="groups-sender-photo" onClick={() => openPerson(sender)} aria-label={`Message or call ${sender.name}`}><Avatar {...sender} size="small" /></button> : <span className="groups-avatar groups-avatar-small" aria-hidden="true" />)}
                     <article tabIndex={0} className={`groups-message ${mine ? 'mine' : 'theirs'} ${isMedia ? 'has-media' : ''} ${scheduled ? 'is-scheduled' : ''} ${sticker ? 'is-sticker' : ''}`}
                       onClick={(clickEvent) => { if (!clickEvent.target.closest('button, a, input, audio, video')) setActiveMessageId(active ? '' : message.id); }}
                       onKeyDown={(keyEvent) => { if (keyEvent.key === 'Enter' && keyEvent.target === keyEvent.currentTarget) setActiveMessageId(active ? '' : message.id); }}>
-                      {!mine && <strong className="groups-sender" style={{ color: senderColor(message.senderId) }}>{sender?.name || (group.offline ? 'Member' : 'Former member')}</strong>}
+                      {!mine && (sender
+                        ? <button type="button" className="groups-sender" style={{ color: senderColor(message.senderId) }} onClick={() => openPerson(sender)}>{sender.name}</button>
+                        : <strong className="groups-sender" style={{ color: senderColor(message.senderId) }}>{group.offline ? 'Member' : 'Former member'}</strong>)}
                       {relayCard ? (
                         <div className="groups-scheduled-card groups-relay-card">
                           <span className="groups-scheduled-icon">{relayCard.mode === 'video' ? <Video size={22} /> : <Phone size={22} />}</span>
@@ -1086,6 +1121,7 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
         {joinCode && <JoinGroupSheet code={joinCode} token={token} onClose={() => setJoinCode('')} onJoined={(groupId) => { setJoinCode(''); setSelected(groupId); }} />}
         {group && callPicker && <CallPeoplePicker members={group.members} userId={userId} mode={callPicker} busy={busy} onStart={startCall} onClose={() => setCallPicker('')} />}
         {infoSheet === 'lists' && group && <GroupListsSheet groupKey={`group:${group.id}`} onClose={() => setInfoSheet('')} />}
+        {personSheet && <MemberSheet member={personSheet} onMessage={onMessagePerson} onCall={onCallPerson} onClose={() => setPersonSheet(null)} />}
         {infoSheet === 'qr' && group?.inviteCode && <GroupQrSheet group={group} onShare={shareGroup} onClose={() => setInfoSheet('')} />}
         {group && scheduling && <ScheduleCallSheet busy={busy} onSchedule={scheduleCall} onClose={() => setScheduling(false)} />}
         {group && richComposer && (() => {

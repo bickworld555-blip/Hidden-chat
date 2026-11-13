@@ -1,154 +1,365 @@
-// Storage and data: what Hidden Messenger keeps on this device, media per chat (sizes from the server), clearing
-// the media cache, and the photo upload quality.
-import { useEffect, useState } from 'react';
-import { HardDrive, Image, Mic, RefreshCw, Trash2 } from 'lucide-react';
+// Settings › Storage and data, laid out like WhatsApp's: Manage storage (what is kept on this device, by chat, with
+// review and delete), Network usage (what this device sent and received, by kind), photo upload quality, and the
+// media auto-download rules for mobile data, Wi-Fi and roaming.
+import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { ArrowUpDown, Check, ChevronRight, CloudUpload, FileText, Folder, HardDrive, Image, Images, MessageSquare, Mic, Phone, Search, Trash2, Users, Video } from 'lucide-react';
 import { localStoreStatus, useChatStore } from '../../store.js';
-import { clearMediaCache, formatFileSize, isMediaContent, loadMediaInfo, mediaCacheStats, parseMediaRef } from '../../media.js';
-import { parseVoiceContent } from '../../voice.js';
-import { SETTINGS, appSettings, useSetting } from '../../settings.js';
+import { clearMediaCache, formatFileSize, mediaCacheStats } from '../../media.js';
+import { forgetMedia, listStoredMedia } from '../../mediaVault.js';
+import { SETTINGS, appSettings, optionLabel, useSetting } from '../../settings.js';
+import { AUTO_DOWNLOAD_KEYS, autoDownloadKind } from '../../autoDownload.js';
+import { LARGE_ITEM_BYTES, sortItems, storageBreakdown } from '../../storageUsage.js';
+import { readUsage, resetUsage, subscribeUsage, usageTotals } from '../../networkUsage.js';
+import { cachedGroups } from '../../groupCache.js';
+import { fetchGroupMessages } from '../../groupHistory.js';
+import Avatar from '../Avatar.jsx';
 import Panel, { Notice } from './Panel.jsx';
 
-const MAX_SIZED = 300;
+const KIND_ICON = { photos: Image, videos: Video, audio: Mic, documents: FileText };
+const toMs = (value) => (typeof value === 'number' ? value : Date.parse(value ?? '') || 0);
 
-function chatBreakdown(messages) {
-  let media = 0;
-  let voice = 0;
-  let textBytes = 0;
-  const mediaIds = [];
-  for (const message of messages) {
-    const content = message?.content ?? '';
-    if (isMediaContent(content)) {
-      media += 1;
-      const ref = parseMediaRef(content);
-      if (ref?.id) mediaIds.push(ref.id);
-    } else if (content.startsWith('voice:')) {
-      voice += 1;
-      const parsed = parseVoiceContent(content);
-      if (parsed?.id) mediaIds.push(parsed.id);
-    } else textBytes += content.length;
-  }
-  return { count: messages.length, media, voice, textBytes, mediaIds };
+// "Photos, Audio" / "All media" / "No media", as WhatsApp words a rule.
+export function ruleSummary(kinds) {
+  if (!kinds?.length) return 'No media';
+  if (kinds.length === SETTINGS['media.autoDownload.wifi'].options.length) return 'All media';
+  return kinds.map((id) => optionLabel('media.autoDownload.wifi', id)).join(', ');
 }
 
-/** Sizes of the given uploads from the server (4 at a time, at most MAX_SIZED). */
-async function sumSizes(ids, sessionToken, onProgress) {
-  let total = 0;
-  let done = 0;
-  const queue = ids.slice(0, MAX_SIZED);
-  async function worker() {
-    while (queue.length) {
-      const id = queue.shift();
-      try {
-        total += Number((await loadMediaInfo(id, sessionToken))?.size) || 0;
-      } catch { /* deleted or expired upload */ }
-      done += 1;
-      onProgress(done);
-    }
-  }
-  await Promise.all([worker(), worker(), worker(), worker()]);
-  return total;
+function useNetworkUsage() {
+  return useSyncExternalStore(subscribeUsage, readUsage, readUsage);
 }
 
-export default function StorageView({ onClose }) {
-  const messages = useChatStore((state) => state.messages);
+function Row({ icon: Icon, title, detail, onClick, chevron = true }) {
+  return (
+    <button type="button" className="hm-sd-row" onClick={onClick}>
+      {Icon && <Icon size={22} aria-hidden="true" />}
+      <span className="hm-sd-text"><strong>{title}</strong>{detail && <small>{detail}</small>}</span>
+      {chevron && <ChevronRight size={18} aria-hidden="true" className="hm-sd-chevron" />}
+    </button>
+  );
+}
+
+// --- Manage storage ---
+
+/** Stored files and which chat each belongs to (one-to-one chats from this device, groups from the server). */
+function useStorageBreakdown(refreshKey) {
   const chats = useChatStore((state) => state.chats);
-  const sessionToken = useChatStore((state) => state.sessionToken);
+  const messages = useChatStore((state) => state.messages);
   const userId = useChatStore((state) => state.userId);
-  const quality = useSetting('media.uploadQuality');
-  const [estimate, setEstimate] = useState(null);
-  const [persisted, setPersisted] = useState(null);
-  const [cache, setCache] = useState(() => mediaCacheStats());
-  // Which store keeps this account's history here (the phone: encrypted SQLite), with its message count.
-  const [local, setLocal] = useState(null);
-  const ownerId = useChatStore((state) => state.userId);
-  useEffect(() => { if (ownerId) localStoreStatus(ownerId).then(setLocal).catch(() => {}); }, [ownerId]);
-  const [sizes, setSizes] = useState({});
-  const [notice, setNotice] = useState('');
+  const token = useChatStore((state) => state.sessionToken);
+  const [stored, setStored] = useState(null);
+  const [groups, setGroups] = useState([]);
+  const [groupsLoading, setGroupsLoading] = useState(true);
 
   useEffect(() => {
-    navigator.storage?.estimate?.().then(setEstimate).catch(() => {});
-    navigator.storage?.persisted?.().then(setPersisted).catch(() => {});
-  }, []);
+    let cancelled = false;
+    listStoredMedia().then((list) => { if (!cancelled) setStored(list); }).catch(() => { if (!cancelled) setStored([]); });
+    return () => { cancelled = true; };
+  }, [refreshKey]);
 
-  const rows = chats.filter((chat) => chat.id !== userId)
-    .map((chat) => ({ chat, ...chatBreakdown(messages[chat.id] ?? []) }))
-    .sort((left, right) => (sizes[right.chat.id]?.bytes ?? 0) - (sizes[left.chat.id]?.bytes ?? 0) || (right.media + right.voice) - (left.media + left.voice));
+  useEffect(() => {
+    if (!userId || !token) { setGroupsLoading(false); return undefined; }
+    let cancelled = false;
+    (async () => {
+      const list = (await cachedGroups(userId).catch(() => null)) ?? [];
+      const found = [];
+      // Two at a time: a phone in many groups still answers quickly, and the list fills in as they arrive.
+      const queue = [...list];
+      await Promise.all([0, 1].map(async () => {
+        while (queue.length && !cancelled) {
+          const group = queue.shift();
+          try {
+            const history = await fetchGroupMessages(token, group.id);
+            found.push({ id: `group:${group.id}`, name: group.name, kind: 'group', messages: (history ?? []).map((message) => ({ content: message.content, at: toMs(message.createdAt) })) });
+            if (!cancelled) setGroups([...found]);
+          } catch { /* offline or no longer a member: its files show under Other */ }
+        }
+      }));
+      if (!cancelled) setGroupsLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, [userId, token, refreshKey]);
 
-  async function measure(row) {
-    setSizes((current) => ({ ...current, [row.chat.id]: { measuring: true, done: 0, total: Math.min(row.mediaIds.length, MAX_SIZED) } }));
-    const bytes = await sumSizes(row.mediaIds, sessionToken, (done) => setSizes((current) => ({ ...current, [row.chat.id]: { ...current[row.chat.id], done } })));
-    setSizes((current) => ({ ...current, [row.chat.id]: { bytes, partial: row.mediaIds.length > MAX_SIZED } }));
+  const breakdown = useMemo(() => {
+    if (!stored) return null;
+    const direct = chats.filter((chat) => chat.id !== userId).map((chat) => ({
+      id: chat.id, name: chat.name || (chat.username ? `@${chat.username}` : 'Chat'), kind: 'chat', person: chat,
+      messages: (messages[chat.id] ?? []).map((message) => ({ content: message.content, at: toMs(message.timestamp) })),
+    }));
+    return storageBreakdown({ stored, chats: [...direct, ...groups] });
+  }, [stored, chats, messages, groups, userId]);
+  return { breakdown, groupsLoading };
+}
+
+function ItemList({ items, selected, onToggle }) {
+  return (
+    <ul className="hm-sd-items">
+      {items.map((item) => {
+        const Icon = item.voice ? Mic : KIND_ICON[autoDownloadKind(item.contentType)];
+        const on = selected.has(item.id);
+        return (
+          <li key={item.id}>
+            <button type="button" className={`hm-sd-item${on ? ' is-on' : ''}`} onClick={() => onToggle(item.id)} aria-pressed={on}>
+              <span className="hm-sd-item-icon">{on ? <Check size={18} /> : <Icon size={18} />}</span>
+              <span><strong>{item.name}</strong><small>{formatFileSize(item.size)}{item.at ? ` · ${new Date(item.at).toLocaleDateString()}` : ''}</small></span>
+            </button>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+/** One chat's files (or every file over 5 MB): sort, select, delete from this device. */
+function ItemsView({ title, items, onBack, onDeleted }) {
+  const [order, setOrder] = useState('largest');
+  const [selected, setSelected] = useState(() => new Set());
+  const [busy, setBusy] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const sorted = useMemo(() => sortItems(items, order), [items, order]);
+  const chosen = items.filter((item) => selected.has(item.id));
+  const chosenBytes = chosen.reduce((total, item) => total + item.size, 0);
+  const toggle = (id) => setSelected((current) => { const next = new Set(current); if (next.has(id)) next.delete(id); else next.add(id); return next; });
+
+  async function remove() {
+    setBusy(true);
+    for (const item of chosen) await forgetMedia(item.id).catch(() => {});
+    clearMediaCache();
+    setBusy(false);
+    setConfirming(false);
+    setSelected(new Set());
+    onDeleted(chosen.length, chosenBytes);
   }
 
-  const usage = estimate?.usage ?? null;
-  const quota = estimate?.quota ?? null;
   return (
-    <Panel title="Storage and data" onClose={onClose}>
-      <Notice notice={notice} />
-      <section className="hm-storage-summary" aria-label="Storage on this device">
-        <HardDrive size={28} aria-hidden="true" />
-        <div>
-          <strong>{usage === null ? 'Storage use unavailable' : `${formatFileSize(usage)} used on this device`}</strong>
-          {quota !== null && <div className="hm-storage-bar" role="meter" aria-valuemin={0} aria-valuemax={quota} aria-valuenow={usage ?? 0} aria-label="Storage used"><span style={{ width: `${Math.min(100, ((usage ?? 0) / quota) * 100)}%` }} /></div>}
-          <small>{quota !== null ? `${formatFileSize(Math.max(0, quota - (usage ?? 0)))} available to Hidden Messenger. ` : ''}Messages, contacts, settings, photos and files are kept here, encrypted. The server deletes each message once your devices have it, so a backup is the only other copy.</small>
-          {persisted === false && (
-            <button type="button" onClick={() => navigator.storage.persist().then((granted) => { setPersisted(granted); setNotice(granted ? 'Your chats will be kept even when the device is low on storage.' : 'The browser didn’t allow it.'); })}>Keep my chats when storage is low</button>
+    <Panel title={title} subtitle={`${formatFileSize(items.reduce((total, item) => total + item.size, 0))} · ${items.length} ${items.length === 1 ? 'item' : 'items'}`} onBack={onBack} onClose={onBack}
+      actions={<button type="button" className="icon-button" onClick={() => setSelected(selected.size === items.length ? new Set() : new Set(items.map((item) => item.id)))}>{selected.size === items.length ? 'None' : 'All'}</button>}>
+      <div className="hm-sd-sort" role="radiogroup" aria-label="Sort">
+        {[['largest', 'Largest'], ['newest', 'Newest'], ['oldest', 'Oldest']].map(([id, label]) => (
+          <button key={id} type="button" role="radio" aria-checked={order === id} className={order === id ? 'is-on' : ''} onClick={() => setOrder(id)}>{label}</button>
+        ))}
+      </div>
+      {items.length === 0 ? <p className="hm-muted">Nothing kept on this device.</p> : <ItemList items={sorted} selected={selected} onToggle={toggle} />}
+      {chosen.length > 0 && (
+        <div className="hm-sd-delete-bar">
+          {confirming ? (
+            <>
+              <span>Delete {chosen.length} {chosen.length === 1 ? 'item' : 'items'} ({formatFileSize(chosenBytes)}) from this device? While the server still holds a file it can be downloaded again; after that it’s gone.</span>
+              <button type="button" onClick={() => setConfirming(false)} disabled={busy}>Cancel</button>
+              <button type="button" className="is-danger" onClick={remove} disabled={busy}>{busy ? 'Deleting…' : 'Delete'}</button>
+            </>
+          ) : (
+            <><span>{chosen.length} selected · {formatFileSize(chosenBytes)}</span><button type="button" className="is-danger" onClick={() => setConfirming(true)}><Trash2 size={16} /> Delete</button></>
           )}
         </div>
-      </section>
-
-      {local && (
-        <p className="hm-muted hm-local-store" data-store={local.kind}>
-          Chat history on this device: {local.kind === 'sqlite' ? 'encrypted SQLite (SQLCipher)' : local.kind === 'indexeddb' ? 'encrypted browser storage' : 'encrypted browser storage (SQLite unavailable)'} · {local.messages.toLocaleString()} messages
-          {local.error ? ` · ${local.error}` : ''}
-          {local.kind === 'sqlite' && typeof local.fts === 'boolean' && (
-            <span className="hm-local-store-facts" data-fts={local.fts ? 'on' : 'off'} data-media-files={local.mediaFiles ?? ''}>
-              <br />Database version {local.schemaVersion ?? '?'} · contacts, outbox, call log and preferences: {local.records === 'sqlite' ? 'SQLite' : 'browser storage'} · settings: {local.settings === 'sqlite' ? 'SQLite' : 'browser storage'}
-              <br />Search works offline ({local.fts ? 'full-text index' : 'scan'}) · {local.mediaFiles ?? 0} attachment files in the app’s private folder ({local.mediaRecords} recorded, {formatFileSize(local.mediaBytes)})
-            </span>
-          )}
-        </p>
       )}
-
-      <section className="hm-storage-section" aria-label="Media cache">
-        <h4>Media cache</h4>
-        <p className="hm-muted">{cache.files} {cache.files === 1 ? 'file' : 'files'} · {formatFileSize(cache.bytes)} held for quick viewing this session.</p>
-        <button type="button" disabled={!cache.files} onClick={() => { clearMediaCache(); setCache(mediaCacheStats()); setNotice('Media cache cleared.'); }}><Trash2 size={16} /> Clear media cache</button>
-      </section>
-
-      <section className="hm-storage-section" aria-label="Media upload quality">
-        <h4>{SETTINGS['media.uploadQuality'].label}</h4>
-        <p className="hm-muted">{SETTINGS['media.uploadQuality'].hint}</p>
-        <div className="hm-radio-list" role="radiogroup" aria-label="Photo upload quality">
-          {SETTINGS['media.uploadQuality'].options.map((option) => (
-            <label key={option.id}><input type="radio" name="upload-quality" checked={quality === option.id} onChange={() => appSettings().set('media.uploadQuality', option.id)} /> {option.label}</label>
-          ))}
-        </div>
-      </section>
-
-      <section className="hm-storage-section" aria-label="Chats">
-        <h4>Chats</h4>
-        <ul className="hm-catalog-list">
-          {rows.map((row) => {
-            const size = sizes[row.chat.id];
-            return (
-              <li key={row.chat.id}>
-                <span>
-                  <strong>{row.chat.name ?? row.chat.username}</strong>
-                  <small className="hm-storage-counts">
-                    {row.count} messages · <Image size={12} aria-hidden="true" /> {row.media} · <Mic size={12} aria-hidden="true" /> {row.voice}
-                    {size?.bytes !== undefined && ` · ${formatFileSize(size.bytes)}${size.partial ? '+' : ''} of media`}
-                    {size?.measuring && ` · measuring ${size.done}/${size.total}…`}
-                  </small>
-                </span>
-                {row.mediaIds.length > 0 && !size?.measuring && size?.bytes === undefined && (
-                  <button type="button" onClick={() => measure(row)} aria-label={`Measure media in chat with ${row.chat.name}`}><RefreshCw size={14} /> Size</button>
-                )}
-              </li>
-            );
-          })}
-        </ul>
-      </section>
     </Panel>
   );
 }
+
+function ManageStorage({ onBack }) {
+  const [refreshKey, setRefreshKey] = useState(0);
+  const { breakdown, groupsLoading } = useStorageBreakdown(refreshKey);
+  const [open, setOpen] = useState(null); // a row id, or 'large'
+  const [query, setQuery] = useState('');
+  const [estimate, setEstimate] = useState(null);
+  const [notice, setNotice] = useState('');
+  const [local, setLocal] = useState(null);
+  const [cache, setCache] = useState(() => mediaCacheStats());
+  const ownerId = useChatStore((state) => state.userId);
+  useEffect(() => { navigator.storage?.estimate?.().then(setEstimate).catch(() => {}); }, [refreshKey]);
+  useEffect(() => { if (ownerId) localStoreStatus(ownerId).then(setLocal).catch(() => {}); }, [ownerId, refreshKey]);
+
+  const deleted = (count, bytes) => { setNotice(`Deleted ${count} ${count === 1 ? 'item' : 'items'} · ${formatFileSize(bytes)} freed.`); setRefreshKey((key) => key + 1); };
+  if (open && breakdown) {
+    const items = open === 'large' ? breakdown.large : breakdown.rows.find((row) => row.id === open)?.items ?? [];
+    const title = open === 'large' ? 'Larger than 5 MB' : breakdown.rows.find((row) => row.id === open)?.name ?? 'Chat';
+    return <ItemsView title={title} items={items} onBack={() => setOpen(null)} onDeleted={deleted} />;
+  }
+
+  const used = breakdown?.total ?? 0;
+  const free = estimate ? Math.max(0, Number(estimate.quota) - Number(estimate.usage)) : null;
+  const rows = (breakdown?.rows ?? []).filter((row) => !query || row.name?.toLowerCase().includes(query.toLowerCase()));
+  return (
+    <Panel title="Manage storage" onBack={onBack} onClose={onBack}>
+      <Notice notice={notice} />
+      <section className="hm-sd-summary" aria-label="Storage used">
+        <div className="hm-sd-summary-figures">
+          <span><strong>{breakdown ? formatFileSize(used) : '…'}</strong><small>Used by media</small></span>
+          {free !== null && <span className="is-free"><strong>{formatFileSize(free)}</strong><small>Free</small></span>}
+        </div>
+        {free !== null && (
+          <div className="hm-sd-bar" role="meter" aria-label="Media share of the space available" aria-valuemin={0} aria-valuemax={used + free} aria-valuenow={used}>
+            <span style={{ width: `${Math.max(used ? 1 : 0, Math.min(100, (used / Math.max(1, used + free)) * 100))}%` }} />
+          </div>
+        )}
+        <small className="hm-muted">Photos, videos, voice messages and documents kept on this device. Messages themselves take very little space.</small>
+      </section>
+
+      <h4 className="hm-sd-heading">Review and delete items</h4>
+      <button type="button" className="hm-sd-review" onClick={() => setOpen('large')} disabled={!breakdown}>
+        <Images size={22} aria-hidden="true" />
+        <span><strong>Larger than {formatFileSize(LARGE_ITEM_BYTES)}</strong><small>{breakdown ? `${breakdown.large.length} ${breakdown.large.length === 1 ? 'item' : 'items'} · ${formatFileSize(breakdown.large.reduce((total, item) => total + item.size, 0))}` : 'Counting…'}</small></span>
+        <ChevronRight size={18} aria-hidden="true" className="hm-sd-chevron" />
+      </button>
+
+      <h4 className="hm-sd-heading">Chats</h4>
+      <label className="hm-sd-search"><Search size={16} aria-hidden="true" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search" aria-label="Search chats" /></label>
+      {!breakdown ? <p className="hm-muted">Counting…</p> : (
+        <ul className="hm-sd-chats">
+          {rows.map((row) => (
+            <li key={row.id}>
+              <button type="button" className="hm-sd-row" onClick={() => setOpen(row.id)}>
+                {row.kind === 'chat' ? <Avatar {...row.person} size="small" /> : <span className="hm-sd-chat-icon">{row.kind === 'group' ? <Users size={18} /> : <Folder size={18} />}</span>}
+                <span className="hm-sd-text"><strong>{row.name}</strong><small>{row.items.length} {row.items.length === 1 ? 'item' : 'items'}</small></span>
+                <span className="hm-sd-size">{formatFileSize(row.bytes)}</span>
+              </button>
+            </li>
+          ))}
+          {rows.length === 0 && <li className="hm-muted">{query ? 'No chats match.' : 'No media kept on this device yet.'}</li>}
+          {groupsLoading && <li className="hm-muted">Adding groups…</li>}
+        </ul>
+      )}
+
+      <details className="hm-sd-details">
+        <summary>On this device</summary>
+        {local && (
+          <p className="hm-muted hm-local-store" data-store={local.kind}>
+            Chat history: {local.kind === 'sqlite' ? 'encrypted SQLite (SQLCipher)' : 'encrypted browser storage'} · {local.messages.toLocaleString()} messages
+            {local.kind === 'sqlite' && typeof local.fts === 'boolean' && <> · search {local.fts ? 'full-text index' : 'scan'} · {local.mediaFiles ?? 0} attachment files ({formatFileSize(local.mediaBytes)})</>}
+            {local.error ? ` · ${local.error}` : ''}
+          </p>
+        )}
+        <p className="hm-muted">Media cache: {cache.files} {cache.files === 1 ? 'file' : 'files'} · {formatFileSize(cache.bytes)} held for quick viewing this session.</p>
+        <button type="button" disabled={!cache.files} onClick={() => { clearMediaCache(); setCache(mediaCacheStats()); setNotice('Media cache cleared.'); }}><Trash2 size={16} /> Clear media cache</button>
+      </details>
+    </Panel>
+  );
+}
+
+// --- Network usage ---
+
+const USAGE_ROWS = [
+  { id: 'calls', icon: Phone, title: 'Calls' },
+  { id: 'media', icon: Image, title: 'Media' },
+  { id: 'messages', icon: MessageSquare, title: 'Messages' },
+  { id: 'status', icon: CloudUpload, title: 'Status' },
+  { id: 'backup', icon: HardDrive, title: 'Chat backup' },
+];
+
+function NetworkUsage({ onBack }) {
+  const usage = useNetworkUsage();
+  const [confirming, setConfirming] = useState(false);
+  const totals = usageTotals(usage);
+  const detail = (id) => {
+    const row = usage[id];
+    if (id === 'calls') return `${row.outgoing} outgoing · ${row.incoming} incoming`;
+    if (id === 'messages') return `${row.countSent.toLocaleString()} sent · ${row.countReceived.toLocaleString()} received`;
+    return null;
+  };
+  return (
+    <Panel title="Network usage" onBack={onBack} onClose={onBack}>
+      <section className="hm-sd-usage-total" aria-label="Total usage">
+        <small>Usage</small>
+        <strong>{formatFileSize(totals.sent + totals.received) || '0 B'}</strong>
+        <span><ArrowUpDown size={14} aria-hidden="true" /> {formatFileSize(totals.sent) || '0 B'} sent · {formatFileSize(totals.received) || '0 B'} received</span>
+      </section>
+      <ul className="hm-sd-usage">
+        {USAGE_ROWS.map(({ id, icon: Icon, title }) => (
+          <li key={id}>
+            <Icon size={22} aria-hidden="true" />
+            <span><strong>{title}</strong>{detail(id) && <small>{detail(id)}</small>}</span>
+            <span className="hm-sd-usage-bytes"><small>↑ {formatFileSize(usage[id].sent) || '0 B'}</small><small>↓ {formatFileSize(usage[id].received) || '0 B'}</small></span>
+          </li>
+        ))}
+      </ul>
+      <p className="hm-muted">Counted on this device since {new Date(usage.since).toLocaleDateString(undefined, { day: 'numeric', month: 'long', year: 'numeric' })}. Group calls through the call server aren’t counted yet.</p>
+      {confirming ? (
+        <div className="hm-sd-reset">
+          <span>Reset network usage statistics?</span>
+          <button type="button" onClick={() => setConfirming(false)}>Cancel</button>
+          <button type="button" className="is-danger" onClick={() => { resetUsage(); setConfirming(false); }}>Reset</button>
+        </div>
+      ) : <button type="button" className="hm-sd-reset-button" onClick={() => setConfirming(true)}>Reset statistics</button>}
+    </Panel>
+  );
+}
+
+// --- Auto-download rule dialog ---
+
+function RuleDialog({ settingKey, onClose }) {
+  const definition = SETTINGS[settingKey];
+  const current = useSetting(settingKey);
+  const [draft, setDraft] = useState(() => new Set(current));
+  const toggle = (id) => setDraft((set) => { const next = new Set(set); if (next.has(id)) next.delete(id); else next.add(id); return next; });
+  return (
+    <>
+      <div className="hm-sd-scrim" onClick={onClose} aria-hidden="true" />
+      <div className="hm-sd-dialog" role="dialog" aria-modal="true" aria-label={definition.label}>
+        <h3>{definition.label}</h3>
+        {definition.options.map((option) => (
+          <label key={option.id}><input type="checkbox" checked={draft.has(option.id)} onChange={() => toggle(option.id)} /> {option.label}</label>
+        ))}
+        <div className="hm-sd-dialog-actions">
+          <button type="button" onClick={onClose}>Cancel</button>
+          <button type="button" onClick={() => { appSettings().set(settingKey, definition.options.map((option) => option.id).filter((id) => draft.has(id))); onClose(); }}>OK</button>
+        </div>
+      </div>
+    </>
+  );
+}
+
+function QualityDialog({ onClose }) {
+  const quality = useSetting('media.uploadQuality');
+  return (
+    <>
+      <div className="hm-sd-scrim" onClick={onClose} aria-hidden="true" />
+      <div className="hm-sd-dialog" role="dialog" aria-modal="true" aria-label="Photo upload quality">
+        <h3>Photo upload quality</h3>
+        {SETTINGS['media.uploadQuality'].options.map((option) => (
+          <label key={option.id}><input type="radio" name="upload-quality" checked={quality === option.id} onChange={() => { appSettings().set('media.uploadQuality', option.id); onClose(); }} /> {option.label}</label>
+        ))}
+        <p className="hm-muted">{SETTINGS['media.uploadQuality'].hint}</p>
+      </div>
+    </>
+  );
+}
+
+// --- Storage and data ---
+
+export default function StorageView({ onClose }) {
+  const [view, setView] = useState('main');
+  const [dialog, setDialog] = useState('');
+  const quality = useSetting('media.uploadQuality');
+  const mobile = useSetting(AUTO_DOWNLOAD_KEYS.mobile);
+  const wifi = useSetting(AUTO_DOWNLOAD_KEYS.wifi);
+  const roaming = useSetting(AUTO_DOWNLOAD_KEYS.roaming);
+  const usage = useNetworkUsage();
+  const [storedBytes, setStoredBytes] = useState(null);
+  useEffect(() => { listStoredMedia().then((list) => setStoredBytes(list.reduce((total, item) => total + item.size, 0))).catch(() => {}); }, [view]);
+
+  if (view === 'manage') return <ManageStorage onBack={() => setView('main')} />;
+  if (view === 'network') return <NetworkUsage onBack={() => setView('main')} />;
+  const totals = usageTotals(usage);
+  return (
+    <Panel title="Storage and data" onClose={onClose}>
+      <div className="hm-sd-list">
+        <Row icon={Folder} title="Manage storage" detail={storedBytes === null ? 'Counting…' : `${formatFileSize(storedBytes) || '0 B'} used`} onClick={() => setView('manage')} />
+        <Row icon={ArrowUpDown} title="Network usage" detail={`${formatFileSize(totals.sent) || '0 B'} sent · ${formatFileSize(totals.received) || '0 B'} received`} onClick={() => setView('network')} />
+      </div>
+      <div className="hm-sd-list">
+        <Row icon={Image} title="Photo upload quality" detail={optionLabel('media.uploadQuality', quality)} onClick={() => setDialog('quality')} />
+      </div>
+      <h4 className="hm-sd-heading">Media auto-download</h4>
+      <p className="hm-muted hm-sd-note">Voice messages are always automatically downloaded. Media left off waits for a tap, and the server keeps it for 30 days.</p>
+      <div className="hm-sd-list">
+        <Row title="When using mobile data" detail={ruleSummary(mobile)} onClick={() => setDialog(AUTO_DOWNLOAD_KEYS.mobile)} chevron={false} />
+        <Row title="When connected on Wi-Fi" detail={ruleSummary(wifi)} onClick={() => setDialog(AUTO_DOWNLOAD_KEYS.wifi)} chevron={false} />
+        <Row title="When roaming" detail={ruleSummary(roaming)} onClick={() => setDialog(AUTO_DOWNLOAD_KEYS.roaming)} chevron={false} />
+      </div>
+      {dialog === 'quality' && <QualityDialog onClose={() => setDialog('')} />}
+      {dialog && dialog !== 'quality' && <RuleDialog settingKey={dialog} onClose={() => setDialog('')} />}
+    </Panel>
+  );
+}
+

@@ -1,5 +1,13 @@
 import { CLIENT_SUBPROTOCOL } from './clientVersion.js';
 import { websocketUrl } from './api.js';
+import { frameBytes, recordUsage } from './networkUsage.js';
+
+// Sends one event and counts it under Network usage › Messages.
+function transmit(socket, event) {
+  const frame = JSON.stringify(event);
+  socket.send(frame);
+  recordUsage('messages', { sent: frameBytes(frame), countSent: event?.type === 'message:send' ? 1 : 0 });
+}
 
 export class RealtimeClient {
   constructor(token, onEvent, onState) {
@@ -49,12 +57,15 @@ export class RealtimeClient {
       this.onReady?.();
       while (this.queue.length && socket.readyState === WebSocket.OPEN) {
         const event = this.queue[0];
-        try { socket.send(JSON.stringify(event)); this.queue.shift(); }
+        try { transmit(socket, event); this.queue.shift(); }
         catch { break; }
       }
     });
     socket.addEventListener('message', ({ data }) => {
-      try { this.onEvent(JSON.parse(data)); } catch { /* Ignore malformed server events. */ }
+      let event;
+      try { event = JSON.parse(data); } catch { return; /* Ignore malformed server events. */ }
+      recordUsage('messages', { received: frameBytes(data), countReceived: event?.type === 'message:new' ? 1 : 0 });
+      try { this.onEvent(event); } catch { /* a handler's own failure */ }
     });
     socket.addEventListener('close', (event) => {
       if (this.closed) return;
@@ -95,17 +106,17 @@ export class RealtimeClient {
 
   publishState() {
     if (this.socket?.readyState !== WebSocket.OPEN) return;
-    this.socket.send(JSON.stringify({
+    transmit(this.socket, {
       type: 'client:state',
       visibility: this.visibility,
       idle: this.isIdle,
-    }));
+    });
   }
 
   send(event) {
     if (this.socket?.readyState === WebSocket.OPEN) {
       try {
-        this.socket.send(JSON.stringify(event));
+        transmit(this.socket, event);
         return true;
       } catch {
         if (this.queue.length >= 100) return false;

@@ -11,7 +11,7 @@ import { join } from 'node:path';
 import express from 'express';
 import { effectiveRouting, isEnvelope, MAX_DIRECT_ENVELOPE, MAX_GROUP_ENVELOPE, STRUCTURED } from '../src/e2e/envelope.js';
 
-export const EDIT_WINDOW_MS = 15 * 60 * 1000;
+export const EDIT_WINDOW_MS = 10 * 60 * 1000; // as src/selection.js
 export const MAX_PINS_PER_CHAT = 3;
 export const MAX_LABELS = 20;
 export const LABEL_COLORS = 20;
@@ -368,7 +368,7 @@ export function registerParity(ctx) {
     const content = request.body?.content;
     const problem = editError(message && !message.deletedAt ? message : null, userId, content, MAX_DIRECT_ENVELOPE);
     if (problem) return response.status(problem[0]).json({ error: problem[1] });
-    if (now() - createdMs(message.timestamp) > EDIT_WINDOW_MS) return response.status(409).json({ error: 'Messages can be edited for 15 minutes after sending.' });
+    if (now() - createdMs(message.timestamp) > EDIT_WINDOW_MS) return response.status(409).json({ error: 'Messages can be edited for 10 minutes after sending.' });
     const sealedProblem = await e2e.checkDirectEnvelope(content.trim(), { senderId: userId, senderDeviceId: request.session.device_id, receiverId: message.receiverId });
     if (sealedProblem) return response.status(sealedProblem.status).json(sealedProblem);
     const editedAt = now();
@@ -385,7 +385,7 @@ export function registerParity(ctx) {
     const message = await groupMessage.get(request.params.messageId);
     const problem = editError(message?.groupId === request.params.groupId ? message : null, userId, request.body?.content, MAX_GROUP_ENVELOPE);
     if (problem) return response.status(problem[0]).json({ error: problem[1] });
-    if (now() - createdMs(message.createdAt) > EDIT_WINDOW_MS) return response.status(409).json({ error: 'Messages can be edited for 15 minutes after sending.' });
+    if (now() - createdMs(message.createdAt) > EDIT_WINDOW_MS) return response.status(409).json({ error: 'Messages can be edited for 10 minutes after sending.' });
     const sealedProblem = await e2e.checkGroupEnvelope(request.body.content.trim(), { groupId: message.groupId, senderId: userId, senderDeviceId: request.session.device_id });
     if (sealedProblem) return response.status(sealedProblem.status).json(sealedProblem);
     const editedAt = now();

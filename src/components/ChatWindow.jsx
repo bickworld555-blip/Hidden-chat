@@ -1436,8 +1436,8 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
     if (targets.length === 1 && targets[0].id !== chatId) setActiveChat(targets[0].id);
   }
 
-  // Edit (WhatsApp: own text messages, for 15 minutes): the text goes back into the composer; saving shows it at once
-  // and reverts if the server refuses (e.g. the 15 minutes ran out meanwhile).
+  // Edit (own text messages, for 10 minutes): the text goes back into the composer; saving shows it at once
+  // and reverts if the server refuses (e.g. the 10 minutes ran out meanwhile).
   function startEdit(target) {
     clearSelection();
     setReplyingTo(null);

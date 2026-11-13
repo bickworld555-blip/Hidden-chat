@@ -275,6 +275,12 @@ export async function updateMediaInfo(id, info) {
   await db.run('UPDATE media SET info = ? WHERE id = ?', [JSON.stringify(info), id]);
 }
 
+/** Every attachment kept on this phone: id, size, type and when it was stored (Manage storage). */
+export async function listMediaRefs() {
+  const db = await openLocalDatabase();
+  return (await db.query('SELECT id, byte_size, content_type, stored_at FROM media')).values ?? [];
+}
+
 export async function deleteMediaRef(id) {
   const db = await openLocalDatabase();
   await db.run('DELETE FROM media WHERE id = ?', [id]);

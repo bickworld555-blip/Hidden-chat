@@ -35,16 +35,27 @@ const STRINGS = {
   },
 };
 
-function storedLanguage() {
-  try {
-    const value = deviceStorage.getItem(STORAGE_KEY);
-    if (LANGUAGES.some((language) => language.id === value)) return value;
-  } catch { /* falls back below */ }
-  const preferred = (globalThis.navigator?.language ?? 'en').slice(0, 2).toLowerCase();
+// WhatsApp's first choice, "(device's language)": the phone's language while no other was picked (English when the
+// app has no translation for it).
+export const DEVICE_LANGUAGE = 'device';
+
+export function deviceLanguage(locale = globalThis.navigator?.language) {
+  const preferred = String(locale ?? 'en').slice(0, 2).toLowerCase();
   return LANGUAGES.some((language) => language.id === preferred) ? preferred : 'en';
 }
 
-export const useLanguage = create(() => ({ language: storedLanguage() }));
+function chosenLanguage() {
+  try {
+    const value = deviceStorage.getItem(STORAGE_KEY);
+    if (LANGUAGES.some((language) => language.id === value)) return value;
+  } catch { /* the device's language */ }
+  return null;
+}
+
+export const useLanguage = create(() => {
+  const chosen = chosenLanguage();
+  return { language: chosen ?? deviceLanguage(), followsDevice: !chosen };
+});
 
 function applyDocumentLanguage(language) {
   if (globalThis.document?.documentElement) globalThis.document.documentElement.lang = language;
@@ -52,10 +63,17 @@ function applyDocumentLanguage(language) {
 applyDocumentLanguage(useLanguage.getState().language);
 
 export function setLanguage(language) {
+  if (language === DEVICE_LANGUAGE) {
+    try { deviceStorage.removeItem(STORAGE_KEY); } catch { /* applies for this session */ }
+    const resolved = deviceLanguage();
+    applyDocumentLanguage(resolved);
+    useLanguage.setState({ language: resolved, followsDevice: true });
+    return;
+  }
   if (!LANGUAGES.some((item) => item.id === language)) return;
   try { deviceStorage.setItem(STORAGE_KEY, language); } catch { /* applies for this session */ }
   applyDocumentLanguage(language);
-  useLanguage.setState({ language });
+  useLanguage.setState({ language, followsDevice: false });
 }
 
 /** The text in the chosen language (English when there is no translation yet). */

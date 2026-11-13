@@ -5478,3 +5478,94 @@ button.wa-quoted-reply-preview:active { filter: brightness(.94); }
 .bp-name .display-name-row { justify-content: center; }
 .help-center, .help-article, .support-chat { padding-left: 16px; padding-right: 16px; }
 .help-contact-wrap { position: fixed; right: 16px; bottom: calc(20px + env(safe-area-inset-bottom)); z-index: 5; }
+
+/* Tap a group member (list, or a message's name or photo): Message / Voice call / Video call sheet. */
+button.groups-sender { padding: 0; border: 0; background: none; font: inherit; font-size: 13px; font-weight: 600; text-align: left; cursor: pointer; }
+.groups-sender-photo, .groups-member-photo, .groups-member-name { padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.groups-sender-photo { align-self: flex-start; border-radius: 50%; }
+.groups-member-photo { flex: none; border-radius: 50%; }
+.groups-sheet-scrim { position: absolute; inset: 0; z-index: 5; background: rgba(0, 0, 0, .4); }
+.groups-member-sheet-who { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.groups-member-sheet-who > span { display: flex; flex-direction: column; min-width: 0; }
+.groups-member-sheet-who small { color: #8696a0; font-size: 13px; }
+.groups-member-sheet-row { display: flex; align-items: center; gap: 18px; width: 100%; padding: 14px 6px; border: 0; border-radius: 10px; background: transparent; color: inherit; font: inherit; font-size: 16px; text-align: left; cursor: pointer; }
+.groups-member-sheet-row:hover { background: rgba(134, 150, 160, .12); }
+.groups-member-sheet-row svg { color: #0b57d0; }
+.dark-theme .groups-member-sheet-row svg { color: #7cacf8; }
+
+/* Settings › Storage and data (WhatsApp's layout): rows, Manage storage, Network usage, auto-download dialogs. */
+.hm-sd-list { display: flex; flex-direction: column; margin: 4px 0 10px; }
+.hm-sd-row { display: flex; align-items: center; gap: 18px; width: 100%; min-height: 64px; padding: 10px 16px; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.hm-sd-row:hover { background: rgba(134, 150, 160, .1); }
+.hm-sd-row > svg:first-child { flex: none; color: #8696a0; }
+.hm-sd-text { display: flex; flex: 1; flex-direction: column; min-width: 0; }
+.hm-sd-row strong { font-size: 16px; font-weight: 500; }
+.hm-sd-row small { margin-top: 2px; color: #8696a0; font-size: 13.5px; }
+.hm-sd-chevron { flex: none; color: #8696a0; }
+.hm-sd-heading { margin: 16px 16px 4px; color: #0b57d0; font-size: 14px; font-weight: 600; }
+.dark-theme .hm-sd-heading { color: #7cacf8; }
+.hm-sd-note { margin: 0 16px 4px; font-size: 13px; }
+.hm-sd-summary { margin: 8px 16px 12px; }
+.hm-sd-summary-figures { display: flex; justify-content: space-between; align-items: flex-end; }
+.hm-sd-summary-figures span { display: flex; flex-direction: column; }
+.hm-sd-summary-figures strong { font-size: 24px; font-weight: 500; }
+.hm-sd-summary-figures .is-free { align-items: flex-end; }
+.hm-sd-summary-figures small { color: #8696a0; font-size: 13px; }
+.hm-sd-bar { height: 8px; margin: 10px 0 8px; overflow: hidden; border-radius: 4px; background: rgba(134, 150, 160, .25); }
+.hm-sd-bar span { display: block; height: 100%; border-radius: 4px; background: #0b57d0; }
+.hm-sd-review { display: flex; align-items: center; gap: 16px; width: calc(100% - 32px); margin: 6px 16px; padding: 14px; border: 1px solid rgba(134, 150, 160, .3); border-radius: 12px; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.hm-sd-review > span { display: flex; flex: 1; flex-direction: column; }
+.hm-sd-review small { color: #8696a0; font-size: 13px; }
+.hm-sd-search { display: flex; align-items: center; gap: 8px; margin: 6px 16px; padding: 8px 12px; border-radius: 20px; background: rgba(134, 150, 160, .14); color: #8696a0; }
+.hm-sd-search input { flex: 1; min-width: 0; border: 0; background: transparent; color: var(--wa-text, inherit); font: inherit; outline: none; }
+.hm-sd-chats, .hm-sd-items, .hm-sd-usage { margin: 0; padding: 0; list-style: none; }
+.hm-sd-chats > li.hm-muted { padding: 10px 16px; }
+.hm-sd-chat-icon { display: grid; flex: none; place-items: center; width: 40px; height: 40px; border-radius: 50%; background: rgba(134, 150, 160, .2); color: #8696a0; }
+.hm-sd-size { flex: none; color: #8696a0; font-size: 14px; }
+.hm-sd-details { margin: 16px; color: #8696a0; font-size: 13px; }
+.hm-sd-details summary { cursor: pointer; }
+.hm-sd-details button { display: inline-flex; align-items: center; gap: 6px; padding: 8px 12px; border: 1px solid rgba(134, 150, 160, .4); border-radius: 18px; background: transparent; color: inherit; cursor: pointer; }
+.hm-sd-sort { display: flex; gap: 8px; margin: 8px 16px; }
+.hm-sd-sort button { padding: 6px 14px; border: 1px solid rgba(134, 150, 160, .4); border-radius: 16px; background: transparent; color: inherit; font: inherit; font-size: 13px; cursor: pointer; }
+.hm-sd-sort button.is-on { border-color: #0b57d0; background: rgba(11, 87, 208, .12); color: #0b57d0; }
+.hm-sd-item { display: flex; align-items: center; gap: 14px; width: 100%; padding: 10px 16px; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.hm-sd-item > span:last-child { display: flex; flex-direction: column; min-width: 0; }
+.hm-sd-item strong { overflow: hidden; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.hm-sd-item small { color: #8696a0; font-size: 13px; }
+.hm-sd-item-icon { display: grid; flex: none; place-items: center; width: 44px; height: 44px; border-radius: 8px; background: rgba(134, 150, 160, .18); color: #8696a0; }
+.hm-sd-item.is-on .hm-sd-item-icon { background: #0b57d0; color: #fff; }
+.hm-sd-delete-bar, .hm-sd-reset { position: sticky; bottom: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 8px; padding: 12px 16px; background: var(--wa-panel, #fff); box-shadow: 0 -4px 12px rgba(0, 0, 0, .12); }
+.hm-sd-delete-bar span, .hm-sd-reset span { flex: 1 1 200px; font-size: 14px; }
+.hm-sd-delete-bar button, .hm-sd-reset button, .hm-sd-reset-button { display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; border: 0; border-radius: 18px; background: rgba(134, 150, 160, .18); color: inherit; font: inherit; cursor: pointer; }
+.hm-sd-delete-bar .is-danger, .hm-sd-reset .is-danger { background: #d93025; color: #fff; }
+.hm-sd-usage-total { display: flex; flex-direction: column; gap: 2px; margin: 8px 16px 12px; }
+.hm-sd-usage-total small { color: #8696a0; }
+.hm-sd-usage-total strong { font-size: 28px; font-weight: 500; }
+.hm-sd-usage-total span { display: inline-flex; align-items: center; gap: 6px; color: #8696a0; font-size: 14px; }
+.hm-sd-usage li { display: flex; align-items: center; gap: 18px; min-height: 60px; padding: 8px 16px; }
+.hm-sd-usage li > svg { flex: none; color: #8696a0; }
+.hm-sd-usage li > span:nth-child(2) { display: flex; flex: 1; flex-direction: column; }
+.hm-sd-usage li > span:nth-child(2) small { color: #8696a0; font-size: 13px; }
+.hm-sd-usage-bytes { display: flex; flex-direction: column; align-items: flex-end; color: #8696a0; font-size: 13px; }
+.hm-sd-reset-button { margin: 8px 16px 20px; color: #d93025; }
+.hm-sd-scrim { position: fixed; inset: 0; z-index: 1300; background: rgba(0, 0, 0, .45); }
+.hm-sd-dialog { position: fixed; left: 50%; top: 50%; z-index: 1301; display: flex; flex-direction: column; gap: 4px; width: min(340px, calc(100vw - 48px)); padding: 20px 20px 12px; border-radius: 24px; background: var(--wa-panel, #fff); color: var(--wa-text, #111b21); box-shadow: 0 12px 40px rgba(0, 0, 0, .35); transform: translate(-50%, -50%); }
+.dark-theme .hm-sd-dialog { background: #1d2733; color: #e2e6eb; }
+.hm-sd-dialog h3 { margin: 0 0 10px; font-size: 19px; font-weight: 500; }
+.hm-sd-dialog label { display: flex; align-items: center; gap: 16px; padding: 10px 0; font-size: 16px; cursor: pointer; }
+.hm-sd-dialog input { width: 20px; height: 20px; accent-color: #0b57d0; }
+.hm-sd-dialog-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 6px; }
+.hm-sd-dialog-actions button { padding: 10px 16px; border: 0; border-radius: 18px; background: transparent; color: #0b57d0; font: inherit; font-weight: 600; cursor: pointer; }
+.dark-theme .hm-sd-dialog-actions button { color: #7cacf8; }
+/* A photo waiting for a tap (Media auto-download off for this connection): WhatsApp's download pill. */
+.wa-image-manual { display: inline-flex; align-items: center; gap: 8px; margin: 80px auto; padding: 10px 16px; border-radius: 22px; background: rgba(0, 0, 0, .55); color: #fff; font-size: 14px; }
+.wa-image:has(.wa-image-manual) { display: grid; place-items: center; width: min(260px, 64vw); min-height: 200px; background: linear-gradient(135deg, #8aa4c4, #5d7594); }
+/* App language: WhatsApp's radio list (device's language first). */
+.hm-lang-list { display: flex; flex-direction: column; padding: 4px 0; }
+.hm-lang-row { display: flex; align-items: center; gap: 22px; min-height: 64px; padding: 8px 20px; cursor: pointer; }
+.hm-lang-row:hover { background: rgba(134, 150, 160, .1); }
+.hm-lang-row input { flex: none; width: 20px; height: 20px; accent-color: #0b57d0; }
+.hm-lang-row span { display: flex; flex-direction: column; }
+.hm-lang-row strong { font-size: 16px; font-weight: 500; }
+.hm-lang-row small { color: #8696a0; font-size: 13.5px; }
+.hm-lang-note { margin: 8px 20px; }

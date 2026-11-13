@@ -18,6 +18,8 @@ import DownloadProgress from './DownloadProgress.jsx';
 import { downloadWithProgress, useDownloadProgress } from '../downloads.js';
 import { nativeShell } from '../native.js';
 import { openMediaOnPhone } from '../mediaSave.js';
+import { isStoredLocally } from '../mediaVault.js';
+import { mayAutoDownload } from '../autoDownload.js';
 
 // "1 page • 0.94 MB • PDF", like WhatsApp under a document.
 export function fileMetaLine({ pages, size, label }) {
@@ -163,10 +165,20 @@ function ImageAttachment({ id, filename, sessionToken, info, onOpen, meta = null
   const { load } = media;
   const previewable = canPreviewSize(info?.size ?? 0);
 
-  // Photos download automatically, as in WhatsApp; other formats wait for a tap.
+  // Photos download on their own when Storage and data › Media auto-download allows it on this connection (or they
+  // are already on this device); otherwise they wait for a tap, as on WhatsApp. Other formats always wait.
+  const [manual, setManual] = useState(false);
   useEffect(() => {
-    if (previewable) load().catch(() => {});
-  }, [load, previewable]);
+    if (!previewable) return undefined;
+    let cancelled = false;
+    (async () => {
+      const allowed = (await isStoredLocally(id)) || (await mayAutoDownload(info?.contentType));
+      if (cancelled) return;
+      setManual(!allowed);
+      if (allowed) load().catch(() => {});
+    })();
+    return () => { cancelled = true; };
+  }, [id, info?.contentType, load, previewable]);
 
   if (!previewable || broken || media.status === 'error') return <><FileCard id={id} filename={filename} sessionToken={sessionToken} info={info} />{meta}</>;
 
@@ -179,12 +191,15 @@ function ImageAttachment({ id, filename, sessionToken, info, onOpen, meta = null
       onClick={(event) => {
         event.stopPropagation();
         if (media.url) onOpen?.();
+        else if (manual) { setManual(false); load().catch(() => {}); }
       }}
-      aria-label={`View ${filename}`}
+      aria-label={media.url || !manual ? `View ${filename}` : `Download ${filename}`}
     >
       {media.url
         ? <img src={media.url} alt={filename} onError={() => setBroken(true)} />
-        : <span className="wa-image-loading" aria-busy="true"><ProgressRing progress={media.progress} /></span>}
+        : manual
+          ? <span className="wa-image-manual"><Download size={20} /> {formatFileSize(info?.size ?? NaN)}</span>
+          : <span className="wa-image-loading" aria-busy="true"><ProgressRing progress={media.progress} /></span>}
     </button>
     {meta && <span className="wa-media-overlay">{meta}</span>}
     </div>
