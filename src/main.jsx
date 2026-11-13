@@ -6,6 +6,7 @@ import { registerServiceWorker } from './pwa.js';
 import { watchKeyboard } from './keyboard.js';
 import { SIGNED_IN_HINT, entryFor } from './site/links.js';
 import { deviceStorage, loadDeviceStorage } from './deviceStorage.js';
+import { settleThemeDefault } from './appearance.js';
 
 // The public website (/, /features, /privacy, /business, /download, /help) or the messenger (/app and every other
 // path, and always in the Android app). Signed-in visitors to the home page go straight to the messenger.
@@ -17,6 +18,7 @@ async function start() {
   await loadDeviceStorage();
   let signedIn = false;
   try { signedIn = deviceStorage.getItem(SIGNED_IN_HINT) === '1'; } catch { /* treat as signed out */ }
+  try { settleThemeDefault(deviceStorage, { signedIn, phone: native || window.matchMedia('(max-width: 768px)').matches }); } catch { /* light */ }
   const entry = entryFor(location.pathname, { native, signedIn });
   if (entry === 'redirect-app') {
     location.replace(`/app${location.search}`);

@@ -18,6 +18,14 @@ export function keyboardOpen({ focusedEditable, viewportHeight, fullHeight }) {
   return Boolean(focusedEditable) && fullHeight - viewportHeight >= KEYBOARD_MIN_HEIGHT;
 }
 
+/**
+ * For a Send button's mousedown: the press no longer moves focus off the message box, so the keyboard stays up
+ * between messages (as on WhatsApp) instead of dropping on every send. The click still fires and submits.
+ */
+export function keepKeyboard(event) {
+  event.preventDefault();
+}
+
 export function watchKeyboard(win = typeof window === 'undefined' ? null : window) {
   if (!win?.visualViewport) return () => {};
   const root = win.document.documentElement;
@@ -42,11 +50,13 @@ export function watchKeyboard(win = typeof window === 'undefined' ? null : windo
   win.visualViewport.addEventListener('resize', update);
   win.addEventListener('resize', update);
   win.addEventListener('focusin', update);
-  win.addEventListener('focusout', () => win.setTimeout(update, 50));
+  const settle = () => win.setTimeout(update, 50);
+  win.addEventListener('focusout', settle);
   update();
   return () => {
     win.visualViewport.removeEventListener('resize', update);
     win.removeEventListener('resize', update);
     win.removeEventListener('focusin', update);
+    win.removeEventListener('focusout', settle);
   };
 }

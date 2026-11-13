@@ -262,6 +262,7 @@ button.file-message { border: 0; background: transparent; color: inherit; text-a
 .voice-avatar .avatar { width: 46px; height: 46px; }
 .voice-badge { position: absolute; right: -3px; bottom: -3px; width: 18px; height: 18px; display: grid; place-items: center; border: 2px solid #fff; border-radius: 50%; background: #256dca; color: #fff; }
 .message-bubble.outgoing .voice-badge { border-color: #dee6f1; }
+.voice-avatar.voice-forwarded { display: grid; place-items: center; width: 46px; height: 46px; border-radius: 50%; background: #f26a2e; color: #fff; }
 .voice-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .voice-track { display: flex; align-items: center; gap: 8px; height: 34px; }
 .voice-play { width: 28px; height: 28px; flex: none; display: grid; place-items: center; padding: 0; border: 0; border-radius: 50%; background: transparent; color: #1f242a; cursor: pointer; }.voice-play:disabled { opacity: .4; cursor: default; }
@@ -3829,6 +3830,7 @@ button.groups-row { cursor: pointer; }
 .groups-compose-field { display: flex; flex: 1; align-items: center; min-width: 0; border-radius: 24px; background: #fff; box-shadow: 0 1px .5px rgba(11, 20, 26, .13); }
 .dark-theme .groups-compose-field { background: #1a2738; }
 .groups-compose .groups-compose-field input { flex: 1; min-width: 0; padding: 12px 6px 12px 16px; border: 0; background: transparent; color: inherit; font: inherit; font-size: 15px; outline: none; }
+.groups-compose .groups-emoji + input { padding-left: 2px; }
 .groups-compose .groups-attach { width: 42px; height: 42px; padding: 0; border-radius: 50%; background: transparent; color: #8696a0; }
 .groups-compose .groups-send { display: grid; flex: none; place-items: center; width: 48px; height: 48px; padding: 0; border-radius: 50%; background: #005ad1; color: #fff; }
 

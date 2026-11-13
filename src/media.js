@@ -101,6 +101,8 @@ export function fileTone(filename) {
 export function formatFileSize(bytes) {
   if (!Number.isFinite(bytes) || bytes < 0) return '';
   if (bytes < 1024) return `${bytes} B`;
+  // WhatsApp writes a file between 100 KB and 1 MB as a fraction of a megabyte: "0.90 MB".
+  if (bytes >= 100 * 1024 && bytes < 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
   const units = ['KB', 'MB', 'GB', 'TB'];
   let value = bytes / 1024;
   let unit = 0;

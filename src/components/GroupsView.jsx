@@ -1,8 +1,8 @@
 import { apiFetch, isNetworkFailure } from '../api.js';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  ArrowLeft, BarChart3, Bell, BellOff, CalendarClock, CalendarDays, Check, ChevronDown, Clock, Copy, Download, Flag, Link2, LockKeyhole, LogOut, Megaphone, MinusCircle, Paperclip,
-  ListPlus, Mic, Pencil, Phone, Pin, PinOff, QrCode, Search, SendHorizontal, Share2, Star, Sticker, Timer, Trash2, UserPlus, Users, Video, X,
+  ArrowLeft, Bell, BellOff, CalendarClock, Check, ChevronDown, Clock, Copy, Download, Flag, Link2, LockKeyhole, LogOut, Megaphone, MinusCircle, Paperclip,
+  Camera, ListPlus, Mic, Smile, Pencil, Phone, Pin, PinOff, QrCode, Search, SendHorizontal, Share2, Star, Timer, Trash2, UserPlus, Users, Video, X,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { inviteUrl } from '../invites.js';
@@ -42,14 +42,18 @@ import Avatar from './Avatar.jsx';
 import MediaRenderer from './MediaRenderer.jsx';
 import VoiceMessage from './VoiceMessage.jsx';
 import VoiceRecorderBar from './VoiceRecorderBar.jsx';
+import AttachmentMenu from './AttachmentMenu.jsx';
 import { parseVoiceContent, voiceContent, voiceExtension } from '../voice.js';
 import { useBackHandler } from '../backStack.js';
 import { nativeClearMessageNotifications, nativeShell } from '../native.js';
 import { EventBubble, EventComposer, PollBubble, PollComposer } from './RichMessages.jsx';
 import { parsePollContent } from '../polls.js';
 import { parseEventContent } from '../calendarEvents.js';
+import { keepKeyboard } from '../keyboard.js';
 
 const DELETE_WINDOW_MS = 24 * 60 * 60 * 1000;
+// What the group share sheet offers (the one-to-one sheet minus what is per contact: location, contact, catalog…).
+const GROUP_ATTACH_OPTIONS = ['document', 'camera', 'gallery', 'audio', 'poll', 'event', 'sticker'];
 
 // Group messages are end-to-end encrypted on the way out (Sender Keys, src/e2e/client.js) and opened on the way in.
 const GROUP_MESSAGES = /^\/([^/]+)\/messages$/;
@@ -246,6 +250,23 @@ function SettingsRow({ icon: Icon, title, detail, danger = false, onClick, child
     : <div className={`groups-setting ${danger ? 'groups-danger' : ''}`}>{body}</div>;
 }
 
+// A message waiting on this phone until every member can receive it end to end: shown as the bubble it will become
+// (voice note, photo, sticker, poll…), never as its raw wire content.
+function PendingGroupBody({ content, token, self }) {
+  if (parseRelayCall(content)) return <p className="groups-message-text">Group call</p>;
+  if (isMediaContent(content)) return <MediaRenderer mediaRef={content} sessionToken={token} />;
+  const voice = parseVoiceContent(content);
+  if (voice?.id) return <VoiceMessage id={voice.id} seconds={voice.seconds} sessionToken={token} sender={self} played />;
+  if (isStickerContent(content)) return <StickerMessage content={content} />;
+  const poll = parsePollContent(content);
+  if (poll) return <p className="groups-message-text">📊 {poll.question}</p>;
+  const event = parseEventContent(content);
+  if (event) return <p className="groups-message-text">🗓️ {event.title}</p>;
+  const scheduled = parseScheduledCall(content);
+  if (scheduled) return <p className="groups-message-text">📅 {scheduled.title}</p>;
+  return <p className="groups-message-text"><FormattedText text={content} /></p>;
+}
+
 export default function GroupsView({ token, userId, client, revision, onClose, onStartGroupCall, initialCreate = false, initialGroupId = '' }) {
   const [groups, setGroups] = useState([]);
   const [selected, setSelected] = useState(initialCreate ? '' : initialGroupId);
@@ -263,6 +284,8 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
   const [tagDraft, setTagDraft] = useState(null);
   const [infoSheet, setInfoSheet] = useState('');
   const [recordingVoice, setRecordingVoice] = useState(false);
+  const [attachOpen, setAttachOpen] = useState(false);
+  const sendQueueRef = useRef(Promise.resolve());
   const [memberFilter, setMemberFilter] = useState('');
   const [confirming, setConfirming] = useState('');
   const [reportReason, setReportReason] = useState('');
@@ -467,6 +490,28 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
       setUploading(0);
     }
   }
+  // Several photos from the gallery go out one after another, each as its own message (as on WhatsApp).
+  async function sendAttachments(files) {
+    for (const file of files) await sendAttachment(file);
+  }
+  function pickFiles(accept, capture) {
+    const input = fileInputRef.current;
+    if (!input) return;
+    if (accept) input.accept = accept; else input.removeAttribute('accept');
+    if (capture) input.setAttribute('capture', capture); else input.removeAttribute('capture');
+    input.multiple = !capture;
+    input.click();
+  }
+  // The same share sheet as a one-to-one chat, with what a group supports.
+  function attachFrom(option) {
+    setError('');
+    if (option === 'document') pickFiles('');
+    else if (option === 'camera') pickFiles('image/*,video/*', 'environment');
+    else if (option === 'gallery') pickFiles('image/*,video/*');
+    else if (option === 'audio') pickFiles('audio/*');
+    else if (option === 'poll' || option === 'event') setRichComposer(option);
+    else if (option === 'sticker') setStickersOpen(true);
+  }
   const startVoiceNote = () => {
     setError('');
     setStickersOpen(false);
@@ -566,10 +611,16 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
       return;
     }
     activityRef.current?.stop();
-    perform(async () => {
-      await groupRequest(token, `${groupPath}/messages`, { method: 'POST', body: { content } });
-      setDraft('');
-    });
+    // The box empties at once and stays focused, so the next message can be typed straight away (WhatsApp). Sends
+    // are queued, so quick successive messages keep their order; a failed one comes back into an empty box.
+    setDraft('');
+    setCaret(0);
+    setError('');
+    const target = groupPath;
+    sendQueueRef.current = sendQueueRef.current
+      .then(() => groupRequest(token, `${target}/messages`, { method: 'POST', body: { content } }))
+      .then(() => refresh(new AbortController().signal))
+      .catch((caught) => { setError(caught.message); setDraft((current) => current || content); });
   }
 
   function startEdit(message) {
@@ -895,7 +946,7 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
             <PinnedBanner pins={pins} describe={describePinned} onJump={showMessage} canUnpin={canPin}
               onUnpin={(messageId) => setMessagePinned(chatKey, messageId, false).catch((caught) => setError(caught.message))} />
             <div className="groups-messages" aria-label="Group messages" ref={listRef}>
-              {messages.length === 0 && <p className="groups-day">No messages yet. Say hi 👋</p>}
+              {messages.length === 0 && !pendingMessages.length && <p className="groups-day">No messages yet. Say hi 👋</p>}
               {withDaySeparators(messages).map((item) => {
                 if (item.kind === 'day') return <p className="groups-day" key={item.key}>{item.label}</p>;
                 const { message } = item;
@@ -975,8 +1026,8 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
               })}
               {pendingMessages.map((entry) => (
                 <div className="groups-message-row mine" key={entry.id}>
-                  <article className="groups-message mine is-waiting">
-                    <p className="groups-message-text">{parseRelayCall(entry.content) ? 'Group call' : <FormattedText text={entry.content} />}</p>
+                  <article className={`groups-message mine is-waiting${isMediaContent(entry.content) ? ' has-media' : ''}`}>
+                    <PendingGroupBody content={entry.content} token={token} self={group.members.find((member) => member.id === userId)} />
                     <span className="groups-waiting"><Clock size={12} aria-hidden="true" /> Waiting until everyone has the updated app · end-to-end encrypted</span>
                     <button type="button" className="groups-waiting-cancel" onClick={() => dropPending(userId, selected, entry.id)}>Don’t send</button>
                   </article>
@@ -1006,8 +1057,9 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
               <div className="groups-recorder"><VoiceRecorderBar onSend={sendVoiceNote} onCancel={() => { setRecordingVoice(false); activityRef.current?.recording(false); }} onError={(message) => { setRecordingVoice(false); activityRef.current?.recording(false); setError(message); }} /></div>
             ) : (
             <form className="groups-compose" onSubmit={(event) => { event.preventDefault(); submitDraft(); }}>
-              <input ref={fileInputRef} type="file" hidden onChange={(event) => { const [file] = event.target.files ?? []; event.target.value = ''; sendAttachment(file); }} />
+              <input ref={fileInputRef} type="file" hidden onChange={(event) => { const files = [...(event.target.files ?? [])]; event.target.value = ''; sendAttachments(files); }} />
               <span className="groups-compose-field">
+                {!editing && <button type="button" className="groups-attach groups-emoji" onClick={() => setStickersOpen((open) => !open)} disabled={busy} aria-label="Stickers" aria-expanded={stickersOpen} title="Stickers"><Smile size={20} /></button>}
                 <input ref={draftRef} aria-label="Group message" value={draft} maxLength={10000}
                   onChange={(event) => {
                     setDraft(event.target.value);
@@ -1016,22 +1068,21 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
                     if (event.target.value) activityRef.current?.typed(); else activityRef.current?.stop();
                   }}
                   onSelect={(event) => setCaret(event.target.selectionStart ?? 0)}
-                  placeholder={uploading ? `Uploading… ${uploading}%` : editing ? 'Edit message' : 'Message'} disabled={uploading > 0} />
-                {!editing && <button type="button" className="groups-attach" onClick={() => setStickersOpen((open) => !open)} disabled={busy} aria-label="Stickers" aria-expanded={stickersOpen} title="Stickers"><Sticker size={20} /></button>}
-                <button type="button" className="groups-attach" onClick={() => fileInputRef.current?.click()} disabled={busy || uploading > 0} aria-label="Attach a file" title="Attach a photo, video or file">
+                  placeholder={uploading ? `Uploading… ${uploading}%` : editing ? 'Edit message' : 'Message'} />
+                <button type="button" className="groups-attach" onClick={() => { setStickersOpen(false); setAttachOpen(true); }} disabled={busy || uploading > 0} aria-label="Attach" title="Document, camera, gallery, audio, poll, event">
                   <Paperclip size={20} />
                 </button>
-                <button type="button" className="groups-attach" onClick={() => setRichComposer('poll')} disabled={busy} aria-label="Create poll" title="Poll"><BarChart3 size={20} /></button>
-                <button type="button" className="groups-attach" onClick={() => setRichComposer('event')} disabled={busy} aria-label="Create event" title="Event"><CalendarDays size={20} /></button>
+                {!draft.trim() && <button type="button" className="groups-attach" onClick={() => pickFiles('image/*,video/*', 'environment')} disabled={busy || uploading > 0} aria-label="Camera" title="Camera"><Camera size={20} /></button>}
               </span>
               {!editing && !draft.trim()
                 ? <button type="button" className="groups-send groups-mic" onClick={startVoiceNote} disabled={busy || uploading > 0} aria-label="Record voice note" title="Record a voice note"><Mic size={20} /></button>
-                : <button type="submit" className="groups-send" disabled={busy || uploading > 0 || !draft.trim()} aria-label={editing ? 'Save edit' : 'Send'}>{editing ? <Check size={20} /> : <SendHorizontal size={20} />}</button>}
+                : <button type="submit" className="groups-send" onMouseDown={keepKeyboard} disabled={!draft.trim()} aria-label={editing ? 'Save edit' : 'Send'}>{editing ? <Check size={20} /> : <SendHorizontal size={20} />}</button>}
             </form>
             )}
             </>)}
           </>
         )}
+        <AttachmentMenu isOpen={attachOpen} options={GROUP_ATTACH_OPTIONS} onSelect={attachFrom} onClose={() => setAttachOpen(false)} />
         {joinCode && <JoinGroupSheet code={joinCode} token={token} onClose={() => setJoinCode('')} onJoined={(groupId) => { setJoinCode(''); setSelected(groupId); }} />}
         {group && callPicker && <CallPeoplePicker members={group.members} userId={userId} mode={callPicker} busy={busy} onStart={startCall} onClose={() => setCallPicker('')} />}
         {infoSheet === 'lists' && group && <GroupListsSheet groupKey={`group:${group.id}`} onClose={() => setInfoSheet('')} />}

@@ -106,7 +106,7 @@ import { fetchBlocks } from './blocksApi.js';
 import { activityFromEvent } from './typing.js';
 import { TERMINAL_STATUSES } from './callEngine.js';
 import { isRoomOffer } from './callRoom.js';
-import { animationsAttribute, callAnimationsAttribute, useAppearance } from './appearance.js';
+import { animationsAttribute, callAnimationsAttribute, startsDark, THEME_KEY, useAppearance } from './appearance.js';
 import { useFontSize, useHighContrast } from './displayPrefs.js';
 import { linkContact, searchPeople } from './contactsApi.js';
 import { deviceStorage } from './deviceStorage.js';
@@ -192,10 +192,8 @@ export default function App() {
   const revokedRef = useRef(null);
   const removingRef = useRef(new Set());
   const [authOpen, setAuthOpen] = useState(false);
-  const [darkMode, setDarkMode] = useState(() => {
-    const stored = deviceStorage.getItem('relay:theme');
-    return stored ? stored === 'dark' : window.matchMedia('(max-width: 768px)').matches;
-  });
+  // Light unless this device chose dark (src/appearance.js).
+  const [darkMode, setDarkMode] = useState(() => startsDark(deviceStorage));
   const [fatalError, setFatalError] = useState('');
   const [mobileListOpen, setMobileListOpen] = useState(true);
   const [authReady, setAuthReady] = useState(false);
@@ -700,7 +698,7 @@ export default function App() {
   function toggleTheme() {
     const next = !darkMode;
     setDarkMode(next);
-    deviceStorage.setItem('relay:theme', next ? 'dark' : 'light');
+    deviceStorage.setItem(THEME_KEY, next ? 'dark' : 'light');
   }
 
   // Activates a session in the store and remembers it in the device's account list.

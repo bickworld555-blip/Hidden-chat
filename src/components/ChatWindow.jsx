@@ -69,6 +69,7 @@ import { ComposerAssist } from './parity/ComposerAssist.jsx';
 import PinnedBanner from './parity/PinnedBanner.jsx';
 import { ProductCard, parseProductContent, productContent } from './parity/ProductCard.jsx';
 import VerifiedBadge from './VerifiedBadge.jsx';
+import { keepKeyboard } from '../keyboard.js';
 const CatalogPicker = lazyComponent(() => import('./parity/CatalogPicker.jsx'));
 
 function usePageVisible() {
@@ -447,6 +448,7 @@ function MessageBubble({
               sessionToken={sessionToken}
               sender={sender}
               played={Boolean(message.played)}
+              forwarded={Boolean(message?.forwarded)}
               onPlayed={mine ? undefined : () => {
                 shared.send?.({ type: 'message:played', messageId: message.id });
                 useChatStore.getState().updateMessage(message.id, { played: true, status: 'read' });
@@ -1880,9 +1882,9 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
               )}
             </div>
             {editing ? (
-              <button type="submit" className="composer-fab" aria-label="Save edit" disabled={!text.trim()}><Check size={20} /></button>
+              <button type="submit" className="composer-fab" onMouseDown={keepKeyboard} aria-label="Save edit" disabled={!text.trim()}><Check size={20} /></button>
             ) : action === 'send' ? (
-              <button type="submit" className="composer-fab" aria-label="Send"><Send size={20} /></button>
+              <button type="submit" className="composer-fab" onMouseDown={keepKeyboard} aria-label="Send"><Send size={20} /></button>
             ) : (
               <button type="button" className="composer-fab composer-mic" onPointerDown={startVoiceGesture} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setError(''); setEmojiOpen(false); setRecording(true); } }} onContextMenu={(event) => event.preventDefault()} aria-label="Record voice note" title="Tap to record, or hold: release to send, slide up to lock" disabled={busy}><Mic size={20} /></button>
             )}

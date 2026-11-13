@@ -9,8 +9,9 @@ import Avatar from './Avatar.jsx';
 const SPEEDS = [1, 1.5, 2];
 
 // `played`: the recipient has listened to it (mic and dot turn from green to blue, like WhatsApp). `onPlayed` is
-// given to the recipient only, and runs the first time they play it.
-export default function VoiceMessage({ id, seconds, sessionToken, sender, played = false, onPlayed, children }) {
+// given to the recipient only, and runs the first time they play it. `forwarded`: someone else recorded it, so (as on
+// WhatsApp) an orange mic stands in for the sender's photo.
+export default function VoiceMessage({ id, seconds, sessionToken, sender, played = false, forwarded = false, onPlayed, children }) {
   const audioRef = useRef(null);
   // Transcript (Android 13+, made on the phone): shown under the voice note once requested.
   const transcript = useTranscripts((state) => state.texts[id]);
@@ -110,10 +111,14 @@ export default function VoiceMessage({ id, seconds, sessionToken, sender, played
 
   return (
     <div className={`voice-row ${played ? 'is-played' : 'is-unplayed'}`}>
-      <span className="voice-avatar">
-        <Avatar name={sender?.name} initials={sender?.initials ?? sender?.name?.slice(0, 2)?.toUpperCase() ?? '?'} color={sender?.color} image={sender?.avatar} />
-        <span className="voice-badge"><Mic size={11} /></span>
-      </span>
+      {forwarded ? (
+        <span className="voice-avatar voice-forwarded" aria-hidden="true"><Mic size={22} /></span>
+      ) : (
+        <span className="voice-avatar">
+          <Avatar name={sender?.name} initials={sender?.initials ?? sender?.name?.slice(0, 2)?.toUpperCase() ?? '?'} color={sender?.color} image={sender?.avatar} />
+          <span className="voice-badge"><Mic size={11} /></span>
+        </span>
+      )}
       <div className="voice-main">
         <div className="voice-track">
           <button type="button" className={`voice-play ${loading !== null ? 'is-loading' : ''}`} onClick={toggle} disabled={loading !== null} aria-label={loading !== null ? `Loading voice message, ${loading}%` : playing ? 'Pause voice message' : 'Play voice message'}>

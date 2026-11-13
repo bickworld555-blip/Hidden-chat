@@ -168,6 +168,8 @@ test('client media helpers classify by server type and label by name', () => {
   assert.equal(formatFileSize(0), '0 B');
   assert.equal(formatFileSize(1536), '1.5 KB');
   assert.equal(formatFileSize(10 * 1024 * 1024), '10 MB');
+  assert.equal(formatFileSize(940000), '0.90 MB');
+  assert.equal(formatFileSize(99 * 1024), '99 KB');
   assert.equal(mediaPreviewLabel('media:1:holiday.JPG'), '📷 Photo');
   assert.equal(mediaPreviewLabel('media:1:clip.mov'), '🎥 Video');
   assert.equal(mediaPreviewLabel('media:1:app.apk'), '📄 app.apk');

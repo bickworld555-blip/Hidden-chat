@@ -85,3 +85,20 @@ export function animationsAttribute(appearance = read()) {
 export function callAnimationsAttribute(appearance = read()) {
   return appearance.animations && appearance.callAnimations ? 'on' : 'off';
 }
+
+// Theme. New installs start on the light theme (blue accents); Settings › Theme switches to dark. Before this, phones
+// started dark: a phone already signed in that never chose a theme keeps the dark one it has been showing, decided
+// once (THEME_SETTLED) so someone who installs fresh and signs in later is never switched to dark.
+export const THEME_KEY = 'relay:theme';
+export const THEME_SETTLED = 'hm:theme-default-light';
+
+export function settleThemeDefault(storage, { signedIn, phone }) {
+  if (storage.getItem(THEME_SETTLED)) return;
+  if (!storage.getItem(THEME_KEY) && signedIn && phone) storage.setItem(THEME_KEY, 'dark');
+  storage.setItem(THEME_SETTLED, '1');
+}
+
+/** Whether the app opens dark: only when this device chose (or kept) the dark theme. */
+export function startsDark(storage) {
+  return storage.getItem(THEME_KEY) === 'dark';
+}
