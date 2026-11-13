@@ -202,3 +202,5 @@ export async function nativeSaveBytes({ data, filename, mimeType = '' }) {
 }
 // A voice message transcript made on the phone (Android 13+, VoiceTranscriber.java): { text } or { error }.
 export const nativeTranscribeAudio = (data, language = '') => invoke('transcribeAudio', { data, language });
+// The on-device speech pack for a language (Android's own speech service downloads it; nothing else is sent).
+export const nativeDownloadSpeechLanguage = (language) => invoke('downloadSpeechLanguage', { language });

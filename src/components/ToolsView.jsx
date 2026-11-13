@@ -9,7 +9,8 @@ import { fetchGroupMessages } from '../groupHistory.js';
 import { ABOUT_MAX, ABOUT_SUGGESTIONS, fetchMyAbout, saveMyAbout } from '../aboutApi.js';
 import BrandMark from './BrandMark.jsx';
 import packageInfo from '../../package.json';
-import { Archive, CalendarDays, FileText, Info, MessageCircleQuestion, Palette, Scale, Share2 } from 'lucide-react';
+import { Archive, AudioLines, CalendarDays, FileText, Info, MessageCircleQuestion, Palette, Scale, Share2 } from 'lucide-react';
+import { VOICE_LANGUAGE_AUTO, VOICE_LANGUAGES, resolveVoiceLanguage, voiceLanguageLabel } from '../voiceLanguage.js';
 import { Accessibility, ArrowLeft, ChevronDown, MonitorSmartphone, QrCode, Bell, Check, ChevronRight, Contrast, CornerDownLeft, ListChecks, Type, CircleHelp, Clock, DatabaseBackup, Download, HardDrive, KeyRound, Languages, Link2, Lock, LogOut, Megaphone, MessageSquare, Moon, Pencil, Radio, ScanFace, ShieldCheck, Sparkles, Star, Store, Sun, UserPlus, Users, Video, X } from 'lucide-react';
 import { useChatStore } from '../store.js';
 import { WALLPAPERS, setWallpaper, useWallpaper } from '../wallpaper.js';
@@ -265,6 +266,7 @@ export default function ToolsView({ darkMode, themePref = 'light', onChooseTheme
   const wallpaper = useWallpaper();
   const enterIsSend = useEnterSends();
   const keepArchived = useSetting('chats.keepArchived');
+  const voiceLanguage = useSetting('chats.voiceLanguage');
   // App icon (Android app only): which launcher icon is on.
   const [appIcon, setAppIcon] = useState('default');
   const [iconNote, setIconNote] = useState('');
@@ -298,6 +300,18 @@ export default function ToolsView({ darkMode, themePref = 'light', onChooseTheme
         ))}
       </div>
     )],
+    voicelang: ['Voice message language', (
+      <div className="tools-section" role="radiogroup" aria-label="Voice message language">
+        <p className="tools-page-note">The language you speak in voice messages. It travels inside the end-to-end encryption, so the people you send voice messages to can transcribe them on their own phone. The server never sees it.</p>
+        {[{ id: VOICE_LANGUAGE_AUTO, label: `Same as the phone (${voiceLanguageLabel(resolveVoiceLanguage(VOICE_LANGUAGE_AUTO))})` }, ...VOICE_LANGUAGES].map(({ id, label }) => (
+          <button key={id} type="button" role="radio" aria-checked={voiceLanguage === id} className="tool-item" onClick={() => appSettings().set('chats.voiceLanguage', id)}>
+            <AudioLines size={20} />
+            <div className="tool-item-info"><strong>{label}</strong></div>
+            {voiceLanguage === id && <Check size={18} />}
+          </button>
+        ))}
+      </div>
+    )],
     avatar: ['Avatar', (
       <div className="tools-section">
         <Item iconNode={<AvatarThumb persona={persona} />} title="Your avatar"
@@ -322,6 +336,9 @@ export default function ToolsView({ darkMode, themePref = 'light', onChooseTheme
         <Item icon={Download} title="Media visibility" checked={mediaSave && Boolean(inApp)} disabled={!inApp}
           detail={!inApp ? 'In the Android app: show newly downloaded media in your phone’s gallery' : mediaSave ? 'On · new photos, videos and files also go to the phone’s gallery (Download/Hidden Messenger)' : 'Off · media stays inside Hidden Messenger'}
           onClick={() => setMediaSaveEnabled(!mediaSave)} />
+        <Item icon={AudioLines} title="Voice message language"
+          detail={voiceLanguage === VOICE_LANGUAGE_AUTO ? `Same as the phone · ${voiceLanguageLabel(resolveVoiceLanguage(voiceLanguage))}` : voiceLanguageLabel(voiceLanguage)}
+          onClick={() => setPage('voicelang')} />
         <h3>Archived chats</h3>
         <Item icon={Archive} title="Keep chats archived" checked={keepArchived}
           detail={keepArchived ? 'Archived chats stay archived when you get a new message' : 'A new message brings an archived chat back to the list'}

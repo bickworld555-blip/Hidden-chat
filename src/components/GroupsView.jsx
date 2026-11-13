@@ -45,6 +45,7 @@ import VoiceRecorderBar from './VoiceRecorderBar.jsx';
 import AttachmentMenu from './AttachmentMenu.jsx';
 import CameraCapture from './CameraCapture.jsx';
 import { parseVoiceContent, voiceContent, voiceExtension } from '../voice.js';
+import { resolveVoiceLanguage } from '../voiceLanguage.js';
 import { useBackHandler } from '../backStack.js';
 import { nativeClearMessageNotifications, nativeShell } from '../native.js';
 import { EventBubble, EventComposer, PollBubble, PollComposer } from './RichMessages.jsx';
@@ -321,7 +322,7 @@ function PendingGroupBody({ content, token, self }) {
   if (parseRelayCall(content)) return <p className="groups-message-text">Group call</p>;
   if (isMediaContent(content)) return <MediaRenderer mediaRef={content} sessionToken={token} />;
   const voice = parseVoiceContent(content);
-  if (voice?.id) return <VoiceMessage id={voice.id} seconds={voice.seconds} sessionToken={token} sender={self} played />;
+  if (voice?.id) return <VoiceMessage id={voice.id} seconds={voice.seconds} lang={voice.lang} sessionToken={token} sender={self} played />;
   if (isStickerContent(content)) return <StickerMessage content={content} />;
   const poll = parsePollContent(content);
   if (poll) return <p className="groups-message-text">📊 {poll.question}</p>;
@@ -551,7 +552,7 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
       const plain = new File([blob], `voice-note.${voiceExtension(type)}`, { type: blob.type || type });
       const { upload, descriptor } = await sealForUpload(plain);
       const data = await uploadFile(upload, { groupId: selected, sessionToken: token, kind: 'voice', onProgress: (done, total) => setUploading(Math.max(1, Math.round((done / total) * 100))) });
-      await groupRequest(token, `${groupPath}/messages`, { method: 'POST', body: { content: voiceContent(data.id, seconds, { descriptor }) } });
+      await groupRequest(token, `${groupPath}/messages`, { method: 'POST', body: { content: voiceContent(data.id, seconds, { descriptor, lang: resolveVoiceLanguage(appSettings().get('chats.voiceLanguage')) }) } });
       await refresh(new AbortController().signal);
     } catch (caught) {
       setError(caught.message);
@@ -1075,7 +1076,7 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
                           {onStartGroupCall && <button type="button" onClick={() => setCallPicker(scheduled.mode)}>{scheduled.at > Date.now() ? 'Start early' : 'Start call'}</button>}
                         </div>
                       ) : message.e2eError ? <p className="deleted-text"><span aria-hidden="true">🔒</span> Waiting for this message. It is end-to-end encrypted.</p>
-                        : voice?.id ? <VoiceMessage id={voice.id} seconds={voice.seconds} sessionToken={token} sender={sender ?? group.members.find((member) => member.id === message.senderId)} played />
+                        : voice?.id ? <VoiceMessage id={voice.id} seconds={voice.seconds} lang={voice.lang} sessionToken={token} sender={sender ?? group.members.find((member) => member.id === message.senderId)} played />
                         : isMedia ? <MediaRenderer mediaRef={message.content} sessionToken={token} meta={meta} />
                         : poll ? <PollBubble messageId={message.id} poll={poll} sessionToken={token} userId={userId} nameFor={(id) => group.members.find((member) => member.id === id)?.name} context={{ groupId: selected }} />
                         : event ? <EventBubble messageId={message.id} event={event} />

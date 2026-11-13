@@ -11,6 +11,7 @@ import { LOAD_OLDER_STEP, RENDER_WINDOW, renderCountFor, windowedMessages } from
 import { attachmentContent, sealForUpload } from '../mediaCrypto.js';
 import { ArrowLeft, Ban, Camera, Check, CheckCheck, ChevronDown, ChevronUp, Clock, CornerUpLeft, FileText, Forward, Image as ImageIcon, Info, Link2, Mic, MoreVertical, Paperclip, Pencil, Phone, Pin, PinOff, Search, Send, Share2, ShoppingCart, Smile, Star, Timer, Trash2, Video, X } from 'lucide-react';
 import { parseVoiceContent, voiceContent, voiceExtension } from '../voice.js';
+import { resolveVoiceLanguage } from '../voiceLanguage.js';
 import { COMPOSER_EMOJIS, COMPOSER_MAX_LENGTH, composerAction, insertAtCaret } from '../composer.js';
 import { playNotificationTone } from '../sounds.js';
 import { EMPTY_MESSAGES, deletedLabel, previewFor, useChatStore } from '../store.js';
@@ -461,6 +462,7 @@ function MessageBubble({
             <VoiceMessage
               id={voice.id}
               seconds={voice.seconds}
+              lang={voice.lang}
               sessionToken={sessionToken}
               sender={sender}
               played={Boolean(message.played)}
@@ -1149,7 +1151,7 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
       const attachment = attachmentContent(data.id, descriptor ? filename : data.filename || filename, descriptor);
       // View once photos/videos, video notes and made stickers wrap the attachment (src/mediaExtras.js).
       const wrapped = { viewonce: VIEW_ONCE_PREFIX, vnote: VIDEO_NOTE_PREFIX, csticker: CUSTOM_STICKER_PREFIX }[kind];
-      sendContent(isVoiceNote ? voiceContent(data.id, seconds, { viewOnce: kind === 'voice-once', descriptor })
+      sendContent(isVoiceNote ? voiceContent(data.id, seconds, { viewOnce: kind === 'voice-once', descriptor, lang: resolveVoiceLanguage(appSettings().get('chats.voiceLanguage')) })
         : wrapped ? wrapped + attachment : attachment);
     } catch (caught) {
       if (caught?.name !== 'AbortError') setError(caught?.message || 'Upload failed.');

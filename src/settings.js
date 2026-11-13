@@ -5,6 +5,7 @@
 //   • scope 'account' lives on the server and follows the account to every device (privacy, like WhatsApp's
 //     MexPrivacySettingsHandler); changes apply at once and roll back if the server refuses them;
 //   • values are validated on the way in and on the way out (a damaged or old value falls back to the default).
+import { VOICE_LANGUAGE_AUTO, VOICE_LANGUAGES } from './voiceLanguage.js';
 import { useSyncExternalStore } from 'react';
 import { deviceStorage } from './deviceStorage.js';
 
@@ -55,6 +56,13 @@ export const SETTINGS = Object.freeze({
     legacyKey: 'hm:noise-cancellation',
   },
   // --- Chats (this device) ---
+  // The language you speak in voice messages; it travels inside the end-to-end encryption so the receiver's phone
+  // transcribes it correctly (src/voiceLanguage.js). "Same as the phone" maps the phone's language.
+  'chats.voiceLanguage': {
+    section: 'chats', scope: 'device', type: 'choice', label: 'Voice message language',
+    options: Object.freeze([{ id: VOICE_LANGUAGE_AUTO, label: 'Same as the phone' }, ...VOICE_LANGUAGES]),
+    default: 'auto', hint: 'The language you speak in voice messages, so people you send them to can transcribe them on their phone.',
+  },
   'chats.keepArchived': {
     section: 'chats', scope: 'device', type: 'switch', label: 'Keep chats archived', default: true,
     hint: 'Archived chats stay archived when you get a new message.',

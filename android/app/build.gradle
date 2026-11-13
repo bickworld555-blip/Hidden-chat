@@ -35,6 +35,12 @@ android {
         }
     }
     buildTypes {
+        // The translation lab (Phase 1 proof of concept, src/debug): installs beside the real app as "HM Lab" and
+        // carries ML Kit only in this build type, so release APKs stay as they are.
+        debug {
+            applicationIdSuffix ".lab"
+            versionNameSuffix "-lab"
+        }
         release {
             if (releaseSigningReady) {
                 signingConfig signingConfigs.release
@@ -46,6 +52,8 @@ android {
 }
 
 tasks.configureEach {
+    // google-services.json only knows the real package; the lab build runs without push.
+    if (name == 'processDebugGoogleServices') enabled = false
     if (name == 'preReleaseBuild') {
         doFirst {
             // Expo EAS builds sign with the EAS-managed keystore it injects; everywhere else our own keystore is required.
@@ -81,6 +89,8 @@ dependencies {
     // Firebase Cloud Messaging: pushes wake the idle app for messages and calls (no always-on connection).
     implementation platform('com.google.firebase:firebase-bom:33.7.0')
     implementation 'com.google.firebase:firebase-messaging'
+    // Translation lab only (debug): Google ML Kit on-device translation. Never in release builds.
+    debugImplementation 'com.google.mlkit:translate:17.0.3'
     testImplementation "junit:junit:$junitVersion"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"

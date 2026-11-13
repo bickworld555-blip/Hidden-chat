@@ -536,12 +536,59 @@ public class HiddenNativePlugin extends Plugin {
             call.reject("No audio.");
             return;
         }
-        VoiceTranscriber.transcribe(getContext(), audio, call.getString("language"), (text, error) -> {
+        VoiceTranscriber.transcribe(getContext(), audio, call.getString("language"), (text, error, code) -> {
             JSObject result = new JSObject();
             if (text != null) result.put("text", text);
             if (error != null) result.put("error", error);
+            if (code != null) result.put("code", code);
             call.resolve(result);
         });
+    }
+
+    /** Asks the on-device speech service for a language pack: { language } → { started } or { error, code }. */
+    @PluginMethod
+    public void downloadSpeechLanguage(PluginCall call) {
+        VoiceTranscriber.downloadLanguage(getContext(), call.getString("language", ""), (text, error, code) -> {
+            JSObject result = new JSObject();
+            result.put("started", text != null);
+            if (error != null) result.put("error", error);
+            if (code != null) result.put("code", code);
+            call.resolve(result);
+        });
+    }
+
+    /** A translation lab run's report (TranslationLab, debug builds only). */
+    interface LabReport {
+        void done(JSObject report);
+    }
+
+    /**
+     * Phase 1 proof of concept, DEBUG BUILDS ONLY ("HM Lab"): { audio (base64), from, to, download?, speak? } →
+     * the lab report (per-stage timings, transcript, translation, voice, memory, network). Everything runs on the
+     * phone (src/debug TranslationLab.java); release builds don't contain it and refuse.
+     */
+    @PluginMethod
+    public void translateVoice(PluginCall call) {
+        if ((getContext().getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) == 0) {
+            call.reject("Voice translation is only in the lab build.", "unavailable");
+            return;
+        }
+        byte[] audio;
+        try {
+            audio = android.util.Base64.decode(call.getString("audio", ""), android.util.Base64.DEFAULT);
+        } catch (IllegalArgumentException broken) {
+            call.reject("No audio.");
+            return;
+        }
+        try {
+            Class<?> lab = Class.forName("io.github.bickworld555.hiddenchat.TranslationLab");
+            java.lang.reflect.Method run = lab.getDeclaredMethod("run", Context.class, byte[].class, String.class, String.class, boolean.class, boolean.class, LabReport.class);
+            run.setAccessible(true);
+            run.invoke(null, getContext(), audio, call.getString("from", ""), call.getString("to", "en-US"),
+                Boolean.TRUE.equals(call.getBoolean("download", false)), Boolean.TRUE.equals(call.getBoolean("speak", false)), (LabReport) call::resolve);
+        } catch (ReflectiveOperationException missing) {
+            call.reject("The translation lab is not in this build.", "unavailable");
+        }
     }
 
     /** Opens what sealSecret produced: { sealed } → { value }. */

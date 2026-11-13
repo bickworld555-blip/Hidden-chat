@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { AudioLines, Mic, Pause, Play } from 'lucide-react';
-import { checkTranscription, transcribe, useTranscripts } from '../transcripts.js';
+import { checkTranscription, downloadSpeechPack, transcribe, useTranscripts } from '../transcripts.js';
 import { formatClock, voiceMimeFromDisposition, waveformPeaks } from '../voice.js';
 import { loadMediaBlob, loadMediaInfo } from '../media.js';
 import { playExclusiveAudio, stopExclusiveAudio } from '../audioManager.js';
@@ -11,13 +11,14 @@ const SPEEDS = [1, 1.5, 2];
 // `played`: the recipient has listened to it (mic and dot turn from green to blue, like WhatsApp). `onPlayed` is
 // given to the recipient only, and runs the first time they play it. `forwarded`: someone else recorded it, so (as on
 // WhatsApp) an orange mic stands in for the sender's photo.
-export default function VoiceMessage({ id, seconds, sessionToken, sender, played = false, forwarded = false, onPlayed, children }) {
+export default function VoiceMessage({ id, seconds, lang = '', sessionToken, sender, played = false, forwarded = false, onPlayed, children }) {
   const audioRef = useRef(null);
   // Transcript (Android 13+, made on the phone): shown under the voice note once requested.
   const transcript = useTranscripts((state) => state.texts[id]);
   const transcribing = useTranscripts((state) => Boolean(state.pending[id]));
   const transcriptError = useTranscripts((state) => state.errors[id]);
   const canTranscribe = useTranscripts((state) => state.available);
+  const missingPack = useTranscripts((state) => state.missingPacks[id]);
   useEffect(() => { checkTranscription(); }, []);
   const urlRef = useRef('');
   const speedRef = useRef(1);
@@ -137,7 +138,7 @@ export default function VoiceMessage({ id, seconds, sessionToken, sender, played
             <button type="button" className="voice-speed" onClick={cycleSpeed} aria-label="Change playback speed">{SPEEDS[speedIndex]}×</button>
           )}
           {canTranscribe && !transcript && (
-            <button type="button" className="voice-transcribe" onClick={() => transcribe(id, sessionToken)} disabled={transcribing} aria-label="Transcribe voice message">
+            <button type="button" className="voice-transcribe" onClick={() => transcribe(id, sessionToken, lang)} disabled={transcribing} aria-label="Transcribe voice message">
               <AudioLines size={14} aria-hidden="true" /> {transcribing ? 'Transcribing…' : 'Transcribe'}
             </button>
           )}
@@ -145,6 +146,9 @@ export default function VoiceMessage({ id, seconds, sessionToken, sender, played
         </div>
         {transcript && <p className="voice-transcript">{transcript}</p>}
         {transcriptError && !transcript && <span className="attachment-error">{transcriptError}</span>}
+        {missingPack && !transcript && (
+          <button type="button" className="voice-transcribe" onClick={() => downloadSpeechPack(id)}>Download speech pack</button>
+        )}
         {error && <span className="attachment-error">{error}</span>}
       </div>
     </div>

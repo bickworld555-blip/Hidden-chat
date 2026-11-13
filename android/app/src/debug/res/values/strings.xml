@@ -1,0 +1,6 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <!-- The translation lab build (debug): installed beside the real app, so it needs its own name. -->
+    <string name="app_name">HM Lab</string>
+    <string name="title_activity_main">HM Lab</string>
+</resources>

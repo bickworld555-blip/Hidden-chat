@@ -2,14 +2,15 @@
 // (encrypted with the rest of local storage), like WhatsApp's.
 import { create } from 'zustand';
 import { secureGet, secureSet } from './secureStorage.js';
-import { nativeSecurityStatus, nativeShell, nativeTranscribeAudio } from './native.js';
+import { nativeDownloadSpeechLanguage, nativeSecurityStatus, nativeShell, nativeTranscribeAudio } from './native.js';
 import { blobToBase64 } from './fileSave.js';
 import { loadMediaBlob } from './media.js';
+import { VOICE_LANGUAGE_AUTO, cleanVoiceLang, resolveVoiceLanguage } from './voiceLanguage.js';
 
 const KEY = 'hm:voice-transcripts-v1';
 const MAX_KEPT = 500;
 
-export const useTranscripts = create(() => ({ texts: {}, pending: {}, errors: {}, available: null, loaded: false }));
+export const useTranscripts = create(() => ({ texts: {}, pending: {}, errors: {}, missingPacks: {}, available: null, loaded: false }));
 
 let loading = null;
 function loadSaved() {
@@ -30,13 +31,20 @@ export function checkTranscription() {
   nativeSecurityStatus().then((status) => useTranscripts.setState({ available: Boolean(status?.transcription) })).catch(() => useTranscripts.setState({ available: false }));
 }
 
-export async function transcribe(mediaId, sessionToken) {
+// lang: the language the sender spoke (inside the encrypted voice message, src/voiceLanguage.js). Older notes carry
+// none; then the phone's own language is the best guess.
+export async function transcribe(mediaId, sessionToken, lang = '') {
   const state = useTranscripts.getState();
   if (state.pending[mediaId] || state.texts[mediaId]) return;
-  useTranscripts.setState({ pending: { ...state.pending, [mediaId]: true }, errors: { ...state.errors, [mediaId]: undefined } });
+  const { [mediaId]: _retried, ...missingPacks } = state.missingPacks;
+  useTranscripts.setState({ pending: { ...state.pending, [mediaId]: true }, errors: { ...state.errors, [mediaId]: undefined }, missingPacks });
   try {
     const blob = await loadMediaBlob(mediaId, sessionToken);
-    const result = await nativeTranscribeAudio(await blobToBase64(blob), navigator.language || '');
+    const language = cleanVoiceLang(lang) || resolveVoiceLanguage(VOICE_LANGUAGE_AUTO);
+    const result = await nativeTranscribeAudio(await blobToBase64(blob), language);
+    if (result?.code === 'language_pack_missing') {
+      useTranscripts.setState((current) => ({ missingPacks: { ...current.missingPacks, [mediaId]: language } }));
+    }
     if (!result?.text) throw new Error(result?.error || 'This voice message can’t be transcribed on this phone.');
     await loadSaved();
     const texts = { ...useTranscripts.getState().texts, [mediaId]: result.text };
@@ -52,4 +60,22 @@ export async function transcribe(mediaId, sessionToken) {
       return { pending };
     });
   }
+}
+
+/**
+ * The phone has no on-device pack for the language a note was spoken in: ask Android's speech service to download it
+ * (it shows its own progress), then the person taps Transcribe again. Transcripts never fall back to a server.
+ */
+export async function downloadSpeechPack(mediaId) {
+  const language = useTranscripts.getState().missingPacks[mediaId];
+  if (!language) return;
+  const result = await nativeDownloadSpeechLanguage(language).catch(() => null);
+  useTranscripts.setState((current) => {
+    const missingPacks = { ...current.missingPacks };
+    delete missingPacks[mediaId];
+    return {
+      missingPacks,
+      errors: { ...current.errors, [mediaId]: result?.started ? 'Downloading the speech pack. Tap Transcribe again when it’s done.' : (result?.error || 'The speech pack could not be downloaded on this phone.') },
+    };
+  });
 }
