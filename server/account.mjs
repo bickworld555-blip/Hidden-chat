@@ -12,6 +12,7 @@ import { join } from 'node:path';
 /** What deletion removes: [table, where clause] with "?" = the user id (repeated as needed). */
 export const PERSONAL_ROWS = [
   ['sessions', 'user_id = ?'],
+  ['connect_tokens', 'owner_id = ?'],
   // Their own contact list goes; other people keep their chat with the account, which now reads "Deleted account".
   ['contacts', 'owner_id = ?'],
   ['blocks', 'blocker_id = ? OR blocked_id = ?'],
@@ -59,7 +60,7 @@ export const PERSONAL_ROWS = [
   ['messages', 'sender_id = ? OR receiver_id = ?'],
 ];
 
-export function registerAccount({ app, db, requireSession, verifyPassword, closeUserSessions, avatarDirectory, catalogDirectory, onDeleted = async () => {} }) {
+export function registerAccount({ app, db, requireSession, verifyPassword, closeUserSessions, avatarDirectory, catalogDirectory, throttle, onDeleted = async () => {} }) {
   const placeholders = (clause) => (clause.match(/\?/g) ?? []).length;
 
   // Your account information, as a download (no message contents: those are end-to-end encrypted on your phones).
@@ -77,7 +78,7 @@ export function registerAccount({ app, db, requireSession, verifyPassword, close
       groups: await safe('SELECT g.name, m.role FROM group_members m JOIN groups g ON g.id = m.group_id WHERE m.user_id = ?'),
       channels: await safe('SELECT name, category, created_at AS "createdAt" FROM channels WHERE owner_id = ?'),
       following: await safe('SELECT c.name FROM channel_followers f JOIN channels c ON c.id = f.channel_id WHERE f.user_id = ?'),
-      businessProfile: (await safe('SELECT category, description, address, email, website, links FROM business_profiles WHERE user_id = ?'))[0] ?? null,
+      businessProfile: (await safe('SELECT category, description, address, website, links FROM business_profiles WHERE user_id = ?'))[0] ?? null,
       catalog: await safe('SELECT name, description, price, currency FROM catalog_items WHERE user_id = ?'),
       labels: await safe('SELECT name, color FROM labels WHERE user_id = ?'),
       quickReplies: await safe('SELECT shortcut, text FROM quick_replies WHERE user_id = ?'),
@@ -87,22 +88,15 @@ export function registerAccount({ app, db, requireSession, verifyPassword, close
     response.json(report);
   });
 
-  // Delete my account (needs the password). Irreversible.
-  app.delete('/api/v1/me', requireSession, async (request, response) => {
-    const userId = request.session.user_id;
-    const row = await db.prepare('SELECT username, password_hash AS "hash", avatar_disk_name AS "avatar" FROM users WHERE id = ?').get(userId);
-    if (!row) return response.status(404).json({ error: 'Account not found.' });
-    const password = typeof request.body?.password === 'string' ? request.body.password : '';
-    if (!row.hash || !(await verifyPassword(password, row.hash))) return response.status(401).json({ error: 'That password is not correct.' });
-    if (request.body?.confirm !== row.username) return response.status(400).json({ error: `Type your username (${row.username}) to confirm.` });
-
+  // Removes the account (sessions first, then every personal row, then files), leaving a "Deleted account" placeholder.
+  async function deleteAccount(userId, row) {
     // Files to remove after the rows (the SQLite driver answers synchronously, Postgres with promises).
     const catalogFiles = await db.prepare('SELECT image_disk_name AS "file" FROM catalog_items WHERE user_id = ? AND image_disk_name IS NOT NULL').all(userId);
     const cover = await db.prepare('SELECT cover_disk_name AS "file" FROM business_profiles WHERE user_id = ?').get(userId);
     // Sign out everywhere first (sockets close, push stops), then remove the rows.
     await closeUserSessions(userId, 'This account was deleted');
     // People who had a chat with the account are told once it is gone (their chat becomes read-only).
-    const formerContacts = (await db.prepare('SELECT owner_id AS "id" FROM contacts WHERE contact_id = ?').all(userId)).map((row) => row.id);
+    const formerContacts = (await db.prepare('SELECT owner_id AS "id" FROM contacts WHERE contact_id = ?').all(userId)).map((item) => item.id);
     for (const [table, where] of PERSONAL_ROWS) {
       await db.prepare(`DELETE FROM ${table} WHERE ${where}`).run(...Array(placeholders(where)).fill(userId));
     }
@@ -112,7 +106,41 @@ export function registerAccount({ app, db, requireSession, verifyPassword, close
       avatar_disk_name = NULL, avatar_type = NULL, is_admin = 0, country = NULL, country_updated_at = NULL, about = '', deleted_at = ? WHERE id = ?`).run(tombstone, Date.now(), userId);
     if (row.avatar) await unlink(join(avatarDirectory, row.avatar)).catch(() => {});
     for (const file of [...catalogFiles.map((item) => item.file), cover?.file].filter(Boolean)) await unlink(join(catalogDirectory, file)).catch(() => {});
+    return formerContacts;
+  }
+
+  // Delete my account (needs the password). Irreversible.
+  app.delete('/api/v1/me', requireSession, async (request, response) => {
+    const userId = request.session.user_id;
+    const row = await db.prepare('SELECT username, password_hash AS "hash", avatar_disk_name AS "avatar" FROM users WHERE id = ?').get(userId);
+    if (!row) return response.status(404).json({ error: 'Account not found.' });
+    const password = typeof request.body?.password === 'string' ? request.body.password : '';
+    if (!row.hash || !(await verifyPassword(password, row.hash))) return response.status(401).json({ error: 'That password is not correct.' });
+    if (request.body?.confirm !== row.username) return response.status(400).json({ error: `Type your username (${row.username}) to confirm.` });
+    const formerContacts = await deleteAccount(userId, row);
     response.status(204).end();
     await onDeleted(userId, formerContacts).catch(() => {});
+  });
+
+  // The website's account deletion page (hiddenmessenger.com/delete-account), which Google Play requires for apps
+  // with accounts: the username and password, without signing in (a lost phone can still delete its account).
+  // Throttled per account like sign-in; a wrong username and a wrong password get the same answer.
+  app.post('/api/v1/account/delete', async (request, response) => {
+    const username = typeof request.body?.username === 'string' ? request.body.username.trim().replace(/^@/, '').toLowerCase() : '';
+    const password = typeof request.body?.password === 'string' ? request.body.password : '';
+    if (!username || username.length > 40 || !password || password.length > 128) return response.status(400).json({ error: 'Enter your username and password.' });
+    if (request.body?.confirm !== 'DELETE') return response.status(400).json({ error: 'Type DELETE to confirm.' });
+    const keys = [`delete:${username}`];
+    const wait = throttle?.retryAfter(keys) ?? 0;
+    if (wait) return response.status(429).set('Retry-After', String(Math.ceil(wait / 1000))).json({ error: `Too many attempts. Try again in ${Math.ceil(wait / 1000)} seconds.`, retryAfterMs: wait });
+    const row = await db.prepare('SELECT id, username, password_hash AS "hash", avatar_disk_name AS "avatar" FROM users WHERE lower(username) = lower(?) AND deleted_at IS NULL').get(username);
+    if (!row?.hash || !(await verifyPassword(password, row.hash))) {
+      throttle?.fail(keys);
+      return response.status(401).json({ error: 'That username and password do not match an account.' });
+    }
+    throttle?.succeed(keys);
+    const formerContacts = await deleteAccount(row.id, row);
+    response.status(204).end();
+    await onDeleted(row.id, formerContacts).catch(() => {});
   });
 }

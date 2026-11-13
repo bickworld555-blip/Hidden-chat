@@ -19,7 +19,7 @@ import { ComposerAssist, MentionText } from './parity/ComposerAssist.jsx';
 import PinnedBanner from './parity/PinnedBanner.jsx';
 import { ProductCard, parseProductContent } from './parity/ProductCard.jsx';
 import { GroupAdminSettings, JoinGroupSheet, MemberAdminActions, inviteCodeFrom } from './parity/GroupAdmin.jsx';
-import { searchPeople } from '../contactsApi.js';
+import { handleFrom, lookupUsername } from '../contactsApi.js';
 import { uploadFile } from '../upload.js';
 import { attachmentContent, sealForUpload } from '../mediaCrypto.js';
 import { groupEncryption, sendGroupContent } from '../e2e/client.js';
@@ -483,13 +483,13 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
   }, [messages.length, selected, settings]);
 
   useEffect(() => {
-    if (!query.trim() || (!creating && !settings)) { setResults([]); return undefined; }
+    if (!handleFrom(query) || (!creating && !settings)) { setResults([]); return undefined; }
     const controller = new AbortController();
     const timer = setTimeout(() => {
-      searchPeople(token, query.trim(), { signal: controller.signal })
-        .then((people) => setResults(people.filter((person) => person.id !== userId)))
+      lookupUsername(token, query, { signal: controller.signal })
+        .then((person) => setResults(person && person.id !== userId ? [person] : []))
         .catch((caught) => { if (caught.name !== 'AbortError') setError(caught.message); });
-    }, 200);
+    }, 600);
     return () => { clearTimeout(timer); controller.abort(); };
   }, [query, creating, settings, token, userId]);
 
@@ -856,7 +856,7 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
         {creating && (
           <div className="groups-content">
             <label>Group name<input value={name} onChange={(event) => setName(event.target.value)} maxLength={100} placeholder="Group name" /></label>
-            <label>Add members by username<input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search username" /></label>
+            <label>Add members by username<input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Type the full @username" /></label>
             {picked.length > 0 && <div className="groups-chips">{picked.map((person) => (
               <button type="button" key={person.id} onClick={() => setPicked((current) => current.filter((item) => item.id !== person.id))} aria-label={`Remove @${person.username}`}>
                 @{person.username} <X size={14} />

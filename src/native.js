@@ -50,10 +50,6 @@ export async function nativeSetProxy(host, port) {
 }
 // Status and navigation bar icons follow the app's theme (dark icons on the light theme).
 export const nativeSetSystemBarsTheme = (theme) => invoke('setSystemBarsTheme', { theme });
-// Invite a friend (android Invites.java): contacts stay on the phone; invites go out as a text from it.
-export const nativeListContacts = () => invoke('listContacts');
-export const nativeOpenSmsComposer = (number, text) => invoke('openSmsComposer', { number, text });
-export const nativeRequestInvitePermissions = async () => remember(await invoke('requestInvitePermissions'));
 export const nativeRequestStartupPermissions = async () => remember(await invoke('requestStartupPermissions'));
 // The service needs the account before it starts (it stops itself without one), so starting waits for any
 // session hand-over still in flight.

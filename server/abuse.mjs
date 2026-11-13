@@ -19,6 +19,8 @@ export const DEFAULT_LIMITS = Object.freeze({
   messages: [{ limit: 30, windowMs: 10 * SECOND }, { limit: 1000, windowMs: HOUR }],
   // New accounts, per client address.
   signups: [{ limit: 10, windowMs: HOUR }, { limit: 30, windowMs: DAY }],
+  // Exact username lookups and invite-link redemptions, per account: plenty for people, too few to list accounts.
+  lookups: [{ limit: 60, windowMs: HOUR }, { limit: 300, windowMs: DAY }],
 });
 
 const intOr = (value, fallback, { min = 0, max = 1_000_000 } = {}) => {
@@ -42,6 +44,10 @@ export function abuseLimitsFromEnv(env = process.env, { production = env.NODE_EN
     signups: [
       { limit: intOr(env.RELAY_SIGNUPS_PER_HOUR, 10, { min: 1 }), windowMs: HOUR },
       { limit: intOr(env.RELAY_SIGNUPS_PER_DAY, 30, { min: 1 }), windowMs: DAY },
+    ],
+    lookups: [
+      { limit: intOr(env.RELAY_LOOKUPS_PER_HOUR, 60, { min: 1 }), windowMs: HOUR },
+      { limit: intOr(env.RELAY_LOOKUPS_PER_DAY, 300, { min: 1 }), windowMs: DAY },
     ],
   };
 }

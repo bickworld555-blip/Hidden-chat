@@ -40,6 +40,11 @@ export const SETTINGS = Object.freeze({
     options: Object.freeze([{ id: 86400, label: '24 hours' }, { id: 604800, label: '7 days' }, { id: 7776000, label: '90 days' }, { id: 0, label: 'Off' }]),
     default: 0, hint: 'Start new chats with disappearing messages set to your timer.',
   },
+  // People find you only by your exact @username (or an invite link you share); off = only through your links.
+  'privacy.discoverableByUsername': {
+    section: 'privacy', scope: 'account', remote: 'discoverableByUsername', type: 'switch', label: 'Discoverable by username', default: true,
+    hint: 'People who type your exact @username can find you. Turn off to be found only through invite links you share.',
+  },
   'privacy.silenceUnknownCallers': {
     section: 'privacy', scope: 'account', remote: 'silenceUnknownCallers', type: 'switch', label: 'Silence unknown callers', default: false,
     hint: 'Calls from people you haven’t saved won’t ring. They still show in Calls.',

@@ -5,7 +5,7 @@ import Avatar from './Avatar.jsx';
 import ProfilePhoto from './ProfilePhoto.jsx';
 import { useAccounts } from '../accounts.js';
 import { presentName } from '../profile.js';
-import { linkContact, searchPeople } from '../contactsApi.js';
+import { handleFrom, linkContact, lookupUsername } from '../contactsApi.js';
 import BrandMark from './BrandMark.jsx';
 import { mergeGroupRows, unreadBadge } from '../groupRows.js';
 
@@ -48,7 +48,7 @@ export default function Sidebar({ onPair, onSounds, onNotifications, onAccountSe
   }, [filtered, groups, query, filter, pinnedChatIds]);
 
   useEffect(() => {
-    if (!sessionToken || normalizedQuery.length === 0) {
+    if (!sessionToken || !handleFrom(normalizedQuery)) {
       setSearchResults([]);
       setSearching(false);
       setSearchError('');
@@ -59,13 +59,14 @@ export default function Sidebar({ onPair, onSounds, onNotifications, onAccountSe
       setSearching(true);
       setSearchError('');
       try {
-        setSearchResults(await searchPeople(sessionToken, normalizedQuery, { signal: controller.signal }));
+        const person = await lookupUsername(sessionToken, normalizedQuery, { signal: controller.signal });
+        setSearchResults(person ? [person] : []);
       } catch (error) {
         if (error.name !== 'AbortError') setSearchError(error.message);
       } finally {
         if (!controller.signal.aborted) setSearching(false);
       }
-    }, 220);
+    }, 600);
     return () => { window.clearTimeout(timer); controller.abort(); };
   }, [normalizedQuery, sessionToken]);
 

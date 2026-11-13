@@ -111,6 +111,7 @@ const PRIVACY_GROUPS = Object.freeze({
   receipts: ['privacy.readReceipts'],
   disappearing: ['privacy.defaultTimer'],
   calls: ['privacy.silenceUnknownCallers'],
+  finding: ['privacy.discoverableByUsername'],
 });
 
 function PrivacyRows({ group, onOpen, onToggle }) {
@@ -293,6 +294,10 @@ export default function AccountSettings({ onClose, section = 'account', initialV
               <section className="wa-info-section">
                 <h3>Calls</h3>
                 <PrivacyRows group="calls" onOpen={setView} onToggle={changeSetting} />
+              </section>
+              <section className="wa-info-section">
+                <h3>Finding you</h3>
+                <PrivacyRows group="finding" onOpen={setView} onToggle={changeSetting} />
               </section>
               <section className="wa-info-section">
                 <h3>Contacts</h3>

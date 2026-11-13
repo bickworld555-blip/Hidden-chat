@@ -108,7 +108,7 @@ import { TERMINAL_STATUSES } from './callEngine.js';
 import { isRoomOffer } from './callRoom.js';
 import { animationsAttribute, callAnimationsAttribute, resolveDark, startsDark, THEME_KEY, themeChoice, useAppearance, watchSystemTheme } from './appearance.js';
 import { useFontSize, useHighContrast } from './displayPrefs.js';
-import { linkContact, searchPeople } from './contactsApi.js';
+import { inviteTokenFrom, linkContact, lookupUsername, redeemInviteLink } from './contactsApi.js';
 import { deviceStorage } from './deviceStorage.js';
 import { storageProblemText, useStorageProblem } from './storageHealth.js';
 
@@ -176,6 +176,8 @@ export default function App() {
   const [paritySheet, setParitySheet] = useState(null);
   const [inviteCode, setInviteCode] = useState(() => inviteCodeFromLocation());
   const [shortLink, setShortLink] = useState(() => shortLinkFromLocation());
+  // An invite link opened from the website in the Android app (hiddenmessenger://c#<token>), redeemed once signed in.
+  const [pendingInvite, setPendingInvite] = useState('');
   const [callLinkCode, setCallLinkCode] = useState(() => callLinkFromLocation());
   useEffect(() => {
     if (callLinkCode && globalThis.history?.replaceState) globalThis.history.replaceState(null, '', '/');
@@ -322,6 +324,8 @@ export default function App() {
             store.applyServerBlocks(event.blocked ? [...others, event.userId] : others);
           }
           if (event.type === 'account:deleted' && typeof event.userId === 'string') useChatStore.getState().markAccountDeleted(event.userId);
+          // Someone opened this account's invite link: they are now a saved contact here too.
+          if (event.type === 'contact:invited' && event.user?.id) useChatStore.getState().addContact(event.user);
           // Hidden Messenger Support answered (or this account wrote from another device): the open support chat shows it.
           if (event.type === 'support:message' && event.message?.id) window.dispatchEvent(new CustomEvent(SUPPORT_EVENT, { detail: event.message }));
           if (event.type === 'message:edited') updateMessage(event.messageId, { content: event.content, editedAt: event.editedAt, ...(event.e2eError ? { e2eError: event.e2eError } : {}) });
@@ -932,8 +936,7 @@ export default function App() {
     if (!sessionToken || !shortLink) return undefined;
     let cancelled = false;
     (async () => {
-      const people = await searchPeople(sessionToken, shortLink.username);
-      const person = people.find((entry) => entry.username?.toLowerCase() === shortLink.username);
+      const person = await lookupUsername(sessionToken, shortLink.username).catch(() => null);
       if (cancelled) return;
       if (!person) { setShortLink(null); return; }
       const existing = useChatStore.getState().chats.find((chat) => chat.id === person.id);
@@ -946,6 +949,26 @@ export default function App() {
     })().catch(() => setShortLink(null));
     return () => { cancelled = true; };
   }, [sessionToken, shortLink]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => onNative('connectLink', ({ url } = {}) => { const token = inviteTokenFrom(url); if (token) setPendingInvite(token); }), []);
+  useEffect(() => {
+    if (!sessionToken || !pendingInvite) return undefined;
+    let cancelled = false;
+    (async () => {
+      try {
+        const person = await redeemInviteLink(sessionToken, pendingInvite);
+        if (cancelled) return;
+        const contact = await linkContact(sessionToken, person.id, { save: true });
+        await useChatStore.getState().addContact(contact);
+        openChat(contact);
+      } catch (error) {
+        if (!cancelled) setFatalError(error.message || 'This invite link could not be opened.');
+      } finally {
+        if (!cancelled) setPendingInvite('');
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [sessionToken, pendingInvite]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function openChat(contact) {
     useChatStore.getState().setActiveChat(contact.id);
@@ -1150,7 +1173,7 @@ export default function App() {
       {sessionToken && paritySheet === 'scheduled' && <ScheduledMessages token={sessionToken} userId={userId} onClose={() => setParitySheet(null)} />}
       {sessionToken && paritySheet === 'lists' && <ListsManager groups={groupRows} onClose={() => setParitySheet(null)} />}
       {sessionToken && (paritySheet === 'help' || paritySheet === 'support') && <HelpCenter token={sessionToken} initialView={paritySheet} onClose={() => setParitySheet(null)} />}
-      {sessionToken && paritySheet === 'invite' && <InviteFriend username={useChatStore.getState().user?.username} onClose={() => setParitySheet(null)} />}
+      {sessionToken && paritySheet === 'invite' && <InviteFriend sessionToken={sessionToken} onClose={() => setParitySheet(null)} />}
       {sessionToken && paritySheet === 'calllinks' && <CallLinks token={sessionToken} onClose={() => setParitySheet(null)} />}
       {sessionToken && paritySheet === 'statusprivacy' && <StatusPrivacy token={sessionToken} onClose={() => setParitySheet(null)} />}
       {paritySheet === 'language' && <LanguageSettings onClose={() => setParitySheet(null)} />}

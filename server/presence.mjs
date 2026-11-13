@@ -51,6 +51,11 @@ export function parsePrivacyPatch(body) {
     patch.silenceUnknownCallers = body.silenceUnknownCallers;
   }
   // Default message timer: new chats you start get this disappearing-messages timer (0 = off).
+  // Discoverable by username: whether people who type your exact @username find you (POST /api/v1/users/lookup).
+  if ('discoverableByUsername' in body) {
+    if (typeof body.discoverableByUsername !== 'boolean') return { error: 'Discoverable by username is on or off.' };
+    patch.discoverableByUsername = body.discoverableByUsername;
+  }
   if ('defaultTimer' in body) {
     if (!Number.isInteger(body.defaultTimer) || !isDisappearingDuration(body.defaultTimer)) return { error: 'Choose 24 hours, 7 days, 90 days or Off.' };
     patch.defaultTimer = body.defaultTimer;

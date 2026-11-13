@@ -6,7 +6,7 @@ import { useT } from '../i18n.js';
 import { labelColor } from '../labels.js';
 import { useChatStore } from '../store.js';
 import { deleteChatOnServer } from '../chatApi.js';
-import { linkContact, searchPeople } from '../contactsApi.js';
+import { handleFrom, linkContact, lookupUsername } from '../contactsApi.js';
 import { createLongPress } from '../longPress.js';
 import { chatRowActions, deleteChatPrompt, deleteOutcome, rowChatKey } from '../chatListActions.js';
 import { orderChats } from '../chatOrder.js';
@@ -143,8 +143,9 @@ export default function ChatsList({ onOpenChat, onStartCall, onGroups, groups = 
     [rawChats, userId],
   );
 
+  // People: only an exact @username finds someone (one lookup after typing pauses), never a prefix or a name.
   useEffect(() => {
-    if (!normalizedQuery) {
+    if (!handleFrom(normalizedQuery)) {
       setSearchResults([]);
       setSearchError('');
       return undefined;
@@ -154,13 +155,14 @@ export default function ChatsList({ onOpenChat, onStartCall, onGroups, groups = 
       setIsSearching(true);
       setSearchError('');
       try {
-        setSearchResults(await searchPeople(sessionToken, normalizedQuery, { signal: controller.signal }));
+        const person = await lookupUsername(sessionToken, normalizedQuery, { signal: controller.signal });
+        setSearchResults(person ? [person] : []);
       } catch (error) {
         if (error.name !== 'AbortError') setSearchError(error.message || 'Search failed');
       } finally {
         if (!controller.signal.aborted) setIsSearching(false);
       }
-    }, 220);
+    }, 600);
     return () => {
       clearTimeout(timer);
       controller.abort();

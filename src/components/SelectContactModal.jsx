@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, Building2, Check, QrCode, Search, UserPlus, Users, X } from 'lucide-react';
 import { useChatStore } from '../store.js';
-import { linkContact, searchPeople } from '../contactsApi.js';
+import { handleFrom, inviteTokenFrom, linkContact, lookupUsername, redeemInviteLink } from '../contactsApi.js';
 import { exactHandleMatch, isSavedContact, matchesPerson, mergeSuggestions, savedContacts, unsavedThreads } from '../contactBook.js';
 import Avatar from './Avatar.jsx';
 import StatusRing from './StatusRing.jsx';
 import VerifiedBadge from './VerifiedBadge.jsx';
 
-const SUGGEST_DEBOUNCE_MS = 180;
+const SUGGEST_DEBOUNCE_MS = 600;
 
 // Debounced people search against the server; `known` people are listed first in the merged suggestions.
 function usePeopleSearch(query, sessionToken, { minLength = 1 } = {}) {
@@ -15,7 +15,7 @@ function usePeopleSearch(query, sessionToken, { minLength = 1 } = {}) {
   const [searching, setSearching] = useState(false);
   const needle = query.trim().replace(/^@/, '');
   useEffect(() => {
-    if (!sessionToken || needle.length < minLength) {
+    if (!sessionToken || needle.length < minLength || !handleFrom(needle)) {
       setResults([]);
       setSearching(false);
       return undefined;
@@ -24,7 +24,8 @@ function usePeopleSearch(query, sessionToken, { minLength = 1 } = {}) {
     const timer = setTimeout(async () => {
       setSearching(true);
       try {
-        setResults(await searchPeople(sessionToken, needle, { signal: controller.signal }));
+        const person = await lookupUsername(sessionToken, needle, { signal: controller.signal });
+        setResults(person ? [person] : []);
       } catch (error) {
         if (error.name !== 'AbortError') setResults([]);
       } finally {
@@ -105,6 +106,21 @@ export default function SelectContactModal({ isOpen, onClose, onSelectContact, o
   }, [isOpen, onClose]);
 
   if (!isOpen) return null;
+  const inviteToken = inviteTokenFrom(query);
+
+  // A pasted invite link (…/c#<token>): redeeming it links both people as contacts, then the chat opens.
+  async function openInvite() {
+    setBusyId('invite');
+    setAddError('');
+    try {
+      const person = await redeemInviteLink(sessionToken, inviteToken);
+      setQuery('');
+      await openWith(person, { save: true });
+    } catch (error) {
+      setAddError(error.message || 'This invite link could not be opened.');
+      setBusyId('');
+    }
+  }
 
   // Opens a thread. `save` puts the person in the contact book; otherwise it is a direct chat that only lives
   // in the chat list. People already in the chat list need no server call.
@@ -137,8 +153,7 @@ export default function SelectContactModal({ isOpen, onClose, onSelectContact, o
     try {
       let match = exact;
       if (!match) {
-        const results = await searchPeople(sessionToken, handle);
-        match = results.find((person) => person.username?.toLowerCase() === handle.toLowerCase()) ?? null;
+        match = await lookupUsername(sessionToken, handle);
       }
       if (!match) throw new Error(`User @${handle} was not found on Hidden Messenger.`);
       await openWith(match, { save: true });
@@ -178,7 +193,7 @@ export default function SelectContactModal({ isOpen, onClose, onSelectContact, o
               type="text"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search name or @username..."
+              placeholder="Search contacts, a full @username or paste an invite link"
               maxLength={64}
             />
             {query && (
@@ -190,6 +205,12 @@ export default function SelectContactModal({ isOpen, onClose, onSelectContact, o
         )}
 
         <div className="wa-sc-scroll-body">
+          {inviteToken && (
+            <button type="button" className="wa-sc-action-row" onClick={openInvite} disabled={busyId === 'invite'}>
+              <div className="wa-sc-action-icon green"><UserPlus size={22} /></div>
+              <div className="wa-sc-action-label"><strong>{busyId === 'invite' ? 'Opening invite…' : 'Open this invite link'}</strong></div>
+            </button>
+          )}
           {!normalizedQuery && (
             <div className="wa-sc-quick-actions">
               <button type="button" className="wa-sc-action-row" onClick={() => { onClose(); onNewGroup?.(); }} disabled={!onNewGroup}>

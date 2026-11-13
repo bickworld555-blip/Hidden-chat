@@ -37,6 +37,13 @@
                 <data android:mimeType="audio/*" />
                 <data android:mimeType="application/*" />
             </intent-filter>
+            <!-- Invite links: hiddenmessenger.com/c#<token> offers "Open in the app", which opens hiddenmessenger://c#<token>. -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="hiddenmessenger" android:host="c" />
+            </intent-filter>
 
         </activity>
 
@@ -188,14 +195,13 @@
     <!-- Saving received files on Android 9 and older (newer versions need no permission). -->
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
-    <!-- Asked only when used, like WhatsApp: contacts when you open Invite a friend. Microphone, camera and location
-         are asked by Android the first time a call, voice note, photo or location share needs them. Files and photos
-         come through the system picker, which needs no permission; invites by text open the messages app. -->
-    <uses-permission android:name="android.permission.READ_CONTACTS" />
+    <!-- No Email. No Number.: the app never reads contacts, phone numbers, SMS or call logs (server/no-identifiers.test.mjs
+         keeps it so). Microphone, camera and location are asked by Android the first time a call, voice note, photo or
+         location share needs them. Files and photos come through the system picker, which needs no permission; invites
+         are links shared through the Android share sheet. -->
     <!-- Routing call audio to a Bluetooth headset (Android 12+); never asked up front. -->
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
-    <uses-permission android:name="android.permission.USE_FINGERPRINT" />
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.microphone" android:required="false" />
 </manifest>

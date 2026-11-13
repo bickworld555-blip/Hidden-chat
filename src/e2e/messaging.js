@@ -4,10 +4,7 @@
 // client.js, with the same plaintext memory.
 import { useChatStore } from '../store.js';
 import { applyDeviceLists, e2eActive, isEnvelope, openContent, openDirectMessage, openDirectMessages, openGroupMessage, sealDirect } from './client.js';
-
-// What people write (not call logs, opened view-once markers or this device's own notices).
-const SYSTEM_CONTENT = /^(?:call|voice-opened|media-opened|notice):/;
-export const isUserContent = (content) => typeof content === 'string' && content.length > 0 && !SYSTEM_CONTENT.test(content);
+import { isUserContent } from './envelope.js';
 
 const MAX_RESEALS = 3;
 const reseals = new Map();

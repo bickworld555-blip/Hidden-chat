@@ -4,6 +4,7 @@
 //
 // index.mjs owns sessions, sockets and the message pipeline; this module receives what it needs through `ctx` and
 // returns the hooks index.mjs calls at the points where these features change existing behaviour.
+import { PLAINTEXT_REFUSED, refusesPlaintext } from './strictE2E.mjs';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { readFile, unlink, writeFile } from 'node:fs/promises';
@@ -84,8 +85,11 @@ const bool = (value) => (value ? 1 : 0);
 
 /** Business profile text fields and their lengths (the business_profiles columns of the same names). */
 export const MEMBER_TAG_MAX = 30;
-export const BUSINESS_PROFILE_FIELDS = ['category', 'description', 'address', 'email', 'website', 'phone'];
-const BUSINESS_PROFILE_LIMITS = { category: 60, description: 512, address: 256, email: 128, website: 256, phone: 32 };
+// No email address and no phone number, not even a business's (No Email. No Number.): customers reach a business in
+// its chat. Databases made before this drop the old email and phone columns (Postgres: 027_zero_number.sql).
+export const BUSINESS_PROFILE_FIELDS = ['category', 'description', 'address', 'website'];
+export const RETIRED_BUSINESS_FIELDS = ['email', 'phone'];
+const BUSINESS_PROFILE_LIMITS = { category: 60, description: 512, address: 256, website: 256 };
 
 export const MAX_BUSINESS_LINKS = 4;
 /** Extra links on a business profile (shop, Instagram, Facebook…): up to MAX_BUSINESS_LINKS { label, url }, or null. */
@@ -114,9 +118,6 @@ export function parseBusinessProfile(value = {}) {
     if (text === undefined) return { problem: field };
     profile[field] = text;
   }
-  if (profile.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(profile.email)) return { problem: 'email' };
-  // A contact number customers can call (the account itself has no phone number): digits, spaces, + ( ) -.
-  if (profile.phone && !/^\+?[0-9][0-9 ()-]{3,31}$/.test(profile.phone)) return { problem: 'phone' };
   if (profile.website) {
     const withScheme = /^https?:\/\//i.test(profile.website) ? profile.website : `https://${profile.website}`;
     try { const url = new URL(withScheme); if (!url.hostname.includes('.')) return { problem: 'website' }; profile.website = url.href; } catch { return { problem: 'website' }; }
@@ -242,6 +243,7 @@ export function ensureParitySchema(db) {
   // Business profile (Postgres: 014_business_profile.sql).
   const business = columns('business_profiles');
   for (const name of BUSINESS_PROFILE_FIELDS) if (!business.has(name)) db.exec(`ALTER TABLE business_profiles ADD COLUMN ${name} TEXT NOT NULL DEFAULT ''`);
+  for (const name of RETIRED_BUSINESS_FIELDS) if (business.has(name)) db.exec(`ALTER TABLE business_profiles DROP COLUMN ${name}`);
   // Links, cover photo, away date ranges, collections (Postgres: 016_business_account.sql).
   if (!business.has('links')) db.exec("ALTER TABLE business_profiles ADD COLUMN links TEXT NOT NULL DEFAULT '[]'");
   for (const name of ['cover_disk_name', 'cover_type']) if (!business.has(name)) db.exec(`ALTER TABLE business_profiles ADD COLUMN ${name} TEXT`);
@@ -282,7 +284,7 @@ export function createLoginThrottle({ now = () => Date.now(), freeAttempts = 5, 
 
 export function registerParity(ctx) {
   const { app, db, requireSession, broadcastUser, notifyGroup, groupMembership, publicUser, hashPassword, verifyPassword,
-    isOnline, deliverDirectMessage, detectImage, dataDirectory, runBatch, e2e, businessCache = null } = ctx;
+    isOnline, deliverDirectMessage, detectImage, dataDirectory, runBatch, e2e, strictE2E = false, businessCache = null } = ctx;
   const catalogDirectory = join(dataDirectory, 'catalog');
   mkdirSync(catalogDirectory, { recursive: true });
   const now = () => Date.now();
@@ -361,6 +363,7 @@ export function registerParity(ctx) {
     if (!isEditableText(message.content)) return [400, 'Only text messages can be edited.'];
     const limit = isEnvelope(content) ? maxEnvelope : 4000;
     if (typeof content !== 'string' || !content.trim() || content.length > limit || !isEditableText(content.trim())) return [400, 'Enter the new text (up to 4,000 characters).'];
+    if (refusesPlaintext(strictE2E, content)) return [400, PLAINTEXT_REFUSED.error];
     return null;
   }
   const createdMs = (value) => (typeof value === 'number' || /^\d+$/.test(String(value)) ? Number(value) : Date.parse(value));
@@ -1189,7 +1192,7 @@ export function registerParity(ctx) {
     const links = request.body?.profile?.links === undefined ? current.profile.links : parseBusinessLinks(request.body.profile.links);
     if (links === null) return response.status(400).json({ error: `Add up to ${MAX_BUSINESS_LINKS} links, each a web address like example.com.` });
     const { profile, problem } = parseBusinessProfile({ ...current.profile, ...(request.body?.profile ?? {}) });
-    if (problem) return response.status(400).json({ error: problem === 'email' ? 'Enter an email address like name@example.com.' : problem === 'website' ? 'Enter a website address like example.com.' : problem === 'phone' ? 'Enter a phone number with digits, like +880 1712 345678.' : `The ${problem} is too long.` });
+    if (problem) return response.status(400).json({ error: problem === 'website' ? 'Enter a website address like example.com.' : `The ${problem} is too long.` });
     await db.prepare(`INSERT INTO business_profiles(user_id, away_enabled, away_text, away_schedule, away_hours, greeting_enabled, greeting_text, updated_at, ${BUSINESS_PROFILE_FIELDS.join(', ')})
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ${BUSINESS_PROFILE_FIELDS.map(() => '?').join(', ')}) ON CONFLICT(user_id) DO UPDATE SET away_enabled = excluded.away_enabled, away_text = excluded.away_text,
       away_schedule = excluded.away_schedule, away_hours = excluded.away_hours, greeting_enabled = excluded.greeting_enabled, greeting_text = excluded.greeting_text, updated_at = excluded.updated_at,

@@ -10,7 +10,7 @@ export const WINDOWS_INSTALLER_URL = `${WINDOWS_RELEASE}/HiddenMessenger-Setup-$
 export const WINDOWS_PORTABLE_URL = `${WINDOWS_RELEASE}/HiddenMessenger-${WINDOWS_APP_VERSION}-portable.exe`;
 
 // Public pages (src/site/PublicSite.jsx); every other path opens the messenger.
-export const PUBLIC_PATH = /^\/(?:features|calling|messaging|privacy|terms|business|download|help(?:\/[a-z0-9-]+)?)?\/?$/;
+export const PUBLIC_PATH = /^\/(?:features|calling|messaging|privacy|terms|business|download|delete-account|c|help(?:\/[a-z0-9-]+)?)?\/?$/;
 export const SIGNED_IN_HINT = 'hm:signed-in';
 
 /** Which experience a page load shows: the public site, or the messenger (always in the Android app). */

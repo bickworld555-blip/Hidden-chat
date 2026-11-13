@@ -145,14 +145,13 @@ test('display names are validated, change initials, are announced live and make 
   const meAgain = await (await fetch(`${baseUrl}/api/v1/me`, { headers: auth(me) })).json();
   assert.equal(meAgain.user.name, 'Shakil Ahmed Khan');
 
-  const search = async (query) => (await (await fetch(`${baseUrl}/api/v1/contacts/search?q=${encodeURIComponent(query)}`, { headers: auth(friend) })).json()).map((row) => row.id);
-  assert.ok((await search('ahmed')).includes(me.user.id), 'display names match by substring, case-insensitively');
-  assert.ok((await search('Shakil Ahmed')).includes(me.user.id), 'multi-word queries match display names');
-  assert.ok((await search(me.user.username.slice(0, 3))).includes(me.user.id), 'handle prefixes still match');
-  assert.ok((await search(`@${me.user.username}`)).includes(me.user.id), 'a leading @ is accepted');
-  assert.deepEqual(await search('zzz-no-such-person'), []);
-  assert.deepEqual(await search(''), []);
-  assert.ok(!(await search('ahmed')).includes(friend.user.id), 'the searcher is never returned');
+  // People are found by their exact handle only: never by display name or a prefix (nothing to list accounts with).
+  const lookup = async (username) => fetch(`${baseUrl}/api/v1/users/lookup`, { method: 'POST', headers: { ...auth(friend), 'Content-Type': 'application/json' }, body: JSON.stringify({ username }) });
+  assert.equal((await lookup('ahmed')).status, 404, 'display names are not searched');
+  assert.notEqual((await lookup(me.user.username.slice(0, -1))).status, 200, 'handle prefixes find no one');
+  assert.equal((await (await lookup(`@${me.user.username}`)).json()).user.id, me.user.id, 'the exact handle, with or without @');
+  assert.equal((await lookup('')).status, 400);
+  assert.equal((await lookup(friend.user.username)).status, 404, 'the searcher is never returned');
 
   assert.equal(initialsFor('bob', 'bob'), 'BO');
   assert.equal(initialsFor('@bob', 'bob'), 'BO');

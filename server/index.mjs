@@ -26,6 +26,7 @@ import { createLoginThrottle, ensureParitySchema, registerParity } from './parit
 import { createVerifiedAccounts, createVerifiedChannels, ensureVerificationSchema, registerVerification } from './verification.mjs';
 import { ensureRegionSchema, registerRegions } from './regions.mjs';
 import { createDeliveryQueue, ensureDeliveryQueueSchema } from './deliveryQueue.mjs';
+import { PLAINTEXT_REFUSED, refusesPlaintext, strictE2EFromEnv } from './strictE2E.mjs';
 import { clientGate, minimumClientProtocol, phoneOnlySignIn, socketClientAllowed, updateRequiredBody, webPasswordSignInAllowed } from './clientGate.mjs';
 import { registerBackups } from './backups.mjs';
 import { registerBilling } from './billing.mjs';
@@ -147,6 +148,7 @@ export function createChatServer({
   webPasswordSignIn = webPasswordSignInAllowed(process.env),
   gifConfig = gifConfigFromEnv(process.env),
   abuseLimits = abuseLimitsFromEnv(process.env),
+  strictE2E = strictE2EFromEnv(process.env),
   alerts = createAlerts({ url: alertWebhookFromEnv(process.env) }),
   gifFetch = globalThis.fetch,
 } = {}) {
@@ -422,9 +424,21 @@ export function createChatServer({
   if (!userColumns.has('about_privacy')) db.exec("ALTER TABLE users ADD COLUMN about_privacy TEXT NOT NULL DEFAULT 'everyone' CHECK (about_privacy IN ('everyone', 'contacts', 'nobody'))");
   if (!userColumns.has('silence_unknown_callers')) db.exec('ALTER TABLE users ADD COLUMN silence_unknown_callers INTEGER NOT NULL DEFAULT 0 CHECK (silence_unknown_callers IN (0, 1))');
   if (!userColumns.has('default_message_timer')) db.exec('ALTER TABLE users ADD COLUMN default_message_timer INTEGER NOT NULL DEFAULT 0');
+  // Privacy › Discoverable by username: off = only people already linked with you find you by exact lookup (Postgres: 027).
+  if (!userColumns.has('discoverable_by_username')) db.exec('ALTER TABLE users ADD COLUMN discoverable_by_username INTEGER NOT NULL DEFAULT 1 CHECK (discoverable_by_username IN (0, 1))');
   const sessionColumns = new Set(db.prepare("PRAGMA table_info(sessions)").all().map((column) => column.name));
   if (!sessionColumns.has('created_at')) db.exec('ALTER TABLE sessions ADD COLUMN created_at INTEGER');
   if (!sessionColumns.has('last_active_at')) db.exec('ALTER TABLE sessions ADD COLUMN last_active_at INTEGER');
+  // Invite links: only the SHA-256 of each token (Postgres: 027_zero_number.sql).
+  db.exec(`CREATE TABLE IF NOT EXISTS connect_tokens (
+    id TEXT PRIMARY KEY,
+    owner_id TEXT NOT NULL,
+    token_hash TEXT NOT NULL UNIQUE,
+    uses_left INTEGER NOT NULL CHECK (uses_left >= 0),
+    expires_at INTEGER NOT NULL,
+    created_at INTEGER NOT NULL
+  )`);
+  db.exec('CREATE INDEX IF NOT EXISTS connect_tokens_owner ON connect_tokens(owner_id)');
   db.exec(`CREATE TABLE IF NOT EXISTS poll_votes (
     message_id TEXT NOT NULL,
     user_id TEXT NOT NULL,
@@ -1138,6 +1152,7 @@ export function createChatServer({
       || parseRouting(routingOf(content))?.once) {
       return response.status(400).json({ error: 'Provide a text message or an attachment uploaded to this group.' });
     }
+    if (refusesPlaintext(strictE2E, content)) return response.status(400).json(PLAINTEXT_REFUSED);
     const allowed = await parity.canPostToGroup(groupId, userId);
     if (!allowed.ok) return response.status(allowed.status).json({ error: allowed.error });
     const sealedProblem = await e2e.checkGroupEnvelope(content, { groupId, senderId: userId, senderDeviceId: request.session.device_id });
@@ -1242,7 +1257,7 @@ export function createChatServer({
 
   // WhatsApp (Business) parity features: edits, stars, archive, pins, group admin, communities, business, two-step.
   const parity = registerParity({
-    e2e,
+    e2e, strictE2E,
     app, db, requireSession, broadcastUser, notifyGroup, groupMembership, publicUser, hashPassword, verifyPassword,
     isOnline: (id) => isOnline(id), deliverDirectMessage, detectImage: detectAvatarImage, dataDirectory, runBatch: runGroupBatch,
     businessCache,
@@ -1512,13 +1527,14 @@ export function createChatServer({
 
   const privacyRow = db.prepare(`SELECT last_seen_privacy AS "lastSeen", online_privacy AS "online", photo_privacy AS "profilePhoto",
     read_receipts AS "readReceipts", about_privacy AS "about", silence_unknown_callers AS "silenceUnknownCallers",
-    default_message_timer AS "defaultTimer" FROM users WHERE id = ?`);
+    default_message_timer AS "defaultTimer", discoverable_by_username AS "discoverable" FROM users WHERE id = ?`);
   async function privacyOf(userId) {
     const row = await privacyRow.get(userId);
     return {
       lastSeen: row?.lastSeen ?? 'everyone', online: row?.online ?? 'same_as_last_seen', profilePhoto: row?.profilePhoto ?? 'everyone',
       readReceipts: row ? Number(row.readReceipts) === 1 : true, about: row?.about ?? 'everyone',
       silenceUnknownCallers: Number(row?.silenceUnknownCallers ?? 0) === 1, defaultTimer: Number(row?.defaultTimer ?? 0),
+      discoverableByUsername: row ? Number(row.discoverable ?? 1) === 1 : true,
     };
   }
 
@@ -1534,6 +1550,7 @@ export function createChatServer({
     const columns = {
       lastSeen: 'last_seen_privacy', online: 'online_privacy', profilePhoto: 'photo_privacy', readReceipts: 'read_receipts',
       about: 'about_privacy', silenceUnknownCallers: 'silence_unknown_callers', defaultTimer: 'default_message_timer',
+      discoverableByUsername: 'discoverable_by_username',
     };
     for (const [name, value] of Object.entries(patch)) {
       await db.prepare(`UPDATE users SET ${columns[name]} = ? WHERE id = ?`).run(typeof value === 'boolean' ? (value ? 1 : 0) : value, userId);
@@ -1592,7 +1609,7 @@ export function createChatServer({
 
   const avatarDirectory = join(dataDirectory, 'avatars');
   // Account information and account deletion (server/account.mjs).
-  registerAccount({ app, db, requireSession, verifyPassword, closeUserSessions, avatarDirectory, catalogDirectory: join(dataDirectory, 'catalog'),
+  registerAccount({ app, db, requireSession, verifyPassword, closeUserSessions, avatarDirectory, catalogDirectory: join(dataDirectory, 'catalog'), throttle: loginThrottle,
     onDeleted: async (userId, formerContacts) => { for (const ownerId of formerContacts) await notifyUser(ownerId, { type: 'account:deleted', userId }).catch(() => {}); } });
   mkdirSync(avatarDirectory, { recursive: true });
 
@@ -2251,16 +2268,84 @@ export function createChatServer({
     response.json({ hidden, kept });
   });
 
-  app.get('/api/v1/contacts/search', requireSession, async (request, response) => {
-    // Matches handles by prefix and display names by substring, so people are found either way.
-    const raw = normalizeDisplayName(request.query.q).slice(0, 40);
-    const handle = normalizeUsername(raw.replace(/^@/, '')).replace(/[^a-z0-9_]/g, '');
-    if (!raw) return response.json([]);
-    const rows = (await db.prepare(`SELECT ${USER_COLUMNS} FROM users
-      WHERE id <> ? AND deleted_at IS NULL AND ((length(?) > 0 AND substr(lower(username), 1, length(?)) = lower(?)) OR replace(lower(name), lower(?), '') <> lower(name))
-      ORDER BY CASE WHEN substr(lower(username), 1, length(?)) = lower(?) AND length(?) > 0 THEN 0 ELSE 1 END, lower(username) LIMIT 20`)
-      .all(request.session.user_id, handle, handle, handle, raw, handle, handle, handle));
-    response.json(rows.map(publicUser));
+  // Find someone by their exact @username: one person or nothing. No prefixes and no display names, so the user list
+  // cannot be listed by typing "a", "b"… The name travels in the body (never in a URL that proxies log), lookups are
+  // rate-limited per account, and a missing account, a deleted one, one that turned off "Discoverable by username"
+  // or one blocked either way all get the same 404. People already linked with you still find you.
+  const LOOKUP_MISSING = Object.freeze({ error: 'No one on Hidden Messenger has that username.', code: 'not_found' });
+  app.post('/api/v1/users/lookup', requireSession, async (request, response) => {
+    const raw = typeof request.body?.username === 'string' ? request.body.username.trim().replace(/^@/, '') : '';
+    const username = normalizeUsername(raw);
+    if (!USERNAME_PATTERN.test(username)) return response.status(400).json({ error: 'Type the full username, like @rahim_42.' });
+    const viewerId = request.session.user_id;
+    const wait = abuseLimits ? await rateLimiter.hit(`lookups:${viewerId}`, abuseLimits.lookups) : 0;
+    if (wait) return response.status(429).set('Retry-After', String(Math.ceil(wait / 1000))).json({ error: `Too many lookups. Try again in ${Math.ceil(wait / 60000)} minutes.`, retryAfterMs: wait });
+    const row = await db.prepare(`SELECT ${USER_COLUMNS} FROM users u
+      WHERE lower(u.username) = lower(?) AND u.id <> ? AND u.deleted_at IS NULL
+        AND (u.discoverable_by_username = 1 OR EXISTS (SELECT 1 FROM contacts c WHERE (c.owner_id = u.id AND c.contact_id = ?) OR (c.owner_id = ? AND c.contact_id = u.id)))
+        AND NOT EXISTS (SELECT 1 FROM blocks b WHERE (b.blocker_id = u.id AND b.blocked_id = ?) OR (b.blocker_id = ? AND b.blocked_id = u.id))`)
+      .get(username, viewerId, viewerId, viewerId, viewerId, viewerId);
+    if (!row) return response.status(404).json(LOOKUP_MISSING);
+    response.json({ user: publicUser(row) });
+  });
+
+  // Invite links (Invite a friend): https://<site>/c#<token>. The token is 128 random bits, shown once to its owner
+  // and kept here only as its SHA-256, so a copy of the database holds no working link. It sits after "#", so web
+  // servers and proxies never receive it; the app sends it in a POST body. Redeeming links both people as contacts.
+  const CONNECT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+  const CONNECT_MAX_ACTIVE = 20;
+  const CONNECT_USES = new Set([1, 10]);
+  const CONNECT_TOKEN = /^[A-Za-z0-9_-]{22}$/;
+  const connectView = (row) => ({ id: row.id, usesLeft: Number(row.usesLeft), expiresAt: Number(row.expiresAt), createdAt: Number(row.createdAt) });
+  app.post('/api/v1/connect/tokens', requireSession, async (request, response) => {
+    const userId = request.session.user_id;
+    const uses = request.body?.uses ?? 1;
+    if (!CONNECT_USES.has(uses)) return response.status(400).json({ error: 'An invite link works for 1 person or up to 10 people.' });
+    const now = Date.now();
+    await db.prepare('DELETE FROM connect_tokens WHERE expires_at <= ? OR uses_left <= 0').run(now);
+    const active = await db.prepare('SELECT COUNT(*) AS "count" FROM connect_tokens WHERE owner_id = ?').get(userId);
+    if (Number(active?.count ?? 0) >= CONNECT_MAX_ACTIVE) return response.status(429).json({ error: `You have ${CONNECT_MAX_ACTIVE} active invite links. Revoke one first.` });
+    const token = randomBytes(16).toString('base64url');
+    const id = randomUUID();
+    await db.prepare('INSERT INTO connect_tokens(id, owner_id, token_hash, uses_left, expires_at, created_at) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(id, userId, digest(token), uses, now + CONNECT_TTL_MS, now);
+    response.status(201).json({ id, token, usesLeft: uses, expiresAt: now + CONNECT_TTL_MS, createdAt: now });
+  });
+  app.get('/api/v1/connect/tokens', requireSession, async (request, response) => {
+    const rows = await db.prepare(`SELECT id, uses_left AS "usesLeft", expires_at AS "expiresAt", created_at AS "createdAt" FROM connect_tokens
+      WHERE owner_id = ? AND expires_at > ? AND uses_left > 0 ORDER BY created_at DESC`).all(request.session.user_id, Date.now());
+    response.json(rows.map(connectView));
+  });
+  app.delete('/api/v1/connect/tokens/:id', requireSession, async (request, response) => {
+    await db.prepare('DELETE FROM connect_tokens WHERE id = ? AND owner_id = ?').run(String(request.params.id), request.session.user_id);
+    response.status(204).end();
+  });
+  const CONNECT_INVALID = Object.freeze({ error: 'This invite link has expired, was already used or was revoked. Ask for a new one.', code: 'invite_invalid' });
+  app.post('/api/v1/connect/redeem', requireSession, async (request, response) => {
+    const userId = request.session.user_id;
+    const token = typeof request.body?.token === 'string' ? request.body.token.trim() : '';
+    if (!CONNECT_TOKEN.test(token)) return response.status(400).json({ error: 'That is not an invite link.' });
+    const wait = abuseLimits ? await rateLimiter.hit(`lookups:${userId}`, abuseLimits.lookups) : 0;
+    if (wait) return response.status(429).set('Retry-After', String(Math.ceil(wait / 1000))).json({ error: `Too many attempts. Try again in ${Math.ceil(wait / 60000)} minutes.`, retryAfterMs: wait });
+    const row = await db.prepare(`SELECT t.id, t.owner_id AS "ownerId" FROM connect_tokens t JOIN users u ON u.id = t.owner_id
+      WHERE t.token_hash = ? AND t.expires_at > ? AND t.uses_left > 0 AND u.deleted_at IS NULL`).get(digest(token), Date.now());
+    if (!row) return response.status(404).json(CONNECT_INVALID);
+    if (row.ownerId === userId) return response.status(400).json({ error: 'This is your own invite link. Share it with a friend.', code: 'own_invite' });
+    const blocked = await db.prepare('SELECT 1 FROM blocks WHERE (blocker_id = ? AND blocked_id = ?) OR (blocker_id = ? AND blocked_id = ?)').get(row.ownerId, userId, userId, row.ownerId);
+    if (blocked) return response.status(404).json(CONNECT_INVALID);
+    // Spend one use (only while one is left, so two people racing for the last use cannot both get it).
+    const spent = await db.prepare('UPDATE connect_tokens SET uses_left = uses_left - 1 WHERE id = ? AND uses_left > 0').run(row.id);
+    if (Number(spent?.changes ?? spent?.rowCount ?? 0) === 0) return response.status(404).json(CONNECT_INVALID);
+    await db.prepare('DELETE FROM connect_tokens WHERE id = ? AND uses_left <= 0').run(row.id);
+    // Both chose this: the owner by sharing the link, the other person by opening it. Both become saved contacts.
+    await linkUsers(userId, row.ownerId, { save: true });
+    await linkUsers(row.ownerId, userId, { save: true });
+    await broadcastPresence(userId);
+    await broadcastPresence(row.ownerId);
+    const owner = await db.prepare(`SELECT ${USER_COLUMNS} FROM users WHERE id = ?`).get(row.ownerId);
+    const me = await db.prepare(`SELECT ${USER_COLUMNS} FROM users WHERE id = ?`).get(userId);
+    await notifyUser(row.ownerId, { type: 'contact:invited', user: { ...publicUser(me), saved: true, hidden: false } }).catch(() => {});
+    response.json({ user: { ...publicUser(owner), saved: true, hidden: false } });
   });
 
   // Display name: visible everywhere the profile is; the @handle never changes.
@@ -2862,6 +2947,9 @@ export function createChatServer({
         FROM media WHERE id = ? AND (sender_id = ? OR receiver_id = ?)`).get(mediaId, userId, userId)) : null;
       if (!receiver || receiverId === userId || !content || content.length > (isEnvelope(content) ? MAX_DIRECT_ENVELOPE : 4000) || (mediaId && !media)) {
         return json(socket, { type: 'error', message: 'Message is invalid or too long.' });
+      }
+      if (refusesPlaintext(strictE2E, content)) {
+        return json(socket, { type: 'error', messageId: clientMessageId, message: PLAINTEXT_REFUSED.error, code: PLAINTEXT_REFUSED.code });
       }
       // End-to-end encrypted: it must be addressed to every device that should get it; if the sender's device list
       // is out of date it is told the current one and encrypts again (no generic error banner).

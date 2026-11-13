@@ -339,17 +339,19 @@ test('keeps sessions valid until explicit logout, then revokes them', async () =
   assert.equal(after.status, 401);
 });
 
-test('searches discoverable handles and persists selected contacts', async () => {
+test('finds people by their exact handle and persists selected contacts', async () => {
   const owner = await createSession('contactowner');
   const discovered = await createSession('milan');
-
-  const unauthenticated = await fetch(`${baseUrl}/api/v1/contacts/search?q=milan`);
-  assert.equal(unauthenticated.status, 401);
-  const search = await fetch(`${baseUrl}/api/v1/contacts/search?q=%40MIL`, {
-    headers: { Authorization: `Bearer ${owner.token}` },
+  const lookup = (username, token = owner.token) => fetch(`${baseUrl}/api/v1/users/lookup`, {
+    method: 'POST', headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), 'Content-Type': 'application/json' }, body: JSON.stringify({ username }),
   });
-  assert.equal(search.status, 200);
-  assert.deepEqual((await search.json()).map((user) => user.username), ['milan']);
+
+  assert.equal((await lookup('milan', null)).status, 401);
+  const found = await lookup('@MILAN');
+  assert.equal(found.status, 200);
+  assert.equal((await found.json()).user.username, 'milan');
+  assert.equal((await lookup('mil')).status, 404, 'a prefix finds no one');
+  assert.equal((await fetch(`${baseUrl}/api/v1/contacts/search?q=mil`, { headers: { Authorization: `Bearer ${owner.token}` } })).status, 404, 'the old prefix search is gone');
 
   const add = await fetch(`${baseUrl}/api/v1/contacts`, {
     method: 'POST',

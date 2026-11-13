@@ -124,8 +124,7 @@ test('a deleted account stays in other people\'s chats as "Deleted account", rea
 
   avaSocket.send(JSON.stringify({ type: 'message:send', message: { id: 'after-delete', receiverId: cal.user.id, content: 'still there?' } }));
   assert.equal((await avaSocket.waitFor((event) => event.code === 'account_deleted'))?.messageId, 'after-delete');
-  const found = (await api(`/api/v1/contacts/search?q=${cal.user.username}`, { session: ava })).data;
-  assert.equal(found.some((user) => user.id === cal.user.id), false, 'not found in search');
+  assert.equal((await api('/api/v1/users/lookup', { session: ava, method: 'POST', body: { username: cal.user.username } })).status, 404, 'not found by lookup');
   assert.equal((await api('/api/v1/contacts', { session: ava, method: 'POST', body: { userId: cal.user.id } })).status, 404, 'cannot be added');
   avaSocket.close();
 });

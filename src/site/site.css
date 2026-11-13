@@ -146,3 +146,15 @@
 .site-steps span { color: var(--s-muted); }
 .site-page h2 { margin-top: 32px; }
 .site-terms-section { margin: 22px 0; } .site-terms-section h2 { margin: 0 0 6px; font-size: 18px; } .site-terms-section p { margin: 0; line-height: 1.6; }
+
+/* Privacy retention list, account deletion form and the invite-link page */
+.site-list { padding-left: 1.2em; display: grid; gap: 6px; }
+.site-narrow { max-width: 720px; }
+.site-muted { color: var(--s-muted); font-size: 15px; }
+.site-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-block: 20px; }
+.site-form { display: grid; gap: 14px; max-width: 420px; margin-block: 20px; }
+.site-form label { display: grid; gap: 6px; font-weight: 600; font-size: 15px; }
+.site-form input { font: inherit; font-weight: 400; padding: 10px 14px; border-radius: 12px; border: 1px solid var(--s-line); background: var(--s-card); color: var(--s-ink); }
+.site-button.is-danger { background: #c62828; justify-self: start; }
+.site-button:disabled { opacity: .55; cursor: not-allowed; transform: none; box-shadow: none; }
+.site-notice { padding: 14px 18px; border-radius: 14px; background: var(--s-chip); }

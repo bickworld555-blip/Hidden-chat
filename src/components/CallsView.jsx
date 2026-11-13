@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import CallAccessNotice from './CallAccessNotice.jsx';
 import { Phone, Video, ArrowDownLeft, ArrowUpRight, CalendarClock, Grid3x3, Heart, PhoneCall, Search, X } from 'lucide-react';
 import { scheduledCallContent } from '../groupChat.js';
-import { searchPeople } from '../contactsApi.js';
+import { lookupUsername } from '../contactsApi.js';
 import { useChatStore } from '../store.js';
 import { formatViewerTimestamp } from '../time.js';
 import { groupCallLogs } from '../callLogGroups.js';
@@ -77,7 +77,7 @@ function KeypadSheet({ onClose, onCall }) {
     setError('');
     try {
       const known = useChatStore.getState().chats.find((chat) => chat.username?.toLowerCase() === username);
-      const person = known ?? (await searchPeople(sessionToken, username)).find((entry) => entry.username?.toLowerCase() === username);
+      const person = known ?? await lookupUsername(sessionToken, username);
       if (!person) throw new Error(`No one is called @${username}.`);
       onCall(person.id, mode);
     } catch (caught) {

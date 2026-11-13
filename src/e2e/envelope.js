@@ -27,6 +27,11 @@ export const VIEW_ONCE_PREFIX = 'viewonce:';
 
 export const isEnvelope = (content) => typeof content === 'string' && content.startsWith(ENVELOPE_PREFIX);
 
+// What people write (not call logs, opened view-once markers or a device's own notices). It always travels sealed:
+// the app holds it back until it can encrypt it, and a production server refuses it readable (server/strictE2E.mjs).
+const SYSTEM_CONTENT = /^(?:call|voice-opened|media-opened|notice):/;
+export const isUserContent = (content) => typeof content === 'string' && content.length > 0 && !SYSTEM_CONTENT.test(content);
+
 /** The routing part for a plaintext message (what the server may know about it). */
 export function routingFor(content) {
   const text = typeof content === 'string' ? content : '';

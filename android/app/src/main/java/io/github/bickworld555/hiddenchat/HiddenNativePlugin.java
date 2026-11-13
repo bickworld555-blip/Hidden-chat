@@ -39,9 +39,8 @@ import org.json.JSONObject;
         @Permission(alias = "camera", strings = { Manifest.permission.CAMERA }),
         // Only Android 9 and older need this to save into Download/Hidden Messenger.
         @Permission(alias = "storage", strings = { Manifest.permission.WRITE_EXTERNAL_STORAGE }),
-        // Asked only when a feature needs it, like WhatsApp: contacts for Invite a friend, location for sharing it,
-        // Bluetooth to route call audio to a headset. Nothing else is requested.
-        @Permission(alias = "contacts", strings = { Manifest.permission.READ_CONTACTS }),
+        // Asked only when a feature needs it: location for sharing it, Bluetooth to route call audio to a headset.
+        // Nothing else is requested; contacts, phone numbers and SMS never (No Email. No Number.).
         @Permission(alias = "location", strings = { Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION }),
         @Permission(alias = "bluetooth", strings = { Manifest.permission.BLUETOOTH_CONNECT })
     }
@@ -105,6 +104,14 @@ public class HiddenNativePlugin extends Plugin {
             notifyListeners("callBack", data, true);
             Alerts.clearMissedCalls(getContext(), callBack);
             intent.removeExtra(Alerts.EXTRA_CALL_BACK);
+        }
+        // An invite link opened from the website ("Open in the app"): the web app redeems it. Retained until it listens.
+        Uri link = intent.getData();
+        if (Intent.ACTION_VIEW.equals(intent.getAction()) && link != null && "hiddenmessenger".equals(link.getScheme()) && "c".equals(link.getHost())) {
+            JSObject data = new JSObject();
+            data.put("url", link.toString());
+            notifyListeners("connectLink", data, true);
+            intent.setData(null);
         }
         if (SharedContent.isShare(intent)) {
             // Shared from another app's share sheet: the web app shows a chat picker. Retained until it listens.
@@ -186,7 +193,6 @@ public class HiddenNativePlugin extends Plugin {
         result.put("notificationsEnabled", NotificationManagerCompat.from(context).areNotificationsEnabled());
         result.put("microphone", getPermissionState("microphone") == PermissionState.GRANTED);
         result.put("camera", getPermissionState("camera") == PermissionState.GRANTED);
-        result.put("contacts", granted("contacts"));
         // "Approximate" is enough to share a location.
         result.put("location", getContext().checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == android.content.pm.PackageManager.PERMISSION_GRANTED);
         result.put("sdk", Build.VERSION.SDK_INT);
@@ -455,46 +461,6 @@ public class HiddenNativePlugin extends Plugin {
         } catch (Exception broken) {
             call.reject("The Android Keystore is not available.");
         }
-    }
-
-    /** Invite a friend: the phone's contacts with numbers, read on the device ([] without permission). */
-    @PluginMethod
-    public void listContacts(PluginCall call) {
-        try {
-            JSObject result = new JSObject();
-            result.put("allowed", Invites.allowed(getContext(), Manifest.permission.READ_CONTACTS));
-            result.put("contacts", Invites.contacts(getContext()));
-            call.resolve(result);
-        } catch (Exception broken) {
-            call.reject("Contacts could not be read.");
-        }
-    }
-
-    /**
-     * Opens the phone's messages app with the number and the invite filled in, for the person to send (no SMS
-     * permission needed), the way WhatsApp invites by text.
-     */
-    @PluginMethod
-    public void openSmsComposer(PluginCall call) {
-        String number = call.getString("number", "");
-        String text = call.getString("text", "");
-        try {
-            Intent intent = new Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:" + Uri.encode(number)));
-            intent.putExtra("sms_body", text);
-            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            getContext().startActivity(intent);
-            JSObject result = new JSObject();
-            result.put("opened", true);
-            call.resolve(result);
-        } catch (Exception missing) {
-            call.reject("No messages app is available.");
-        }
-    }
-
-    /** Asks for contacts (Invite a friend), then reports the state. */
-    @PluginMethod
-    public void requestInvitePermissions(PluginCall call) {
-        requestPermissionForAlias("contacts", call, "startupPermissionsDone");
     }
 
     /** App lock and screen security state: { biometric: available|none|unsupported, secureScreen, transcription }. */

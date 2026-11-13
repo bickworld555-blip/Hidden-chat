@@ -8,7 +8,7 @@ import { DATABASE_SCHEMA_VERSION, postgresOptions } from '../server/database.mjs
 import { DEMO_USERS } from '../server/demo.mjs';
 
 export const IMPORT_TABLES = Object.freeze([
-  { name: 'users', columns: ['id', 'username', 'name', 'initials', 'color', 'dob', 'password_hash', 'created_at', 'avatar_disk_name', 'avatar_type', 'avatar_updated_at', 'last_seen_at', 'last_seen_privacy', 'online_privacy', 'photo_privacy', 'read_receipts', 'two_step_hash', 'two_step_set_at', 'status_audience', 'is_admin', 'suspended_at', 'deleted_at', 'country', 'country_updated_at', 'about', 'about_privacy', 'silence_unknown_callers', 'default_message_timer'], users: ['id'] },
+  { name: 'users', columns: ['id', 'username', 'name', 'initials', 'color', 'dob', 'password_hash', 'created_at', 'avatar_disk_name', 'avatar_type', 'avatar_updated_at', 'last_seen_at', 'last_seen_privacy', 'online_privacy', 'photo_privacy', 'read_receipts', 'two_step_hash', 'two_step_set_at', 'status_audience', 'is_admin', 'suspended_at', 'deleted_at', 'country', 'country_updated_at', 'about', 'about_privacy', 'silence_unknown_callers', 'default_message_timer', 'discoverable_by_username'], users: ['id'] },
   { name: 'sessions', columns: ['token_hash', 'user_id', 'device_id', 'device_name', 'expires_at', 'created_at', 'last_active_at'], users: ['user_id'] },
   { name: 'contacts', columns: ['owner_id', 'contact_id', 'created_at', 'saved', 'hidden'], users: ['owner_id', 'contact_id'], key: ['owner_id', 'contact_id'] },
   // Groups precede media and uploads, whose group_id references them.
@@ -34,7 +34,7 @@ export const IMPORT_TABLES = Object.freeze([
   { name: 'message_stars', columns: ['user_id', 'message_id', 'chat_key', 'starred_at'], users: ['user_id'], key: ['user_id', 'message_id'] },
   { name: 'chat_prefs', columns: ['user_id', 'chat_key', 'archived', 'updated_at'], users: ['user_id'], key: ['user_id', 'chat_key'] },
   { name: 'pinned_messages', columns: ['chat_key', 'message_id', 'pinned_by', 'pinned_at'], users: ['pinned_by'], key: ['chat_key', 'message_id'] },
-  { name: 'business_profiles', columns: ['user_id', 'away_enabled', 'away_text', 'away_schedule', 'away_hours', 'greeting_enabled', 'greeting_text', 'updated_at', 'category', 'description', 'address', 'email', 'website', 'links', 'cover_disk_name', 'cover_type', 'away_from', 'away_until', 'phone'], users: ['user_id'] },
+  { name: 'business_profiles', columns: ['user_id', 'away_enabled', 'away_text', 'away_schedule', 'away_hours', 'greeting_enabled', 'greeting_text', 'updated_at', 'category', 'description', 'address', 'website', 'links', 'cover_disk_name', 'cover_type', 'away_from', 'away_until'], users: ['user_id'] },
   { name: 'business_auto_replies', columns: ['user_id', 'peer_id', 'kind', 'sent_at'], users: ['user_id', 'peer_id'], key: ['user_id', 'peer_id', 'kind'] },
   { name: 'catalog_items', columns: ['id', 'user_id', 'name', 'description', 'price', 'currency', 'link', 'hidden', 'image_disk_name', 'image_type', 'created_at', 'updated_at'], users: ['user_id'] },
   { name: 'labels', columns: ['id', 'user_id', 'name', 'color', 'created_at'], users: ['user_id'] },
@@ -70,6 +70,7 @@ export const IMPORT_TABLES = Object.freeze([
   { name: 'call_links', columns: ['code', 'owner_id', 'mode', 'created_at', 'revoked_at'], users: ['owner_id'], key: ['code'] },
   // Help Center and moderation (migration 013).
   { name: 'support_messages', columns: ['id', 'user_id', 'from_admin', 'body', 'created_at', 'read_by_user_at', 'read_by_admin_at'], users: ['user_id'] },
+  { name: 'connect_tokens', columns: ['id', 'owner_id', 'token_hash', 'uses_left', 'expires_at', 'created_at'], users: ['owner_id'] },
   { name: 'help_articles', columns: ['id', 'slug', 'category', 'title', 'body', 'published', 'updated_at', 'updated_by'], users: [] },
   { name: 'user_reports', columns: ['id', 'reporter_id', 'reported_id', 'reason', 'details', 'status', 'created_at', 'resolved_at', 'resolved_by'], users: ['reporter_id', 'reported_id'] },
 ]);

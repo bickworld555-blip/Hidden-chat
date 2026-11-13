@@ -60,7 +60,7 @@ function Header({ path, go }) {
 function Footer({ go }) {
   const groups = [
     ['Product', [['/messaging', 'Messaging'], ['/calling', 'Calling'], ['/features', 'All features'], ['/business', 'For business'], ['/download', 'Download'], ['/app', 'Open web app']]],
-    ['Trust', [['/privacy', 'Privacy & encryption'], ['/terms', 'Terms of Service'], ['/help/end-to-end-encryption', 'How encryption works'], ['/help/report-and-block', 'Report abuse']]],
+    ['Trust', [['/privacy', 'Privacy & encryption'], ['/terms', 'Terms of Service'], ['/help/end-to-end-encryption', 'How encryption works'], ['/help/report-and-block', 'Report abuse'], ['/delete-account', 'Delete your account']]],
     ['Help', [['/help', 'Help Center'], ['/help/create-account', 'Create an account'], ['/help/install-android', 'Install on Android']]],
   ];
   return (
@@ -200,23 +200,32 @@ function Terms() {
   );
 }
 
+// The privacy policy: every kind of data, who reads it and what the server keeps, matching the code and the Play
+// Store Data safety answers (docs/play-store/data-safety.md). Change them together.
+export const PRIVACY_ROWS = [
+  ['Message text, photos, videos, voice notes, files, shared locations', 'Only the people in the chat', 'Locked ciphertext, deleted once every device received it (30 days at most)'],
+  ['Reactions, poll votes, statuses', 'Only the people they are for', 'Locked ciphertext; statuses disappear after 24 hours'],
+  ['Link previews', 'Made on the sender’s phone', 'Nothing'],
+  ['Your username, display name and date of birth', 'Username and name: people you chat with. Date of birth: no one', 'Kept for your account; the date of birth only checks the minimum age'],
+  ['Your profile photo and About', 'Who you choose in Settings › Privacy', 'Kept until you change or delete them'],
+  ['Who talks to whom, and when', 'Needed to deliver messages', 'Contacts you add and delivery records (no message content)'],
+  ['Push notification token (Firebase Cloud Messaging)', 'Google’s push service, to wake the app', 'Kept while the app is signed in on that phone'],
+  ['Messages to Hidden Messenger Support', 'You and the Support team', 'Readable by the Support team; deleted with your account'],
+  ['Business profile, catalogue and auto-replies (business accounts)', 'Customers who open your profile or chat with you', 'Readable by the server, which shows them for you; deleted with your account'],
+  ['Your phone number or email', 'Never asked for', 'Nothing: there is nowhere to store them'],
+  ['Your phone’s contacts', 'Never read', 'Nothing: the app has no permission to read them'],
+  ['Your country (from your phone’s time zone)', 'Counted in totals per country', 'The country only: no IP address or location'],
+];
+
 function Privacy({ go }) {
-  const rows = [
-    ['Message text, photos, voice notes', 'Only the people in the chat', 'Locked ciphertext'],
-    ['Reactions, poll votes, statuses', 'Only the people they are for', 'Locked ciphertext'],
-    ['Link previews', 'Made on the sender’s phone', 'Nothing'],
-    ['Who talks to whom, and when', 'Needed to deliver messages', 'Yes'],
-    ['Your phone number or email', 'Never asked for', 'Nothing'],
-    ['Your country (from your phone’s time zone)', 'Counted in totals per country', 'The country only: no IP address or location'],
-  ];
   return (
     <div className="site-wrap site-page">
       <h1>Privacy you can check</h1>
-      <p className="site-lede">Hidden Messenger encrypts on your device using the same family of techniques as the Signal Protocol: a new key agreement for every device, keys that change with every message, and group keys that change when people leave.</p>
+      <p className="site-lede">No email. No phone number. We never access your contacts. Hidden Messenger encrypts on your device using the same family of techniques as the Signal Protocol: a new key agreement for every device, keys that change with every message, and group keys that change when people leave.</p>
       <div className="site-table">
         <table>
-          <thead><tr><th>What</th><th>Who can read it</th><th>What our server sees</th></tr></thead>
-          <tbody>{rows.map(([what, who, server]) => <tr key={what}><td>{what}</td><td>{who}</td><td>{server}</td></tr>)}</tbody>
+          <thead><tr><th>What</th><th>Who can read it</th><th>What our server keeps</th></tr></thead>
+          <tbody>{PRIVACY_ROWS.map(([what, who, server]) => <tr key={what}><td>{what}</td><td>{who}</td><td>{server}</td></tr>)}</tbody>
         </table>
       </div>
       <div className="site-grid">
@@ -226,10 +235,81 @@ function Privacy({ go }) {
       <h2>Your account and your devices</h2>
       <div className="site-grid">
         <section className="site-card"><h2><KeyRound size={20} /> No phone number</h2><p>An account is a username, a date of birth and a password. Add a two-step PIN so a new device also needs it.</p></section>
+        <section className="site-card"><h2><Search size={20} /> Finding people</h2><p>People find you only by typing your exact username, or through an invite link you share. Turn off Settings › Privacy › Discoverable by username to be found only through your links.</p></section>
         <section className="site-card"><h2><Smartphone size={20} /> Linked devices</h2><p>Every phone and browser you link has its own keys. See and sign out any device under Settings › Linked devices.</p></section>
         <section className="site-card"><h2><BadgeCheck size={20} /> Reports and safety</h2><p>Report or block someone from their contact info. Reports go to the Hidden Messenger team with the reason you choose; they never include your messages.</p></section>
       </div>
+      <h2>How long we keep things</h2>
+      <ul className="site-list">
+        <li>Messages wait on the server only until every device they are for has received them, and 30 days at most.</li>
+        <li>Statuses disappear after 24 hours. Invite links expire after 7 days, or sooner when used up or revoked.</li>
+        <li>Your encrypted backup, if you make one, stays until you replace it or delete your account.</li>
+        <li>Deleting your account removes your profile, contacts, group memberships, statuses, backup, business profile, Support messages and push tokens at once. A “Deleted account” placeholder keeps other people’s chats readable. Messages already on other people’s phones stay with them.</li>
+      </ul>
+      <p>Delete your account in the app (Settings › Account › Delete account) or <Link to="/delete-account" go={go}>on the website</Link>. Questions about your data: message Hidden Messenger Support in the app (Settings › Help and feedback).</p>
       <p><Link to="/help/end-to-end-encryption" go={go} className="site-more">Read how encryption works <ChevronRight size={16} /></Link></p>
+    </div>
+  );
+}
+
+// Google Play requires a way to delete an account outside the app: the username, the password and "DELETE".
+function DeleteAccount({ go }) {
+  const [form, setForm] = useState({ username: '', password: '', confirm: '' });
+  const [state, setState] = useState({ busy: false, error: '', done: false });
+  const set = (key) => (event) => setForm((current) => ({ ...current, [key]: event.target.value }));
+  async function submit(event) {
+    event.preventDefault();
+    setState({ busy: true, error: '', done: false });
+    try {
+      const response = await apiFetch('/api/v1/account/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form) });
+      if (response.status === 204) { setForm({ username: '', password: '', confirm: '' }); setState({ busy: false, error: '', done: true }); return; }
+      const data = await response.json().catch(() => null);
+      setState({ busy: false, error: data?.error || 'Your account could not be deleted. Try again.', done: false });
+    } catch {
+      setState({ busy: false, error: 'No connection. Check your internet and try again.', done: false });
+    }
+  }
+  return (
+    <div className="site-wrap site-page site-narrow">
+      <h1>Delete your account</h1>
+      <p className="site-lede">This deletes your Hidden Messenger account and the data the server keeps for it, at once. It can’t be undone.</p>
+      <ul className="site-list">
+        <li>Removed: your profile, username, date of birth, contacts, group memberships, statuses, encrypted backup, business profile and catalogue, Support messages and push tokens.</li>
+        <li>Your username becomes free for someone else. Other people see “Deleted account” in their chats with you.</li>
+        <li>Messages already on other people’s phones stay with them, as on any messenger.</li>
+      </ul>
+      <p>You can also delete it in the app: Settings › Account › Delete account.</p>
+      {state.done ? (
+        <p className="site-notice" role="status">Your account was deleted and every device was signed out.</p>
+      ) : (
+        <form className="site-form" onSubmit={submit}>
+          <label>Username<input value={form.username} onChange={set('username')} autoComplete="username" required maxLength={40} placeholder="@username" /></label>
+          <label>Password<input type="password" value={form.password} onChange={set('password')} autoComplete="current-password" required maxLength={128} /></label>
+          <label>Type DELETE to confirm<input value={form.confirm} onChange={set('confirm')} required autoComplete="off" /></label>
+          {state.error && <p className="site-error" role="alert">{state.error}</p>}
+          <button type="submit" className="site-button is-danger" disabled={state.busy || form.confirm !== 'DELETE'}>{state.busy ? 'Deleting…' : 'Delete my account'}</button>
+        </form>
+      )}
+      <p><Link to="/privacy" go={go} className="site-more">Privacy policy <ChevronRight size={16} /></Link></p>
+    </div>
+  );
+}
+
+// An invite link (hiddenmessenger.com/c#<token>): the token stays after "#", so this page never sends it anywhere.
+// "Open in the app" hands it to the Android app (hiddenmessenger://c#<token>), which redeems it.
+function ConnectInvite() {
+  const token = /^#([A-Za-z0-9_-]{22})$/.exec(globalThis.location?.hash ?? '')?.[1] ?? '';
+  return (
+    <div className="site-wrap site-page site-narrow">
+      <h1>You’re invited to chat</h1>
+      <p className="site-lede">Someone shared their Hidden Messenger invite with you: private messaging with no phone number and no email.</p>
+      {token ? (
+        <div className="site-actions">
+          <a className="site-button is-large" href={`hiddenmessenger://c#${token}`}>Open in the app</a>
+          <a className="site-button is-large is-ghost" href={ANDROID_APK_URL}>Get the app</a>
+        </div>
+      ) : <p className="site-error">This invite link is incomplete. Ask for the whole link again.</p>}
+      <p className="site-muted">New to Hidden Messenger? Install the app and sign up, then open this link again. You can also paste the link into the search box of New chat in the app.</p>
     </div>
   );
 }
@@ -384,7 +464,7 @@ function HelpArticle({ slug, go }) {
 
 export default function PublicSite() {
   const [path, go] = usePath();
-  useEffect(() => { document.title = path === '/' ? 'Hidden Messenger · Private messaging' : `${(PAGES.find(([to]) => path.startsWith(to))?.[1] ?? 'Download')} · Hidden Messenger`; }, [path]);
+  useEffect(() => { document.title = path === '/' ? 'Hidden Messenger · Private messaging' : `${(PAGES.find(([to]) => path.startsWith(to))?.[1] ?? (path.startsWith('/delete-account') ? 'Delete your account' : /^\/c\/?$/.test(path) ? 'Invite' : 'Download'))} · Hidden Messenger`; }, [path]);
   const helpSlug = /^\/help\/([a-z0-9-]+)\/?$/.exec(path)?.[1];
   const page = helpSlug ? <HelpArticle slug={helpSlug} go={go} />
     : path.startsWith('/help') ? <HelpCenter go={go} />
@@ -392,6 +472,8 @@ export default function PublicSite() {
         : path.startsWith('/calling') ? <Calling go={go} />
       : path.startsWith('/features') ? <Features />
         : path.startsWith('/privacy') ? <Privacy go={go} />
+        : path.startsWith('/delete-account') ? <DeleteAccount go={go} />
+        : /^\/c\/?$/.test(path) ? <ConnectInvite />
         : path.startsWith('/terms') ? <Terms />
           : path.startsWith('/business') ? <Business go={go} />
             : path.startsWith('/download') ? <Download />

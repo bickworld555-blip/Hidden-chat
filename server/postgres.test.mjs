@@ -244,8 +244,8 @@ test('PostgreSQL public login, profile, contacts and logout preserve the protoco
   assert.equal((await api('/api/v1/me')).status, 401);
   assert.deepEqual((await api('/api/v1/contacts', { session: owner })).data, []);
   await api('/api/v1/me', { session: peer, method: 'PATCH', body: { name: 'Literal %_ Name' } });
-  const search = await api('/api/v1/contacts/search?q=%25_', { session: owner });
-  assert.equal(search.data[0].id, peer.user.id);
+  assert.equal((await api('/api/v1/users/lookup', { session: owner, method: 'POST', body: { username: '%_' } })).status, 400, 'wildcards are not a username');
+  assert.equal((await api('/api/v1/users/lookup', { session: owner, method: 'POST', body: { username: 'PEER_PERSON' } })).data.user.id, peer.user.id);
   const linked = await api('/api/v1/contacts', { session: owner, method: 'POST', body: { userId: peer.user.id } });
   assert.equal(linked.data.saved, true);
   assert.equal((await api('/api/v1/contacts', { session: owner })).data[0].disappearSeconds, 0);

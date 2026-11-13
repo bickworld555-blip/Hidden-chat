@@ -401,12 +401,13 @@ test('a business profile is saved with the business settings and shown to custom
   const shop = await register('bizprof');
   const customer = await register('cust');
   assert.equal((await api(`/api/v1/users/${shop.user.id}/business`, { session: customer })).body, null, 'nothing to show before it is filled in');
-  const bad = await api('/api/v1/business', { session: shop, method: 'PUT', body: { profile: { email: 'not-an-email' } } });
-  assert.deepEqual([bad.status, /email address/.test(bad.body.error)], [400, true]);
+  // No Email. No Number.: a business profile has no email address or phone number; sent ones are ignored, not kept.
+  const contactless = (await api('/api/v1/business', { session: shop, method: 'PUT', body: { profile: { email: 'hello@bakery.example', phone: '+880 1712 345678' } } })).body;
+  assert.equal('email' in contactless.profile || 'phone' in contactless.profile, false);
   assert.equal((await api('/api/v1/business', { session: shop, method: 'PUT', body: { profile: { website: 'not a site' } } })).status, 400);
   assert.equal((await api('/api/v1/business', { session: shop, method: 'PUT', body: { profile: { description: 'x'.repeat(513) } } })).status, 400);
   const hours = { timeZone: 'Asia/Dhaka', days: { 1: [540, 1020], 2: [540, 1020] } };
-  const saved = (await api('/api/v1/business', { session: shop, method: 'PUT', body: { profile: { category: 'Bakery', description: 'Fresh bread daily', address: '12 Lake Road, Dhaka', email: 'hello@bakery.example', website: 'bakery.example' }, away: { hours } } })).body;
+  const saved = (await api('/api/v1/business', { session: shop, method: 'PUT', body: { profile: { category: 'Bakery', description: 'Fresh bread daily', address: '12 Lake Road, Dhaka', website: 'bakery.example' }, away: { hours } } })).body;
   assert.equal(saved.profile.website, 'https://bakery.example/', 'a bare domain becomes a link');
   assert.equal(saved.away.enabled, false, 'saving the profile leaves the away message as it was');
   const seen = (await api(`/api/v1/users/${shop.user.id}/business`, { session: customer })).body;
