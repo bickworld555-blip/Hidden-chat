@@ -61,7 +61,7 @@ export async function showSystemNotification(category, { title, body: rawBody, t
     tag: `${channel.id}:${tag ?? conversationOpenParam(conversation)}`,
     silent: true,
     renotify: true,
-    icon: '/icons/icon-192.png?v=2',
+    icon: '/icons/icon-192.png?v=3',
     data: { channel: channel.id, open: conversationOpenParam(conversation) },
   };
   try {

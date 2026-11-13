@@ -1,15 +1,18 @@
+// App icons (scripts/generate-app-icons.mjs): every file the website, the PWA and the Android launcher and splash
+// screens use exists at its declared size, round icons are round, and the adaptive foreground stays inside the
+// launcher's safe circle (nothing for a mask to clip).
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
-import { OUTPUTS, decodePng, encodePng, renderCrop } from '../scripts/generate-app-icons.mjs';
+import { OUTPUTS, decodePng, iconSvg } from '../scripts/generate-app-icons.mjs';
 
 const root = new URL('../', import.meta.url);
+const alpha = (image, x, y) => image.pixels[(y * image.width + x) * 4 + 3];
 
 test('every generated icon exists at its declared size', async () => {
   for (const output of OUTPUTS) {
     const image = decodePng(await readFile(new URL(output.file, root)));
-    assert.equal(image.width, output.size, output.file);
-    assert.equal(image.height, output.size, output.file);
+    assert.deepEqual([image.width, image.height], [output.width, output.height], output.file);
   }
 });
 
@@ -23,11 +26,26 @@ test('the manifest names only real icons whose sizes match', async () => {
   }
 });
 
-test('masked icons are transparent outside their shape and the codec round-trips', () => {
-  const pixels = Buffer.alloc(4 * 4 * 4, 200);
-  const source = decodePng(encodePng(4, pixels));
-  assert.deepEqual([source.width, source.height, source.pixels[0], source.pixels[3]], [4, 4, 200, 200]);
-  const round = decodePng(renderCrop({ width: 4, height: 4, pixels: Buffer.alloc(64, 255) }, { cx: 2, cy: 2, side: 4 }, 32, 'circle'));
-  assert.equal(round.pixels[3], 0, 'corner is transparent');
-  assert.equal(round.pixels[(16 * 32 + 16) * 4 + 3], 255, 'centre is opaque');
+test('round icons are transparent at the corners and solid in the middle; full-bleed ones are solid everywhere', async () => {
+  for (const output of OUTPUTS) {
+    const image = decodePng(await readFile(new URL(output.file, root)));
+    const middle = alpha(image, image.width >> 1, image.height >> 1);
+    const corner = alpha(image, 0, 0);
+    if (output.variant === 'regular' && output.shape === 'circle') assert.deepEqual([corner, middle], [0, 255], output.file);
+    if (output.variant === 'maskable' || output.variant === 'splash') assert.deepEqual([corner, middle], [255, 255], output.file);
+    if (output.variant === 'adaptive') assert.equal(corner, 0, output.file);
+  }
+});
+
+test('the adaptive foreground keeps the whole mark inside the 66-unit safe circle', async () => {
+  const output = OUTPUTS.find((item) => item.variant === 'adaptive' && item.width === 432);
+  const image = decodePng(await readFile(new URL(output.file, root)));
+  const centre = image.width / 2;
+  const safe = (33 / 108) * image.width;
+  for (let y = 0; y < image.height; y += 2) {
+    for (let x = 0; x < image.width; x += 2) {
+      if (alpha(image, x, y) > 32) assert.ok(Math.hypot(x - centre, y - centre) <= safe, `opaque pixel at ${x},${y} is outside the safe circle`);
+    }
+  }
+  assert.match(iconSvg('adaptive', 108), /scale\(\.82\)/);
 });
