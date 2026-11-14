@@ -48,9 +48,11 @@ export function sfuOrigins(value = '') {
   });
 }
 
+export const DEFAULT_XMPP_ORIGIN = 'wss://chat.hiddenmessenger.com';
+
 /**
  * The bundled app's Content-Security-Policy: scripts only from the APK itself (and WebAssembly for the on-device
- * face tracker), network only to the app's server, the map/place services it uses and the group-call media server,
+ * face tracker), network only to the app's server, the XMPP core, the map/place services it uses and the group-call media server,
  * no frames or plugins.
  */
 export function bundledCsp(rawUrl) {
@@ -60,13 +62,16 @@ export function bundledCsp(rawUrl) {
   // Group calls through the media server (server/sfu.mjs): LiveKit Cloud and its region servers, plus a self-hosted
   // server named in ANDROID_SFU_ORIGINS (space-separated https:// and wss:// origins). Media stays end-to-end encrypted.
   const sfu = ['https://*.livekit.cloud', 'wss://*.livekit.cloud', ...sfuOrigins(process.env.ANDROID_SFU_ORIGINS)];
+  // The XMPP core (ejabberd on the VPS, server/xmpp.mjs DEFAULT_XMPP_HOST): the app's WebSocket to it
+  // (src/xmpp/transport.js). Another host is named in ANDROID_XMPP_ORIGINS (space-separated wss:// origins).
+  const xmpp = sfuOrigins(process.env.ANDROID_XMPP_ORIGINS ?? DEFAULT_XMPP_ORIGIN);
   return [
     "default-src 'self'",
     "script-src 'self' 'wasm-unsafe-eval'",
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob: https:",
     `media-src 'self' blob: data: ${api}`,
-    `connect-src 'self' blob: data: ${api} ${socket} ${services.join(' ')} ${sfu.join(' ')}`,
+    `connect-src 'self' blob: data: ${api} ${socket} ${xmpp.join(' ')} ${services.join(' ')} ${sfu.join(' ')}`,
     "worker-src 'self' blob:",
     "font-src 'self' data:",
     "object-src 'none'",

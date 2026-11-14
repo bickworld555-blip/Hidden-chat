@@ -1173,11 +1173,15 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
       aspect: preview.width && preview.height ? preview.width / preview.height : 0,
     }));
 
-    const job = withUploadSlot(async () => {
-      const ready = prepare ? await prepare() : { blob, filename, extras: {} };
+    // Prepared once (a compressed video is not compressed again on Retry).
+    let preparing = null;
+    const run = (signal) => withUploadSlot(async () => {
+      preparing ??= prepare ? prepare() : Promise.resolve({ blob, filename, extras: {} });
+      let ready;
+      try { ready = await preparing; } catch (error) { preparing = null; throw error; }
       const sizeError = uploadSizeError(ready.filename, ready.blob.size);
       if (sizeError) throw new Error(sizeError);
-      if (controller.signal.aborted) throw new DOMException('Cancelled', 'AbortError');
+      if (signal.aborted) throw new DOMException('Cancelled', 'AbortError');
       patchUpload(key, { preparing: false, total: ready.blob.size });
       const plainFile = ready.blob instanceof File ? ready.blob : new File([ready.blob], ready.filename, { type: ready.blob.type });
       // Encrypted on this device before upload (src/mediaCrypto.js); the key travels inside the end-to-end encrypted
@@ -1186,7 +1190,7 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
       const data = await uploadFile(file, {
         receiverId: chatId,
         sessionToken,
-        signal: controller.signal,
+        signal,
         kind: isVoiceNote ? 'voice' : undefined,
         onProgress: (sent, total) => patchUpload(key, { sent, total }),
       });
@@ -1207,22 +1211,48 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
       return { content, extras: { ...extras, ...previewExtras, ...ready.extras } };
     });
 
-    // Sent strictly in the order queued, whatever order the uploads finish in.
-    const sent = sendOrderRef.current.then(() => job).then(({ content, extras: sealedExtras }) => {
-      sendContent(content, null, sealedExtras);
-    }).catch((caught) => {
-      if (caught?.name !== 'AbortError') setError(caught?.message || 'Upload failed.');
-    }).finally(() => {
+    const remove = () => {
       uploadControllersRef.current.delete(key);
+      uploadRetriesRef.current.delete(key);
       if (previewUrl) URL.revokeObjectURL(previewUrl);
       setUploads((list) => list.filter((entry) => entry.key !== key));
+    };
+    // A failed upload stays in the chat with Retry (as on WhatsApp) instead of disappearing; cancelling removes it.
+    const settle = (job) => job.then(({ content, extras: sealedExtras }) => {
+      sendContent(content, null, sealedExtras);
+      remove();
+    }, (caught) => {
+      if (caught?.name === 'AbortError') { remove(); return; }
+      uploadControllersRef.current.delete(key);
+      patchUpload(key, { failed: true, preparing: false, sent: 0, error: caught?.message || 'Upload failed.' });
+      uploadRetriesRef.current.set(key, () => {
+        const again = new AbortController();
+        uploadControllersRef.current.set(key, again);
+        uploadRetriesRef.current.delete(key);
+        patchUpload(key, { failed: false, error: '', sent: 0 });
+        return settle(run(again.signal));
+      });
     });
+
+    const job = run(controller.signal);
+    // Sent strictly in the order queued, whatever order the uploads finish in. A retried item goes when it is done.
+    const sent = sendOrderRef.current.then(() => settle(job));
     sendOrderRef.current = sent;
     return sent;
   }
 
+  // key -> resend of a failed upload (uploadAndSend).
+  const uploadRetriesRef = useRef(new Map());
+
   function cancelUpload(key) {
-    uploadControllersRef.current.get(key)?.abort();
+    const controller = uploadControllersRef.current.get(key);
+    if (controller) { controller.abort(); return; }
+    // A failed item: dismissed.
+    if (uploadRetriesRef.current.delete(key)) setUploads((list) => list.filter((entry) => entry.key !== key));
+  }
+
+  function retryUpload(key) {
+    uploadRetriesRef.current.get(key)?.();
   }
 
   useEffect(() => () => uploadControllersRef.current.forEach((controller) => controller.abort()), []);
@@ -1925,7 +1955,7 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
       >
         <div className="message-stack" ref={messageStackRef}>
           {messageList}
-          {uploads.map((upload) => <PendingUpload key={upload.key} upload={upload} onCancel={() => cancelUpload(upload.key)} />)}
+          {uploads.map((upload) => <PendingUpload key={upload.key} upload={upload} onCancel={() => cancelUpload(upload.key)} onRetry={() => retryUpload(upload.key)} />)}
           {typing === 'recording' && (
             <div className="recording-indicator" role="status" aria-label={`${chat?.name ?? 'Contact'} is recording audio`}>
               <span className="recording-indicator-mic" aria-hidden="true"><Mic size={18} /></span>

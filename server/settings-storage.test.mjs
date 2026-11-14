@@ -23,7 +23,7 @@ let counter = 0;
 
 before(async () => {
   directory = mkdtempSync(join(tmpdir(), 'relay-settings-'));
-  service = createChatServer({ port: 0, host: '127.0.0.1', databasePath: join(directory, 'db.sqlite'), pushSender: null });
+  service = createChatServer({ port: 0, host: '127.0.0.1', databasePath: join(directory, 'db.sqlite'), pushSender: null, reconnectGraceMs: 0 });
   baseUrl = `http://127.0.0.1:${(await service.listen()).port}`;
 });
 after(async () => {

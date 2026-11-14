@@ -21,6 +21,10 @@ test('Android app runs its bundled web assets only: no remote server.url, strict
   const csp = bundledCsp('https://example.com');
   assert.match(csp, /script-src 'self' 'wasm-unsafe-eval';/, 'scripts only from the APK');
   assert.ok(csp.includes('https://example.com wss://example.com'), 'network to the app server');
+  // The XMPP core's WebSocket: without it the WebView blocks the app's XMPP connection before it leaves the phone.
+  const connect = csp.split('; ').find((part) => part.startsWith('connect-src'));
+  assert.ok(connect.split(' ').includes('wss://chat.hiddenmessenger.com'), 'the XMPP core may be reached');
+  assert.ok(!connect.split(' ').includes('https://chat.hiddenmessenger.com'), 'only its WebSocket');
   assert.ok(csp.includes("object-src 'none'") && csp.includes("frame-src 'none'"));
   const server = await readFile(new URL('./index.mjs', import.meta.url), 'utf8');
   assert.ok(server.includes('configuredOrigins.includes(origin) || origin === BUNDLED_APP_ORIGIN'), 'the bundled app may call the API in production');

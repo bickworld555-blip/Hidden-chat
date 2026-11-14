@@ -149,8 +149,8 @@ test('upload limits and ownership are enforced and abandoned uploads are discard
   assert.equal((await fetch(`${baseUrl}/api/v1/uploads/${cancelled.uploadId}`, { headers: auth(sender) })).status, 404);
 
   const plan = uploadPlan(MAX_TRANSFER_BYTES);
-  assert.deepEqual(plan, { ok: true, chunked: true, chunks: Math.ceil(MAX_TRANSFER_BYTES / UPLOAD_CHUNK_BYTES) });
-  assert.deepEqual(uploadPlan(UPLOAD_CHUNK_BYTES), { ok: true, chunked: false, chunks: 1 });
+  assert.deepEqual(plan, { ok: true, chunked: true, chunkBytes: UPLOAD_CHUNK_BYTES, chunks: Math.ceil(MAX_TRANSFER_BYTES / UPLOAD_CHUNK_BYTES) });
+  assert.deepEqual(uploadPlan(UPLOAD_CHUNK_BYTES), { ok: true, chunked: false, chunkBytes: UPLOAD_CHUNK_BYTES, chunks: 1 });
   assert.deepEqual(uploadPlan(MAX_TRANSFER_BYTES + 1), { ok: false, reason: 'too-large' });
   assert.equal(MAX_UPLOAD_BYTES, MAX_TRANSFER_BYTES, 'the browser advertises the same limit as the server');
   assert.ok(PREVIEW_LIMIT_BYTES < MAX_TRANSFER_BYTES);
@@ -279,7 +279,7 @@ test('the chat UI uploads through the resumable client and downloads stream to d
   const renderer = await read('../src/components/MediaRenderer.jsx');
   const viewer = await read('../src/components/MediaViewer.jsx');
   assert.ok(chatWindow.includes("import { uploadFile, uploadSizeError } from '../upload.js'"));
-  assert.ok(chatWindow.includes('signal: controller.signal') && chatWindow.includes('{uploads.map((upload) => <PendingUpload key={upload.key} upload={upload} onCancel={() => cancelUpload(upload.key)} />)}'), 'uploads show progress inline in the chat and can be cancelled');
+  assert.ok(chatWindow.includes('const job = run(controller.signal);') && chatWindow.includes('{uploads.map((upload) => <PendingUpload key={upload.key} upload={upload} onCancel={() => cancelUpload(upload.key)} onRetry={() => retryUpload(upload.key)} />)}'), 'uploads show progress inline in the chat and can be cancelled');
   assert.doesNotMatch(chatWindow, /MAX_UPLOAD_BYTES \/ \(1024 \* 1024\)/, 'no hardcoded megabyte cap remains');
   assert.doesNotMatch(renderer + viewer, /saveBlob\(/, 'attachments are never buffered into memory to save them');
   assert.ok(renderer.includes('downloadWithProgress(id, filename, sessionToken)') && viewer.includes('downloadWithProgress(ref?.id, filename, sessionToken)'), 'downloads go through the progress manager');

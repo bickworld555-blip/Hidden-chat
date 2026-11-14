@@ -98,7 +98,11 @@ export function detectAvatarImage(buffer) {
 const scrypt = promisify(scryptCallback);
 const USERNAME_PATTERN = /^[a-z0-9_]{3,24}$/;
 const USER_COLORS = ['blue', 'green', 'coral', 'yellow', 'violet'];
-export const heartbeatIntervalForState = ({ visibility, idle }) => visibility !== 'visible' ? 120_000 : idle ? 60_000 : 25_000;
+// The path in front of this server (Hostinger's CDN and LiteSpeed) cuts a WebSocket after 60 s with no traffic
+// (measured 2026-11-15: a backgrounded socket pinged every 120 s closed with 1006 at exactly 60 s). Every interval —
+// and the wait for the pong, which is itself traffic — therefore stays well under a minute.
+export const PROXY_IDLE_LIMIT_MS = 60_000;
+export const heartbeatIntervalForState = ({ visibility, idle }) => visibility !== 'visible' || idle ? 40_000 : 25_000;
 
 export function isAllowedAppOrigin(origin, configuredOrigins = []) {
   if (typeof origin !== 'string') return false;
@@ -136,6 +140,10 @@ export function createChatServer({
   seedDemo = process.env.NODE_ENV !== 'production' && process.env.RELAY_SEED_DEMO === 'true',
   // An unanswered call stops ringing everywhere after this long (both sides, and phones rung by push).
   callTimeoutMs = process.env.CALL_RING_TIMEOUT_MS === undefined ? 60_000 : Number(process.env.CALL_RING_TIMEOUT_MS) || 0,
+  // A connection that drops (a Wi-Fi <-> mobile data switch) is given this long to come back before the person's
+  // contacts see them go offline and before a call on it ends; the app reconnects within seconds.
+  reconnectGraceMs = process.env.RECONNECT_GRACE_MS === undefined ? 10_000 : Number(process.env.RECONNECT_GRACE_MS) || 0,
+  callReconnectGraceMs = process.env.CALL_RECONNECT_GRACE_MS === undefined ? 20_000 : Number(process.env.CALL_RECONNECT_GRACE_MS) || 0,
   allowedOrigins = process.env.RELAY_ALLOWED_ORIGINS ?? '',
   webDirectory = join(directory, '..', 'dist'),
   migrate = false,
@@ -684,6 +692,7 @@ export function createChatServer({
     const activeCall = activeCalls.get(callId);
     if (!activeCall) return;
     clearTimeout(activeCall.timer);
+    clearTimeout(activeCall.reconnectTimer);
     activeCalls.delete(callId);
     // A phone that was rung by push stops ringing even if its socket never connected.
     if (activeCall.pushed && !activeCall.calleeSocket) pushInBackground(activeCall.calleeId, { t: 'call_end', callId }, { ttlSeconds: 30, collapseKey: `call:${callId}` });
@@ -698,6 +707,24 @@ export function createChatServer({
     // Every device of both people hears the end, so unanswered devices stop ringing too.
     broadcastUser(activeCall.callerId, event, exceptSocket);
     broadcastUser(activeCall.calleeId, event, exceptSocket);
+  }
+
+  // The same signed-in device reconnecting (a new socket after a network switch) takes its calls back: the old socket
+  // is closed or silently dead, and the call's signals follow the new one.
+  function adoptCalls(socket, userId) {
+    for (const activeCall of activeCalls.values()) {
+      for (const side of ['callerSocket', 'calleeSocket']) {
+        const owner = side === 'callerSocket' ? activeCall.callerId : activeCall.calleeId;
+        const previous = activeCall[side];
+        if (owner !== userId || !previous || previous === socket || previous.sessionHash !== socket.sessionHash) continue;
+        // A live socket (another tab of the same browser) keeps its call; a closed one, or one that missed its last
+        // pong, hands it over. The dead one is then cut by the next heartbeat (it is no longer in a call).
+        if (previous.readyState === WebSocket.OPEN && !previous.awaitingPong) continue;
+        activeCall[side] = socket;
+        clearTimeout(activeCall.reconnectTimer);
+        activeCall.reconnectTimer = null;
+      }
+    }
   }
 
   // Once a device owns its side of the call, negotiation stays on that device only.
@@ -1360,9 +1387,32 @@ export function createChatServer({
     return false;
   }
 
-  async function presenceChanged(userId, wasOnline) {
+  // userId -> timer of an offline announcement held back for reconnectGraceMs after a dropped connection.
+  const pendingOffline = new Map();
+
+  async function presenceChanged(userId, wasOnline, { dropped = false } = {}) {
     const online = isOnline(userId);
+    const pending = pendingOffline.get(userId);
+    if (online && pending) {
+      // Back within the grace period: contacts never saw the drop.
+      clearTimeout(pending);
+      pendingOffline.delete(userId);
+      return;
+    }
     if (online === wasOnline) return;
+    if (!online && dropped && reconnectGraceMs > 0 && !closing) {
+      if (pending) return;
+      const droppedAt = Date.now();
+      const timer = setTimeout(() => {
+        pendingOffline.delete(userId);
+        if (isOnline(userId)) return;
+        trackSocketTask(Promise.resolve(db.prepare('UPDATE users SET last_seen_at = ? WHERE id = ?').run(droppedAt, userId))
+          .then(() => broadcastPresence(userId)).catch((error) => console.error('Presence could not be sent:', error.code ?? error.name)));
+      }, reconnectGraceMs);
+      timer.unref?.();
+      pendingOffline.set(userId, timer);
+      return;
+    }
     if (!online) await db.prepare('UPDATE users SET last_seen_at = ? WHERE id = ?').run(Date.now(), userId);
     await broadcastPresence(userId);
   }
@@ -1406,7 +1456,7 @@ export function createChatServer({
       }
       socket.awaitingPong = true;
       socket.ping();
-      scheduleHeartbeat(socket, socket.backgrounded ? 45_000 : 15_000);
+      scheduleHeartbeat(socket, socket.backgrounded || socket.idle ? 40_000 : 15_000);
     }, delay);
     socket.heartbeatTimer.unref?.();
   }
@@ -2562,6 +2612,7 @@ export function createChatServer({
     socket.idle = false;
     socket.awaitingPong = false;
     scheduleHeartbeat(socket);
+    adoptCalls(socket, userId);
     if (!connections.has(userId)) connections.set(userId, new Set());
     const wasOnline = isOnline(userId);
     connections.get(userId).add(socket);
@@ -2607,6 +2658,12 @@ export function createChatServer({
 
     socket.on('message', (raw) => {
       const bytes = raw.length;
+      // The app's own liveness check (src/realtime.js): answered at once, never queued behind other work.
+      if (bytes <= 32 && raw.toString() === '{"type":"client:ping"}') {
+        socket.awaitingPong = false;
+        json(socket, { type: 'pong' });
+        return;
+      }
       if (bytes > 48 * 1024) {
         json(socket, { type: 'error', message: 'Message is too large.' });
         return;
@@ -3130,16 +3187,21 @@ export function createChatServer({
     socket.on('close', () => {
       clearTimeout(socket.heartbeatTimer);
       for (const [callId, activeCall] of activeCalls) {
-        if (activeCall.callerSocket === socket || activeCall.calleeSocket === socket) {
-          finishCall(callId, 'disconnected', socket);
-        }
+        if (activeCall.callerSocket !== socket && activeCall.calleeSocket !== socket) continue;
+        if (callReconnectGraceMs <= 0 || closing) { finishCall(callId, 'disconnected', socket); continue; }
+        // The device may be switching networks: its new connection takes the call back (adoptCalls) in time.
+        clearTimeout(activeCall.reconnectTimer);
+        activeCall.reconnectTimer = setTimeout(() => {
+          if (activeCalls.get(callId) === activeCall && [activeCall.callerSocket, activeCall.calleeSocket].includes(socket)) finishCall(callId, 'disconnected', socket);
+        }, callReconnectGraceMs);
+        activeCall.reconnectTimer.unref?.();
       }
       const sockets = userSockets(userId);
       const wasOnline = isOnline(userId);
       sockets.delete(socket);
       if (sockets.size === 0) connections.delete(userId);
       trackSocketTask(Promise.resolve(db.prepare('UPDATE sessions SET last_active_at = ? WHERE token_hash = ?').run(Date.now(), socket.sessionHash))
-        .then(() => presenceChanged(userId, wasOnline)).catch((error) => {
+        .then(() => presenceChanged(userId, wasOnline, { dropped: true })).catch((error) => {
           console.error('Last seen could not be recorded:', error.code ?? error.name);
         }));
     });
@@ -3267,8 +3329,10 @@ export function createChatServer({
           socket.terminate();
         }
         await Promise.all(socketsClosed);
-        for (const activeCall of activeCalls.values()) clearTimeout(activeCall.timer);
+        for (const activeCall of activeCalls.values()) { clearTimeout(activeCall.timer); clearTimeout(activeCall.reconnectTimer); }
         for (const session of liveSessions.values()) clearTimeout(session.timer);
+        for (const timer of pendingOffline.values()) clearTimeout(timer);
+        pendingOffline.clear();
         liveSessions.clear();
         activeCalls.clear();
         await new Promise((resolve) => server.close(resolve));

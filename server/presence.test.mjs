@@ -16,10 +16,12 @@ let service;
 let directory;
 let baseUrl;
 let counter = 0;
+const GRACE_MS = 400;
 
 before(async () => {
   directory = mkdtempSync(join(tmpdir(), 'relay-presence-'));
-  service = createChatServer({ port: 0, host: '127.0.0.1', databasePath: join(directory, 'presence.sqlite') });
+  // A short reconnect grace (10 s in production) keeps these tests quick.
+  service = createChatServer({ port: 0, host: '127.0.0.1', databasePath: join(directory, 'presence.sqlite'), reconnectGraceMs: GRACE_MS });
   const address = await service.listen();
   baseUrl = `http://127.0.0.1:${address.port}`;
 });
@@ -112,6 +114,37 @@ test('the header line reads "online", "last seen today at …", "… weeks/month
   assert.equal(formatLastSeen(new Date(2025, 9, 31, 23, 59).getTime(), now), 'last seen over a year ago');
   // A clock slightly ahead of this device still reads as today, not "tomorrow".
   assert.equal(formatLastSeen(new Date(2026, 10, 8, 22, 16).getTime(), now), 'last seen today at 10:16 pm');
+});
+
+test('a connection that drops and comes back within the grace period never shows the person offline', async () => {
+  const ava = await register('ava');
+  const ben = await register('ben');
+  assert.equal((await api('/api/v1/contacts', { session: ben, method: 'POST', body: { userId: ava.user.id } })).status, 200);
+  const avaSocket = await connect(ava);
+  const benSocket = await connect(ben);
+  await until(() => benSocket.events.find((event) => event.type === 'connection:ready'), 'ready');
+  // A Wi-Fi <-> mobile data switch: the old connection goes, a new one opens a moment later.
+  avaSocket.terminate();
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  const back = await connect(ava);
+  await new Promise((resolve) => setTimeout(resolve, GRACE_MS * 2));
+  const updates = benSocket.events.filter((event) => event.type === 'presence:update' && event.userId === ava.user.id);
+  assert.ok(!updates.some((event) => event.status === 'offline'), 'no offline blink');
+  // Gone for longer than the grace period: offline, with last seen at the moment the connection dropped.
+  const before = Date.now();
+  await closed(back);
+  const offline = await until(() => latest(benSocket, ava.user.id)?.status === 'offline' && latest(benSocket, ava.user.id), 'offline');
+  assert.ok(offline.lastSeenAt >= before && offline.lastSeenAt < before + GRACE_MS, 'last seen is the drop, not the end of the grace period');
+  benSocket.close();
+});
+
+test('the liveness ping from the app is answered at once', async () => {
+  const ava = await register('ava');
+  const socket = await connect(ava);
+  await until(() => socket.events.find((event) => event.type === 'connection:ready'), 'ready');
+  socket.send(JSON.stringify({ type: 'client:ping' }));
+  await until(() => socket.events.find((event) => event.type === 'pong'), 'pong');
+  socket.close();
 });
 
 test('a chat partner sees online, then last seen with a time once the other person leaves', async () => {

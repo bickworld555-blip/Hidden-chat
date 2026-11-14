@@ -81,7 +81,7 @@ test('chats send through the preview: caption in the bubble, albums, parallel up
   const chat = read('src/components/ChatWindow.jsx');
   assert.ok(chat.includes('<MediaComposer files={composer.files}'), 'gallery and documents open the send preview');
   assert.match(chat, /const UPLOAD_PARALLEL = 3;/);
-  assert.ok(chat.includes('sendOrderRef.current.then(() => job)'), 'messages go out in the order picked');
+  assert.ok(chat.includes('sendOrderRef.current.then(() => settle(job))'), 'messages go out in the order picked');
   assert.ok(chat.includes('{uploads.map((upload) => <PendingUpload key={upload.key}'), 'every item shows its own progress at once');
   assert.equal(/if \(caption\) sendContent\(caption\)/.test(chat), false, 'a caption is no longer a separate message');
   assert.ok(chat.includes('const albumId = visual >= 2 && !viewOnce'), 'photos and videos picked together form an album');

@@ -9,6 +9,26 @@ import { recordUsage } from './networkUsage.js';
 
 const MAX_CHUNK_ATTEMPTS = 6;
 const RETRY_BASE_MS = 800;
+// A single-request upload (voice notes, photos, short videos) is tried this many times before it fails.
+export const SINGLE_ATTEMPTS = 3;
+// No bytes leaving for this long = the connection under the request is gone (a Wi-Fi <-> mobile data switch
+// leaves it hanging forever otherwise): the request is dropped and retried.
+export const STALL_MS = 20_000;
+// Once every byte is sent, the server's answer is waited for this long.
+export const RESPONSE_MS = 60_000;
+
+/** On mobile data, as far as the browser can tell (Android WebView reports navigator.connection.type). */
+export function onCellular(connection = typeof navigator === 'undefined' ? null : navigator.connection) {
+  if (!connection) return false;
+  return connection.type === 'cellular' || ['slow-2g', '2g', '3g'].includes(connection.effectiveType);
+}
+
+/** A failure worth another try: the network, a stall, or the server briefly unavailable. Not a refusal. */
+export function retryableUpload(error, status) {
+  if (isAbort(error)) return false;
+  if (error) return true;
+  return status === 408 || status === 429 || status >= 500;
+}
 
 function sleep(ms, signal) {
   return new Promise((resolve, reject) => {
@@ -25,24 +45,40 @@ function isAbort(error) {
 // at 0%. In the browser, requests that carry a body go through XMLHttpRequest and report bytes as they leave.
 // Returns the same { response: { ok, status }, data } shape as api(); falls back to fetch where XHR is missing.
 function send(path, { sessionToken, signal, method, body, headers = {}, onBytes }) {
-  if (typeof XMLHttpRequest === 'undefined' || !onBytes) return api(path, { sessionToken, signal, method, body, headers });
+  if (typeof XMLHttpRequest === 'undefined') return api(path, { sessionToken, signal, method, body, headers });
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
+    // The watchdog: restarted by every progress event; after the last byte it waits for the answer instead.
+    let stalled = false;
+    let watchdog = null;
+    const watch = (ms) => {
+      clearTimeout(watchdog);
+      watchdog = setTimeout(() => { stalled = true; xhr.abort(); }, ms);
+    };
+    const done = () => { clearTimeout(watchdog); signal?.removeEventListener('abort', abort); };
     xhr.open(method, apiUrl(path));
     xhr.setRequestHeader('Authorization', 'Bearer ' + sessionToken);
     xhr.setRequestHeader(CLIENT_HEADER, String(CLIENT_PROTOCOL));
     for (const [name, value] of Object.entries(headers)) xhr.setRequestHeader(name, value);
-    xhr.upload.onprogress = (event) => { if (event.lengthComputable) onBytes(event.loaded); };
+    xhr.upload.onprogress = (event) => {
+      watch(STALL_MS);
+      if (event.lengthComputable) onBytes?.(event.loaded);
+    };
+    xhr.upload.onload = () => watch(RESPONSE_MS);
     const abort = () => xhr.abort();
     signal?.addEventListener('abort', abort, { once: true });
     xhr.onload = () => {
-      signal?.removeEventListener('abort', abort);
+      done();
       let data = {};
       try { data = xhr.status === 204 ? {} : JSON.parse(xhr.responseText || '{}'); } catch { data = {}; }
       resolve({ response: { ok: xhr.status >= 200 && xhr.status < 300, status: xhr.status }, data });
     };
-    xhr.onerror = () => { signal?.removeEventListener('abort', abort); reject(new TypeError('Network error during upload.')); };
-    xhr.onabort = () => reject(signal?.reason ?? new DOMException('Aborted', 'AbortError'));
+    xhr.onerror = () => { done(); reject(new TypeError('Network error during upload.')); };
+    xhr.onabort = () => {
+      done();
+      reject(stalled ? new TypeError('The upload stalled.') : (signal?.reason ?? new DOMException('Aborted', 'AbortError')));
+    };
+    watch(STALL_MS);
     xhr.send(body);
   });
 }
@@ -59,8 +95,26 @@ function targetQuery({ receiverId, groupId }) {
   return groupId ? `groupId=${encodeURIComponent(groupId)}` : `receiverId=${encodeURIComponent(receiverId)}`;
 }
 
-async function singleRequest(file, filename, { receiverId, groupId, sessionToken, signal, onProgress }) {
-  const { response, data } = await send(`/api/v1/media?${targetQuery({ receiverId, groupId })}`, {
+// One request, tried up to SINGLE_ATTEMPTS times: a dropped or stalled connection, or the server briefly away, is
+// retried after a short wait; a refusal (too large, not allowed) is not.
+async function singleRequest(file, filename, options) {
+  for (let attempt = 1; ; attempt += 1) {
+    let outcome = null;
+    let failure = null;
+    try { outcome = await singleAttempt(file, filename, options); } catch (error) { failure = error; }
+    if (outcome?.response.ok && outcome.data?.id) return outcome.data;
+    const status = outcome?.response.status;
+    if (attempt >= SINGLE_ATTEMPTS || !retryableUpload(failure, status)) {
+      if (failure) throw failure;
+      throw new Error(outcome?.data?.error || 'Upload failed.');
+    }
+    options.onProgress?.(0, file.size);
+    await sleep(RETRY_BASE_MS * 2 ** (attempt - 1), options.signal);
+  }
+}
+
+function singleAttempt(file, filename, { receiverId, groupId, sessionToken, signal, onProgress }) {
+  return send(`/api/v1/media?${targetQuery({ receiverId, groupId })}`, {
     sessionToken,
     signal,
     method: 'POST',
@@ -72,8 +126,6 @@ async function singleRequest(file, filename, { receiverId, groupId, sessionToken
     body: file,
     onBytes: onProgress ? (loaded) => onProgress(Math.min(loaded, file.size - 1), file.size) : null,
   });
-  if (!response.ok || !data?.id) throw new Error(data?.error || 'Upload failed.');
-  return data;
 }
 
 async function api(path, { sessionToken, signal, method = 'GET', body, headers = {} }) {
@@ -87,7 +139,7 @@ async function api(path, { sessionToken, signal, method = 'GET', body, headers =
   return { response, data };
 }
 
-async function chunkedUpload(file, filename, { receiverId, groupId, sessionToken, signal, onProgress }) {
+async function chunkedUpload(file, filename, { receiverId, groupId, sessionToken, signal, onProgress, chunkBytes: wanted = UPLOAD_CHUNK_BYTES }) {
   const created = await api('/api/v1/uploads', {
     sessionToken, signal, method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -95,7 +147,8 @@ async function chunkedUpload(file, filename, { receiverId, groupId, sessionToken
   });
   if (!created.response.ok || !created.data?.uploadId) throw new Error(created.data?.error || 'Upload could not start.');
   const { uploadId } = created.data;
-  const chunkBytes = Number(created.data.chunkBytes) || UPLOAD_CHUNK_BYTES;
+  // The server's limit, or smaller pieces on mobile data (uploadPlan).
+  const chunkBytes = Math.min(Number(created.data.chunkBytes) || UPLOAD_CHUNK_BYTES, wanted);
   let offset = Number(created.data.received) || 0;
   let attempts = 0;
 
@@ -182,10 +235,10 @@ async function uploadFileNow(file, { receiverId, groupId, sessionToken, signal, 
   const sizeError = uploadSizeError(filename, file.size);
   if (sizeError) throw new Error(sizeError);
   if (!sessionToken) throw new Error('Sign in again to share attachments.');
-  const plan = uploadPlan(file.size);
+  const plan = uploadPlan(file.size, { cellular: onCellular() });
   onProgress?.(0, file.size);
   const result = plan.chunked
-    ? await chunkedUpload(file, filename, { receiverId, groupId, sessionToken, signal, onProgress })
+    ? await chunkedUpload(file, filename, { receiverId, groupId, sessionToken, signal, onProgress, chunkBytes: plan.chunkBytes })
     : await singleRequest(file, filename, { receiverId, groupId, sessionToken, signal, onProgress });
   onProgress?.(file.size, file.size);
   // Network usage: a status photo or video counts under Status, everything else under Media.

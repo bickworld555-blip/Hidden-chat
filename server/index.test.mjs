@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, test } from 'node:test';
 import { DatabaseSync } from 'node:sqlite';
 import WebSocket from 'ws';
-import { createChatServer, heartbeatIntervalForState, isAllowedAppOrigin } from './index.mjs';
+import { createChatServer, heartbeatIntervalForState, isAllowedAppOrigin, PROXY_IDLE_LIMIT_MS } from './index.mjs';
 import { mergeMessageStatus } from '../src/messageStatus.js';
 import { formatChatListTime, formatMessageDate, formatMessageTime, localDateKey } from '../src/time.js';
 import { checkGroupAttachments, checkGroupContract } from './group-contract.mjs';
@@ -571,10 +571,13 @@ test('tells the caller only when a callee device is ringing', async () => {
   onlineSocket.close();
 });
 
-test('uses longer heartbeat intervals while idle or backgrounded', () => {
+test('heartbeats stay under the proxy idle cut-off, longer while idle or backgrounded', () => {
   assert.equal(heartbeatIntervalForState({ visibility: 'visible', idle: false }), 25_000);
-  assert.equal(heartbeatIntervalForState({ visibility: 'visible', idle: true }), 60_000);
-  assert.equal(heartbeatIntervalForState({ visibility: 'hidden', idle: false }), 120_000);
+  assert.equal(heartbeatIntervalForState({ visibility: 'visible', idle: true }), 40_000);
+  assert.equal(heartbeatIntervalForState({ visibility: 'hidden', idle: false }), 40_000);
+  for (const state of [{ visibility: 'visible', idle: false }, { visibility: 'visible', idle: true }, { visibility: 'hidden', idle: true }]) {
+    assert.ok(heartbeatIntervalForState(state) < PROXY_IDLE_LIMIT_MS);
+  }
 });
 
 test('times read like WhatsApp in the phone time zone', () => {

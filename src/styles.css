@@ -4088,6 +4088,14 @@ button.groups-setting:hover, label.groups-setting:hover { background: rgba(134, 
 .pending-upload-ring-fill { stroke: #fff; stroke-linecap: round; transition: stroke-dashoffset .25s ease; }
 .pending-upload-file { display: flex; align-items: center; gap: 10px; min-width: 220px; padding: 6px 8px; }
 .pending-upload-file .pending-upload-ring { width: 44px; height: 44px; background: #005ad1; }
+/* A failed upload: Retry in place of the ring, a small X to remove it, the status in the error colour. */
+.pending-upload-retry-wrap { position: relative; flex: none; display: inline-grid; }
+.pending-upload-retry { background: rgba(0, 0, 0, .55); }
+.pending-upload-file .pending-upload-retry { background: #c62828; }
+.pending-upload-dismiss { position: absolute; top: -6px; right: -6px; width: 18px; height: 18px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 50%; background: #fff; color: #333; box-shadow: 0 1px 3px rgba(0, 0, 0, .3); cursor: pointer; }
+.pending-upload.is-failed .pending-upload-status { color: #ff8a80; }
+.pending-upload.is-failed .pending-upload-file-text small { color: #c62828; }
+.pending-upload-file .pending-upload-retry-wrap + .pending-upload-file-icon { margin-left: 2px; }
 .pending-upload-file-icon { display: none; }
 .pending-upload-file-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .pending-upload-file-text strong { overflow: hidden; font-size: 14px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
