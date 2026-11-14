@@ -74,7 +74,7 @@ test('voice notes are green until played, then blue for both people', async () =
   assert.ok(voice.includes("played ? 'is-played' : 'is-unplayed'"));
   assert.ok(voice.includes('if (!played) onPlayed?.();'));
   const chat = await source('src/components/ChatWindow.jsx');
-  assert.match(chat, /onPlayed=\{mine \? undefined : \(\) => \{\s*shared\.send\?\.\(\{ type: 'message:played'/, 'only the recipient reports playing');
+  assert.match(chat, /onPlayed=\{mine \? undefined : \(\) => \{[\s\S]{0,300}?shared\.send\?\.\(\{ type: 'message:played'/, 'only the recipient reports playing (over XMPP as a sealed control)');
   const css = await source('src/styles.css');
   assert.ok(css.includes('.voice-row.is-played .voice-badge, .voice-row.is-played .voice-thumb { background: #38bdf8; }'), 'played notes turn sky blue');
   assert.ok(css.includes('.voice-row.is-unplayed .voice-thumb { background: var(--wa-green, #1a73e8); }'), '…distinct from the accent blue of an unplayed note');

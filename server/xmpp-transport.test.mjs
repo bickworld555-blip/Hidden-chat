@@ -257,7 +257,7 @@ import { startXmppSession } from '../src/xmpp/session.js';
 function sessionHarness({ transportAnswer = 'xmpp', targets = { targets: ['d1@h', 'd2@h'], complete: true, sender: ME } } = {}) {
   const delivered = [];
   const legacy = [];
-  const fake = { state: 'online', sent: [], connects: 0, connect() { this.connects += 1; }, sendChatState(to, state, opts) { this.sent.push(['chatstate', to, state, opts?.kind ?? null]); }, sendSealed(args) { this.sent.push(['sealed', args]); }, sendReceipt(to, id) { this.sent.push(['receipt', to, id]); }, sendDisplayed(to, id) { this.sent.push(['displayed', to, id]); }, setActive() {}, close() {} };
+  const fake = { state: 'online', sent: [], connects: 0, checks: 0, connect() { this.connects += 1; }, checkNow() { this.checks += 1; }, sendChatState(to, state, opts) { this.sent.push(['chatstate', to, state, opts?.kind ?? null]); }, sendSealed(args) { this.sent.push(['sealed', args]); }, sendReceipt(to, id) { this.sent.push(['receipt', to, id]); }, sendDisplayed(to, id) { this.sent.push(['displayed', to, id]); }, setActive() {}, close() {} };
   let options;
   const start = () => startXmppSession({
     sessionToken: 't', userId: ME.userId, deliver: (event) => delivered.push(event), legacySend: (event) => legacy.push(event),
@@ -312,7 +312,7 @@ test('session: incoming messages need the envelope to name the sending device; r
   onEvent({ type: 'message', id: 'in1', from: 'dpeer@h/app', userId: 'user-peer', deviceId: 'tablet', envelope: envelopeFrom('tablet'), sentAt: '2026-11-15T10:00:00Z' });
   onEvent({ type: 'message', id: 'in2', from: 'dpeer@h/app', userId: 'user-peer', deviceId: 'tablet', envelope: envelopeFrom('another-device') });
   assert.equal(h.delivered.length, 1, 'an envelope from another device is dropped');
-  assert.deepEqual(h.delivered[0], { type: 'message:new', message: { id: 'in1', senderId: 'user-peer', receiverId: ME.userId, content: envelopeFrom('tablet'), timestamp: '2026-11-15T10:00:00Z', status: 'sent' } });
+  assert.deepEqual(h.delivered[0], { type: 'message:new', message: { id: 'in1', senderId: 'user-peer', receiverId: ME.userId, content: envelopeFrom('tablet'), timestamp: '2026-11-15T10:00:00Z', status: 'sent', via: 'xmpp' } });
 
   // The early "delivered" is not sent for XMPP messages: the receipt waits until the message is stored (queue:ack).
   assert.equal(session.route({ type: 'message:delivered', messageIds: ['in1', 'legacy-1'] }), true);
@@ -346,12 +346,11 @@ test("session: typing goes to the contact's devices over XMPP and comes back as 
   onEvent({ type: 'chatstate', from: 'dstranger@h/app', state: 'composing', kind: 'typing' });
   assert.deepEqual(h.delivered.filter((e) => e.type === 'presence:typing'), [{ type: 'presence:typing', userId: 'user-peer', active: true, kind: 'typing' }], 'unknown devices are ignored');
 
-  h.fake.state = 'offline';
+  // A wake-up push, a network change or the app returning: the transport checks or reconnects at once (checkNow;
+  // its behaviour online and offline is tested with the transport above).
   session.wake();
-  assert.equal(h.fake.connects, 1, 'a wake-up push reconnects a dropped connection');
-  h.fake.state = 'online';
   session.wake();
-  assert.equal(h.fake.connects, 1, 'an open connection is left alone');
+  assert.equal(h.fake.checks, 2);
 });
 
 test('session: when XMPP is down, everything takes the current path at once', async () => {
@@ -445,7 +444,7 @@ test('session groups: all member devices on XMPP -> one fan-out; otherwise the s
     sessionToken: 't', userId: ME.userId, deliver: (e) => h.delivered.push(e), legacySend: (e) => h.legacy.push(e),
     targetsFor: async () => ({ targets: [], complete: false, sender: ME }), groupTargetsFor: async () => groupTargets,
     fetchImpl: async () => new Response(JSON.stringify({ transport: 'xmpp' }), { status: 200 }),
-    createTransport: (opts) => { h.opts = opts; return h.fake; },
+    createTransport: (opts) => { h.opts = opts; return h.fake; }, groupsOverXmpp: true,
   });
   const envelope = `e2e2:text|${JSON.stringify({ v: 2, sd: 'phone', mh: 'hash-1', g: {} })}`;
   let resent = 0;
@@ -464,4 +463,109 @@ test('session groups: all member devices on XMPP -> one fan-out; otherwise the s
   h.opts.onEvent({ type: 'message', id: 'in-g', from: 'dpeer@h/app', userId: 'user-peer', deviceId: 'tablet', envelope: `e2e2:text|${JSON.stringify({ v: 2, sd: 'tablet', mh: 'h', g: {} })}`, group: true, groupId: 'grp-1', sentAt: '2026-11-15T10:00:00Z' });
   const incoming = h.delivered.find((e) => e.type === 'group:message');
   assert.deepEqual([incoming.message.id, incoming.message.groupId, incoming.message.senderId, incoming.message.createdAt], ['in-g', 'grp-1', 'user-peer', Date.parse('2026-11-15T10:00:00Z')]);
+});
+
+// --- Liveness (R4): a socket that silently died during a Wi-Fi <-> mobile data switch is found and replaced ----------
+
+// Timers that can really be cancelled, run by hand.
+function liveTransport(server) {
+  const timers = new Map();
+  let next = 0;
+  const states = [];
+  const t = new XmppTransport({
+    fetchToken: async () => ({ transport: 'xmpp', jid: MY_JID, token: 'good-token', websocket: `wss://${HOST}/xmpp-websocket` }),
+    onState: (state) => states.push(state),
+    createSocket: server.createSocket,
+    setTimer: (fn, ms) => { next += 1; timers.set(next, { fn, ms }); return next; },
+    clearTimer: (id) => { timers.delete(id); },
+    subtle: webcrypto.subtle,
+    random: () => 0.5,
+  });
+  // Runs (and removes) every pending timer of exactly `ms`.
+  const fire = (ms) => {
+    const due = [...timers].filter(([, timer]) => timer.ms === ms);
+    for (const [id, timer] of due) { timers.delete(id); timer.fn(); }
+    return due.length;
+  };
+  return { t, timers, fire, states };
+}
+
+test('liveness: an <r/> every 30 s; an answer keeps the socket; silence for 10 s drops it and the session resumes at once', async () => {
+  const { LIVENESS_INTERVAL_MS, LIVENESS_TIMEOUT_MS } = await import('../src/xmpp/transport.js');
+  const server = fakeServer();
+  const { t, fire, states } = liveTransport(server);
+  await t.connect();
+  await until(() => t.state === 'online', 'online');
+  const first = server.sockets[0];
+  assert.equal(fire(LIVENESS_INTERVAL_MS), 1);
+  assert.match(first.sent.at(-1), /<r xmlns="urn:xmpp:sm:3"\/>/);
+  first.deliver(xml('a', { xmlns: 'urn:xmpp:sm:3', h: '0' }));
+  assert.equal(fire(LIVENESS_TIMEOUT_MS), 0, 'answered: no deadline left');
+  assert.equal(server.sockets.length, 1);
+
+  fire(LIVENESS_INTERVAL_MS);                      // the network silently goes away: no answer
+  server.resumeWith = '0';
+  assert.equal(fire(LIVENESS_TIMEOUT_MS), 1);
+  assert.equal(t.state, 'offline');
+  assert.ok(first.closed, 'the dead socket is dropped');
+  assert.equal(fire(0), 1, 'the reconnect is immediate');
+  await until(() => t.state === 'online', 'back online');
+  assert.equal(server.sockets[1].resumeRequest?.previd, 'sm-1', 'the same session resumes: nothing lost');
+  assert.deepEqual(states, ['connecting', 'online', 'offline', 'connecting', 'online']);
+  t.close();
+});
+
+test('liveness: a late close of the dropped socket does not disturb the new one', async () => {
+  const { LIVENESS_INTERVAL_MS, LIVENESS_TIMEOUT_MS } = await import('../src/xmpp/transport.js');
+  const server = fakeServer();
+  const { t, fire } = liveTransport(server);
+  await t.connect();
+  await until(() => t.state === 'online', 'online');
+  fire(LIVENESS_INTERVAL_MS);
+  server.resumeWith = '0';
+  fire(LIVENESS_TIMEOUT_MS);
+  fire(0);
+  await until(() => t.state === 'online', 'back online');
+  server.sockets[0].onclose?.();                    // the old socket's close finally arrives
+  assert.equal(t.state, 'online');
+  t.close();
+});
+
+test('checkNow (network change, push, app resumed): probes a live socket, reconnects at once when offline', async () => {
+  const { LIVENESS_TIMEOUT_MS, RECONNECT_MIN_MS } = await import('../src/xmpp/transport.js');
+  const server = fakeServer();
+  const { t, timers, fire } = liveTransport(server);
+  await t.connect();
+  await until(() => t.state === 'online', 'online');
+  t.checkNow();
+  assert.match(server.sockets[0].sent.at(-1), /<r xmlns="urn:xmpp:sm:3"\/>/, 'online: checked now');
+  assert.ok([...timers.values()].some((timer) => timer.ms === LIVENESS_TIMEOUT_MS));
+  server.sockets[0].deliver(xml('a', { xmlns: 'urn:xmpp:sm:3', h: '0' }));
+
+  server.resumeWith = '0';
+  server.sockets[0].close();                        // a drop: the next try waits for the backoff
+  await until(() => t.state === 'offline', 'offline');
+  assert.ok([...timers.values()].some((timer) => timer.ms >= RECONNECT_MIN_MS * 0.8), 'a backoff retry is waiting');
+  t.checkNow();                                     // the network came back: no waiting
+  await until(() => t.state === 'online', 'online at once');
+  assert.equal(server.sockets.length, 2);
+  void fire;
+  t.close();
+});
+
+test("the server's ping (XEP-0199) is answered at once; other requests get service-unavailable", async () => {
+  const server = fakeServer();
+  const { t } = liveTransport(server);
+  await t.connect();
+  await until(() => t.state === 'online', 'online');
+  const socket = server.sockets[0];
+  socket.deliver(xml('iq', { type: 'get', id: 'ping-1', from: HOST, to: `${MY_JID}/app` }, xml('ping', { xmlns: 'urn:xmpp:ping' })));
+  const pong = parseXml(socket.sent.at(-1));
+  assert.deepEqual([local(pong), pong.attrs.type, pong.attrs.id, pong.attrs.to], ['iq', 'result', 'ping-1', HOST]);
+  socket.deliver(xml('iq', { type: 'get', id: 'v-1', from: HOST }, xml('query', { xmlns: 'jabber:iq:version' })));
+  const refused = parseXml(socket.sent.at(-1));
+  assert.equal(refused.attrs.type, 'error');
+  assert.ok(child(child(refused, 'error'), 'service-unavailable'));
+  assert.equal(t.sm.inbound, 2, 'both count for Stream Management');
+  t.close();
 });

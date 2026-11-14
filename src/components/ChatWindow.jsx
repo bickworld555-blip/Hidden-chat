@@ -1,7 +1,7 @@
 import { storeMedia } from '../mediaVault.js';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { isEnvelope, STRUCTURED } from '../e2e/envelope.js';
-import { transmitDirect, transmitReaction } from '../e2e/messaging.js';
+import { sendControlFor, transmitDirect, transmitReaction } from '../e2e/messaging.js';
 import { buildLinkPreview } from '../linkPreviewSender.js';
 import { translate, useLanguage } from '../i18n.js';
 import { contactEncrypted } from '../e2e/client.js';
@@ -474,7 +474,8 @@ function MessageBubble({
               played={Boolean(message.played)}
               forwarded={Boolean(message?.forwarded)}
               onPlayed={mine ? undefined : () => {
-                shared.send?.({ type: 'message:played', messageId: message.id });
+                // Over XMPP the sender's devices hear it end to end; otherwise the server tells them.
+                if (!sendControlFor(message, { op: 'played' })) shared.send?.({ type: 'message:played', messageId: message.id });
                 useChatStore.getState().updateMessage(message.id, { played: true, status: 'read' });
               }}
             >{meta}</VoiceMessage>
@@ -1619,6 +1620,8 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
     setError('');
     if (content === target.content) return;
     updateMessage(target.id, { content, editedAt: new Date().toISOString() });
+    // A message that travelled over XMPP is edited end to end on every device (the server never had it).
+    if (sendControlFor(target, { op: 'edit', text: content })) return;
     editDirectMessage(sessionToken, target.id, content, chatId).catch((caught) => {
       updateMessage(target.id, { content: target.content, editedAt: target.editedAt });
       setError(caught.message);
@@ -1725,12 +1728,20 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
     let offline = false;
     for (const target of targets) {
       const onServer = !target.content?.startsWith('call:') && target.status !== 'failed';
+      // A message that travelled over XMPP was never on the server: deleting it for me is this device's own business,
+      // and deleting it for everyone goes end to end to every device of both people (src/e2e/lifecycle.js).
+      const overXmpp = target.via === 'xmpp';
       if (target.deleted) {
         deleteMessage(chatId, target.id);
-        client?.send?.({ type: 'message:delete', messageId: target.id, scope: 'me' });
+        if (!overXmpp) client?.send?.({ type: 'message:delete', messageId: target.id, scope: 'me' });
         continue;
       }
-      if (!onServer) {
+      if (overXmpp && scope === 'everyone') {
+        if (sendControlFor(target, { op: 'delete' })) useChatStore.getState().markMessageDeleted(target.id);
+        else offline = true;
+      } else if (overXmpp) {
+        deleteMessage(chatId, target.id);
+      } else if (!onServer) {
         deleteMessage(chatId, target.id);
       } else if (scope === 'everyone') {
         if (!client?.send?.({ type: 'message:delete', messageId: target.id, scope, deleteMedia })) offline = true;

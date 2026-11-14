@@ -1302,7 +1302,8 @@ export function createChatServer({
       return pushToDevice(userId, deviceId, body, { collapseKey: sender ? `chat:${sender.id}` : 'xmpp-wake', ttlSeconds: 86_400 });
     } });
   xmpp.register(app, requireSession);
-  const e2e = registerE2e({ app, db, requireSession, xmppAddress: xmpp.addressFor });
+  const e2e = registerE2e({ app, db, requireSession, xmppAddress: xmpp.addressFor, onXmpp: (userId) => xmpp.transportFor(userId) === 'xmpp',
+    connectedDevices: (userId) => new Set([...userSockets(userId)].map((socket) => socket.deviceId).filter(Boolean)) });
   // Signs an account out everywhere: sessions go, sockets close, push stops (suspension, account deletion).
   async function closeUserSessions(userId, reason) {
     const removed = await db.prepare('DELETE FROM sessions WHERE user_id = ? RETURNING token_hash AS "hash"').all(userId);

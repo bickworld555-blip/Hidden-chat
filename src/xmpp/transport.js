@@ -30,6 +30,14 @@ const CHAT_STATES = new Set(['active', 'composing', 'paused', 'inactive', 'gone'
 export const RECONNECT_MIN_MS = 1000;
 export const RECONNECT_MAX_MS = 30_000;
 const ACK_REQUEST_MS = 5000;
+// Liveness: a phone switching between Wi-Fi and mobile data keeps its old socket "open" while nothing gets through.
+// Every LIVENESS_INTERVAL_MS the app asks the server for a Stream Management acknowledgement (<r/>); no frame of any
+// kind within LIVENESS_TIMEOUT_MS means the socket is dead: it is dropped without waiting for its closing handshake
+// and the session is resumed on a new one at once (nothing is lost: unacknowledged stanzas are resent).
+export const LIVENESS_INTERVAL_MS = 30_000;
+export const LIVENESS_TIMEOUT_MS = 10_000;
+const NS_PING = 'urn:xmpp:ping';
+const NS_STANZAS = 'urn:ietf:params:xml:ns:xmpp-stanzas';
 
 const utf8 = new TextEncoder();
 const toBase64 = (text) => { let s = ''; for (const byte of utf8.encode(text)) s += String.fromCharCode(byte); return btoa(s); };
@@ -61,6 +69,8 @@ export class XmppTransport {
     this.queue = [];          // stanzas waiting for a session
     this.ackTimer = null;
     this.retryTimer = null;
+    this.livenessTimer = null;   // the next <r/>
+    this.deadlineTimer = null;   // set while waiting for any frame after an <r/>
     this.active = true;
     // Incoming stanzas are handled one after another, in arrival order (checking a sender takes an async hash).
     this.dispatching = Promise.resolve();
@@ -104,12 +114,16 @@ export class XmppTransport {
       if (this.socket !== socket) return;
       this.socket = null;
       this.clearTimer(this.ackTimer);
+      this.ackTimer = null;
+      this.#stopLiveness();
       if (this.closed) return this.#setState('closed');
       this.#setState('offline');
       this.#scheduleReconnect();
     };
     socket.onerror = () => {};
     socket.onmessage = ({ data }) => {
+      if (this.socket !== socket) return;
+      this.#alive();
       const el = parseXml(typeof data === 'string' ? data : '');
       if (!el) return;
       const name = local(el);
@@ -158,13 +172,84 @@ export class XmppTransport {
       if (name === 'a' && el.attrs.xmlns === NS_SM) return this.#acked(Number(el.attrs.h));
       if (name === 'message' || name === 'iq' || name === 'presence') {
         this.sm.inbound += 1;
+        // The server's ping (XEP-0199; mod_ping ends a session that does not answer) and any other request get a
+        // reply at once, ahead of the message queue.
+        if (name === 'iq' && (el.attrs.type === 'get' || el.attrs.type === 'set')) return this.#answerIq(el);
         this.dispatching = this.dispatching.then(() => this.#dispatch(el)).catch(() => {});
       }
     };
   }
 
+  #answerIq(el) {
+    const { id, from } = el.attrs;
+    const ping = child(el, 'ping', NS_PING);
+    this.#write(String(ping
+      ? xml('iq', { type: 'result', id, to: from })
+      : xml('iq', { type: 'error', id, to: from }, xml('error', { type: 'cancel' }, xml('service-unavailable', { xmlns: NS_STANZAS })))));
+  }
+
+  // --- Liveness ----------------------------------------------------------------------------------------------------
+
+  #startLiveness() {
+    this.clearTimer(this.livenessTimer);
+    this.livenessTimer = this.setTimer(() => {
+      this.livenessTimer = null;
+      this.#probe();
+      this.#startLiveness();
+    }, LIVENESS_INTERVAL_MS);
+  }
+
+  #stopLiveness() {
+    this.clearTimer(this.livenessTimer);
+    this.clearTimer(this.deadlineTimer);
+    this.livenessTimer = null;
+    this.deadlineTimer = null;
+  }
+
+  /** Asks for an acknowledgement; no frame within LIVENESS_TIMEOUT_MS drops the socket. */
+  #probe() {
+    const socket = this.socket;
+    if (this.state !== 'online' || !socket || this.deadlineTimer !== null || !this.sm.enabled) return;
+    try { socket.send(String(xml('r', { xmlns: NS_SM }))); } catch { this.#abandon(socket); return; }
+    this.deadlineTimer = this.setTimer(() => { this.deadlineTimer = null; this.#abandon(socket); }, LIVENESS_TIMEOUT_MS);
+  }
+
+  /** Any frame from the server proves the socket works. */
+  #alive() {
+    if (this.deadlineTimer === null) return;
+    this.clearTimer(this.deadlineTimer);
+    this.deadlineTimer = null;
+  }
+
+  /** Gives up on a dead socket without waiting for its closing handshake and resumes on a new one at once. */
+  #abandon(socket) {
+    if (this.socket !== socket || this.closed) return;
+    this.socket = null;
+    this.clearTimer(this.ackTimer);
+    this.ackTimer = null;
+    this.#stopLiveness();
+    try { socket.close(); } catch { /* already closing */ }
+    this.#setState('offline');
+    this.attempt = 0;
+    this.#scheduleReconnect(0);
+  }
+
+  /**
+   * The network may have changed (Wi-Fi <-> mobile data), the phone came back online or the app returned to screen:
+   * check a live socket now, and reconnect at once (backoff starts over) when there is none.
+   */
+  checkNow() {
+    if (this.closed || this.state === 'legacy' || this.state === 'connecting') return;
+    if (this.state === 'online') { this.#probe(); return; }
+    this.clearTimer(this.retryTimer);
+    this.retryTimer = null;
+    this.attempt = 0;
+    this.connect();
+  }
+
   #online(resumed) {
     this.attempt = 0;
+    this.#startLiveness();
     if (!resumed) this.socket.send(String(xml('presence')));
     this.socket.send(String(xml(this.active ? 'active' : 'inactive', { xmlns: NS_CSI })));
     this.#setState('online');
@@ -198,10 +283,10 @@ export class XmppTransport {
     return true;
   }
 
-  #scheduleReconnect() {
+  #scheduleReconnect(immediate = null) {
     if (this.closed) return;
     this.clearTimer(this.retryTimer);
-    const delay = Math.min(RECONNECT_MAX_MS, RECONNECT_MIN_MS * 2 ** this.attempt) * (0.8 + 0.4 * this.random());
+    const delay = immediate ?? Math.min(RECONNECT_MAX_MS, RECONNECT_MIN_MS * 2 ** this.attempt) * (0.8 + 0.4 * this.random());
     this.attempt += 1;
     this.retryTimer = this.setTimer(() => { this.retryTimer = null; this.#setState('offline'); this.connect(); }, delay);
   }
@@ -216,6 +301,7 @@ export class XmppTransport {
     this.closed = true;
     this.clearTimer(this.retryTimer);
     this.clearTimer(this.ackTimer);
+    this.#stopLiveness();
     try { this.socket?.send(String(xml('close', { xmlns: NS_FRAMING }))); } catch { /* already gone */ }
     try { this.socket?.close(); } catch { /* already gone */ }
     this.#setState('closed');

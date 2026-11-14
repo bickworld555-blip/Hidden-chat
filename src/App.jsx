@@ -17,13 +17,14 @@ import { getViewingGroup, readMutedGroups, setGroupMuted, useMutedGroups } from 
 import { classifyIncoming, groupNotificationText, parseConversationOpenParam, shouldAlertGroup } from './notificationChannels.js';
 import { nativeClearSession, nativeRequestStartupPermissions, nativeSetSession, nativeShell, nativeStartBackground, nativeState, nativeStopBackground, nativeTakePendingCall, nativeMoveToBackground, nativeClearShare, nativeSetCallActive, nativeClearMessageNotifications, nativeClearMissedCalls, nativeTakeMessageActions, nativeSetSystemBarsTheme, onNative } from './native.js';
 import { parseShare } from './shareTarget.js';
-import { onE2eEvent, startE2e, stopE2e, userForXmppAddress, xmppGroupTargetsFor, xmppTargetsFor } from './e2e/client.js';
+import { onE2eEvent, sealDirect, startE2e, stopE2e, userForXmppAddress, xmppGroupTargetsFor, xmppTargetsFor } from './e2e/client.js';
+import { createControlBuffer, expiredIds, resolveControl } from './e2e/lifecycle.js';
 import { startXmppSession } from './xmpp/session.js';
 import { setXmppSession } from './xmpp/active.js';
 import { fetchGroupMessages } from './groupHistory.js';
 import { SECURITY_NOTICE } from './e2e/notices.js';
 import { LOCKED_NOTIFICATION } from './chatLock.js';
-import { handleReactionError, handleRejected, needsOpening, openEvent, openHistory, openRows, transmitDirect } from './e2e/messaging.js';
+import { handleReactionError, handleRejected, needsOpening, openEvent, openHistory, openRows, storedMessage, transmitDirect } from './e2e/messaging.js';
 import { appSettings, connectAccountSettings } from './settings.js';
 import { getPrivacy, setPrivacy } from './accountApi.js';
 import ShareSheet from './components/ShareSheet.jsx';
@@ -318,7 +319,23 @@ export default function App() {
         if (cancelled) return;
         if (cancelled) return;
         let connectedBefore = false;
+        // Changes to messages that travelled over XMPP (src/e2e/lifecycle.js): checked, then handled like the server's
+        // own events; one that arrives before its message waits for it.
+        const heldControls = createControlBuffer();
+        const reactionTimes = new Map();
+        const applyControl = ({ control, senderId }) => {
+          if (!control) return;
+          const outcome = resolveControl(control, {
+            senderId, target: storedMessage(control.target), me: userId,
+            reactedAt: (messageId, reactorId) => reactionTimes.get(`${messageId}:${reactorId}`) ?? null,
+          });
+          if (outcome.action === 'hold') heldControls.hold(control, senderId);
+          if (outcome.action !== 'apply') return;
+          if (outcome.event.type === 'message:reaction') reactionTimes.set(`${outcome.event.messageId}:${outcome.event.userId}`, outcome.event.at);
+          handleEvent(outcome.event);
+        };
         const handleEvent = (event) => {
+          if (event.type === 'message:control') { applyControl(event); return; }
           if (event.type === 'connection:ready' || event.type === 'community:changed' || (typeof event.type === 'string' && event.type.startsWith('group:'))) setGroupRevision((current) => current + 1);
           handleAccountEvent(event);
           // Blocked or unblocked on another of this account's devices; a contact deleted their account.
@@ -380,6 +397,8 @@ export default function App() {
               || hiddenByBlock(event.message, blockedChats[event.message.senderId], userId);
             addMessage(event.message);
             if (event.type === 'message:ack') acknowledgeMessage(event.message);
+            // Changes that overtook this message on the way are applied now.
+            for (const held of heldControls.take(event.message.id)) applyControl(held);
             // This device has it: tell the sender (one tick → two). Reading it is a separate, explicit step.
             if (incoming) autoSaveIncoming(event.message.content, sessionToken);
             if (incoming && event.message.receiverId === userId && event.message.status === 'sent') {
@@ -527,7 +546,7 @@ export default function App() {
         // device traffic over XMPP; anything it cannot carry goes on this connection as before. Others never open it.
         const legacySend = realtime.send.bind(realtime);
         realtime.send = (event) => (xmppRef.current?.route(event) ? true : legacySend(event));
-        startXmppSession({ sessionToken, userId, deliver: onRealtimeEvent, legacySend, targetsFor: xmppTargetsFor, groupTargetsFor: xmppGroupTargetsFor, userForAddress: userForXmppAddress, fetchImpl: apiFetch })
+        startXmppSession({ sessionToken, userId, deliver: onRealtimeEvent, legacySend, targetsFor: xmppTargetsFor, groupTargetsFor: xmppGroupTargetsFor, userForAddress: userForXmppAddress, fetchImpl: apiFetch, seal: (peerId, content) => sealDirect(peerId, content) })
           .then((session) => {
             if (!session) return;
             if (cancelled) { session.close(); return; }
@@ -637,11 +656,40 @@ export default function App() {
   }, [authReady, userId, sessionToken]);
   // The XMPP session (when this account uses it) is told when the app goes to the background and back (XEP-0352), and
   // reconnects at once when the phone gets a wake-up push for a message waiting on the XMPP core (PushService.java).
+  // Disappearing messages: each device removes its own copy when the timer runs out (src/e2e/lifecycle.js). The server
+  // still removes those it stored; a copy that came over XMPP is only ever on the devices.
   useEffect(() => {
-    const sync = () => xmppRef.current?.setActive(document.visibilityState === 'visible');
+    const sweep = () => {
+      const { messages, deleteMessage } = useChatStore.getState();
+      const now = Date.now();
+      for (const [chatId, list] of Object.entries(messages)) {
+        for (const messageId of expiredIds(list, now)) deleteMessage(chatId, messageId);
+      }
+    };
+    sweep();
+    const timer = setInterval(sweep, 30_000);
+    const onVisible = () => { if (document.visibilityState === 'visible') sweep(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => { clearInterval(timer); document.removeEventListener('visibilitychange', onVisible); };
+  }, []);
+  // A network change (Wi-Fi <-> mobile data), coming back online or returning to screen checks the connection at once.
+  useEffect(() => {
+    const wake = () => xmppRef.current?.wake();
+    const sync = () => {
+      const visible = document.visibilityState === 'visible';
+      xmppRef.current?.setActive(visible);
+      if (visible) wake();
+    };
     document.addEventListener('visibilitychange', sync);
-    const stopWake = onNative('xmppWake', () => xmppRef.current?.wake());
-    return () => { document.removeEventListener('visibilitychange', sync); stopWake(); };
+    window.addEventListener('online', wake);
+    navigator.connection?.addEventListener?.('change', wake);
+    const stopWake = onNative('xmppWake', wake);
+    return () => {
+      document.removeEventListener('visibilitychange', sync);
+      window.removeEventListener('online', wake);
+      navigator.connection?.removeEventListener?.('change', wake);
+      stopWake();
+    };
   }, []);
 
   useEffect(() => { if (sessionToken) persistMessages(userId); }, [messages, sessionToken, userId]);

@@ -16,6 +16,7 @@ import { buildEnvelope, ENVELOPE_PREFIX, isEnvelope, parseEnvelope, routingFor, 
 import { sha256Hex } from './primitives.js';
 import { sanitizePreview } from '../linkPreviewParse.js';
 import { cleanDuration, cleanPoster, cleanThumb } from '../mediaThumb.js';
+import { cleanDisappear, expiryOf } from './lifecycle.js';
 
 // What travels inside the encryption: { c: content, lp?: link preview made by the sender, r?: the id of the message
 // it replies to, fw?: 1 when forwarded }. Replies and forwards are not visible to the server (like Signal).
@@ -35,6 +36,8 @@ export const cleanCaption = (value) => (typeof value === 'string' ? value.trim()
 export const cleanAlbum = (value) => (value && typeof value.id === 'string' && /^[A-Za-z0-9_-]{6,40}$/.test(value.id)
   && Number.isInteger(value.n) && value.n >= 2 && value.n <= 30 && Number.isInteger(value.i) && value.i >= 0 && value.i < value.n
   ? { id: value.id, i: value.i, n: value.n } : null);
+// The disappearing timer (seconds) travels inside the encryption too: a message sent over XMPP never passes the server
+// that used to enforce it, so each device expires its own copy (src/e2e/lifecycle.js).
 export const innerOf = (content, extra = {}) => {
   const linkPreview = sanitizePreview(extra.linkPreview);
   const statusReply = cleanStatusReply(extra.statusReply);
@@ -44,7 +47,8 @@ export const innerOf = (content, extra = {}) => {
   const thumb = cleanThumb(extra.thumb);
   const poster = cleanPoster(extra.poster);
   const duration = cleanDuration(extra.duration);
-  return { ...(thumb ? { th: thumb } : {}), ...(poster ? { pv: poster } : {}), ...(duration ? { du: duration } : {}), c: content, ...(linkPreview ? { lp: linkPreview } : {}), ...(statusReply ? { sr: statusReply } : {}), ...(replyToId ? { r: replyToId } : {}), ...(extra.forwarded ? { fw: 1 } : {}), ...(caption ? { cp: caption } : {}), ...(album ? { al: album } : {}) };
+  const disappear = cleanDisappear(extra.disappearSeconds);
+  return { ...(disappear ? { ex: disappear } : {}), ...(thumb ? { th: thumb } : {}), ...(poster ? { pv: poster } : {}), ...(duration ? { du: duration } : {}), c: content, ...(linkPreview ? { lp: linkPreview } : {}), ...(statusReply ? { sr: statusReply } : {}), ...(replyToId ? { r: replyToId } : {}), ...(extra.forwarded ? { fw: 1 } : {}), ...(caption ? { cp: caption } : {}), ...(album ? { al: album } : {}) };
 };
 
 /**
@@ -67,6 +71,7 @@ export const innerFrom = (value) => {
     ...(cleanThumb(value.th) ? { th: cleanThumb(value.th) } : {}),
     ...(cleanPoster(value.pv) ? { pv: cleanPoster(value.pv) } : {}),
     ...(cleanDuration(value.du) ? { du: cleanDuration(value.du) } : {}),
+    ...(cleanDisappear(value.ex) ? { ex: cleanDisappear(value.ex) } : {}),
   };
 };
 
@@ -273,6 +278,7 @@ export const openedFrom = (inner, route) => ({
   ...(inner.th ? { thumb: inner.th } : {}),
   ...(inner.pv ? { poster: inner.pv } : {}),
   ...(inner.du ? { duration: inner.du } : {}),
+  ...(inner.ex ? { disappearSeconds: inner.ex } : {}),
 });
 
 // --- Sealing ------------------------------------------------------------------------------------------
@@ -420,6 +426,8 @@ export async function openDirectMessage(message, known = null) {
     // Reply and forward travel inside the encryption; a copy the server still describes (older apps) keeps its own.
     ...(opened.replyTo && !base.replyTo ? { replyTo: opened.replyTo } : {}), ...(opened.forwarded ? { forwarded: true } : {}),
     ...(opened.caption ? { caption: opened.caption } : {}), ...(opened.album ? { album: opened.album } : {}), ...(opened.thumb ? { thumb: opened.thumb } : {}), ...(opened.poster ? { poster: opened.poster } : {}), ...(opened.duration ? { duration: opened.duration } : {}),
+    // The server's own timer wins when it set one; otherwise the sender's, from inside the encryption.
+    ...(!base.expiresAt && expiryOf(base.timestamp, opened.disappearSeconds) ? { expiresAt: new Date(expiryOf(base.timestamp, opened.disappearSeconds)).toISOString() } : {}),
   };
 }
 
@@ -433,7 +441,8 @@ export async function openDirectMessages(messages, knownById = () => null) {
 export async function openGroupMessage(groupId, message) {
   if (!message || typeof message.content !== 'string' || !isEnvelope(message.content)) return message;
   const opened = await openContent(message.content, { senderId: message.senderId, groupId });
-  return { ...message, content: opened.content, ...(opened.e2e ? { e2e: true } : {}), ...(opened.linkPreview ? { linkPreview: opened.linkPreview } : {}), ...(opened.caption ? { caption: opened.caption } : {}), ...(opened.album ? { album: opened.album } : {}), ...(opened.thumb ? { thumb: opened.thumb } : {}), ...(opened.poster ? { poster: opened.poster } : {}), ...(opened.duration ? { duration: opened.duration } : {}), ...(opened.e2eError ? { e2eError: opened.e2eError } : {}) };
+  const expires = !message.expiresAt ? expiryOf(message.createdAt, opened.disappearSeconds) : null;
+  return { ...message, content: opened.content, ...(opened.e2e ? { e2e: true } : {}), ...(opened.linkPreview ? { linkPreview: opened.linkPreview } : {}), ...(opened.caption ? { caption: opened.caption } : {}), ...(opened.album ? { album: opened.album } : {}), ...(opened.thumb ? { thumb: opened.thumb } : {}), ...(opened.poster ? { poster: opened.poster } : {}), ...(opened.duration ? { duration: opened.duration } : {}), ...(opened.e2eError ? { e2eError: opened.e2eError } : {}), ...(expires ? { expiresAt: expires } : {}) };
 }
 
 export async function openGroupMessages(groupId, messages) {

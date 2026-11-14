@@ -41,6 +41,9 @@ final class NativeRelay extends WebSocketListener {
     private boolean running;
     private int attempt;
     private ConnectivityManager.NetworkCallback networkCallback;
+    // The network the current socket was opened on. When the phone moves to another (Wi-Fi <-> mobile data) that
+    // socket is dead even though nothing has told OkHttp yet; it is replaced at once instead of after a missed ping.
+    private Network boundNetwork;
 
     private NativeRelay(Context context) {
         this.context = context.getApplicationContext();
@@ -163,7 +166,17 @@ final class NativeRelay extends WebSocketListener {
             .url(session.websocketUrl())
             .header("Sec-WebSocket-Protocol", "relay.auth." + session.token + ", relay.v1, relay.background, " + ClientVersion.SUBPROTOCOL)
             .build();
+        ConnectivityManager manager = context.getSystemService(ConnectivityManager.class);
+        boundNetwork = manager != null ? manager.getActiveNetwork() : null;
         socket = client.newWebSocket(request, this);
+    }
+
+    /** Drops the current socket without waiting for its closing handshake (a dead network never answers). */
+    private synchronized void dropSocket() {
+        WebSocket old = socket;
+        socket = null;
+        boundNetwork = null;
+        if (old != null) old.cancel();
     }
 
     private synchronized void scheduleReconnect() {
@@ -182,10 +195,26 @@ final class NativeRelay extends WebSocketListener {
             public void onAvailable(Network network) {
                 handler.post(() -> {
                     synchronized (NativeRelay.this) {
-                        if (!running || socket != null) return;
+                        if (!running) return;
+                        // Still on the network the socket was opened on: nothing to do.
+                        if (socket != null && network.equals(boundNetwork)) return;
+                        // A new default network (Wi-Fi <-> mobile data): the old socket is gone with the old network.
+                        if (socket != null) dropSocket();
                         handler.removeCallbacksAndMessages(null);
                         attempt = 0;
                         connect();
+                    }
+                });
+            }
+
+            @Override
+            public void onLost(Network network) {
+                handler.post(() -> {
+                    synchronized (NativeRelay.this) {
+                        if (!running || socket == null || !network.equals(boundNetwork)) return;
+                        dropSocket();
+                        // The next network's onAvailable connects at once; this is the fallback if none comes.
+                        scheduleReconnect();
                     }
                 });
             }

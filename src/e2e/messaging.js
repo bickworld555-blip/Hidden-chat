@@ -5,11 +5,13 @@
 import { useChatStore } from '../store.js';
 import { applyDeviceLists, e2eActive, isEnvelope, openContent, openDirectMessage, openDirectMessages, openGroupMessage, sealDirect } from './client.js';
 import { isUserContent } from './envelope.js';
+import { controlContent, parseControl } from './lifecycle.js';
+import { getXmppSession } from '../xmpp/active.js';
 
 const MAX_RESEALS = 3;
 const reseals = new Map();
 
-function storedMessage(id, chatId = null) {
+export function storedMessage(id, chatId = null) {
   const { messages } = useChatStore.getState();
   const lists = chatId ? [messages[chatId] ?? []] : Object.values(messages);
   for (const list of lists) {
@@ -29,8 +31,10 @@ export async function transmitDirect(client, message, { fresh = false } = {}) {
   if (!client?.send || !message?.receiverId) return false;
   let content;
   try {
+    // The chat's disappearing timer goes inside the encryption, for a copy that never passes the server (XMPP).
+    const disappearSeconds = useChatStore.getState().chats.find((chat) => chat.id === message.receiverId)?.disappearSeconds ?? 0;
     content = await sealDirect(message.receiverId, message.content, {
-      linkPreview: message.linkPreview, statusReply: message.statusReply, replyToId: message.replyTo?.id, forwarded: message.forwarded === true, caption: message.caption, album: message.album, thumb: message.thumb, poster: message.poster, duration: message.duration,
+      linkPreview: message.linkPreview, statusReply: message.statusReply, replyToId: message.replyTo?.id, forwarded: message.forwarded === true, caption: message.caption, album: message.album, thumb: message.thumb, poster: message.poster, duration: message.duration, disappearSeconds,
     }, { fresh: fresh || Boolean(message.awaitingKeys) });
   } catch (error) {
     // Strict end-to-end encryption: nothing people write is ever sent readable. When the contact has no keys yet
@@ -94,12 +98,28 @@ async function withOpenedReactions(message) {
   return { ...message, reactions };
 }
 
+/**
+ * A change to a message that travelled over XMPP (delete for everyone, edit, reaction, played) goes the same way, as a
+ * sealed control to every device of both people (src/e2e/lifecycle.js): the server never had that message. True when
+ * sent that way; false for a message the server stored, which keeps the server path. `change`: { op, emoji?, text? }.
+ */
+export function sendControlFor(target, change) {
+  const session = getXmppSession();
+  if (!session?.sendControl || target?.via !== 'xmpp' || typeof target.id !== 'string') return false;
+  const me = useChatStore.getState().userId;
+  const peerId = target.senderId === me ? target.receiverId : target.senderId;
+  if (!peerId) return false;
+  session.sendControl(peerId, controlContent({ ...change, target: target.id, peerId })).catch(() => {});
+  return true;
+}
+
 const reactionRetries = new Map();
 /**
  * Sends a reaction (or its removal, emoji null) to a direct message, sealed for every device like a message.
  * `peerId` is the other person in the chat. Re-seals when the server says the device list changed.
  */
 export async function transmitReaction(client, peerId, messageId, emoji) {
+  if (sendControlFor(storedMessage(messageId, peerId), { op: 'react', emoji: emoji || null })) return true;
   if (!client?.send) return false;
   let value = emoji;
   if (emoji) {
@@ -130,6 +150,11 @@ export const needsOpening = (event) => SEALED_EVENTS.has(event?.type);
 export async function openEvent(event) {
   if (event.type === 'message:new' || event.type === 'message:ack') {
     const message = await openDirectMessage(event.message, storedMessage(event.message?.id));
+    // A sealed change to another message (src/e2e/lifecycle.js), never a message of its own. Only an XMPP copy can
+    // carry one: the server path has its own events for these changes.
+    if (event.type === 'message:new' && event.message?.via === 'xmpp' && typeof message?.content === 'string' && message.content.startsWith('ctl:')) {
+      return { type: 'message:control', senderId: event.message.senderId, control: parseControl(message.content) };
+    }
     // A message that arrived without end-to-end encryption while this device has it is marked "Not encrypted".
     const plain = event.type === 'message:new' && e2eActive() && !isEnvelope(event.message?.content) && isUserContent(event.message?.content);
     return { ...event, message: plain ? { ...message, unencrypted: true } : message };

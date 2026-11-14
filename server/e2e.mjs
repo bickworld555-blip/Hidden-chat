@@ -65,20 +65,47 @@ export function parseKeyUpload(body) {
 // `xmppAddress(userId, localpart)`: a device's XMPP address (server/xmpp.mjs addressFor) or null. Device lists carry it for
 // devices reachable over XMPP, so senders can route while users move over; a device without one is reached through
 // this server as before.
-export function registerE2e({ app, db, requireSession, xmppAddress = () => null }) {
+//
+// Retired devices (devicesOf leaves them out, so nobody seals for them and XMPP routing is not held back by them):
+//   - a device not active for DEVICE_IDLE_MS (WhatsApp signs out linked devices after a few weeks; this only stops
+//     sending to it, so it comes back the moment it is used again);
+//   - on an account moved to XMPP (`onXmpp(userId)`), a device with no XMPP account that has not been active for
+//     DEVICE_XMPP_GRACE_MS: every app that runs gets its account at start-up, so it has not run since the move (an
+//     old install, a wiped app on the same phone). The grace covers a fresh sign-in before its first token request.
+// A device connected right now (`connectedDevices(userId)`: ids with an open socket) is never retired, whatever its
+// stored activity says (an older app that never asks for an XMPP account keeps receiving while it is in use).
+// A device whose activity is unknown is kept: unknown is not the same as idle.
+export const DEVICE_IDLE_MS = 30 * 24 * 60 * 60 * 1000;
+export const DEVICE_XMPP_GRACE_MS = 10 * 60 * 1000;
+
+export function isRetiredDevice({ lastActive, hasXmpp, onXmpp, now, connected = false }) {
+  if (connected) return false;
+  const active = Number(lastActive);
+  if (!Number.isFinite(active) || active <= 0) return false;
+  if (now - active > DEVICE_IDLE_MS) return true;
+  return Boolean(onXmpp && !hasXmpp && now - active > DEVICE_XMPP_GRACE_MS);
+}
+
+export function registerE2e({ app, db, requireSession, xmppAddress = () => null, onXmpp = () => false, connectedDevices = () => new Set(), now = () => Date.now() }) {
   const json = express.json({ limit: '64kb' });
 
   // Devices that can receive end-to-end messages: they published keys and are still signed in.
-  const keyDevicesOf = db.prepare(`SELECT d.device_id AS "deviceId", d.identity_dh AS "dh", d.identity_sig AS "sig", x.localpart AS "xmpp"
+  const keyDevicesOf = db.prepare(`SELECT d.device_id AS "deviceId", d.identity_dh AS "dh", d.identity_sig AS "sig", x.localpart AS "xmpp",
+      (SELECT MAX(COALESCE(s.last_active_at, s.created_at)) FROM sessions s WHERE s.user_id = d.user_id AND s.device_id = d.device_id) AS "lastActive"
     FROM e2e_devices d LEFT JOIN xmpp_accounts x ON x.user_id = d.user_id AND x.device_id = d.device_id
     WHERE d.user_id = ? AND EXISTS (SELECT 1 FROM sessions s WHERE s.user_id = d.user_id AND s.device_id = d.device_id)
     ORDER BY d.device_id`);
 
   async function devicesOf(userId) {
-    return (await keyDevicesOf.all(userId)).map((row) => {
-      const xmpp = xmppAddress(userId, row.xmpp);
-      return { deviceId: row.deviceId, identity: { dh: row.dh, sig: row.sig }, ...(xmpp ? { xmpp } : {}) };
-    });
+    const moved = Boolean(onXmpp(userId));
+    const at = now();
+    const connected = connectedDevices(userId);
+    return (await keyDevicesOf.all(userId))
+      .filter((row) => !isRetiredDevice({ lastActive: row.lastActive, hasXmpp: Boolean(row.xmpp), onXmpp: moved, now: at, connected: connected.has(row.deviceId) }))
+      .map((row) => {
+        const xmpp = xmppAddress(userId, row.xmpp);
+        return { deviceId: row.deviceId, identity: { dh: row.dh, sig: row.sig }, ...(xmpp ? { xmpp } : {}) };
+      });
   }
 
   async function forgetStaleDevices() {

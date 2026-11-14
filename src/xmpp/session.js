@@ -22,6 +22,12 @@
 //        (ejabberd checks with the server that the sender may post and the members hash is current); when nobody
 //        could be reached it is sent through the server instead, with the same message id.
 //
+//   changes  delete for everyone, edits, reactions and "played" on a message that travelled over XMPP (marked
+//        via: 'xmpp' on every device) go as a sealed control message (sendControl; src/e2e/lifecycle.js): the server
+//        never had that message. Messages the server stored keep the server's own path.
+//   groups over XMPP are off unless `groupsOverXmpp`: their deletes, edits and reactions still go through the
+//        server, which must therefore hold every group message until group controls exist.
+//
 // Everything else stays on the current connection for now (statuses, account, group admin).
 import { parseEnvelope } from '../e2e/envelope.js';
 import { XmppTransport } from './transport.js';
@@ -32,7 +38,7 @@ const RECEIPT_MEMORY = 5000;
  * Resolves null unless this account is moved over. `deliver(event)` feeds the app's realtime event handler;
  * `legacySend(event)` is the current connection's send.
  */
-export async function startXmppSession({ sessionToken, userId, deliver, legacySend, targetsFor, groupTargetsFor = async () => ({ targets: [], complete: false, sender: null }), userForAddress = () => null, fetchImpl, createTransport = (options) => new XmppTransport(options) }) {
+export async function startXmppSession({ sessionToken, userId, deliver, legacySend, targetsFor, groupTargetsFor = async () => ({ targets: [], complete: false, sender: null }), userForAddress = () => null, fetchImpl, createTransport = (options) => new XmppTransport(options), seal = null, groupsOverXmpp = false }) {
   const auth = { Authorization: `Bearer ${sessionToken}` };
   let decision;
   try {
@@ -79,7 +85,7 @@ export async function startXmppSession({ sessionToken, userId, deliver, legacySe
         }
         deliver({
           type: 'message:new',
-          message: { id: event.id, senderId: event.userId, receiverId: userId, content: event.envelope, timestamp: event.sentAt || new Date().toISOString(), status: 'sent' },
+          message: { id: event.id, senderId: event.userId, receiverId: userId, content: event.envelope, timestamp: event.sentAt || new Date().toISOString(), status: 'sent', via: 'xmpp' },
         });
       } else if (event.type === 'receipt') {
         inFlight.delete(event.id);
@@ -120,7 +126,7 @@ export async function startXmppSession({ sessionToken, userId, deliver, legacySe
       remember(inFlight, message.id, event);
       transport.sendSealed({ id: message.id, to: targets, envelope: message.content, sender });
       // Sent: one tick, as the server's acknowledgement gives today.
-      deliver({ type: 'message:ack', message: { ...message, senderId: userId, timestamp: message.timestamp || new Date().toISOString(), status: 'sent' } });
+      deliver({ type: 'message:ack', message: { ...message, senderId: userId, timestamp: message.timestamp || new Date().toISOString(), status: 'sent', via: 'xmpp' } });
     } catch {
       legacySend(event);
     }
@@ -174,7 +180,7 @@ export async function startXmppSession({ sessionToken, userId, deliver, legacySe
      * null to send it through the server. `fallback()` resends through the server when nobody could be reached.
      */
     async sendGroup({ groupId, messageId, envelope, fallback }) {
-      if (transport.state !== 'online') return null;
+      if (!groupsOverXmpp || transport.state !== 'online') return null;
       try {
         const { targets, complete, sender } = await groupTargetsFor(groupId);
         const membersHash = parseEnvelope(envelope)?.body?.mh;
@@ -220,9 +226,23 @@ export async function startXmppSession({ sessionToken, userId, deliver, legacySe
       }
       return false;
     },
+    /**
+     * A sealed change (src/e2e/lifecycle.js controlContent) to every device of both people in the chat with `peerId`.
+     * Queued while the connection is down (Stream Management then resends it); false when it cannot go over XMPP.
+     */
+    async sendControl(peerId, content) {
+      if (typeof seal !== 'function') return false;
+      const { targets, complete, sender } = await targetsFor(peerId);
+      if (!complete || !sender || !targets.length) return false;
+      const envelope = await seal(peerId, content);
+      if (typeof envelope !== 'string' || !envelope.startsWith('e2e2:')) return false;
+      transport.sendSealed({ id: crypto.randomUUID(), to: targets, envelope, sender });
+      return true;
+    },
     setActive: (active) => transport.setActive(active),
     /** A wake-up push arrived (Android): connect now if the connection is down. */
-    wake: () => { if (transport.state !== 'online') transport.connect(); },
+    // A push, a network change or the app returning: check the connection now (src/xmpp/transport.js checkNow).
+    wake: () => transport.checkNow(),
     close: () => transport.close(),
   };
 }
