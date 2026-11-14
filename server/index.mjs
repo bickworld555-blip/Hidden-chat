@@ -655,7 +655,7 @@ export function createChatServer({
   const largeJson = express.json({ limit: '1mb' });
   const LARGE_JSON_ROUTES = /^\/api\/v1\/(?:groups\/[^/]+\/messages(?:\/[^/]+)?|messages\/[^/]+|e2e\/keys|polls\/[^/]+\/sealed-vote|statuses)$/;
   // A linked device's encrypted history has its own, larger limit (server/linking.mjs).
-  const OWN_PARSER_ROUTES = /^\/api\/v1\/link\/requests\/[^/]+\/history$/;
+  const OWN_PARSER_ROUTES = /^\/api\/v1\/(link\/requests\/[^/]+\/history|xmpp\/offline)$/;
   app.use((request, response, next) => (OWN_PARSER_ROUTES.test(request.path) ? next() : (LARGE_JSON_ROUTES.test(request.path) ? largeJson : smallJson)(request, response, next)));
   const server = createServer(app);
   const websocketServer = new WebSocketServer({
@@ -869,7 +869,17 @@ export function createChatServer({
   /** Sends one encrypted push to every phone the person registered; forgets phones the app is gone from. */
   async function pushToUser(userId, body, options = {}) {
     if (!push) return 0;
-    const devices = await db.prepare('SELECT token, device_key AS "deviceKey" FROM push_devices WHERE user_id = ?').all(userId);
+    return sendPushes(await db.prepare('SELECT token, device_key AS "deviceKey" FROM push_devices WHERE user_id = ?').all(userId), body, options);
+  }
+
+  /** One signed-in device's push registrations only (an XMPP wake-up is for the device whose message waits). */
+  async function pushToDevice(userId, deviceId, body, options = {}) {
+    if (!push) return 0;
+    return sendPushes(await db.prepare(`SELECT p.token, p.device_key AS "deviceKey" FROM push_devices p
+      JOIN sessions s ON s.token_hash = p.session_hash WHERE s.user_id = ? AND s.device_id = ?`).all(userId, deviceId), body, options);
+  }
+
+  async function sendPushes(devices, body, options) {
     let sent = 0;
     await Promise.all(devices.map(async (device) => {
       const { enc, iv } = encryptForDevice(device.deviceKey, body);
@@ -1224,9 +1234,11 @@ export function createChatServer({
   });
 
   // End-to-end encryption: key directory and fan-out checks (server/e2e.mjs).
-  const e2e = registerE2e({ app, db, requireSession });
+  const e2e = registerE2e({ app, db, requireSession, xmppHost: xmppConfig.enabled ? xmppConfig.host : null });
   // Device accounts and sign-in tokens for the XMPP core (Phase 2 of the BEAM/XMPP move).
-  const xmpp = createXmpp({ db, config: xmppConfig, fetchImpl: xmppFetch });
+  const xmpp = createXmpp({ db, config: xmppConfig, fetchImpl: xmppFetch,
+    // A message waits on ejabberd for this device: the usual encrypted push, carrying nothing but "connect".
+    wake: (userId, deviceId) => pushToDevice(userId, deviceId, { t: 'xwake' }, { collapseKey: 'xmpp-wake', ttlSeconds: 86_400 }) });
   xmpp.register(app, requireSession);
   // Signs an account out everywhere: sessions go, sockets close, push stops (suspension, account deletion).
   async function closeUserSessions(userId, reason) {

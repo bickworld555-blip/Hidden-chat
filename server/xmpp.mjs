@@ -12,9 +12,14 @@
 //
 // Lifecycle: an account is created before the device's first token (ejabberd stores offline messages only for
 // accounts that exist), and removed — its live connection kicked first — when the device's session ends.
-import { createHash, createHmac, randomBytes } from 'node:crypto';
+import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import express from 'express';
 
 export const XMPP_TOKEN_TTL_SECONDS = 600;
+// ejabberd's offline hook (mod_hm on the VPS): requests older or newer than this are refused (replays, clock drift).
+export const OFFLINE_HOOK_MAX_SKEW_SECONDS = 300;
+// A device gets at most one wake-up push this often, however many messages wait for it.
+export const WAKE_COALESCE_MS = 15_000;
 export const DEFAULT_XMPP_HOST = 'chat.hiddenmessenger.com';
 const ADMIN_TIMEOUT_MS = 8000;
 
@@ -50,6 +55,11 @@ export function signXmppToken({ secret, jid, nowMs = Date.now(), ttlSeconds = XM
   return { token: `${header}.${payload}.${signature}`, expiresAt: (iat + ttlSeconds) * 1000 };
 }
 
+/** The hook's signature: hex HMAC-SHA256 of the exact request body, keyed with the JWT key (one shared secret). */
+export function signOfflineHook(secret, body) {
+  return createHmac('sha256', Buffer.from(secret, 'base64url')).update(body).digest('hex');
+}
+
 export function ensureXmppSchema(db) {
   db.exec(`CREATE TABLE IF NOT EXISTS xmpp_accounts (
     user_id TEXT NOT NULL,
@@ -60,10 +70,13 @@ export function ensureXmppSchema(db) {
   )`);
 }
 
-export function createXmpp({ db, config = xmppConfigFromEnv(), fetchImpl = globalThis.fetch, now = Date.now, log = console } = {}) {
+// `wake(userId, deviceId)`: sends that one device the wake-up push (index.mjs pushToDevice); resolves how many went.
+export function createXmpp({ db, config = xmppConfigFromEnv(), fetchImpl = globalThis.fetch, now = Date.now, log = console, wake = async () => 0 } = {}) {
   const accountOf = db.prepare('SELECT localpart FROM xmpp_accounts WHERE user_id = ? AND device_id = ?');
   const insertAccount = db.prepare('INSERT INTO xmpp_accounts(user_id, device_id, localpart, created_at) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING');
   const deleteAccount = db.prepare('DELETE FROM xmpp_accounts WHERE localpart = ?');
+  const accountByLocalpart = db.prepare('SELECT user_id AS "userId", device_id AS "deviceId" FROM xmpp_accounts WHERE localpart = ?');
+  const lastWake = new Map();
   const endedAccounts = db.prepare(`SELECT localpart FROM xmpp_accounts x
     WHERE NOT EXISTS (SELECT 1 FROM sessions s WHERE s.user_id = x.user_id AND s.device_id = x.device_id)`);
   const authorization = `Basic ${Buffer.from(`${config.adminJid}:${config.adminPassword}`).toString('base64')}`;
@@ -153,6 +166,30 @@ export function createXmpp({ db, config = xmppConfigFromEnv(), fetchImpl = globa
         const { token, expiresAt } = signXmppToken({ secret: config.secret, jid, nowMs: now() });
         response.set('Cache-Control', 'no-store');
         response.json({ enabled: true, jid, token, expiresAt, websocket: config.websocketUrl });
+      });
+
+      // ejabberd stored a message for a device that is offline (mod_hm, offline_message_hook): wake that phone with
+      // the usual encrypted push so it connects and collects it. The body is {"to": localpart, "ts": seconds};
+      // nothing about the message itself is sent.
+      app.post('/api/v1/xmpp/offline', express.raw({ type: () => true, limit: '2kb' }), async (request, response) => {
+        if (!config.enabled) return response.status(404).end();
+        const raw = Buffer.isBuffer(request.body) ? request.body : Buffer.alloc(0);
+        const given = Buffer.from(String(request.get('x-hm-signature') ?? ''), 'utf8');
+        const expected = Buffer.from(signOfflineHook(config.secret, raw), 'utf8');
+        if (given.length !== expected.length || !timingSafeEqual(given, expected)) return response.status(401).json({ error: 'Bad signature.' });
+        let event;
+        try { event = JSON.parse(raw.toString('utf8')); } catch { return response.status(400).json({ error: 'Invalid body.' }); }
+        if (typeof event?.to !== 'string' || !/^d[0-9a-f]{40}$/.test(event.to) || !Number.isInteger(event.ts)) return response.status(400).json({ error: 'Invalid body.' });
+        if (Math.abs(Math.floor(now() / 1000) - event.ts) > OFFLINE_HOOK_MAX_SKEW_SECONDS) return response.status(400).json({ error: 'Stale request.' });
+        const device = await accountByLocalpart.get(event.to);
+        if (!device) return response.status(202).json({ pushed: 0 });
+        const at = now();
+        if (at - (lastWake.get(event.to) ?? 0) < WAKE_COALESCE_MS) return response.status(202).json({ pushed: 0, coalesced: true });
+        lastWake.set(event.to, at);
+        if (lastWake.size > 10_000) for (const [key, value] of lastWake) if (at - value >= WAKE_COALESCE_MS) lastWake.delete(key);
+        let pushed = 0;
+        try { pushed = await wake(device.userId, device.deviceId); } catch (error) { log.warn?.('xmpp: wake-up push failed', error?.message); }
+        response.status(202).json({ pushed });
       });
     },
   };

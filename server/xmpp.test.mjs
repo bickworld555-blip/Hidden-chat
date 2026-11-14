@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, test } from 'node:test';
 import { createChatServer } from './index.mjs';
-import { createXmpp, localpartFor, signXmppToken, xmppConfigFromEnv, XMPP_TOKEN_TTL_SECONDS } from './xmpp.mjs';
+import { createXmpp, localpartFor, signOfflineHook, signXmppToken, xmppConfigFromEnv, XMPP_TOKEN_TTL_SECONDS } from './xmpp.mjs';
 
 const PASSWORD = 'correct horse battery staple';
 const SECRET = Buffer.alloc(48, 7).toString('base64url');
@@ -32,6 +32,10 @@ async function fakeEjabberd(url, init) {
   return json(404, { status: 'error' });
 }
 
+// A fake FCM sender: every push recorded with its target token.
+const pushes = [];
+const fakePush = { send: async (token, data, options) => { pushes.push({ token, data, options }); return { ok: true }; } };
+
 let directory;
 let service;
 let baseUrl;
@@ -41,7 +45,7 @@ let counter = 0;
 
 before(async () => {
   directory = mkdtempSync(join(tmpdir(), 'relay-xmpp-'));
-  service = createChatServer({ port: 0, host: '127.0.0.1', databasePath: join(directory, 'db.sqlite'), pushSender: null, xmppConfig: config, xmppFetch: fakeEjabberd });
+  service = createChatServer({ port: 0, host: '127.0.0.1', databasePath: join(directory, 'db.sqlite'), pushSender: fakePush, xmppConfig: config, xmppFetch: fakeEjabberd });
   baseUrl = `http://127.0.0.1:${(await service.listen()).port}`;
   disabledService = createChatServer({ port: 0, host: '127.0.0.1', databasePath: join(directory, 'off.sqlite'), pushSender: null, xmppConfig: xmppConfigFromEnv({}), xmppFetch: fakeEjabberd });
   disabledUrl = `http://127.0.0.1:${(await disabledService.listen()).port}`;
@@ -204,4 +208,59 @@ test('a server still starting (migrations running) answers API calls and sockets
   assert.notEqual((await fetch(`${url}/api/v1/auth/availability?username=someone`)).status, 503, 'once started, requests go through');
   await starting.close();
   rmSync(dir, { recursive: true, force: true });
+});
+
+// --- Reachability and the offline wake-up hook ------------------------------------------------------------------
+
+const PUSH_KEY = Buffer.alloc(32, 9).toString('base64');
+async function withKeysAndPush(token, pushToken) {
+  // A device with end-to-end keys (so it is in device lists) and a push registration (so it can be woken).
+  const { createProtocol } = await import('../src/e2e/protocol.js');
+  const memory = new Map();
+  const protocol = createProtocol({ storage: { get: async (k) => memory.get(k), set: async (k, v) => { memory.set(k, v); }, del: async (k) => { memory.delete(k); } } });
+  assert.equal((await api('/api/v1/e2e/keys', { method: 'PUT', token, body: await protocol.prepareUpload({ serverPreKeyCount: 0 }) })).status < 300, true);
+  assert.equal((await api('/api/v1/push/devices', { method: 'POST', token, body: { token: pushToken, key: PUSH_KEY, platform: 'android' } })).status, 200);
+}
+const hook = (body, { secret = SECRET, signature } = {}) => {
+  const raw = JSON.stringify(body);
+  return fetch(`${baseUrl}/api/v1/xmpp/offline`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-hm-signature': signature ?? signOfflineHook(secret, raw) }, body: raw });
+};
+
+test('device lists show which devices are reachable over XMPP, so senders can route during the move', async () => {
+  const frank = await account();
+  const viewer = await account();
+  await withKeysAndPush(frank.token, `fcm-frank-phone-${'x'.repeat(30)}`);
+  await withKeysAndPush(frank.otherToken, `fcm-frank-laptop-${'x'.repeat(30)}`);
+  const before = (await api(`/api/v1/e2e/users/${frank.user.id}/devices`, { token: viewer.token })).body.devices;
+  assert.equal(before.length, 2);
+  assert.ok(before.every((device) => device.xmpp === undefined), 'nobody has signed in to XMPP yet');
+  const jid = (await api('/api/v1/xmpp/token', { method: 'POST', token: frank.token })).body.jid;
+  const after = (await api(`/api/v1/e2e/users/${frank.user.id}/devices`, { token: viewer.token })).body.devices;
+  assert.deepEqual(after.map((device) => device.xmpp).filter(Boolean), [jid], 'only the device that signed in to XMPP has an address');
+});
+
+test('the offline hook wakes exactly the device whose message waits, once per burst; forged or stale calls are refused', async () => {
+  const gina = await account();
+  await withKeysAndPush(gina.token, `fcm-gina-phone-${'y'.repeat(30)}`);
+  await withKeysAndPush(gina.otherToken, `fcm-gina-tablet-${'y'.repeat(30)}`);
+  const localpart = (await api('/api/v1/xmpp/token', { method: 'POST', token: gina.token })).body.jid.split('@')[0];
+  const ts = Math.floor(Date.now() / 1000);
+  pushes.length = 0;
+
+  assert.equal((await hook({ to: localpart, ts }, { signature: 'f'.repeat(64) })).status, 401, 'a forged signature');
+  assert.equal((await hook({ to: localpart, ts }, { secret: Buffer.alloc(48, 1).toString('base64url') })).status, 401, 'another key');
+  assert.equal((await hook({ to: localpart, ts: ts - 3600 })).status, 400, 'an old request (replay)');
+  assert.equal((await hook({ to: 'admin', ts })).status, 400, 'not a device address');
+  assert.equal(pushes.length, 0);
+
+  const woken = await hook({ to: localpart, ts });
+  assert.equal(woken.status, 202);
+  assert.equal((await woken.json()).pushed, 1);
+  assert.deepEqual(pushes.map((push) => push.token), [`fcm-gina-phone-${'y'.repeat(30)}`], 'only that device, not the tablet');
+  assert.ok(pushes[0].data.enc && pushes[0].data.iv, 'the wake-up is encrypted for the device like every push');
+  assert.deepEqual(pushes[0].options, { collapseKey: 'xmpp-wake', ttlSeconds: 86_400 });
+
+  const again = await (await hook({ to: localpart, ts })).json();
+  assert.deepEqual(again, { pushed: 0, coalesced: true }, 'a second message seconds later does not push again');
+  assert.equal((await (await hook({ to: `d${'0'.repeat(40)}`, ts })).json()).pushed, 0, 'an unknown device is ignored');
 });

@@ -62,16 +62,24 @@ export function parseKeyUpload(body) {
   return { identity, spk, preKeys };
 }
 
-export function registerE2e({ app, db, requireSession }) {
+// `xmppHost` (when the XMPP core is on): each device in a device list also carries its XMPP address, so senders can
+// see which devices are reachable over XMPP while devices move over (server/xmpp.mjs). A device without one has not
+// signed in to XMPP yet and is reached through this server as before.
+export function registerE2e({ app, db, requireSession, xmppHost = null }) {
   const json = express.json({ limit: '64kb' });
 
   // Devices that can receive end-to-end messages: they published keys and are still signed in.
-  const keyDevicesOf = db.prepare(`SELECT d.device_id AS "deviceId", d.identity_dh AS "dh", d.identity_sig AS "sig"
-    FROM e2e_devices d WHERE d.user_id = ? AND EXISTS (SELECT 1 FROM sessions s WHERE s.user_id = d.user_id AND s.device_id = d.device_id)
+  const keyDevicesOf = db.prepare(`SELECT d.device_id AS "deviceId", d.identity_dh AS "dh", d.identity_sig AS "sig", x.localpart AS "xmpp"
+    FROM e2e_devices d LEFT JOIN xmpp_accounts x ON x.user_id = d.user_id AND x.device_id = d.device_id
+    WHERE d.user_id = ? AND EXISTS (SELECT 1 FROM sessions s WHERE s.user_id = d.user_id AND s.device_id = d.device_id)
     ORDER BY d.device_id`);
 
   async function devicesOf(userId) {
-    return (await keyDevicesOf.all(userId)).map((row) => ({ deviceId: row.deviceId, identity: { dh: row.dh, sig: row.sig } }));
+    return (await keyDevicesOf.all(userId)).map((row) => ({
+      deviceId: row.deviceId,
+      identity: { dh: row.dh, sig: row.sig },
+      ...(xmppHost && row.xmpp ? { xmpp: `${row.xmpp}@${xmppHost}` } : {}),
+    }));
   }
 
   async function forgetStaleDevices() {
