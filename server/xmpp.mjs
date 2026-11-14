@@ -79,6 +79,9 @@ export function createXmpp({ db, config = xmppConfigFromEnv(), fetchImpl = globa
   const lastWake = new Map();
   const endedAccounts = db.prepare(`SELECT localpart FROM xmpp_accounts x
     WHERE NOT EXISTS (SELECT 1 FROM sessions s WHERE s.user_id = x.user_id AND s.device_id = x.device_id)`);
+  const liveAccounts = db.prepare(`SELECT localpart FROM xmpp_accounts x
+    WHERE EXISTS (SELECT 1 FROM sessions s WHERE s.user_id = x.user_id AND s.device_id = x.device_id)`);
+  const allLocalparts = db.prepare('SELECT localpart FROM xmpp_accounts');
   const authorization = `Basic ${Buffer.from(`${config.adminJid}:${config.adminPassword}`).toString('base64')}`;
 
   // One admin API call. Resolves { status, body }; a network failure or timeout throws.
@@ -107,23 +110,55 @@ export function createXmpp({ db, config = xmppConfigFromEnv(), fetchImpl = globa
     if (status !== 200) throw Object.assign(new Error(`ejabberd unregister failed (${status})`), { status });
   }
 
-  /** The device's account, created on ejabberd first when it is new. */
+  /**
+   * The device's account. The row is written BEFORE ejabberd creates the account (and dropped if that fails), so an
+   * account on ejabberd always has a row: anything on ejabberd without one is an orphan the sweep may remove.
+   */
   async function ensureAccount(userId, deviceId) {
     const known = await accountOf.get(userId, deviceId);
     if (known) return known.localpart;
     const localpart = localpartFor(userId, deviceId);
-    await register(localpart);
     await insertAccount.run(userId, deviceId, localpart, now());
+    try {
+      await register(localpart);
+    } catch (error) {
+      await deleteAccount.run(localpart).catch(() => {});
+      throw error;
+    }
     return localpart;
+  }
+
+  // ejabberd as a mirror of xmpp_accounts: device accounts with no row are removed (left by a crash, or by data
+  // restored from a backup); rows of signed-in devices whose account is missing are created again. ejabberd's list
+  // is read first, so an account being created meanwhile already has its row and is never taken for an orphan.
+  async function sweepMirror() {
+    const { status, body } = await admin('registered_users', {});
+    if (status !== 200 || !Array.isArray(body)) throw Object.assign(new Error(`ejabberd registered_users failed (${status})`), { status });
+    const onEjabberd = new Set(body.filter((user) => /^d[0-9a-f]{40}$/.test(user)));
+    const known = new Set((await allLocalparts.all()).map((row) => row.localpart));
+    let removed = 0;
+    let restored = 0;
+    for (const localpart of onEjabberd) {
+      if (known.has(localpart)) continue;
+      try { await unregister(localpart); removed += 1; } catch (error) { log.warn?.('xmpp: could not remove an orphaned account', error?.message); }
+    }
+    for (const { localpart } of await liveAccounts.all()) {
+      if (onEjabberd.has(localpart)) continue;
+      try { await register(localpart); restored += 1; } catch (error) { log.warn?.('xmpp: could not restore a device account', error?.message); }
+    }
+    return { removed, restored };
   }
 
   /** Removes the accounts of devices whose sessions have ended (a failed removal is retried on the next run). */
   let reconciling = null;
-  function reconcile() {
+  function reconcile({ mirror = false } = {}) {
     if (!config.enabled) return Promise.resolve(0);
     reconciling ??= (async () => {
       let removed = 0;
       try {
+        if (mirror) {
+          try { removed += (await sweepMirror()).removed; } catch (error) { log.warn?.('xmpp: mirror sweep failed', error?.message); }
+        }
         for (const { localpart } of await endedAccounts.all()) {
           try {
             await unregister(localpart);

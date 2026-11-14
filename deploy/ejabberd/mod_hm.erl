@@ -75,11 +75,21 @@ notify(LServer, LUser) ->
                        {customize_hostname_check, [{match_fun, public_key:pkix_verify_hostname_match_fun(https)}]}],
             Request = {binary_to_list(Url), Headers, "application/json", Body},
             case httpc:request(post, Request, [{timeout, 8000}, {connect_timeout, 4000}, {ssl, SslOpts}],
-                               [{sync, false}, {receiver, fun(_Reply) -> ok end}]) of
+                               [{sync, false}, {receiver, fun(Reply) -> log_reply(LUser, Reply) end}]) of
                 {ok, _RequestId} -> ok;
                 {error, Reason} -> ?WARNING_MSG("mod_hm: wake-up hook not sent: ~p", [Reason])
             end
     end.
+
+%% The API answers 202 when the hook is accepted; anything else is worth seeing in the log.
+log_reply(LUser, {_RequestId, {{_, 202, _}, _Headers, _Body}}) ->
+    ?INFO_MSG("mod_hm: wake-up hook accepted for ~s", [LUser]);
+log_reply(LUser, {_RequestId, {{_, Status, _}, _Headers, _Body}}) ->
+    ?WARNING_MSG("mod_hm: wake-up hook for ~s answered ~p", [LUser, Status]);
+log_reply(LUser, {_RequestId, {error, Reason}}) ->
+    ?WARNING_MSG("mod_hm: wake-up hook for ~s failed: ~p", [LUser, Reason]);
+log_reply(_LUser, _Other) ->
+    ok.
 
 %%% --- 2. Group fan-out --------------------------------------------------------------------------------------
 

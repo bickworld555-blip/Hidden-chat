@@ -29,6 +29,7 @@ async function fakeEjabberd(url, init) {
   }
   if (command === 'unregister') { ejabberd.accounts.delete(body.user); return json(200, ''); }
   if (command === 'kick_user') return json(200, 0);
+  if (command === 'registered_users') return json(200, ['admin', ...ejabberd.accounts]);
   return json(404, { status: 'error' });
 }
 
@@ -263,4 +264,46 @@ test('the offline hook wakes exactly the device whose message waits, once per bu
   const again = await (await hook({ to: localpart, ts })).json();
   assert.deepEqual(again, { pushed: 0, coalesced: true }, 'a second message seconds later does not push again');
   assert.equal((await (await hook({ to: `d${'0'.repeat(40)}`, ts })).json()).pushed, 0, 'an unknown device is ignored');
+});
+
+test('deleting a user removes every one of its device accounts on ejabberd', async () => {
+  const hana = await account();
+  const phone = (await api('/api/v1/xmpp/token', { method: 'POST', token: hana.token })).body.jid.split('@')[0];
+  const laptop = (await api('/api/v1/xmpp/token', { method: 'POST', token: hana.otherToken })).body.jid.split('@')[0];
+  assert.equal((await api('/api/v1/account/delete', { method: 'POST', body: { username: hana.username, password: PASSWORD, confirm: 'DELETE' } })).status < 300, true);
+  const deadline = Date.now() + 3000;
+  while ((ejabberd.accounts.has(phone) || ejabberd.accounts.has(laptop)) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 20));
+  assert.ok(!ejabberd.accounts.has(phone) && !ejabberd.accounts.has(laptop), 'no account is left behind on ejabberd');
+});
+
+test('the mirror sweep removes accounts ejabberd has but the table does not, and restores missing ones', async () => {
+  const { DatabaseSync } = await import('node:sqlite');
+  const db = new DatabaseSync(':memory:');
+  db.exec('CREATE TABLE sessions (token_hash TEXT PRIMARY KEY, user_id TEXT, device_id TEXT)');
+  const { ensureXmppSchema } = await import('./xmpp.mjs');
+  ensureXmppSchema(db);
+  const fake = { accounts: new Set(), calls: [] };
+  const fetchImpl = async (url, init) => {
+    const command = String(url).split('/').pop(); const body = JSON.parse(init.body); fake.calls.push(`${command}:${body.user ?? ''}`);
+    const json = (status, value) => new Response(JSON.stringify(value), { status });
+    if (command === 'registered_users') return json(200, ['admin', ...fake.accounts]);
+    if (command === 'register') { fake.accounts.add(body.user); return json(200, 'ok'); }
+    if (command === 'unregister') { fake.accounts.delete(body.user); return json(200, ''); }
+    return json(200, 0);
+  };
+  const xmpp = createXmpp({ db, config, fetchImpl, log: { warn() {} } });
+  db.prepare("INSERT INTO sessions VALUES ('t1', 'u1', 'live')").run();
+  const live = await xmpp.ensureAccount('u1', 'live');
+  const orphan = `d${'a'.repeat(40)}`;
+  fake.accounts.add(orphan);                       // on ejabberd, no row (a crash, a restore)
+  fake.accounts.delete(live);                      // a signed-in device whose account went missing
+  await xmpp.reconcile({ mirror: true });
+  assert.ok(!fake.accounts.has(orphan), 'the orphan is removed');
+  assert.ok(fake.accounts.has(live), 'the live device gets its account back');
+  assert.ok(!fake.calls.some((call) => call.endsWith(':admin')), 'the admin account is never touched');
+  assert.deepEqual(fake.calls.filter((call) => call.startsWith('unregister:')), [`unregister:${orphan}`], 'only the orphan is removed');
+  // A failed creation leaves no row behind, so the sweep cannot mistake anything.
+  const failing = createXmpp({ db, config, fetchImpl: async () => new Response('{}', { status: 500 }), log: { warn() {} } });
+  await assert.rejects(() => failing.ensureAccount('u2', 'dev'));
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM xmpp_accounts WHERE user_id = ?').get('u2').n, 0);
 });

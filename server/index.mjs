@@ -3192,6 +3192,8 @@ export function createChatServer({
         throw error;
       }
       started = true;
+      // XMPP device accounts left behind (crash, restore) go at start, not an hour later.
+      sweep(() => xmpp.reconcile({ mirror: true }));
       expiryTimer = setInterval(() => {
         sweep(() => extras.deliverScheduled());
         sweep(expireMessages);
@@ -3206,8 +3208,8 @@ export function createChatServer({
         sweep(() => backups.removeOrphanedBackups());
         sweep(() => rateLimiter.sweep());
         sweep(() => messageLimiter.sweep());
-        // Devices whose sessions expired lose their XMPP accounts too.
-        sweep(() => xmpp.reconcile());
+        // Devices whose sessions expired lose their XMPP accounts too; ejabberd is brought back in line with the table.
+        sweep(() => xmpp.reconcile({ mirror: true }));
       }, 60 * 60 * 1000);
       uploadSweep.unref();
       await eventPilot.publish('server:listening', server.address());

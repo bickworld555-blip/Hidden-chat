@@ -84,6 +84,10 @@ test('schema migration is idempotent, private, RLS-enabled and case-insensitive'
   await migratePostgres(pool);
   const tables = await pool.query("SELECT tablename FROM pg_tables WHERE schemaname = 'relay'");
   assert.equal(tables.rows.length, IMPORT_TABLES.length + 1);
+  // An XMPP device row outlives its user until ejabberd has removed the account (migration 029): no cascade.
+  const xmppKeys = await pool.query(`SELECT 1 FROM information_schema.table_constraints
+    WHERE table_schema = 'relay' AND table_name = 'xmpp_accounts' AND constraint_type = 'FOREIGN KEY'`);
+  assert.equal(xmppKeys.rows.length, 0);
   const rls = await pool.query("SELECT relrowsecurity FROM pg_class JOIN pg_namespace n ON n.oid = relnamespace WHERE n.nspname = 'relay' AND relkind = 'r'");
   assert.ok(rls.rows.every((row) => row.relrowsecurity));
   for (const role of ['anon', 'authenticated']) {
