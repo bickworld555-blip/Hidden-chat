@@ -213,7 +213,7 @@ test('uploads: priority queue (voice and small first), limited concurrency, over
 
 test('uploads go through the queue and keep an Android "Sending…" foreground service while running', async () => {
   const upload = await source('src/upload.js');
-  assert.ok(upload.includes('const uploadQueue = createUploadQueue({ concurrency: 2, onChange: reportUploads });'));
+  assert.ok(upload.includes('const uploadQueue = createUploadQueue({ concurrency: 3, onChange: reportUploads });'));
   assert.ok(upload.includes("nativeSetUploads({ count: state.count, label: state.label, progress: Math.round(state.progress * 100) });"));
   const manifest = await source('android/app/src/main/AndroidManifest.xml');
   assert.match(manifest, /android:name="\.UploadService"\s+android:exported="false"\s+android:foregroundServiceType="dataSync"/);

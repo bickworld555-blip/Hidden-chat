@@ -4,6 +4,7 @@
 // Animated GIFs, SVGs and documents are always sent as they are. Videos: Standard re-encodes big ones on the phone
 // (src/videoCompress.js, Android app only); HD sends them as recorded.
 import { compressVideoForUpload, needsVideoCompression } from './videoCompress.js';
+import { thumbFromSource } from './mediaThumb.js';
 
 export const QUALITY = Object.freeze({
   standard: { maxSide: 1600, quality: 0.8 },
@@ -29,8 +30,9 @@ const replaceExtension = (filename, extension) => {
 };
 
 /**
- * Prepares a picked file for sending at `quality` ('standard' | 'hd'). Returns { blob, filename }; when the photo
- * can't be decoded on this device the original is sent.
+ * Prepares a picked file for sending at `quality` ('standard' | 'hd'). Returns { blob, filename, thumb? }; when the
+ * photo can't be decoded on this device the original is sent. A photo's micro thumbnail (src/mediaThumb.js) is drawn
+ * from the resized picture already in memory, so the sent photo is never decoded a second time.
  */
 export async function prepareForSend(file, filename, quality = 'standard') {
   const preset = QUALITY[quality] ?? QUALITY.standard;
@@ -45,18 +47,20 @@ export async function prepareForSend(file, filename, quality = 'standard') {
   try {
     const size = scaledSize(bitmap.width, bitmap.height, preset.maxSide);
     // HD keeps the original bytes whenever no scaling is needed; Standard re-encodes large JPEG-heavy photos too.
-    if (!size && (quality === 'hd' || file.size <= 600 * 1024)) return { blob: file, filename };
+    if (!size && (quality === 'hd' || file.size <= 600 * 1024)) return { blob: file, filename, thumb: thumbFromSource(bitmap, bitmap.width, bitmap.height) };
     const target = size ?? { width: bitmap.width, height: bitmap.height };
     const canvas = typeof OffscreenCanvas === 'function' ? new OffscreenCanvas(target.width, target.height) : Object.assign(document.createElement('canvas'), target);
     const context = canvas.getContext('2d');
     context.fillStyle = '#ffffff';
     context.fillRect(0, 0, target.width, target.height);
     context.drawImage(bitmap, 0, 0, target.width, target.height);
+    // The preview is drawn from the resized picture (measured: drawing it from the full-size photo cost more than it saved).
+    const thumb = thumbFromSource(canvas, target.width, target.height);
     const blob = canvas.convertToBlob
       ? await canvas.convertToBlob({ type: 'image/jpeg', quality: preset.quality })
       : await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', preset.quality));
-    if (!blob || (!size && blob.size >= file.size)) return { blob: file, filename };
-    return { blob: new File([blob], replaceExtension(filename, 'jpg'), { type: 'image/jpeg' }), filename: replaceExtension(filename, 'jpg') };
+    if (!blob || (!size && blob.size >= file.size)) return { blob: file, filename, thumb };
+    return { blob: new File([blob], replaceExtension(filename, 'jpg'), { type: 'image/jpeg' }), filename: replaceExtension(filename, 'jpg'), thumb };
   } finally {
     bitmap.close?.();
   }

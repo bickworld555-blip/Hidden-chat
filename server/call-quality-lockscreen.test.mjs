@@ -9,19 +9,21 @@ const root = new URL('../', import.meta.url);
 const source = (path) => readFile(new URL(path, root), 'utf8');
 const java = (file) => source(`android/app/src/main/java/io/github/bickworld555/hiddenchat/${file}`);
 
-test('video calls ask the camera for Full HD at 30 fps with a bitrate that can carry it', async () => {
+test('video calls send 720p at 30 fps within a mobile-sized bitrate, keeping motion smooth under pressure', async () => {
+  // 1080p at up to 4 Mbps froze calls on phones over 4G (the encoder and the uplink fell behind): 720p, 1.5 Mbps.
   assert.deepEqual(videoConstraints('user'), {
     facingMode: 'user',
-    width: { ideal: 1920, max: 1920 },
-    height: { ideal: 1080, max: 1080 },
+    width: { ideal: 1280, max: 1280 },
+    height: { ideal: 720, max: 720 },
     frameRate: { ideal: 30, max: 30 },
   });
-  assert.equal(mediaConstraints('video', 'environment').video.height.ideal, 1080);
+  assert.equal(mediaConstraints('video', 'environment').video.height.ideal, 720);
   assert.equal(mediaConstraints('audio').video, false, 'voice calls never open the camera');
-  assert.ok(VIDEO_MAX_BITRATE >= 3_000_000, `1080p30 needs a few Mbit/s, cap is ${VIDEO_MAX_BITRATE}`);
+  assert.ok(VIDEO_MAX_BITRATE >= 1_000_000 && VIDEO_MAX_BITRATE <= 2_000_000, `a 4G uplink carries 1–2 Mbit/s, cap is ${VIDEO_MAX_BITRATE}`);
   assert.equal(VIDEO_MAX_FRAMERATE, 30);
   const engine = await source('src/callEngine.js');
-  assert.ok(engine.includes("params.degradationPreference = 'balanced'"), 'congestion does not drop straight to a blurry resolution');
+  assert.ok(engine.includes("params.degradationPreference = 'maintain-framerate'"), 'under pressure the picture softens instead of freezing');
+  assert.ok(engine.includes("sender.track.contentHint = 'motion'"), 'the encoder favours smooth motion');
 });
 
 test('call switches that are off show as a quiet Calls-tab row, never a popup', async () => {

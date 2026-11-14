@@ -449,8 +449,11 @@ export function createCallEngine({
         params.encodings[0].maxFramerate = VIDEO_MAX_FRAMERATE;
         params.encodings[0].scaleResolutionDownBy = 1;
       }
-      // Under congestion trade a little of both rather than dropping straight to a blurry low resolution.
-      if (params.degradationPreference !== undefined || kind === 'video') params.degradationPreference = 'balanced';
+      // Under congestion or a busy processor keep the motion smooth and lower the resolution instead (a softer
+      // picture reads as fine; a stuttering or frozen one reads as a broken call).
+      if (params.degradationPreference !== undefined || kind === 'video') params.degradationPreference = 'maintain-framerate';
+      // The camera is people moving: the encoder favours smooth frames over sharp still detail.
+      if (kind === 'video' && sender.track && 'contentHint' in sender.track && !sender.track.contentHint) sender.track.contentHint = 'motion';
       Promise.resolve(sender.setParameters(params)).catch(() => {});
     } catch {}
   }

@@ -162,7 +162,8 @@ function reportUploads(state) {
   if (state.count === 0 || Date.now() - lastNativeReport >= NATIVE_REPORT_MS) send();
   else pendingNativeReport = setTimeout(send, NATIVE_REPORT_MS);
 }
-const uploadQueue = createUploadQueue({ concurrency: 2, onChange: reportUploads });
+// Three at once, as the chat queues them (ChatWindow UPLOAD_PARALLEL): picked photos go up together.
+const uploadQueue = createUploadQueue({ concurrency: 3, onChange: reportUploads });
 
 /**
  * Resolves to { id, filename, contentType, byteSize } once the server has the whole file. Uploads wait in a

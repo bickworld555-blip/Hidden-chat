@@ -1227,8 +1227,9 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
       uploadAndSend(item.file, item.file.name, viewOnce ? 'viewonce' : 'media', undefined, {
         extras: { ...(item.caption ? { caption: item.caption } : {}), ...(album ? { album } : {}) },
         prepare: item.kind === 'file' ? null : async () => {
-          const prepared = await prepareForSend(item.file, item.file.name, quality);
-          const thumb = viewOnce ? '' : await makeThumb(prepared.blob);
+          const { thumb: photoThumb, ...prepared } = await prepareForSend(item.file, item.file.name, quality);
+          // A photo's preview comes from its own decode; a video's from a frame.
+          const thumb = viewOnce ? '' : photoThumb || await makeThumb(prepared.blob);
           return { ...prepared, extras: thumb ? { thumb } : {} };
         },
       });

@@ -536,7 +536,7 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
     setUploading(1);
     try {
       const prepared = document ? { blob: file, filename: file.name || 'attachment' } : await prepareForSend(file, file.name || 'attachment', quality);
-      const thumb = document ? '' : await makeThumb(prepared.blob);
+      const thumb = document ? '' : prepared.thumb || await makeThumb(prepared.blob);
       const plain = prepared.blob instanceof File ? prepared.blob : new File([prepared.blob], prepared.filename, { type: prepared.blob.type });
       // Encrypted on this device before upload; the key travels in the end-to-end encrypted group message.
       const { upload, descriptor } = await sealForUpload(plain);

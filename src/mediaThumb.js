@@ -8,6 +8,11 @@ export const THUMB_PATTERN = /^data:image\/jpeg;base64,[A-Za-z0-9+/]+={0,2}$/;
 /** The thumbnail if it is one we accept (a small base64 JPEG), else ''. */
 export const cleanThumb = (value) => (typeof value === 'string' && value.length <= THUMB_MAX_CHARS && THUMB_PATTERN.test(value) ? value : '');
 
+/** The micro thumbnail of an already decoded image or video frame (no second decode). */
+export function thumbFromSource(source, width, height) {
+  try { return cleanThumb(draw(source, width, height)); } catch { return ''; }
+}
+
 function draw(source, width, height) {
   const scale = Math.min(1, THUMB_EDGE / Math.max(width, height));
   const canvas = document.createElement('canvas');

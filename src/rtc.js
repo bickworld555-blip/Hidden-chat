@@ -50,9 +50,11 @@ export function turnServerFromEnv({ url, username, credential } = {}) {
 export function videoConstraints(facing = 'user') {
   return {
     facingMode: facing,
-    // Full HD at 30 fps when the camera and connection allow it; WebRTC scales down by itself on weak networks.
-    width: { ideal: 1920, max: 1920 },
-    height: { ideal: 1080, max: 1080 },
+    // 720p at 30 fps, as video calls on phones are made (WhatsApp-class calls run 480p–720p). 1080p made the phone
+    // encode 2.25× the pixels and asked a mobile uplink for up to 4 Mbps: the encoder fell behind, the phone heated
+    // up and frames froze. WebRTC still lowers the resolution by itself on a weak network.
+    width: { ideal: 1280, max: 1280 },
+    height: { ideal: 720, max: 720 },
     frameRate: { ideal: 30, max: 30 },
   };
 }
@@ -66,8 +68,9 @@ export function mediaConstraints(mode, facing = 'user') {
 
 export const VIDEO_CODEC_ORDER = Object.freeze(['video/VP8', 'video/H264']);
 export const AUDIO_MAX_BITRATE = 48_000;
-// Enough for sharp 1080p30; a cap, not a target (bandwidth estimation still lowers it on slow links).
-export const VIDEO_MAX_BITRATE = 4_000_000;
+// Enough for sharp 720p30; a cap, not a target (bandwidth estimation still lowers it on slow links). 4G uplinks
+// often give a call 1–2 Mbps, so a higher cap only invites bursts the network then drops (freezes).
+export const VIDEO_MAX_BITRATE = 1_500_000;
 export const VIDEO_MAX_FRAMERATE = 30;
 
 // Stable reorder: preferred codecs first in the given order; everything else (VP9, AV1, rtx, red,
