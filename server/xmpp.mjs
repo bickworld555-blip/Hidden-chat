@@ -22,6 +22,7 @@ export const OFFLINE_HOOK_MAX_SKEW_SECONDS = 300;
 export const WAKE_COALESCE_MS = 15_000;
 export const DEFAULT_XMPP_HOST = 'chat.hiddenmessenger.com';
 const ADMIN_TIMEOUT_MS = 8000;
+const FORGET_DEBOUNCE_MS = 200;
 
 // Rollout (Phase 3): who uses XMPP. XMPP_ROLLOUT_PERCENT (0-100, default 0) of users by a stable hash of the user id,
 // plus everyone in XMPP_ROLLOUT_USER_IDS (comma-separated, for test accounts). Everyone else stays on the current path.
@@ -224,9 +225,26 @@ export function createXmpp({ db, config = xmppConfigFromEnv(), fetchImpl = globa
     return event;
   }
 
+  // mod_hm's verdict cache (hm_clear_verdicts): emptied after a block or membership change. Several changes in a
+  // moment become one call; a failure only means the old verdicts live out their 30 s.
+  let forgetTimer = null;
+  function forgetVerdictsSoon() {
+    if (!config.enabled || forgetTimer) return;
+    forgetTimer = setTimeout(() => {
+      forgetTimer = null;
+      fetchImpl(`${config.apiUrl}/hm_clear_verdicts`, {
+        method: 'POST', headers: { Authorization: authorization, 'Content-Type': 'application/json' }, body: '{}',
+        signal: AbortSignal.timeout(ADMIN_TIMEOUT_MS),
+      }).then((response) => { if (!response.ok) console.error('XMPP verdicts not cleared: HTTP', response.status); })
+        .catch((error) => console.error('XMPP verdicts not cleared:', error.name));
+    }, FORGET_DEBOUNCE_MS);
+    forgetTimer.unref?.();
+  }
+
   return {
     config,
     transportFor,
+    forgetVerdictsSoon,
     /** A device's XMPP address for device lists, only for users moved over (null otherwise). */
     addressFor(userId, localpart) {
       return localpart && transportFor(userId) === 'xmpp' ? `${localpart}@${config.host}` : null;

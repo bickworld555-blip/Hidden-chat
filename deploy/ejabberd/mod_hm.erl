@@ -17,13 +17,21 @@
 %%%    sender gets a not-allowed error) or drop (silently not delivered: the recipient blocked the sender). The rules
 %%%    are the Node server's (blocks, deleted accounts; group fan-out also reaches members who share a group). Verdicts
 %%%    are cached for 30 s per (sender, target, group); when the API cannot be reached the stanza is refused.
+%%%    The Node API empties the cache the moment a rule changes (a block, a group membership): the admin command
+%%%    hm_clear_verdicts, so a block or a removal takes effect at once rather than within 30 s.
+%%% 4. Flood limit: each connection may send messages to other devices at a sustained RATE_PER_S, with bursts up to
+%%%    RATE_BURST (a token bucket kept in the connection's own state; a fan-out costs 1 + items/10). Above it the
+%%%    stanza is refused with policy-violation (type wait) and not relayed. Receipts, read markers and typing count
+%%%    too, so the burst is generous enough for catching up on a long chat.
 -module(mod_hm).
 -behaviour(gen_mod).
 
 -export([start/2, stop/1, reload/3, depends/2, mod_options/1, mod_opt_type/1, mod_doc/0]).
 -export([offline_message/1, user_send_packet/1]).
+-export([clear_verdicts/0]).
 
 -include("logger.hrl").
+-include("ejabberd_commands.hrl").
 -include_lib("xmpp/include/xmpp.hrl").
 
 -define(NS_FANOUT, <<"urn:hiddenmessenger:fanout:1">>).
@@ -31,6 +39,8 @@
 -define(MAX_ITEMS, 1024).
 -define(VERDICTS, hm_verdicts).
 -define(VERDICT_LIFE_MS, 30000).
+-define(RATE_BURST, 200).
+-define(RATE_PER_S, 10).
 
 start(Host, _Opts) ->
     {ok, _} = application:ensure_all_started(inets),
@@ -39,9 +49,11 @@ start(Host, _Opts) ->
     %% After mod_offline (50), so the message is already stored when the device is woken.
     ejabberd_hooks:add(offline_message_hook, Host, ?MODULE, offline_message, 60),
     ejabberd_hooks:add(user_send_packet, Host, ?MODULE, user_send_packet, 40),
+    ejabberd_commands:register_commands(?MODULE, commands()),
     ok.
 
 stop(Host) ->
+    ejabberd_commands:unregister_commands(commands()),
     ejabberd_hooks:delete(offline_message_hook, Host, ?MODULE, offline_message, 60),
     ejabberd_hooks:delete(user_send_packet, Host, ?MODULE, user_send_packet, 40),
     ok.
@@ -57,6 +69,15 @@ mod_opt_type(hook_key) -> econf:binary().
 mod_options(_Host) -> [{hook_url, <<>>}, {check_url, <<>>}, {hook_key, <<>>}].
 
 mod_doc() -> #{desc => [<<"Hidden Messenger: offline wake-up hook and group fan-out.">>]}.
+
+commands() ->
+    [#ejabberd_commands{name = hm_clear_verdicts, tags = [hm],
+                        desc = "Forget cached delivery verdicts (a block or a group membership changed)",
+                        module = ?MODULE, function = clear_verdicts, args = [], result = {res, rescode}}].
+
+clear_verdicts() ->
+    ets_cache:clear(?VERDICTS),
+    ok.
 
 %%% --- 1. Offline wake-up ---------------------------------------------------------------------------------
 
@@ -128,13 +149,19 @@ user_send_packet({#message{to = #jid{luser = <<>>, lresource = <<>>, lserver = L
     case find_fanout(Msg#message.sub_els) of
         false -> Acc;
         El ->
-            N = fan_out(From, LServer, Msg, El),
+            case take_tokens(State, 1 + length(items_of(El)) div 10) of
+                limited ->
+                    refuse_flood(Msg),
+                    {stop, {drop, State}};
+                {ok, State1} ->
+                    N = fan_out(From, LServer, Msg, El),
             ejabberd_router:route(#message{
                 from = jid:make(LServer), to = From, type = normal,
                 sub_els = [#xmlel{name = <<"fanout-ack">>,
                                   attrs = [{<<"xmlns">>, ?NS_FANOUT}, {<<"id">>, fanout_id(Msg, El)},
                                            {<<"n">>, integer_to_binary(N)}]}]}),
-            {stop, {drop, State}}
+                    {stop, {drop, State1}}
+            end
     end;
 %% Anything else addressed to another device: the Node server's rules decide.
 user_send_packet({Pkt, State} = Acc) when is_record(Pkt, message); is_record(Pkt, iq); is_record(Pkt, presence) ->
@@ -143,16 +170,42 @@ user_send_packet({Pkt, State} = Acc) when is_record(Pkt, message); is_record(Pkt
     case relayed_between_devices(From, To) of
         false -> Acc;
         true ->
-            case maps:get(To#jid.luser, verdicts(From#jid.lserver, From#jid.luser, [To#jid.luser], false), <<"deny">>) of
-                <<"allow">> -> Acc;
-                <<"drop">> -> {stop, {drop, State}};
-                _ ->
-                    refuse(Pkt),
-                    {stop, {drop, State}}
+            case take_tokens(State, 1) of
+                limited ->
+                    refuse_flood(Pkt),
+                    {stop, {drop, State}};
+                {ok, State1} ->
+                    case maps:get(To#jid.luser, verdicts(From#jid.lserver, From#jid.luser, [To#jid.luser], false), <<"deny">>) of
+                        <<"allow">> -> {Pkt, State1};
+                        <<"drop">> -> {stop, {drop, State1}};
+                        _ ->
+                            refuse(Pkt),
+                            {stop, {drop, State1}}
+                    end
             end
     end;
 user_send_packet(Acc) ->
     Acc.
+
+%%% --- 4. Flood limit -----------------------------------------------------------------------------------------
+
+%% Token bucket in the c2s state: {Tokens, LastMs}. Refills RATE_PER_S a second up to RATE_BURST.
+take_tokens(State, Cost) ->
+    Now = erlang:monotonic_time(millisecond),
+    {Tokens0, Last} = maps:get(hm_bucket, State, {float(?RATE_BURST), Now}),
+    Tokens = min(float(?RATE_BURST), Tokens0 + (Now - Last) * ?RATE_PER_S / 1000),
+    case Tokens >= Cost of
+        true -> {ok, State#{hm_bucket => {Tokens - Cost, Now}}};
+        false -> limited
+    end.
+
+refuse_flood(#message{type = error}) -> ok;
+refuse_flood(Pkt) ->
+    ?WARNING_MSG("mod_hm: flood limit for ~s", [jid:encode(xmpp:get_from(Pkt))]),
+    ejabberd_router:route(xmpp:make_error(Pkt, xmpp:err_policy_violation())).
+
+items_of(#xmlel{children = Children}) ->
+    [C || #xmlel{name = <<"item">>} = C <- Children].
 
 relayed_between_devices(#jid{luser = FromUser}, #jid{luser = ToUser}) ->
     FromUser =/= ToUser andalso device_localpart(FromUser) andalso device_localpart(ToUser);

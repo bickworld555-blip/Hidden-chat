@@ -198,14 +198,18 @@ export function createChatServer({
   const linkCache = createTtlCache({ max: 50_000 });
   const groupMemberCache = createTtlCache();
   const businessCache = createTtlCache();
+  // ejabberd's own cache of who may reach whom (mod_hm, 30 s): emptied the moment blocks or group memberships change,
+  // so a block or a removal takes effect at once over XMPP too. Bound to the XMPP core once it exists (below).
+  let forgetXmppVerdicts = () => {};
+  const xmppVerdictCache = { clear: () => forgetXmppVerdicts() };
   const db = invalidateOnWrite(rawDatabase(), {
     sessions: { caches: [sessionCache, devicesCache], ignore: [/UPDATEs+(?:relay.)?sessionss+SETs+last_active_ats*=s*?s+WHERE/i] },
-    users: { caches: [sessionCache, userCache], ignore: [/UPDATEs+(?:relay.)?userss+SETs+(?:last_seen_at|country)/i] },
-    blocks: { caches: [blockCache] },
+    users: { caches: [sessionCache, userCache, xmppVerdictCache], ignore: [/UPDATEs+(?:relay.)?userss+SETs+(?:last_seen_at|country)/i] },
+    blocks: { caches: [blockCache, xmppVerdictCache] },
     e2e_devices: { caches: [devicesCache] },
     chat_settings: { caches: [chatSettingCache] },
     contacts: { caches: [linkCache] },
-    group_members: { caches: [groupMemberCache], ignore: [/UPDATEs+(?:relay.)?group_memberss+SETs+(?:last_read_at|cleared_at|auto_delete)/i] },
+    group_members: { caches: [groupMemberCache, xmppVerdictCache], ignore: [/UPDATEs+(?:relay.)?group_memberss+SETs+(?:last_read_at|cleared_at|auto_delete)/i] },
     business_profiles: { caches: [businessCache] },
   });
   function rawDatabase() { return database ?? (databaseUrl
@@ -1302,6 +1306,7 @@ export function createChatServer({
       return pushToDevice(userId, deviceId, body, { collapseKey: sender ? `chat:${sender.id}` : 'xmpp-wake', ttlSeconds: 86_400 });
     } });
   xmpp.register(app, requireSession);
+  forgetXmppVerdicts = () => xmpp.forgetVerdictsSoon();
   const e2e = registerE2e({ app, db, requireSession, xmppAddress: xmpp.addressFor, onXmpp: (userId) => xmpp.transportFor(userId) === 'xmpp',
     connectedDevices: (userId) => new Set([...userSockets(userId)].map((socket) => socket.deviceId).filter(Boolean)) });
   // Signs an account out everywhere: sessions go, sockets close, push stops (suspension, account deletion).

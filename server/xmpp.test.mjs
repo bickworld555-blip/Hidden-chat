@@ -3,7 +3,7 @@
 // existing account 409 / code 10090, unregister 200 even when absent.
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, test } from 'node:test';
@@ -454,4 +454,28 @@ test('a group message may carry its own id (the one it was first sent over XMPP 
   assert.equal((await api(`/api/v1/groups/${groupId}/messages`, { method: 'POST', token: zed.token, body: { content: 'again', id } })).status, 409);
   const named = await api(`/api/v1/groups/${groupId}/messages`, { method: 'POST', token: zed.token, body: { content: 'no id' } });
   assert.match(named.body.id, /^[0-9a-f-]{36}$/, 'without one the server names it as before');
+});
+
+test('a block or membership change empties ejabberd\'s verdict cache at once (one call for a burst of changes)', async () => {
+  const { DatabaseSync } = await import('node:sqlite');
+  const { ensureXmppSchema } = await import('./xmpp.mjs');
+  const openDb = () => { const db = new DatabaseSync(':memory:'); db.exec('CREATE TABLE sessions (token_hash TEXT PRIMARY KEY, user_id TEXT, device_id TEXT)'); ensureXmppSchema(db); return db; };
+  const calls = [];
+  const xmpp = createXmpp({ db: openDb(), config, fetchImpl: async (url, init) => { calls.push({ url, body: init.body }); return new Response('0', { status: 200 }); } });
+  xmpp.forgetVerdictsSoon();
+  xmpp.forgetVerdictsSoon();
+  xmpp.forgetVerdictsSoon();
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].url, /\/hm_clear_verdicts$/);
+  const off = createXmpp({ db: openDb(), config: xmppConfigFromEnv({}), fetchImpl: async () => { throw new Error('no call when XMPP is off'); } });
+  off.forgetVerdictsSoon();
+  const server = readFileSync(new URL('./index.mjs', import.meta.url), 'utf8');
+  const lines = server.split(/\r?\n/);
+  for (const table of ['blocks', 'group_members', 'users']) {
+    assert.ok(lines.some((line) => line.startsWith(`    ${table}: { caches: [`) && line.includes('xmppVerdictCache')), table);
+  }
+  const module = readFileSync(new URL('../deploy/ejabberd/mod_hm.erl', import.meta.url), 'utf8');
+  assert.ok(module.includes('name = hm_clear_verdicts') && module.includes('ets_cache:clear(?VERDICTS)'));
+  assert.ok(module.includes('-define(RATE_BURST, 200).') && module.includes('xmpp:err_policy_violation()'), 'the flood limit');
 });
