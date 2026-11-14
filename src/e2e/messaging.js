@@ -3,7 +3,7 @@
 // sees it (live events, history, catch-up sync). Group messages are sealed and opened in GroupsView through
 // client.js, with the same plaintext memory.
 import { useChatStore } from '../store.js';
-import { applyDeviceLists, e2eActive, isEnvelope, openContent, openDirectMessage, openDirectMessages, openGroupMessage, sealDirect } from './client.js';
+import { applyDeviceLists, e2eActive, isEnvelope, openContent, openDirectMessage, openDirectMessages, openGroupMessage, resealForDevice, sealDirect } from './client.js';
 import { isUserContent } from './envelope.js';
 import { controlContent, parseControl } from './lifecycle.js';
 import { getXmppSession } from '../xmpp/active.js';
@@ -76,6 +76,71 @@ export async function handleRejected(event, client) {
   if (!queued) return false;
   const { id, receiverId, content, replyTo, forwarded } = queued;
   return transmitDirect(client, { id, receiverId, content, ...(replyTo ? { replyTo } : {}), ...(forwarded ? { forwarded } : {}) });
+}
+
+// --- "Waiting for this message": asking the sender to seal it again -------------------------------------------------
+//
+// A copy this device cannot open (sealed for another device, a lost or used-up one-time key, a broken session) is not
+// left waiting forever: this device asks the device that sealed it (e2e:retry, through the server, carrying ids and
+// the error only), and that device — which still holds the plaintext — seals it again for this device alone, starting
+// a fresh session when the old one is unusable (message:reseal). The answer replaces "Waiting for this message".
+// Asked at most RETRY_TRIES times per message, RETRY_SPACING_MS apart, and at most RETRY_PER_MINUTE requests a minute.
+export const RETRY_TRIES = 3;
+export const RETRY_SPACING_MS = 10 * 60 * 1000;
+export const RETRY_PER_MINUTE = 30;
+const retryAsked = new Map();   // message id -> { tries, at }
+let retryWindow = { start: 0, count: 0 };
+const answered = new Map();     // "messageId:userId:deviceId" -> times answered
+
+/** True when a request went out for this message. `now` for tests. */
+export function requestResend(client, message, { me = useChatStore.getState().userId, now = Date.now() } = {}) {
+  if (!client?.send || !message?.e2eError || !message.sealedBy || typeof message.id !== 'string' || !message.senderId) return false;
+  const previous = retryAsked.get(message.id);
+  if (previous && (previous.tries >= RETRY_TRIES || now - previous.at < RETRY_SPACING_MS)) return false;
+  if (now - retryWindow.start >= 60_000) retryWindow = { start: now, count: 0 };
+  if (retryWindow.count >= RETRY_PER_MINUTE) return false;
+  retryWindow.count += 1;
+  retryAsked.set(message.id, { tries: (previous?.tries ?? 0) + 1, at: now });
+  if (retryAsked.size > 5000) retryAsked.delete(retryAsked.keys().next().value);
+  return Boolean(client.send({ type: 'e2e:retry', messageId: message.id, userId: message.senderId, senderDeviceId: message.sealedBy, error: String(message.e2eError).slice(0, 40), peerId: message.senderId === me ? message.receiverId : null }));
+}
+
+/**
+ * Another device could not open a message: if this device sealed it and still holds it readable, seal it again for
+ * that device and send it there. Only messages this account sent, only to the person they were sent to (or this
+ * account's own other devices), at most RETRY_TRIES answers per message and device.
+ */
+export async function answerResendRequest(client, event, { me = useChatStore.getState().userId, deviceId = null } = {}) {
+  if (!client?.send || typeof event?.messageId !== 'string' || typeof event.fromUserId !== 'string' || typeof event.fromDeviceId !== 'string') return false;
+  if (deviceId && event.senderDeviceId && event.senderDeviceId !== deviceId) return false;     // another of my devices sealed it
+  const message = storedMessage(event.messageId);
+  if (!message || message.senderId !== me || message.e2eError || message.deleted || typeof message.content !== 'string' || !message.content) return false;
+  if (event.fromUserId !== message.receiverId && event.fromUserId !== me) return false;
+  const key = `${event.messageId}:${event.fromUserId}:${event.fromDeviceId}`;
+  const times = answered.get(key) ?? 0;
+  if (times >= RETRY_TRIES) return false;
+  answered.set(key, times + 1);
+  if (answered.size > 5000) answered.delete(answered.keys().next().value);
+  const disappearSeconds = useChatStore.getState().chats.find((chat) => chat.id === message.receiverId)?.disappearSeconds ?? 0;
+  const content = await resealForDevice(event.fromUserId, event.fromDeviceId, message.content, {
+    linkPreview: message.linkPreview, statusReply: message.statusReply, replyToId: message.replyTo?.id, forwarded: message.forwarded === true,
+    caption: message.caption, album: message.album, thumb: message.thumb, poster: message.poster, duration: message.duration, disappearSeconds,
+  }, { error: event.error }).catch(() => null);
+  if (!content) return false;
+  return Boolean(client.send({ type: 'message:reseal', messageId: message.id, toUserId: event.fromUserId, toDeviceId: event.fromDeviceId, content }));
+}
+
+/** A copy sealed again for this device: opened; the readable message replaces "Waiting for this message". */
+export async function applyResealed(event) {
+  if (typeof event?.messageId !== 'string' || typeof event.content !== 'string' || !isEnvelope(event.content)) return null;
+  const known = storedMessage(event.messageId);
+  if (!known || !known.e2eError) return null;
+  const opened = await openDirectMessage({ ...known, content: event.content, senderId: known.senderId }, null);
+  if (!opened || opened.e2eError) return null;
+  const { e2eError: _error, sealedBy: _sealedBy, ...rest } = opened;
+  const fixed = { ...rest, e2eError: undefined, sealedBy: undefined };
+  useChatStore.getState().addMessage(fixed);
+  return fixed;
 }
 
 const SEALED_EVENTS = new Set(['message:new', 'message:ack', 'message:edited', 'group:message', 'group:message-edited', 'message:reaction']);

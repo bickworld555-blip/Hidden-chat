@@ -17,14 +17,14 @@ import { getViewingGroup, readMutedGroups, setGroupMuted, useMutedGroups } from 
 import { classifyIncoming, groupNotificationText, parseConversationOpenParam, shouldAlertGroup } from './notificationChannels.js';
 import { nativeClearSession, nativeRequestStartupPermissions, nativeSetSession, nativeShell, nativeStartBackground, nativeState, nativeStopBackground, nativeTakePendingCall, nativeMoveToBackground, nativeClearShare, nativeSetCallActive, nativeClearMessageNotifications, nativeClearMissedCalls, nativeTakeMessageActions, nativeSetSystemBarsTheme, onNative } from './native.js';
 import { parseShare } from './shareTarget.js';
-import { onE2eEvent, sealDirect, startE2e, stopE2e, userForXmppAddress, xmppGroupTargetsFor, xmppTargetsFor } from './e2e/client.js';
+import { e2eDeviceId, onE2eEvent, sealDirect, startE2e, stopE2e, userForXmppAddress, xmppGroupTargetsFor, xmppTargetsFor } from './e2e/client.js';
 import { createControlBuffer, expiredIds, resolveControl } from './e2e/lifecycle.js';
 import { startXmppSession } from './xmpp/session.js';
 import { setXmppSession } from './xmpp/active.js';
 import { fetchGroupMessages } from './groupHistory.js';
 import { SECURITY_NOTICE } from './e2e/notices.js';
 import { LOCKED_NOTIFICATION } from './chatLock.js';
-import { handleReactionError, handleRejected, needsOpening, openEvent, openHistory, openRows, storedMessage, transmitDirect } from './e2e/messaging.js';
+import { answerResendRequest, applyResealed, handleReactionError, handleRejected, needsOpening, openEvent, openHistory, openRows, requestResend, storedMessage, transmitDirect } from './e2e/messaging.js';
 import { appSettings, connectAccountSettings } from './settings.js';
 import { getPrivacy, setPrivacy } from './accountApi.js';
 import ShareSheet from './components/ShareSheet.jsx';
@@ -303,6 +303,7 @@ export default function App() {
   useEffect(() => {
     let cancelled = false;
     let realtime;
+    let waitingAskTimer = null;
     async function boot() {
       if (!authReady) return;
       if (!userId || !sessionToken) {
@@ -336,6 +337,9 @@ export default function App() {
         };
         const handleEvent = (event) => {
           if (event.type === 'message:control') { applyControl(event); return; }
+          // "Waiting for this message": another device asks for a copy it can open, or answers this device's request.
+          if (event.type === 'e2e:retry') { answerResendRequest(realtime, event, { deviceId: e2eDeviceId() }).catch(() => {}); return; }
+          if (event.type === 'message:resealed') { applyResealed(event).catch(() => {}); return; }
           if (event.type === 'connection:ready' || event.type === 'community:changed' || (typeof event.type === 'string' && event.type.startsWith('group:'))) setGroupRevision((current) => current + 1);
           handleAccountEvent(event);
           // Blocked or unblocked on another of this account's devices; a contact deleted their account.
@@ -397,6 +401,8 @@ export default function App() {
               || hiddenByBlock(event.message, blockedChats[event.message.senderId], userId);
             addMessage(event.message);
             if (event.type === 'message:ack') acknowledgeMessage(event.message);
+            // Unreadable here: ask the device that sealed it for a copy this device can open.
+            if (event.message.e2eError) requestResend(realtime, event.message);
             // Changes that overtook this message on the way are applied now.
             for (const held of heldControls.take(event.message.id)) applyControl(held);
             // This device has it: tell the sender (one tick → two). Reading it is a separate, explicit step.
@@ -569,7 +575,17 @@ export default function App() {
           contactsLoaded = true;
           return contacts;
         };
+        // Messages this device could not open (history, or kept from before): newest first, within the request limits.
+        const askForWaiting = () => {
+          const waiting = Object.values(useChatStore.getState().messages).flat()
+            .filter((message) => message?.e2eError && message.sealedBy && !message.groupId)
+            .sort((left, right) => String(right.timestamp ?? '').localeCompare(String(left.timestamp ?? '')));
+          for (const message of waiting.slice(0, 60)) requestResend(realtime, message);
+        };
+        clearInterval(waitingAskTimer);
+        waitingAskTimer = setInterval(() => { if (useChatStore.getState().connection === 'online') askForWaiting(); }, 5 * 60 * 1000);
         realtime.onReady = async () => {
+          setTimeout(askForWaiting, 5000);
           const outbox = await getOutbox(userId);
           for (const message of outbox) await transmitDirect(realtime, message);
           // What waited on the server for this device while it was away (src/deliveryAck.js): messages are opened
@@ -652,7 +668,7 @@ export default function App() {
       }
     }
     boot();
-    return () => { cancelled = true; realtime?.close(); xmppRef.current?.close(); xmppRef.current = null; setXmppSession(null); setClient(null); useChatStore.getState().setClient(null); };
+    return () => { cancelled = true; clearInterval(waitingAskTimer); realtime?.close(); xmppRef.current?.close(); xmppRef.current = null; setXmppSession(null); setClient(null); useChatStore.getState().setClient(null); };
   }, [authReady, userId, sessionToken]);
   // The XMPP session (when this account uses it) is told when the app goes to the background and back (XEP-0352), and
   // reconnects at once when the phone gets a wake-up push for a message waiting on the XMPP core (PushService.java).

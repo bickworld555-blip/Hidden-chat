@@ -179,6 +179,8 @@ export function stopE2e() {
 }
 
 export const e2eActive = () => Boolean(current);
+/** This device's id in the end-to-end layer (null before it starts). */
+export const e2eDeviceId = () => current?.deviceId ?? null;
 
 // --- Device lists ---------------------------------------------------------------------------------------
 
@@ -314,6 +316,30 @@ export async function sealDirect(peerId, content, extra = {}, { fresh = false } 
   return envelope;
 }
 
+// Errors after which the sending device starts a fresh session before sealing again: the receiver's state for the
+// current one is missing or broken. "not-addressed" only needs sealing for that device.
+export const RESET_SESSION_ERRORS = new Set(['no-session', 'decrypt-failed', 'stale-prekey']);
+
+/**
+ * Seals `content` again for ONE device of `userId` (a retry request: that device could not open the original).
+ * A fresh session first when its error says the old one is unusable. Resolves the envelope, or null when that device
+ * is not (or no longer) in the user's device list.
+ */
+export async function resealForDevice(userId, deviceId, content, extra = {}, { error = null } = {}) {
+  const session = current;
+  if (!session || typeof content !== 'string' || !content || isEnvelope(content)) return null;
+  await session.ready.catch(() => {});
+  const device = (await devicesOf(userId, { fresh: true })).find((item) => item.deviceId === deviceId);
+  if (!device) return null;
+  if (RESET_SESSION_ERRORS.has(error)) await session.protocol.forgetSession(userId, deviceId);
+  const inner = innerOf(content, extra);
+  const d = await session.protocol.encryptForDevices({ [userId]: [device] }, JSON.stringify(inner), { claimBundles });
+  return buildEnvelope(routingFor(content), { sd: session.deviceId, d });
+}
+
+/** The device that sealed an envelope (its "sd"), or null. */
+export const sealingDevice = (content) => (isEnvelope(content) ? parseEnvelope(content)?.body?.sd ?? null : null);
+
 /**
  * Seals content for a group and hands it to `send(content)` (the POST or PUT). If the server says the group's
  * devices changed, the lists are refreshed and it is sealed again. While a member has no device with keys
@@ -419,9 +445,11 @@ export async function openDirectMessage(message, known = null) {
     const { content: _content, ...rest } = message;
     return { ...rest, e2e: true };
   }
-  const { e2eError: _stale, ...base } = message;
+  const { e2eError: _stale, sealedBy: _sealedBy, ...base } = message;
   return {
-    ...base, content: opened.content, ...(opened.e2e ? { e2e: true } : {}), ...(opened.linkPreview ? { linkPreview: opened.linkPreview } : {}),
+    ...base, content: opened.content,
+    // Which device sealed a copy this device cannot open: the retry request asks that device to seal it again.
+    ...(opened.e2eError && sealingDevice(message.content) ? { sealedBy: sealingDevice(message.content) } : {}), ...(opened.e2e ? { e2e: true } : {}), ...(opened.linkPreview ? { linkPreview: opened.linkPreview } : {}),
     ...(opened.statusReply ? { statusReply: opened.statusReply } : {}), ...(opened.e2eError ? { e2eError: opened.e2eError } : {}),
     // Reply and forward travel inside the encryption; a copy the server still describes (older apps) keeps its own.
     ...(opened.replyTo && !base.replyTo ? { replyTo: opened.replyTo } : {}), ...(opened.forwarded ? { forwarded: true } : {}),

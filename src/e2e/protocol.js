@@ -195,6 +195,18 @@ export function createProtocol({ storage, api, onIdentityChange = null } = {}) {
   }
   const decryptFromDevice = (userId, deviceId, entry) => exclusive(() => decryptCore(userId, deviceId, entry));
 
+  /**
+   * The other device could not read what this one sent (its session state was lost or broken): the next message to
+   * it starts a fresh session (a new key agreement). The old session is kept among the previous ones, so anything
+   * still in flight from that device can be read.
+   */
+  const forgetSession = (userId, deviceId) => exclusive(async () => {
+    const target = address(userId, deviceId);
+    const record = await loadSessions(target);
+    if (!record.current) return;
+    await saveSessions(target, { current: null, previous: [record.current, ...record.previous].slice(0, KEEP_PREVIOUS_SESSIONS) });
+  });
+
   async function respondTo(userId, deviceId, header) {
     const own = await identity();
     const signed = await storage.get(`spk:${header.spk}`);
@@ -302,6 +314,7 @@ export function createProtocol({ storage, api, onIdentityChange = null } = {}) {
     prepareUpload,
     encryptForDevices,
     decryptFromDevice,
+    forgetSession,
     encryptGroup,
     confirmGroupSend,
     resetGroup,

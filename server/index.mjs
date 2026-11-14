@@ -2712,6 +2712,29 @@ export function createChatServer({
         return;
       }
 
+      // "Waiting for this message" (src/e2e/messaging.js): a device that cannot open a message asks the device that
+      // sealed it to seal it again (e2e:retry), and that device answers with a copy for it alone (message:reseal).
+      // Relayed live, never stored; ids and ciphertext only; not between people who blocked each other.
+      if (event.type === 'e2e:retry' || event.type === 'message:reseal') {
+        const at = Date.now();
+        if (at - (socket.resealWindow?.start ?? 0) >= 60_000) socket.resealWindow = { start: at, count: 0 };
+        if (++socket.resealWindow.count > 120) return;
+        const id = (value) => typeof value === 'string' && value.length > 0 && value.length < 120;
+        const targetId = event.type === 'e2e:retry' ? event.userId : event.toUserId;
+        if (!id(event.messageId) || !id(targetId)) return;
+        if (targetId !== userId && (await blocks.has(userId, targetId) || await blocks.has(targetId, userId))) return;
+        if (event.type === 'e2e:retry') {
+          broadcastUser(targetId, { type: 'e2e:retry', messageId: event.messageId, fromUserId: userId, fromDeviceId: socket.deviceId,
+            senderDeviceId: id(event.senderDeviceId) ? event.senderDeviceId : null, error: typeof event.error === 'string' ? event.error.slice(0, 40) : null });
+          return;
+        }
+        if (!id(event.toDeviceId) || !isEnvelope(event.content) || event.content.length > MAX_DIRECT_ENVELOPE) return;
+        for (const target of userSockets(targetId)) {
+          if (target.deviceId === event.toDeviceId) json(target, { type: 'message:resealed', messageId: event.messageId, senderId: userId, content: event.content });
+        }
+        return;
+      }
+
       if (event.type === 'presence:typing' && typeof event.groupId === 'string') {
         // In a group: only a member may say they are typing, and every other member hears it, with the name to show
         // ("Ava is typing…"); the sender's own devices don't.
