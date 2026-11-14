@@ -9,7 +9,7 @@ import { EMPTY_NOTICES, nextNotice, pushNotice } from './noticeQueue.js';
 
 const INITIAL = {
   // Title, status line inputs (the timer derives the text) and the header buttons.
-  header: { title: '', status: 'idle', direction: 'outgoing', mode: 'audio', isOnline: true, answered: false, group: false, connectedAt: 0, terminal: false, incomingRinging: false, canAdd: false, addTitle: '' },
+  header: { title: '', status: 'idle', direction: 'outgoing', mode: 'audio', isOnline: true, answered: false, group: false, connectedAt: 0, networkQuality: 'good', terminal: false, incomingRinging: false, canAdd: false, addTitle: '' },
   // Everything the bottom control card shows.
   controls: { mode: 'audio', status: 'idle', terminal: false, incomingRinging: false, muted: false, cameraOff: false, speakerOn: false, nativeRouting: false, speakerLabel: '', moreOpen: false, videoRequest: null, screenSharing: false, canShareScreen: false, avatarOn: false, hasPersona: false },
   // In-call notices, one at a time by priority.

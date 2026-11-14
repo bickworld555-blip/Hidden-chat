@@ -2,10 +2,9 @@
 // the inbound signal queue, perfect negotiation, ICE restart and all call timers.
 // The UI only subscribes to snapshots; Node tests drive it with @roamhq/wrtc.
 import { recordUsage, transportBytes } from './networkUsage.js';
+import { QUALITY_SAMPLE_MS, VIDEO_LEVELS, createQualityTracker, hasTurnRelay, readQualitySample, updateQuality } from './callQuality.js';
 import {
   AUDIO_MAX_BITRATE,
-  VIDEO_MAX_BITRATE,
-  VIDEO_MAX_FRAMERATE,
   candidateToJson,
   describeForPeer,
   mediaConstraints,
@@ -20,9 +19,15 @@ export const CALL_STATUSES = Object.freeze(['idle', 'connecting', 'ringing', 'co
 export const CONNECT_TIMEOUT_MS = 30_000;
 // An unanswered call stops ringing on both phones after this long (the server enforces the same limit).
 export const RING_TIMEOUT_MS = 60_000;
-export const RECONNECT_GRACE_MS = 15_000;
+// How long a call may stay "Reconnecting…" (no working path, or no media arriving) before it ends.
+export const RECONNECT_GRACE_MS = 30_000;
+// A "disconnected" path often recovers by itself within a second or two; restart ICE only if it has not.
 export const ICE_RESTART_DELAY_MS = 2_000;
-export const MAX_ICE_RESTARTS = 2;
+// After an ICE restart that has not brought the call back, try again this often (up to MAX_ICE_RESTARTS per outage).
+export const ICE_RETRY_MS = 6_000;
+// Two restarts (from either side, or a network switch and a stall at once) are at least this far apart.
+export const ICE_RESTART_COOLDOWN_MS = 3_000;
+export const MAX_ICE_RESTARTS = 4;
 export const VIDEO_REQUEST_TIMEOUT_MS = 30_000;
 // Quick reactions that float over the call, sent to everyone in it.
 export const CALL_REACTIONS = Object.freeze(['👍', '❤️', '😂', '😮', '😢', '🙏']);
@@ -88,6 +93,11 @@ export function createCallEngine({
   onSnapshot = () => {},
   setTimer = (fn, ms) => setTimeout(fn, ms),
   clearTimer = (id) => clearTimeout(id),
+  // The network-health sampler's repeating timer (separate from setTimer so deadline tests see only deadlines).
+  setRepeat = (fn, ms) => { const id = setInterval(fn, ms); id?.unref?.(); return id; },
+  clearRepeat = (id) => clearInterval(id),
+  // Calls the handler when the phone switches network (Wi-Fi ↔ mobile data) or comes back online; returns unsubscribe.
+  onNetworkChange = browserNetworkChanges,
   log = () => {},
 } = {}) {
   if (!rtc?.RTCPeerConnection) throw new Error('A WebRTC implementation is required.');
@@ -128,6 +138,8 @@ export function createCallEngine({
     torch: false,
     // The latest reaction from the other side: { emoji, at } (a new object each time, so repeats re-trigger).
     remoteReaction: null,
+    // 'good' | 'weak' | 'poor': how well media is getting through, for the call screen (src/callQuality.js).
+    networkQuality: 'good',
   };
 
   let connection = null;
@@ -176,7 +188,15 @@ export function createCallEngine({
   const pendingCandidates = [];
   const queue = [];
   let draining = false;
-  const timers = { connect: null, reconnect: null, restart: null, videoRequest: null, ring: null };
+  const timers = { connect: null, reconnect: null, restart: null, iceRetry: null, cooldown: null, videoRequest: null, ring: null };
+  // Network health (src/callQuality.js): the sampler, our video level, stall handling and the relay-only fallback.
+  let qualityTimer = null;
+  const quality = createQualityTracker();
+  let stallActive = false;
+  let stallRestarts = 0;
+  let relayForced = false;
+  let iceServersInUse = [];
+  let stopNetworkWatch = null;
   const seenSignalIds = new Set();
 
   function emit() {
@@ -211,6 +231,10 @@ export function createCallEngine({
     connection = null;
     clearInterval(usageTimer);
     usageTimer = null;
+    if (qualityTimer != null) clearRepeat(qualityTimer);
+    qualityTimer = null;
+    try { stopNetworkWatch?.(); } catch {}
+    stopNetworkWatch = null;
     if (!current) return;
     sampleUsage(current); // the last few seconds (before close() ends the counters)
     current.onicecandidate = null;
@@ -260,8 +284,10 @@ export function createCallEngine({
     if (state.status === 'connected') return;
     clearTimer(timers.connect);
     clearTimer(timers.reconnect);
+    clearTimer(timers.iceRetry);
     timers.connect = null;
     timers.reconnect = null;
+    timers.iceRetry = null;
     set({ status: 'connected', error: '', answered: true, connectedAt: state.connectedAt || Date.now(), iceRestarts: 0 });
     if (state.muted || state.cameraOff) announceMedia();
   }
@@ -293,21 +319,100 @@ export function createCallEngine({
     }, CONNECT_TIMEOUT_MS);
   }
 
+  // "Reconnecting…" is bounded: no working path (or no media at all) for RECONNECT_GRACE_MS ends the call.
+  function armReconnectGrace() {
+    if (timers.reconnect != null) return;
+    timers.reconnect = setTimer(() => {
+      timers.reconnect = null;
+      if (!closed && state.status !== 'connected') finish('ended', { reason: 'disconnected', message: 'The call disconnected.' });
+    }, RECONNECT_GRACE_MS);
+  }
+
+  // A "disconnected" path gets a moment to recover on its own before ICE is restarted.
   function scheduleIceRestart() {
     if (closed || timers.restart != null || !connection?.restartIce) return;
-    if (state.iceRestarts >= MAX_ICE_RESTARTS) return;
     timers.restart = setTimer(() => {
       timers.restart = null;
       if (closed || !connection) return;
       const current = connection.connectionState;
       if (current === 'connected' || current === 'closed') return;
-      set({ iceRestarts: state.iceRestarts + 1 });
-      log('ice-restart', state.iceRestarts);
-      // Only the impolite side (caller) restarts so both peers never glare on an offer.
-      if (!polite) {
-        try { connection.restartIce(); } catch {}
-      }
+      restartIce('disconnected');
     }, ICE_RESTART_DELAY_MS);
+  }
+
+  // Only the caller (impolite side) calls restartIce(), so the two phones never send crossing offers; the callee asks
+  // the caller to. Either side may first switch itself to relay-only (TURN) when the direct path keeps failing.
+  function restartIce(reason, { relay = false } = {}) {
+    if (closed || !connection?.restartIce) return false;
+    if (timers.cooldown != null || state.iceRestarts >= MAX_ICE_RESTARTS) return false;
+    timers.cooldown = setTimer(() => { timers.cooldown = null; }, ICE_RESTART_COOLDOWN_MS);
+    if (relay) forceRelay();
+    set({ iceRestarts: state.iceRestarts + 1 });
+    log('ice-restart', reason, state.iceRestarts, relayForced ? 'relay-only' : 'any-path');
+    if (polite) sendSignal({ type: 'ice-restart', relay: relayForced });
+    else {
+      // Tell the callee first (signals stay in order) so it is relay-only before our new offer reaches it.
+      if (relayForced) sendSignal({ type: 'ice-restart', relay: true, restarting: true });
+      try { connection.restartIce(); } catch (error) { log('ice-restart-failed', error); }
+    }
+    armIceRetry();
+    return true;
+  }
+
+  function armIceRetry() {
+    if (timers.iceRetry != null) clearTimer(timers.iceRetry);
+    timers.iceRetry = setTimer(() => {
+      timers.iceRetry = null;
+      if (closed || !connection || state.status === 'connected') return;
+      // The direct path has now failed at least twice in a row: go through the relay.
+      restartIce('retry', { relay: state.iceRestarts >= 2 });
+    }, ICE_RETRY_MS);
+  }
+
+  // From now on this side only offers TURN relay candidates (needs a TURN server with credentials).
+  function forceRelay() {
+    if (relayForced || !connection || typeof connection.setConfiguration !== 'function' || !hasTurnRelay(iceServersInUse)) return;
+    try {
+      const current = typeof connection.getConfiguration === 'function' ? connection.getConfiguration() : {};
+      connection.setConfiguration({ ...current, iceTransportPolicy: 'relay' });
+      relayForced = true;
+      log('relay-only');
+    } catch (error) {
+      log('relay-only-failed', error);
+    }
+  }
+
+  // --- Network health: sampled while connected (src/callQuality.js). ---
+
+  function startQualityMonitor(pc) {
+    if (qualityTimer != null || typeof pc?.getStats !== 'function') return;
+    qualityTimer = setRepeat(() => sampleQuality(pc), QUALITY_SAMPLE_MS);
+  }
+
+  function sampleQuality(pc) {
+    Promise.resolve().then(() => pc.getStats()).then((report) => {
+      if (closed || pc !== connection) return;
+      const result = updateQuality(quality, readQualitySample(report));
+      if (result.changed) {
+        log('video-level', VIDEO_LEVELS[result.level].name);
+        if (videoSender) tuneSender(videoSender);
+      }
+      if (result.quality !== state.networkQuality) set({ networkQuality: result.quality });
+      if (result.stalled) {
+        if (stallActive) return;
+        // Nothing has arrived for a few seconds although ICE still says "connected": the mobile network stopped
+        // routing this path. Look for a new one now (through the relay the second time) instead of freezing.
+        stallActive = true;
+        stallRestarts += 1;
+        log('media-stall', stallRestarts);
+        if (state.status === 'connected') set({ status: 'reconnecting' });
+        armReconnectGrace();
+        restartIce('media-stall', { relay: stallRestarts >= 2 });
+      } else if (quality.still === 0 && stallActive) {
+        stallActive = false;
+        if (state.status === 'reconnecting' && pc.connectionState === 'connected') markConnected();
+      }
+    }).catch(() => {});
   }
 
   function attachRemoteTrack(event) {
@@ -445,9 +550,11 @@ export function createCallEngine({
         params.encodings[0].priority = 'high';
         params.encodings[0].networkPriority = 'high';
       } else {
-        params.encodings[0].maxBitrate = VIDEO_MAX_BITRATE;
-        params.encodings[0].maxFramerate = VIDEO_MAX_FRAMERATE;
-        params.encodings[0].scaleResolutionDownBy = 1;
+        // The current network level (src/callQuality.js); a shared screen keeps full resolution for legible text.
+        const level = VIDEO_LEVELS[quality.level] ?? VIDEO_LEVELS[0];
+        params.encodings[0].maxBitrate = level.maxBitrate;
+        params.encodings[0].maxFramerate = level.maxFramerate;
+        params.encodings[0].scaleResolutionDownBy = state.screenSharing ? 1 : level.scale;
       }
       // Under congestion or a busy processor keep the motion smooth and lower the resolution instead (a softer
       // picture reads as fine; a stuttering or frozen one reads as a broken call).
@@ -499,20 +606,20 @@ export function createCallEngine({
       if (next === 'connected') {
         markConnected({ announce: true });
         startUsage(pc);
+        startQualityMonitor(pc);
       } else if (next === 'disconnected') {
         if (state.status === 'connected') set({ status: 'reconnecting' });
-        if (timers.reconnect == null) {
-          timers.reconnect = setTimer(() => {
-            timers.reconnect = null;
-            if (!closed && pc.connectionState !== 'connected') finish('ended', { reason: 'disconnected', message: 'The call disconnected.' });
-          }, RECONNECT_GRACE_MS);
-        }
+        armReconnectGrace();
         scheduleIceRestart();
       } else if (next === 'failed') {
         if (state.iceRestarts >= MAX_ICE_RESTARTS) failConnection('Could not connect. Check your network or add a TURN server.');
         else {
-          if (state.status === 'connected') set({ status: 'reconnecting' });
-          scheduleIceRestart();
+          if (state.status === 'connected' || state.status === 'reconnecting') {
+            set({ status: 'reconnecting' });
+            armReconnectGrace();
+          }
+          // The path is gone for good: restart at once, through the relay if a restart already failed.
+          if (!restartIce('failed', { relay: state.iceRestarts >= 1 })) scheduleIceRestart();
         }
       }
     };
@@ -548,7 +655,17 @@ export function createCallEngine({
       iceCandidatePoolSize: 2,
     });
     connection = pc;
+    iceServersInUse = Array.isArray(iceServers) ? iceServers : [];
     wireConnection(pc);
+    try {
+      stopNetworkWatch = onNetworkChange((why) => {
+        if (closed || pc !== connection) return;
+        if (state.status !== 'connected' && state.status !== 'reconnecting') return;
+        // Wi-Fi ↔ mobile data: the old path is about to die (or already has); find the new one right away.
+        log('network-change', why);
+        restartIce('network-change');
+      }) ?? null;
+    } catch (error) { log('network-watch-failed', error); }
     return pc;
   }
 
@@ -690,6 +807,14 @@ export function createCallEngine({
         return;
       case 'video-cancel':
         if (state.videoRequest === 'incoming') clearVideoRequest();
+        return;
+      case 'ice-restart':
+        // The callee lost its path (or switched network) and asks the caller to restart; either side may also say
+        // "relay only from now on" so both ends pick TURN candidates.
+        if (signal.relay === true) forceRelay();
+        if (signal.restarting === true || polite || !connection) return;
+        if (state.status !== 'connected' && state.status !== 'reconnecting') return;
+        restartIce('peer-request', { relay: signal.relay === true });
         return;
       case 'reaction':
         if (CALL_REACTIONS.includes(signal.emoji)) set({ remoteReaction: { emoji: signal.emoji, at: Date.now() } });
@@ -1040,4 +1165,20 @@ export function createCallEngine({
   // An incoming call rings from the moment it exists; unanswered it becomes a missed call.
   if (direction === 'incoming') armRingTimeout();
   return engine;
+}
+
+// Wi-Fi ↔ mobile data switches (navigator.connection.type, where the browser reports it) and coming back online.
+// Bandwidth-estimate updates fire the same "change" event and are ignored: only the network type counts.
+function browserNetworkChanges(handler) {
+  if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') return () => {};
+  const info = typeof navigator !== 'undefined' ? navigator.connection ?? null : null;
+  let type = info?.type;
+  const onInfo = () => { if (info.type !== type) { type = info.type; handler('network-type'); } };
+  const onOnline = () => handler('online');
+  info?.addEventListener?.('change', onInfo);
+  window.addEventListener('online', onOnline);
+  return () => {
+    info?.removeEventListener?.('change', onInfo);
+    window.removeEventListener('online', onOnline);
+  };
 }

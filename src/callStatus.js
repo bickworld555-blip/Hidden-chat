@@ -10,9 +10,10 @@ export function formatElapsed(totalSeconds) {
 
 // `answered` means both descriptions are exchanged; only the transport is left, so neither side
 // should still read as calling or ringing.
-export function getStatusLabel({ status, direction, mode, isOnline, answered, elapsed, group = false }) {
+export function getStatusLabel({ status, direction, mode, isOnline, answered, elapsed, group = false, networkQuality = 'good' }) {
   const kind = `${group ? 'group ' : ''}${mode === 'video' ? 'video' : 'voice'} call`;
-  if (status === 'connected') return formatElapsed(elapsed);
+  // Like WhatsApp, a bad line is named next to the timer (the call keeps going at lower quality meanwhile).
+  if (status === 'connected') return networkQuality === 'poor' ? `${formatElapsed(elapsed)} · Poor connection` : formatElapsed(elapsed);
   if (status === 'reconnecting') return 'Reconnecting…';
   if (status === 'no-answer') return 'No answer';
   if (status === 'busy') return 'Busy';

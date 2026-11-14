@@ -758,6 +758,7 @@ export default function CallOverlay({
       status, direction: call.direction, mode: callMode, isOnline, answered,
       group: Boolean(call.invite) || extraPeers.length > 0,
       connectedAt: snapshot.connectedAt || 0,
+      networkQuality: snapshot.networkQuality || 'good',
       terminal, incomingRinging,
       canAdd: canAddPeople && status === 'connected',
       addTitle: canAddPeople ? 'Add participant' : `Up to ${MAX_CALL_PARTICIPANTS} people`,

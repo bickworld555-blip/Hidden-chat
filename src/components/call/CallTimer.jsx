@@ -24,5 +24,5 @@ export const CallStatusLabel = memo(function CallStatusLabel() {
     return () => clearTimeout(timer);
   }, [live, startedAt]);
 
-  return getStatusLabel({ status: header.status, direction: header.direction, mode: header.mode, isOnline: header.isOnline, answered: header.answered, elapsed, group: header.group });
+  return getStatusLabel({ status: header.status, direction: header.direction, mode: header.mode, isOnline: header.isOnline, answered: header.answered, elapsed, group: header.group, networkQuality: header.networkQuality });
 });

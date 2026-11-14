@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import WebSocket from 'ws';
 import { createChatServer } from './index.mjs';
-import { createCallEngine, cameraSwitchPlans, CONNECT_TIMEOUT_MS, RECONNECT_GRACE_MS, RING_TIMEOUT_MS } from '../src/callEngine.js';
+import { createCallEngine, cameraSwitchPlans, CONNECT_TIMEOUT_MS, ICE_RESTART_COOLDOWN_MS, MAX_ICE_RESTARTS, RECONNECT_GRACE_MS, RING_TIMEOUT_MS } from '../src/callEngine.js';
 import { getStatusLabel } from '../src/callStatus.js';
 import { normalizeIceServers, orderCodecs, readDescription, tuneOpusSdp, turnServerFromEnv } from '../src/rtc.js';
 
@@ -613,7 +613,7 @@ test('the peer reporting connected flips this side to the live timer without wai
   const pc = connections[0];
   pc.transition('connected');
   assert.equal(sent.filter((signal) => signal.type === 'connected').length, 1);
-  for (let attempt = 0; attempt < 3; attempt += 1) { pc.transition('failed'); await clock.advance(2_000); }
+  for (let attempt = 0; attempt <= MAX_ICE_RESTARTS; attempt += 1) { pc.transition('failed'); await clock.advance(ICE_RESTART_COOLDOWN_MS); }
   assert.equal(engine.state.status, 'failed');
 });
 
@@ -647,12 +647,12 @@ test('repeated failures give up after the ICE restart budget', async () => {
   await until(() => engine.state.answered && clock.pending === 1, { label: 'armed' });
   const pc = connections[0];
   pc.transition('connected');
-  for (let attempt = 0; attempt < 2; attempt += 1) {
+  for (let attempt = 0; attempt < MAX_ICE_RESTARTS; attempt += 1) {
     pc.transition('failed');
     assert.equal(engine.state.status, 'reconnecting');
-    await clock.advance(2_000);
+    assert.equal(pc.restarts, attempt + 1, 'a failed path restarts ICE at once');
+    await clock.advance(ICE_RESTART_COOLDOWN_MS);
   }
-  assert.equal(pc.restarts, 2);
   pc.transition('failed');
   assert.equal(engine.state.status, 'failed');
 });
