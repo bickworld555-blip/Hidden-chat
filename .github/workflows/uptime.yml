@@ -41,3 +41,35 @@ jobs:
             message='[Hidden Messenger] hiddenmessenger.com is not ready (uptime check failed 3 times).'
             curl -sS --max-time 10 -H 'Content-Type: application/json' -d "{\"text\":\"$message\",\"content\":\"$message\"}" "$ALERT_WEBHOOK_URL" || true
           fi
+
+  xmpp:
+    # The XMPP core on the VPS (chat.hiddenmessenger.com): a real WebSocket stream open must be answered with stream
+    # features. The VPS checks itself too (deploy/ejabberd/backup/hm-health.cjs); this catches the VPS being down.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Open an XMPP stream (3 tries)
+        shell: bash
+        run: |
+          cat > probe.mjs <<'JS'
+          const ws = new WebSocket('wss://chat.hiddenmessenger.com/xmpp-websocket', 'xmpp');
+          const timer = setTimeout(() => { console.log('no stream features in 15 s'); process.exit(1); }, 15000);
+          ws.onopen = () => ws.send("<open xmlns='urn:ietf:params:xml:ns:xmpp-framing' to='chat.hiddenmessenger.com' version='1.0'/>");
+          ws.onmessage = ({ data }) => { if (String(data).includes('features')) { clearTimeout(timer); console.log('xmpp up'); ws.close(); process.exit(0); } };
+          ws.onerror = () => { console.log('websocket error'); process.exit(1); };
+          JS
+          for attempt in 1 2 3; do node probe.mjs && exit 0; sleep 20; done
+          exit 1
+      - name: Alert
+        if: failure()
+        env:
+          ALERT_WEBHOOK_URL: ${{ secrets.ALERT_WEBHOOK_URL }}
+        shell: bash
+        run: |
+          if [ -n "$ALERT_WEBHOOK_URL" ]; then
+            message='[Hidden Messenger] The XMPP core (chat.hiddenmessenger.com) does not answer (uptime check failed 3 times).'
+            curl -sS --max-time 10 -H 'Content-Type: application/json' -d "{\"text\":\"$message\",\"content\":\"$message\"}" "$ALERT_WEBHOOK_URL" || true
+          fi

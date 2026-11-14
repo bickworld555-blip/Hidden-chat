@@ -1,0 +1,7 @@
+[Unit]
+Description=Hidden Messenger: VPS health check (hm-health.cjs)
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/node /opt/hm-ejabberd/backup/hm-health.cjs

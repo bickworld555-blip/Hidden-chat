@@ -1,0 +1,9 @@
+[Unit]
+Description=Hidden Messenger: off-site backup of the ejabberd database (hm-backup.cjs)
+After=network-online.target ejabberd.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=/root/.hm-backup.env
+ExecStart=/usr/bin/node /opt/hm-ejabberd/backup/hm-backup.cjs backup

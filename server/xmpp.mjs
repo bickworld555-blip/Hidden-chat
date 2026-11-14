@@ -23,6 +23,7 @@ export const WAKE_COALESCE_MS = 15_000;
 export const DEFAULT_XMPP_HOST = 'chat.hiddenmessenger.com';
 const ADMIN_TIMEOUT_MS = 8000;
 const FORGET_DEBOUNCE_MS = 200;
+export const OPS_ALERT_KINDS = new Set(['ejabberd', 'websocket', 'coturn', 'backup', 'disk', 'offline-queue']);
 
 // Rollout (Phase 3): who uses XMPP. XMPP_ROLLOUT_PERCENT (0-100, default 0) of users by a stable hash of the user id,
 // plus everyone in XMPP_ROLLOUT_USER_IDS (comma-separated, for test accounts). Everyone else stays on the current path.
@@ -90,6 +91,8 @@ export function ensureXmppSchema(db) {
 // `wake(userId, deviceId, { fromUserId })`: sends that one device the wake-up push (index.mjs pushToDevice); resolves how
 // many went. fromUserId (when the sender is known) lets the push name the sender.
 export function createXmpp({ db, config = xmppConfigFromEnv(), fetchImpl = globalThis.fetch, now = Date.now, log = console, wake = async () => 0,
+  // alert(kind, text): the app's operations alerts (monitoring.mjs); the VPS health check reports through it.
+  alert = async () => false,
   verdict = async () => 'allow',
   // groupPost({ groupId, senderUserId, membersHash }) -> may this sender post there with this (current) members hash;
   // groupMember(groupId, userId) -> is that user a member. Used for group fan-out (index.mjs).
@@ -300,6 +303,17 @@ export function createXmpp({ db, config = xmppConfigFromEnv(), fetchImpl = globa
         const groupId = typeof event.group === 'string' && event.group.length > 0 && event.group.length <= 128 ? event.group : null;
         try { pushed = await wake(device.userId, device.deviceId, { fromUserId: sender?.userId ?? null, groupId }); } catch (error) { log.warn?.('xmpp: wake-up push failed', error?.message); }
         response.status(202).json({ pushed });
+      });
+
+      // The VPS health check (deploy/ejabberd/ops/hm-health.sh, every 5 minutes) reports a problem there:
+      // {"kind": one of OPS_ALERT_KINDS, "text": short description, "ts": seconds}, signed like the hooks. Sent on to the
+      // operations webhook (ALERT_WEBHOOK_URL), at most once per kind per 15 minutes.
+      app.post('/api/v1/xmpp/ops-alert', express.raw({ type: () => true, limit: '4kb' }), async (request, response) => {
+        const event = signedEvent(request, response);
+        if (!event) return;
+        if (!OPS_ALERT_KINDS.has(event.kind) || typeof event.text !== 'string' || !event.text.trim()) return response.status(400).json({ error: 'Invalid body.' });
+        const sent = await alert(`vps-${event.kind}`, `VPS: ${event.text.trim().slice(0, 300)}`).catch(() => false);
+        response.status(202).json({ sent: Boolean(sent) });
       });
 
       // mod_hm asks before relaying anything from one device to others: {"from": localpart, "to": [localparts],

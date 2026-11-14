@@ -479,3 +479,20 @@ test('a block or membership change empties ejabberd\'s verdict cache at once (on
   assert.ok(module.includes('name = hm_clear_verdicts') && module.includes('ets_cache:clear(?VERDICTS)'));
   assert.ok(module.includes('-define(RATE_BURST, 200).') && module.includes('xmpp:err_policy_violation()'), 'the flood limit');
 });
+
+test('the VPS health check reports through a signed endpoint; only known kinds, never unsigned', async () => {
+  const post = (body, signature) => {
+    const raw = JSON.stringify({ ts: Math.floor(Date.now() / 1000), ...body });
+    return fetch(`${baseUrl}/api/v1/xmpp/ops-alert`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-hm-signature': signature ?? signOfflineHook(SECRET, raw) }, body: raw });
+  };
+  assert.equal((await post({ kind: 'coturn', text: 'coturn is not running.' })).status, 202);
+  assert.equal((await post({ kind: 'nonsense', text: 'x' })).status, 400, 'only known kinds');
+  assert.equal((await post({ kind: 'coturn', text: '' })).status, 400, 'a description is required');
+  assert.equal((await post({ kind: 'coturn', text: 'x' }, 'bad')).status, 401, 'never unsigned');
+  const health = readFileSync(new URL('../deploy/ejabberd/backup/hm-health.cjs', import.meta.url), 'utf8');
+  for (const kind of ['ejabberd', 'websocket', 'coturn', 'backup', 'disk']) assert.ok(health.includes(`'${kind}'`), kind);
+  const backup = readFileSync(new URL('../deploy/ejabberd/backup/hm-backup.cjs', import.meta.url), 'utf8');
+  assert.ok(backup.includes("createCipheriv('aes-256-gcm'") && backup.includes('read-back check failed'), 'encrypted and verified after upload');
+  const server = readFileSync(new URL('./index.mjs', import.meta.url), 'utf8');
+  assert.ok(server.includes('notePushFailure(result.error)'), 'push failures are counted for an alert');
+});

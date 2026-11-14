@@ -667,7 +667,7 @@ export function createChatServer({
   const largeJson = express.json({ limit: '1mb' });
   const LARGE_JSON_ROUTES = /^\/api\/v1\/(?:groups\/[^/]+\/messages(?:\/[^/]+)?|messages\/[^/]+|e2e\/keys|polls\/[^/]+\/sealed-vote|statuses)$/;
   // A linked device's encrypted history has its own, larger limit (server/linking.mjs).
-  const OWN_PARSER_ROUTES = /^\/api\/v1\/(link\/requests\/[^/]+\/history|xmpp\/(offline|allow))$/;
+  const OWN_PARSER_ROUTES = /^\/api\/v1\/(link\/requests\/[^/]+\/history|xmpp\/(offline|allow|ops-alert))$/;
   app.use((request, response, next) => (OWN_PARSER_ROUTES.test(request.path) ? next() : (LARGE_JSON_ROUTES.test(request.path) ? largeJson : smallJson)(request, response, next)));
   const server = createServer(app);
   const websocketServer = new WebSocketServer({
@@ -910,6 +910,16 @@ export function createChatServer({
       JOIN sessions s ON s.token_hash = p.session_hash WHERE s.user_id = ? AND s.device_id = ?`).all(userId, deviceId), body, options);
   }
 
+  // Push failures (not phones that uninstalled the app): PUSH_FAILURE_ALERT within 5 minutes means wake-ups are not
+  // reaching phones (FCM credentials, quota, an outage); the operations webhook hears of it.
+  const pushFailures = [];
+  const PUSH_FAILURE_ALERT = 10;
+  function notePushFailure(error) {
+    const at = Date.now();
+    pushFailures.push(at);
+    while (pushFailures.length && at - pushFailures[0] > 5 * 60 * 1000) pushFailures.shift();
+    if (pushFailures.length >= PUSH_FAILURE_ALERT) alerts.send('push', `${pushFailures.length} pushes failed in 5 minutes (last: ${String(error ?? 'error').slice(0, 120)}).`).catch(() => {});
+  }
   async function sendPushes(devices, body, options) {
     let sent = 0;
     await Promise.all(devices.map(async (device) => {
@@ -917,7 +927,7 @@ export function createChatServer({
       const result = await push.send(device.token, { t: body.t, enc, iv }, options);
       if (result.ok) sent += 1;
       else if (result.invalidToken) await db.prepare('DELETE FROM push_devices WHERE token = ?').run(device.token);
-      else console.error('Push not sent:', result.error);
+      else { console.error('Push not sent:', result.error); notePushFailure(result.error); }
     }));
     return sent;
   }
@@ -1282,7 +1292,7 @@ export function createChatServer({
     if (await blocks.has(toUserId, fromUserId)) return 'drop';
     return 'allow';
   }
-  const xmpp = createXmpp({ db, config: xmppConfig, fetchImpl: xmppFetch, verdict: xmppVerdict,
+  const xmpp = createXmpp({ db, config: xmppConfig, fetchImpl: xmppFetch, verdict: xmppVerdict, alert: (kind, text) => alerts.send(kind, text),
     groupPost: async ({ groupId, senderUserId, membersHash }) => {
       if (!(await parity.canPostToGroup(groupId, senderUserId)).ok) return false;
       return Boolean(membersHash) && membersHash === await e2e.groupMembersHash(groupId);

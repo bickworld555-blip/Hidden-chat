@@ -11,7 +11,7 @@ const OPEN_PATHS = [
   /^\/(health|ready)$/,
   /^\/users\/[^/]+\/avatar$/,
   // ejabberd's offline-message hook and delivery check (server/xmpp.mjs): not an app, authenticated by HMAC.
-  /^\/xmpp\/(offline|allow)$/,
+  /^\/xmpp\/(offline|allow|ops-alert)$/,
 ];
 
 export function clientProtocolOf(value) {
