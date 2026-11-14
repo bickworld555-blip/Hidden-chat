@@ -1010,6 +1010,16 @@ export function createChatServer({
     return rows.length;
   }
 
+  // The port opens before startup finishes (migrations, maintenance), so a deploy's first requests could reach tables
+  // that do not exist yet. Until listen() completes, API requests and socket upgrades get a short 503 to retry; the
+  // health and readiness probes still answer.
+  let started = false;
+  app.use('/api/v1', (request, response, next) => {
+    if (started || request.path === '/health' || request.path === '/ready') return next();
+    response.set('Retry-After', '2');
+    response.status(503).json({ error: 'The server is starting. Try again in a moment.', starting: true });
+  });
+
   // Apps older than the current version can no longer send or receive (server/clientGate.mjs).
   app.use('/api/v1', clientGate(minClientProtocol));
 
@@ -2449,6 +2459,10 @@ export function createChatServer({
     return task;
   }
   server.on('upgrade', (request, socket, head) => {
+    if (!started) {
+      socket.end('HTTP/1.1 503 Service Unavailable\r\nRetry-After: 2\r\nConnection: close\r\n\r\n');
+      return;
+    }
     trackSocketTask(authorizeUpgrade(request, socket, head).catch((error) => {
       console.error('WebSocket authorization failed:', error.code ?? error.name);
       if (!socket.destroyed) socket.end('HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n');
@@ -3165,6 +3179,7 @@ export function createChatServer({
         await new Promise((resolve) => server.close(resolve));
         throw error;
       }
+      started = true;
       expiryTimer = setInterval(() => {
         sweep(() => extras.deliverScheduled());
         sweep(expireMessages);

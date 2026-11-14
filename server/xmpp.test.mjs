@@ -169,3 +169,39 @@ test('without the XMPP secrets the endpoint says so, and it always needs a signe
   assert.equal(off.body.enabled, false);
   assert.equal((await api('/api/v1/xmpp/token', { method: 'POST' })).status, 401);
 });
+
+test('a server still starting (migrations running) answers API calls and sockets with 503 + Retry-After; probes stay up', async () => {
+  const { DatabaseSync } = await import('node:sqlite');
+  const { createServer } = await import('node:net');
+  const port = await new Promise((resolve) => { const probe = createServer().listen(0, '127.0.0.1', () => { const { port: free } = probe.address(); probe.close(() => resolve(free)); }); });
+  const dir = mkdtempSync(join(tmpdir(), 'relay-start-'));
+  const raw = new DatabaseSync(join(dir, 'db.sqlite'));
+  let release;
+  raw.migrate = () => new Promise((resolve) => { release = () => resolve(false); });
+  const starting = createChatServer({ port, host: '127.0.0.1', database: raw, migrate: true, pushSender: null, xmppConfig: config, xmppFetch: fakeEjabberd });
+  const listening = starting.listen();
+  const url = `http://127.0.0.1:${port}`;
+  try {
+    for (let i = 0; i < 100 && !release; i += 1) await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.ok(release, 'startup reached the migration step');
+    const busy = await fetch(`${url}/api/v1/xmpp/token`, { method: 'POST' });
+    assert.equal(busy.status, 503);
+    assert.equal(busy.headers.get('retry-after'), '2');
+    assert.equal((await busy.json()).starting, true);
+    assert.equal((await fetch(`${url}/api/v1/health`)).status, 200, 'the health probe still answers');
+    const { WebSocket } = await import('ws');
+    const upgradeStatus = await new Promise((resolve) => {
+      const socket = new WebSocket(`ws://127.0.0.1:${port}/ws`);
+      socket.on('unexpected-response', (_request, response) => resolve(response.statusCode));
+      socket.on('error', () => resolve('error'));
+      socket.on('open', () => { socket.close(); resolve('opened'); });
+    });
+    assert.equal(upgradeStatus, 503, 'socket upgrades wait for startup too');
+  } finally {
+    release?.();
+  }
+  await listening;
+  assert.notEqual((await fetch(`${url}/api/v1/auth/availability?username=someone`)).status, 503, 'once started, requests go through');
+  await starting.close();
+  rmSync(dir, { recursive: true, force: true });
+});
