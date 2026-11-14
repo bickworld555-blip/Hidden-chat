@@ -31,6 +31,7 @@ import { clientGate, minimumClientProtocol, phoneOnlySignIn, socketClientAllowed
 import { registerBackups } from './backups.mjs';
 import { registerBilling } from './billing.mjs';
 import { ensureE2eSchema, registerE2e } from './e2e.mjs';
+import { createXmpp, ensureXmppSchema, xmppConfigFromEnv } from './xmpp.mjs';
 import { registerSfu } from './sfu.mjs';
 import { gifConfigFromEnv, registerGifs } from './gifs.mjs';
 import { alertWebhookFromEnv, createAlerts, serverErrorWatch } from './monitoring.mjs';
@@ -151,6 +152,9 @@ export function createChatServer({
   strictE2E = strictE2EFromEnv(process.env),
   alerts = createAlerts({ url: alertWebhookFromEnv(process.env) }),
   gifFetch = globalThis.fetch,
+  // The XMPP core (server/xmpp.mjs): XMPP_JWT_SECRET, XMPP_ADMIN_PASSWORD; `xmppFetch` reaches its admin API.
+  xmppConfig = xmppConfigFromEnv(process.env),
+  xmppFetch = globalThis.fetch,
 } = {}) {
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('PORT must be an integer from 0 to 65535.');
   if (process.env.NODE_ENV === 'production' && port === 0) throw new Error('Production requires a fixed nonzero PORT.');
@@ -461,6 +465,7 @@ export function createChatServer({
   ensureDeliveryQueueSchema(db);
   ensureRateLimitSchema(db);
   ensureBlockSchema(db);
+  ensureXmppSchema(db);
   }
   // Verified business badges (server/verification.mjs), read into memory for public user records.
   const verifiedAccounts = createVerifiedAccounts(db);
@@ -886,10 +891,13 @@ export function createChatServer({
   }
 
   // Called whenever sessions are deleted (log out, remote sign-out, password change): the devices' push
-  // registrations and end-to-end keys go with them.
+  // registrations, end-to-end keys and XMPP accounts (kicked first) go with them.
   async function forgetPushDevicesOf(sessionHashes) {
     for (const hash of sessionHashes) await db.prepare('DELETE FROM push_devices WHERE session_hash = ?').run(hash);
-    if (sessionHashes.length) await e2e.forgetStaleDevices();
+    if (sessionHashes.length) {
+      await e2e.forgetStaleDevices();
+      xmpp.reconcileSoon();
+    }
   }
 
   /** One tick becomes two: the receiver's device has these messages. Returns how many changed. */
@@ -1207,6 +1215,9 @@ export function createChatServer({
 
   // End-to-end encryption: key directory and fan-out checks (server/e2e.mjs).
   const e2e = registerE2e({ app, db, requireSession });
+  // Device accounts and sign-in tokens for the XMPP core (Phase 2 of the BEAM/XMPP move).
+  const xmpp = createXmpp({ db, config: xmppConfig, fetchImpl: xmppFetch });
+  xmpp.register(app, requireSession);
   // Signs an account out everywhere: sessions go, sockets close, push stops (suspension, account deletion).
   async function closeUserSessions(userId, reason) {
     const removed = await db.prepare('DELETE FROM sessions WHERE user_id = ? RETURNING token_hash AS "hash"').all(userId);
@@ -3168,6 +3179,8 @@ export function createChatServer({
         sweep(() => backups.removeOrphanedBackups());
         sweep(() => rateLimiter.sweep());
         sweep(() => messageLimiter.sweep());
+        // Devices whose sessions expired lose their XMPP accounts too.
+        sweep(() => xmpp.reconcile());
       }, 60 * 60 * 1000);
       uploadSweep.unref();
       await eventPilot.publish('server:listening', server.address());
