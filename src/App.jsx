@@ -17,7 +17,8 @@ import { getViewingGroup, readMutedGroups, setGroupMuted, useMutedGroups } from 
 import { classifyIncoming, groupNotificationText, parseConversationOpenParam, shouldAlertGroup } from './notificationChannels.js';
 import { nativeClearSession, nativeRequestStartupPermissions, nativeSetSession, nativeShell, nativeStartBackground, nativeState, nativeStopBackground, nativeTakePendingCall, nativeMoveToBackground, nativeClearShare, nativeSetCallActive, nativeClearMessageNotifications, nativeClearMissedCalls, nativeTakeMessageActions, nativeSetSystemBarsTheme, onNative } from './native.js';
 import { parseShare } from './shareTarget.js';
-import { onE2eEvent, startE2e, stopE2e } from './e2e/client.js';
+import { onE2eEvent, startE2e, stopE2e, xmppTargetsFor } from './e2e/client.js';
+import { startXmppSession } from './xmpp/session.js';
 import { fetchGroupMessages } from './groupHistory.js';
 import { SECURITY_NOTICE } from './e2e/notices.js';
 import { LOCKED_NOTIFICATION } from './chatLock.js';
@@ -192,6 +193,8 @@ export default function App() {
   const openChatRef = useRef(null);
   const openGroupRef = useRef(null);
   const revokedRef = useRef(null);
+  // The XMPP session for accounts moved over (src/xmpp/session.js); null for everyone else.
+  const xmppRef = useRef(null);
   const removingRef = useRef(new Set());
   const [authOpen, setAuthOpen] = useState(false);
   // Light unless this device chose dark (src/appearance.js).
@@ -503,7 +506,7 @@ export default function App() {
         };
         // Events that may carry ciphertext are opened in arrival order before they are handled (src/e2e/messaging.js).
         let openChain = Promise.resolve();
-        realtime = new RealtimeClient(sessionToken, (event) => {
+        const onRealtimeEvent = (event) => {
           if (event?.type === 'message:reaction:error' && handleReactionError(event, realtime)) return;
           if (event?.type === 'message:rejected') {
             handleRejected(event, realtime).catch(() => {});
@@ -514,8 +517,22 @@ export default function App() {
             return;
           }
           openChain = openChain.then(() => openEvent(event)).then(handleEvent).catch((error) => console.error('Could not handle a message:', error));
-        }, setConnection);
+        };
+        realtime = new RealtimeClient(sessionToken, onRealtimeEvent, setConnection);
         realtime.onRevoked = () => revokedRef.current?.();
+        // Accounts moved over to the XMPP core (src/xmpp/session.js; the server decides, 0% by default) carry device-to-
+        // device traffic over XMPP; anything it cannot carry goes on this connection as before. Others never open it.
+        const legacySend = realtime.send.bind(realtime);
+        realtime.send = (event) => (xmppRef.current?.route(event) ? true : legacySend(event));
+        startXmppSession({ sessionToken, userId, deliver: onRealtimeEvent, legacySend, targetsFor: xmppTargetsFor, fetchImpl: apiFetch })
+          .then((session) => {
+            if (!session) return;
+            if (cancelled) { session.close(); return; }
+            xmppRef.current = session;
+            session.setActive(document.visibilityState === 'visible');
+            session.transport.connect();
+          })
+          .catch(() => {});
         let contactsLoaded = false;
         const loadContacts = async () => {
           const contactResponse = await apiFetch('/api/v1/contacts', { headers: { Authorization: `Bearer ${sessionToken}` } });
@@ -612,8 +629,14 @@ export default function App() {
       }
     }
     boot();
-    return () => { cancelled = true; realtime?.close(); setClient(null); useChatStore.getState().setClient(null); };
+    return () => { cancelled = true; realtime?.close(); xmppRef.current?.close(); xmppRef.current = null; setClient(null); useChatStore.getState().setClient(null); };
   }, [authReady, userId, sessionToken]);
+  // The XMPP session (when this account uses it) is told when the app goes to the background and back (XEP-0352).
+  useEffect(() => {
+    const sync = () => xmppRef.current?.setActive(document.visibilityState === 'visible');
+    document.addEventListener('visibilitychange', sync);
+    return () => document.removeEventListener('visibilitychange', sync);
+  }, []);
 
   useEffect(() => { if (sessionToken) persistMessages(userId); }, [messages, sessionToken, userId]);
   useEffect(() => {

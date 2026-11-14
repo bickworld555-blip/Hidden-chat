@@ -1,0 +1,326 @@
+// The app's XMPP transport (src/xmpp/transport.js) against a scripted server that answers like ejabberd: sign-in,
+// bind, Stream Management (acks, resume, failed resume), queued sends, the legacy answer, and every incoming event,
+// including the check that a message's claimed sender owns the address it came from.
+import assert from 'node:assert/strict';
+import { createHash, webcrypto } from 'node:crypto';
+import { test } from 'node:test';
+import { parseXml, xml, escapeXml, local, child } from '../src/xmpp/stanza.js';
+import { deviceLocalpart, XmppTransport } from '../src/xmpp/transport.js';
+
+const HOST = 'chat.hiddenmessenger.com';
+const localpartOf = (userId, deviceId) => `d${createHash('sha256').update(`${userId}\n${deviceId}`).digest('hex').slice(0, 40)}`;
+const ME = { userId: 'user-me', deviceId: 'phone' };
+const MY_JID = `${localpartOf(ME.userId, ME.deviceId)}@${HOST}`;
+const flush = () => new Promise((resolve) => setImmediate(resolve));
+
+// A fake WebSocket + ejabberd. `script` decides how the server answers each frame the client sends.
+function fakeServer({ resumeWith = null, enable = true } = {}) {
+  const sockets = [];
+  let smCounter = 0;
+  const server = {
+    sockets,
+    resumeWith,
+    createSocket(url) {
+      const socket = { url, sent: [], readyState: 0, closed: false };
+      socket.send = (frame) => {
+        socket.sent.push(String(frame));
+        const el = parseXml(String(frame));
+        const name = local(el);
+        const reply = (markup) => queueMicrotask(() => socket.onmessage?.({ data: String(markup) }));
+        if (name === 'open') {
+          reply(xml('open', { xmlns: 'urn:ietf:params:xml:ns:xmpp-framing', from: HOST, version: '1.0' }));
+          const authed = socket.sent.some((f) => f.startsWith('<auth'));
+          reply(authed
+            ? xml('stream:features', { 'xmlns:stream': 'http://etherx.jabber.org/streams' }, [xml('bind', { xmlns: 'urn:ietf:params:xml:ns:xmpp-bind' }), xml('sm', { xmlns: 'urn:xmpp:sm:3' })])
+            : xml('stream:features', { 'xmlns:stream': 'http://etherx.jabber.org/streams' }, xml('mechanisms', { xmlns: 'urn:ietf:params:xml:ns:xmpp-sasl' }, xml('mechanism', {}, 'PLAIN'))));
+        } else if (name === 'auth') {
+          const decoded = Buffer.from(el.text, 'base64').toString();
+          socket.auth = decoded;
+          reply(decoded.endsWith('\0good-token') ? xml('success', { xmlns: 'urn:ietf:params:xml:ns:xmpp-sasl' }) : xml('failure', { xmlns: 'urn:ietf:params:xml:ns:xmpp-sasl' }));
+        } else if (name === 'iq' && el.attrs.id === 'bind') {
+          reply(xml('iq', { type: 'result', id: 'bind' }, xml('bind', { xmlns: 'urn:ietf:params:xml:ns:xmpp-bind' }, xml('jid', {}, `${MY_JID}/app`))));
+        } else if (name === 'enable') {
+          smCounter += 1;
+          reply(enable ? xml('enabled', { xmlns: 'urn:xmpp:sm:3', id: `sm-${smCounter}`, resume: 'true' }) : xml('failed', { xmlns: 'urn:xmpp:sm:3' }));
+        } else if (name === 'resume') {
+          socket.resumeRequest = el.attrs;
+          reply(server.resumeWith === null ? xml('failed', { xmlns: 'urn:xmpp:sm:3' }) : xml('resumed', { xmlns: 'urn:xmpp:sm:3', h: server.resumeWith, previd: el.attrs.previd }));
+        }
+      };
+      socket.close = () => { if (socket.closed) return; socket.closed = true; queueMicrotask(() => socket.onclose?.()); };
+      socket.deliver = (markup) => socket.onmessage?.({ data: String(markup) });
+      sockets.push(socket);
+      queueMicrotask(() => { socket.readyState = 1; socket.onopen?.(); });
+      return socket;
+    },
+  };
+  return server;
+}
+
+function transport(server, { grant = { transport: 'xmpp', jid: MY_JID, token: 'good-token', websocket: `wss://${HOST}/xmpp-websocket` } } = {}) {
+  const events = [];
+  const states = [];
+  const timers = [];
+  const t = new XmppTransport({
+    fetchToken: async () => grant,
+    onEvent: (event) => events.push(event),
+    onState: (state) => states.push(state),
+    createSocket: server.createSocket,
+    setTimer: (fn, ms) => { timers.push({ fn, ms }); return timers.length; },
+    clearTimer: () => {},
+    subtle: webcrypto.subtle,
+    random: () => 0.5,
+  });
+  return { t, events, states, timers };
+}
+async function until(check, label) {
+  for (let i = 0; i < 200; i += 1) { if (check()) return; await flush(); }
+  throw new Error(`timeout: ${label}`);
+}
+const sentNames = (socket) => socket.sent.map((frame) => local(parseXml(frame)));
+
+test('stanzas: built XML escapes text and attributes, parses back, and malformed frames are refused', () => {
+  const built = String(xml('message', { to: 'a@b', id: `x"<&'` }, [xml('body', {}, 'one < two & "three"'), 'tail']));
+  const el = parseXml(built);
+  assert.equal(el.attrs.id, `x"<&'`);
+  assert.equal(child(el, 'body').text, 'one < two & "three"');
+  assert.equal(el.text, 'tail');
+  assert.equal(parseXml("<a b='1'><c/>&#x41;&#66;</a>").text, 'AB');
+  for (const bad of ['<a>', '<a></b>', 'text', '<a/><b/>', '<a b=1/>', '']) assert.equal(parseXml(bad), null, bad);
+  assert.equal(escapeXml(`<'&">`), '&lt;&apos;&amp;&quot;&gt;');
+});
+
+test('the device address matches the server\'s derivation', async () => {
+  assert.equal(await deviceLocalpart('user-1', 'Dev', webcrypto.subtle), localpartOf('user-1', 'Dev'));
+});
+
+test('signs in with the token, binds, enables Stream Management, announces presence and comes online', async () => {
+  const server = fakeServer();
+  const { t, states } = transport(server);
+  await t.connect();
+  await until(() => t.state === 'online', 'online');
+  const socket = server.sockets[0];
+  assert.equal(socket.url, `wss://${HOST}/xmpp-websocket`);
+  assert.equal(socket.auth, `\0${MY_JID.split('@')[0]}\0good-token`, 'SASL PLAIN with the device address and token');
+  assert.deepEqual(sentNames(socket), ['open', 'auth', 'open', 'iq', 'enable', 'presence', 'active']);
+  assert.equal(t.fullJid, `${MY_JID}/app`);
+  assert.deepEqual(states, ['connecting', 'online']);
+  t.close();
+  assert.equal(t.state, 'closed');
+});
+
+test('an account not moved over stays on the current path: no socket is opened', async () => {
+  const server = fakeServer();
+  const { t, states } = transport(server, { grant: { transport: 'legacy' } });
+  await t.connect();
+  assert.equal(server.sockets.length, 0);
+  assert.deepEqual(states, ['connecting', 'legacy']);
+});
+
+test('sends wait while offline and go out once online; a refused sign-in closes and retries later', async () => {
+  const server = fakeServer();
+  const { t, timers } = transport(server);
+  t.sendSealed({ id: 'm1', to: [`${localpartOf('peer', 'p1')}@${HOST}`], envelope: 'e2e2:text|{"v":2}', sender: ME });
+  await t.connect();
+  await until(() => t.state === 'online', 'online');
+  const message = server.sockets[0].sent.map((f) => parseXml(f)).find((el) => local(el) === 'message');
+  assert.equal(message.attrs.id, 'm1');
+  const hm = child(message, 'hm', 'urn:hiddenmessenger:1');
+  assert.deepEqual([hm.attrs.u, hm.attrs.d], [ME.userId, ME.deviceId]);
+  assert.equal(Buffer.from(hm.text, 'base64').toString(), 'e2e2:text|{"v":2}', 'the sealed envelope, untouched');
+  assert.ok(child(message, 'request', 'urn:xmpp:receipts') && child(message, 'store', 'urn:xmpp:hints'));
+  t.close();
+
+  const refused = fakeServer();
+  const bad = transport(refused, { grant: { transport: 'xmpp', jid: MY_JID, token: 'stale', websocket: 'wss://x/xmpp-websocket' } });
+  await bad.t.connect();
+  await until(() => bad.t.state === 'offline' && bad.timers.length > 0, 'retry scheduled');
+  assert.ok(bad.timers.at(-1).ms >= 800 && bad.timers.at(-1).ms <= 1200, 'first retry after about a second');
+  bad.t.close();
+  void timers;
+});
+
+test('several devices go as one <fanout>; direct (g=0) and group (g=1) are told apart', async () => {
+  const server = fakeServer();
+  const { t } = transport(server);
+  await t.connect();
+  await until(() => t.state === 'online', 'online');
+  const a = `${localpartOf('peer', 'p1')}@${HOST}`;
+  const b = `${localpartOf('peer', 'p2')}@${HOST}`;
+  t.sendSealed({ id: 'm2', to: [a, b, a], envelope: 'e2e2:text|{}', sender: ME });
+  t.sendSealed({ id: 'g1', to: [a], envelope: 'e2e2:text|{}', sender: ME, group: true });
+  const fanouts = server.sockets[0].sent.map((f) => parseXml(f)).filter((el) => child(el, 'fanout'));
+  assert.equal(fanouts.length, 2);
+  const direct = child(fanouts[0], 'fanout');
+  assert.equal(fanouts[0].attrs.to, HOST, 'addressed to the server, which splits it');
+  assert.deepEqual([direct.attrs.g, direct.attrs.u, direct.attrs.d], ['0', ME.userId, ME.deviceId]);
+  assert.deepEqual(direct.children.map((item) => item.attrs.to), [a.split('@')[0], b.split('@')[0]], 'each device once');
+  assert.equal(child(fanouts[1], 'fanout').attrs.g, '1');
+  t.close();
+});
+
+test('Stream Management: acknowledged stanzas are forgotten; after a drop the session resumes and resends the rest', async () => {
+  const server = fakeServer();
+  const { t, timers } = transport(server);
+  await t.connect();
+  await until(() => t.state === 'online', 'online');
+  const to = `${localpartOf('peer', 'p1')}@${HOST}`;
+  for (const id of ['s1', 's2', 's3']) t.sendSealed({ id, to: [to], envelope: `e2e2:text|${id}`, sender: ME });
+  server.sockets[0].deliver(xml('a', { xmlns: 'urn:xmpp:sm:3', h: '2' }));
+  assert.deepEqual(t.sm.unacked.length, 1, 's3 is still unacknowledged');
+  // The server asks how much we have handled: nothing yet.
+  server.sockets[0].deliver(xml('r', { xmlns: 'urn:xmpp:sm:3' }));
+  assert.match(server.sockets[0].sent.at(-1), /<a xmlns="urn:xmpp:sm:3" h="0"\/>/);
+
+  server.resumeWith = '2';              // the server got s1 and s2 before the drop
+  server.sockets[0].close();
+  await until(() => t.state === 'offline' && timers.length > 0, 'retry scheduled');
+  timers.at(-1).fn();
+  await until(() => t.state === 'online', 'back online');
+  const second = server.sockets[1];
+  assert.equal(second.resumeRequest.previd, 'sm-1', 'resumes the same session');
+  const resent = second.sent.map((f) => parseXml(f)).filter((el) => local(el) === 'message').map((el) => el.attrs.id);
+  assert.deepEqual(resent, ['s3'], 'only what the server had not acknowledged');
+  assert.ok(!sentNames(second).includes('presence'), 'a resumed session keeps its presence');
+  t.close();
+});
+
+test('a failed resume starts a fresh session and still resends what was never acknowledged', async () => {
+  const server = fakeServer();
+  const { t, timers } = transport(server);
+  await t.connect();
+  await until(() => t.state === 'online', 'online');
+  t.sendSealed({ id: 'lost', to: [`${localpartOf('peer', 'p1')}@${HOST}`], envelope: 'e2e2:text|x', sender: ME });
+  server.resumeWith = null;             // the server forgot the session
+  server.sockets[0].close();
+  await until(() => timers.length > 0, 'retry');
+  timers.at(-1).fn();
+  await until(() => t.state === 'online', 'online again');
+  const names = sentNames(server.sockets[1]);
+  assert.deepEqual(names.slice(0, 6), ['open', 'auth', 'open', 'resume', 'iq', 'enable']);
+  assert.ok(server.sockets[1].sent.some((f) => f.includes('id="lost"')), 'the unacknowledged message goes again');
+  t.close();
+});
+
+test('incoming: messages from their true sender, receipts, read markers, typing, fan-out acks and errors', async () => {
+  const server = fakeServer();
+  const { t, events } = transport(server);
+  await t.connect();
+  await until(() => t.state === 'online', 'online');
+  const peer = { userId: 'user-peer', deviceId: 'tablet' };
+  const peerJid = `${localpartOf(peer.userId, peer.deviceId)}@${HOST}`;
+  const socket = server.sockets[0];
+  const sealed = (from, u, d) => xml('message', { from: `${from}/app`, id: 'in1', type: 'chat' }, [
+    xml('hm', { xmlns: 'urn:hiddenmessenger:1', v: '1', u, d }, Buffer.from('e2e2:text|{"v":2}').toString('base64')),
+    xml('delay', { xmlns: 'urn:xmpp:delay', stamp: '2026-11-15T10:00:00Z' }),
+  ]);
+  socket.deliver(sealed(peerJid, peer.userId, peer.deviceId));
+  socket.deliver(sealed(peerJid, 'someone-else', peer.deviceId));     // claims another user's identity
+  socket.deliver(xml('message', { from: `${peerJid}/app` }, xml('received', { xmlns: 'urn:xmpp:receipts', id: 'm1' })));
+  socket.deliver(xml('message', { from: `${peerJid}/app` }, xml('displayed', { xmlns: 'urn:xmpp:chat-markers:0', id: 'm1' })));
+  socket.deliver(xml('message', { from: `${peerJid}/app`, type: 'chat' }, xml('composing', { xmlns: 'http://jabber.org/protocol/chatstates' })));
+  socket.deliver(xml('message', { from: HOST }, xml('fanout-ack', { xmlns: 'urn:hiddenmessenger:fanout:1', id: 'm2', n: '2' })));
+  socket.deliver(xml('message', { from: peerJid, id: 'm9', type: 'error' }, xml('error', { type: 'cancel' }, xml('not-allowed', { xmlns: 'urn:ietf:params:xml:ns:xmpp-stanzas' }))));
+  await until(() => events.length === 7, 'all events');
+  assert.deepEqual(events[0], { type: 'message', id: 'in1', from: `${peerJid}/app`, userId: peer.userId, deviceId: peer.deviceId, envelope: 'e2e2:text|{"v":2}', group: false, sentAt: '2026-11-15T10:00:00Z' });
+  assert.deepEqual(events[1], { type: 'rejected', id: 'in1', from: `${peerJid}/app`, reason: 'sender' });
+  assert.deepEqual(events.slice(2).map((e) => e.type), ['receipt', 'displayed', 'chatstate', 'fanout-ack', 'error']);
+  assert.equal(events[5].delivered, 2);
+  assert.equal(events[6].condition, 'not-allowed');
+  assert.equal(t.sm.inbound, 7, 'every stanza counted for the server\'s acks');
+  t.close();
+});
+
+test('receipts, read markers, typing and background state are the standard stanzas', async () => {
+  const server = fakeServer();
+  const { t } = transport(server);
+  await t.connect();
+  await until(() => t.state === 'online', 'online');
+  const to = `${localpartOf('peer', 'p1')}@${HOST}/app`;
+  t.sendReceipt(to, 'm1');
+  t.sendDisplayed(to, 'm1');
+  t.sendChatState(to, 'composing');
+  assert.equal(t.sendChatState(to, 'dancing'), false);
+  t.setActive(false);
+  const tail = server.sockets[0].sent.slice(-4).map((f) => parseXml(f));
+  assert.equal(child(tail[0], 'received', 'urn:xmpp:receipts').attrs.id, 'm1');
+  assert.equal(child(tail[1], 'displayed', 'urn:xmpp:chat-markers:0').attrs.id, 'm1');
+  assert.ok(child(tail[2], 'composing') && child(tail[2], 'no-store', 'urn:xmpp:hints'));
+  assert.equal(local(tail[3]), 'inactive');
+  t.close();
+});
+
+// --- The app's XMPP session (src/xmpp/session.js) -----------------------------------------------------------------
+
+import { startXmppSession } from '../src/xmpp/session.js';
+
+function sessionHarness({ transportAnswer = 'xmpp', targets = { targets: ['d1@h', 'd2@h'], complete: true, sender: ME } } = {}) {
+  const delivered = [];
+  const legacy = [];
+  const fake = { state: 'online', sent: [], sendSealed(args) { this.sent.push(['sealed', args]); }, sendReceipt(to, id) { this.sent.push(['receipt', to, id]); }, sendDisplayed(to, id) { this.sent.push(['displayed', to, id]); }, setActive() {}, close() {} };
+  let options;
+  const start = () => startXmppSession({
+    sessionToken: 't', userId: ME.userId, deliver: (event) => delivered.push(event), legacySend: (event) => legacy.push(event),
+    targetsFor: async () => targets,
+    fetchImpl: async (path) => new Response(JSON.stringify(path.endsWith('/transport') ? { enabled: true, transport: transportAnswer } : {}), { status: 200 }),
+    createTransport: (opts) => { options = opts; return fake; },
+  });
+  return { start, delivered, legacy, fake, options: () => options };
+}
+const envelopeFrom = (deviceId) => `e2e2:text|${JSON.stringify({ v: 2, sd: deviceId, d: {} })}`;
+
+test('session: an account not moved over never starts one', async () => {
+  const h = sessionHarness({ transportAnswer: 'legacy' });
+  assert.equal(await h.start(), null);
+});
+
+test('session: a sealed message goes over XMPP only when every target device is reachable, else the current path', async () => {
+  const h = sessionHarness();
+  const session = await h.start();
+  const event = { type: 'message:send', message: { id: 'm1', receiverId: 'peer', content: envelopeFrom('phone') } };
+  assert.equal(session.route(event), true);
+  await flush();
+  assert.equal(h.fake.sent[0][0], 'sealed');
+  assert.deepEqual(h.fake.sent[0][1].to, ['d1@h', 'd2@h']);
+  assert.equal(h.delivered[0].type, 'message:ack', 'one tick, as today');
+  assert.equal(h.legacy.length, 0);
+
+  const partial = sessionHarness({ targets: { targets: ['d1@h'], complete: false, sender: ME } });
+  const s2 = await partial.start();
+  s2.route(event);
+  await flush();
+  assert.equal(partial.fake.sent.length, 0);
+  assert.deepEqual(partial.legacy, [event], 'a device without XMPP: the server reaches every device');
+  assert.equal(s2.route({ type: 'chat:disappearing', peerId: 'p', seconds: 5 }), false, 'other events stay on the current connection');
+});
+
+test('session: a refusal from ejabberd resends the message through the current path', async () => {
+  const h = sessionHarness();
+  const session = await h.start();
+  const event = { type: 'message:send', message: { id: 'm7', receiverId: 'peer', content: envelopeFrom('phone') } };
+  session.route(event);
+  await flush();
+  h.options().onEvent({ type: 'error', id: 'm7', condition: 'not-allowed' });
+  assert.deepEqual(h.legacy, [event]);
+});
+
+test('session: incoming messages need the envelope to name the sending device; receipts and reads flow both ways', async () => {
+  const h = sessionHarness();
+  const session = await h.start();
+  const { onEvent } = h.options();
+  onEvent({ type: 'message', id: 'in1', from: 'dpeer@h/app', userId: 'user-peer', deviceId: 'tablet', envelope: envelopeFrom('tablet'), sentAt: '2026-11-15T10:00:00Z' });
+  onEvent({ type: 'message', id: 'in2', from: 'dpeer@h/app', userId: 'user-peer', deviceId: 'tablet', envelope: envelopeFrom('another-device') });
+  assert.equal(h.delivered.length, 1, 'an envelope from another device is dropped');
+  assert.deepEqual(h.delivered[0], { type: 'message:new', message: { id: 'in1', senderId: 'user-peer', receiverId: ME.userId, content: envelopeFrom('tablet'), timestamp: '2026-11-15T10:00:00Z', status: 'sent' } });
+
+  assert.equal(session.route({ type: 'message:delivered', messageIds: ['in1', 'legacy-1'] }), true);
+  assert.deepEqual(h.fake.sent.at(-1), ['receipt', 'dpeer@h/app', 'in1']);
+  assert.deepEqual(h.legacy.at(-1), { type: 'message:delivered', messageIds: ['legacy-1'] }, 'messages that came the old way are acknowledged the old way');
+  assert.equal(session.route({ type: 'message:read', messageId: 'in1' }), true);
+  assert.deepEqual(h.fake.sent.at(-1), ['displayed', 'dpeer@h/app', 'in1']);
+  assert.equal(session.route({ type: 'message:read', messageId: 'legacy-1' }), false);
+
+  onEvent({ type: 'receipt', id: 'mine-1' });
+  onEvent({ type: 'displayed', id: 'mine-1' });
+  assert.deepEqual(h.delivered.slice(-2), [{ type: 'message:status', messageId: 'mine-1', status: 'delivered' }, { type: 'message:status', messageId: 'mine-1', status: 'read' }]);
+});

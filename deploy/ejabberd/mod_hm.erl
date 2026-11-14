@@ -8,7 +8,8 @@
 %%%      <message to='chat.hiddenmessenger.com' id='G'><fanout xmlns='urn:hiddenmessenger:fanout:1' id='G'>
 %%%        <item to='d...'>BASE64</item> ... </fanout></message>
 %%%    and each item goes out as its own message from the sender to d...@host, carrying the item's payload in
-%%%    <hm xmlns='urn:hiddenmessenger:1' v='1' g='1'/>, with a receipt request and store hints, exactly like a direct
+%%%    <hm xmlns='urn:hiddenmessenger:1' v='1' g u d/> (g, u, d copied from <fanout>: group flag, sender user and
+%%%    device ids, which the receiver checks against the sending address), with a receipt request and store hints, like a direct
 %%%    message (so offline storage and the wake-up apply per device). The sender gets <fanout-ack id='G' n='N'/>.
 %%%    The server sees only addresses and ciphertext.
 %%% 3. Who may reach whom: before relaying a message, IQ or directed presence from one device to another, and for every
@@ -207,8 +208,12 @@ fanout_id(Msg, #xmlel{attrs = Attrs}) ->
         Id -> Id
     end.
 
-fan_out(From, LServer, Msg, #xmlel{children = Children} = El) ->
+fan_out(From, LServer, Msg, #xmlel{attrs = FanAttrs, children = Children} = El) ->
     Id = fanout_id(Msg, El),
+    %% g="0": one person's devices (a direct message), so direct rules apply; anything else is a group message.
+    Group = fxml:get_attr_s(<<"g">>, FanAttrs) =/= <<"0">>,
+    HmAttrs = [{<<"xmlns">>, ?NS_HM}, {<<"v">>, <<"1">>}, {<<"g">>, case Group of true -> <<"1">>; false -> <<"0">> end}]
+              ++ [{K, V} || K <- [<<"u">>, <<"d">>], V <- [fxml:get_attr_s(K, FanAttrs)], V =/= <<>>],
     Items = lists:sublist([{To, fxml:get_tag_cdata(Item)}
                            || #xmlel{name = <<"item">>, attrs = ItemAttrs} = Item <- Children,
                               To <- [fxml:get_attr_s(<<"to">>, ItemAttrs)],
@@ -216,16 +221,14 @@ fan_out(From, LServer, Msg, #xmlel{children = Children} = El) ->
     %% Each member device must be reachable under the group rules; others are skipped (the ack counts the rest).
     Verdicts = case Items of
                    [] -> #{};
-                   _ -> verdicts(LServer, From#jid.luser, [To || {To, _} <- Items], true)
+                   _ -> verdicts(LServer, From#jid.luser, [To || {To, _} <- Items], Group)
                end,
     Selected = [Item || {To, _} = Item <- Items, maps:get(To, Verdicts, <<"deny">>) =:= <<"allow">>],
     lists:foreach(
       fun({To, Payload}) ->
               ejabberd_router:route(#message{
                 id = Id, type = chat, from = From, to = jid:make(To, LServer),
-                sub_els = [#xmlel{name = <<"hm">>,
-                                  attrs = [{<<"xmlns">>, ?NS_HM}, {<<"v">>, <<"1">>}, {<<"g">>, <<"1">>}],
-                                  children = [{xmlcdata, Payload}]},
+                sub_els = [#xmlel{name = <<"hm">>, attrs = HmAttrs, children = [{xmlcdata, Payload}]},
                            #xmlel{name = <<"request">>, attrs = [{<<"xmlns">>, <<"urn:xmpp:receipts">>}]},
                            #xmlel{name = <<"store">>, attrs = [{<<"xmlns">>, <<"urn:xmpp:hints">>}]},
                            #xmlel{name = <<"no-permanent-store">>, attrs = [{<<"xmlns">>, <<"urn:xmpp:hints">>}]}]})

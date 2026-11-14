@@ -185,6 +185,20 @@ async function devicesOf(userId, { fresh = false } = {}) {
   return devices;
 }
 
+/**
+ * Where a direct message to `peerId` goes over XMPP (src/xmpp/session.js): every device of the contact and this
+ * account's other devices, by their XMPP addresses from the device lists. `complete` is false when any of them has none
+ * (not moved over yet): the message then goes through the server, which reaches every device.
+ */
+export async function xmppTargetsFor(peerId) {
+  const session = current;
+  if (!session) return { targets: [], complete: false, sender: null };
+  const [peer, mine] = await Promise.all([devicesOf(peerId), devicesOf(session.userId)]);
+  const devices = [...peer, ...mine.filter((device) => device.deviceId !== session.deviceId)];
+  const targets = devices.map((device) => device.xmpp).filter(Boolean);
+  return { targets, complete: devices.length > 0 && targets.length === devices.length, sender: { userId: session.userId, deviceId: session.deviceId } };
+}
+
 /** The server's current list after it refused a message as out of date ({ [userId]: [{ deviceId, identity }] }). */
 export function applyDeviceLists(devices) {
   for (const [userId, list] of Object.entries(devices ?? {})) {
