@@ -199,6 +199,19 @@ export async function xmppTargetsFor(peerId, { peerOnly = false } = {}) {
   return { targets, complete: devices.length > 0 && targets.length === devices.length, sender: { userId: session.userId, deviceId: session.deviceId } };
 }
 
+/**
+ * Where a group message goes over XMPP: every member device except this one, by XMPP address (src/xmpp/session.js
+ * sendGroup). complete is false when any member device has none; the group then stays on the server path.
+ */
+export async function xmppGroupTargetsFor(groupId) {
+  const session = current;
+  if (!session) return { targets: [], complete: false, sender: null };
+  const { devices } = await groupDevicesOf(groupId);
+  const all = Object.values(devices ?? {}).flat().filter((device) => !(device.deviceId === session.deviceId && devices[session.userId]?.includes(device)));
+  const targets = all.map((device) => device.xmpp).filter(Boolean);
+  return { targets, complete: all.length > 0 && targets.length === all.length, sender: { userId: session.userId, deviceId: session.deviceId } };
+}
+
 /** Whose device an XMPP address is, from the device lists this device has seen (null when unknown). */
 export function userForXmppAddress(address) {
   const bare = String(address ?? '').split('/')[0];

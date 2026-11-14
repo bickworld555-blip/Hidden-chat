@@ -222,7 +222,7 @@ test('incoming: messages from their true sender, receipts, read markers, typing,
   socket.deliver(xml('message', { from: HOST }, xml('fanout-ack', { xmlns: 'urn:hiddenmessenger:fanout:1', id: 'm2', n: '2' })));
   socket.deliver(xml('message', { from: peerJid, id: 'm9', type: 'error' }, xml('error', { type: 'cancel' }, xml('not-allowed', { xmlns: 'urn:ietf:params:xml:ns:xmpp-stanzas' }))));
   await until(() => events.length === 7, 'all events');
-  assert.deepEqual(events[0], { type: 'message', id: 'in1', from: `${peerJid}/app`, userId: peer.userId, deviceId: peer.deviceId, envelope: 'e2e2:text|{"v":2}', group: false, sentAt: '2026-11-15T10:00:00Z' });
+  assert.deepEqual(events[0], { type: 'message', id: 'in1', from: `${peerJid}/app`, userId: peer.userId, deviceId: peer.deviceId, envelope: 'e2e2:text|{"v":2}', group: false, groupId: null, sentAt: '2026-11-15T10:00:00Z' });
   assert.deepEqual(events[1], { type: 'rejected', id: 'in1', from: `${peerJid}/app`, reason: 'sender' });
   assert.deepEqual(events.slice(2).map((e) => e.type), ['receipt', 'displayed', 'chatstate', 'fanout-ack', 'error']);
   assert.equal(events[5].delivered, 2);
@@ -377,4 +377,91 @@ test('transport: a recording voice note travels as composing + activity and is r
   await until(() => events.length === 1, 'chatstate');
   assert.deepEqual(events[0], { type: 'chatstate', from: 'dpeer@h/app', state: 'composing', kind: 'recording' });
   t.close();
+});
+
+test('transport: call signals travel live-only in <call>, group fan-outs carry gid and mh, group copies report their group', async () => {
+  const server = fakeServer();
+  const { t, events } = transport(server);
+  await t.connect();
+  await until(() => t.state === 'online', 'online');
+  t.sendCall('dpeer@h/app', { callId: 'c1', mode: 'video', signalId: 's1' }, { type: 'ice', candidate: { candidate: 'a=1' } });
+  const callStanza = parseXml(server.sockets[0].sent.at(-1));
+  const call = child(callStanza, 'call', 'urn:hiddenmessenger:call:1');
+  assert.deepEqual([call.attrs.id, call.attrs.mode, call.attrs.sid, JSON.parse(call.text).type], ['c1', 'video', 's1', 'ice']);
+  assert.ok(child(callStanza, 'no-store', 'urn:xmpp:hints'), 'never stored');
+  t.sendSealed({ id: 'g1', to: ['d1@h', 'd2@h'], envelope: 'e2e2:text|{}', sender: ME, group: true, groupId: 'grp-1', membersHash: 'mh-1' });
+  const fan = child(parseXml(server.sockets[0].sent.at(-1)), 'fanout');
+  assert.deepEqual([fan.attrs.g, fan.attrs.gid, fan.attrs.mh], ['1', 'grp-1', 'mh-1']);
+
+  const peer = { userId: 'user-peer', deviceId: 'tab' };
+  const peerJid = `${localpartOf(peer.userId, peer.deviceId)}@${HOST}`;
+  server.sockets[0].deliver(xml('message', { from: `${peerJid}/app`, id: 'gm1', type: 'chat' }, xml('hm', { xmlns: 'urn:hiddenmessenger:1', v: '1', g: '1', gid: 'grp-1', u: peer.userId, d: peer.deviceId }, Buffer.from('e2e2:text|{}').toString('base64'))));
+  server.sockets[0].deliver(xml('message', { from: `${peerJid}/app`, type: 'chat', id: 's9' }, xml('call', { xmlns: 'urn:hiddenmessenger:call:1', id: 'c1', mode: 'audio', sid: 's9' }, JSON.stringify({ type: 'media', video: false }))));
+  await until(() => events.length === 2, 'events');
+  assert.deepEqual([events[0].group, events[0].groupId], [true, 'grp-1']);
+  assert.deepEqual(events[1], { type: 'call', from: `${peerJid}/app`, callId: 'c1', mode: 'audio', roomId: null, signalId: 's9', signal: { type: 'media', video: false } });
+  t.close();
+});
+
+test("session calls: the server keeps the call's life; once both addresses are known the other signals go direct", async () => {
+  const h = sessionHarness();
+  h.fake.fullJid = 'dme0000000000000000000000000000000000000000@h/app';
+  h.fake.sendCall = (to, meta, signal) => { h.fake.sent.push(['call', to, meta, signal]); return true; };
+  const session = await h.start();
+  const peerAddress = `d${'a'.repeat(40)}@h/app`;
+  const callEvent = (signal, extra = {}) => ({ type: 'call:signal', callId: 'call-1', mode: 'video', targetId: 'user-peer', signalId: crypto.randomUUID(), signal, ...extra });
+
+  // Before the other side is known everything (and the first offer) goes through the server, with our address.
+  assert.equal(session.route(callEvent({ type: 'ice', candidate: {} })), false);
+  assert.equal(session.route(callEvent({ type: 'offer', sdp: 'v=0' })), true);
+  assert.equal(h.legacy.at(-1).signal.x, h.fake.fullJid);
+  // The callee's answer arrives through the server with its address.
+  session.observe({ type: 'call:signal', from: 'user-peer', callId: 'call-1', signal: { type: 'answer', sdp: 'v=0', x: peerAddress } });
+  assert.equal(session.route(callEvent({ type: 'ice', candidate: { candidate: 'c' } })), true);
+  assert.deepEqual(h.fake.sent.at(-1).slice(0, 2), ['call', peerAddress]);
+  assert.equal(session.route(callEvent({ type: 'offer', sdp: 'restart' })), true, 'an ICE-restart offer goes direct too');
+  assert.equal(h.fake.sent.at(-1)[3].sdp, 'restart');
+
+  // Incoming direct signals are only taken from that device.
+  const { onEvent } = h.options();
+  onEvent({ type: 'call', from: peerAddress, callId: 'call-1', mode: 'video', signalId: 'x1', signal: { type: 'ice', candidate: {} } });
+  onEvent({ type: 'call', from: `d${'b'.repeat(40)}@h/app`, callId: 'call-1', mode: 'video', signalId: 'x2', signal: { type: 'ice' } });
+  const calls = h.delivered.filter((e) => e.type === 'call:signal');
+  assert.deepEqual(calls.map((e) => [e.from, e.signalId]), [['user-peer', 'x1']]);
+
+  // A refusal goes through the server; the end always does, and forgets the call.
+  const refused = callEvent({ type: 'media', video: false }, { signalId: 'sig-refused' });
+  session.route(refused);
+  onEvent({ type: 'error', id: 'sig-refused', condition: 'not-allowed' });
+  assert.equal(h.legacy.at(-1), refused);
+  assert.equal(session.route(callEvent({ type: 'end', reason: 'ended' })), false);
+  assert.equal(session.route(callEvent({ type: 'ice', candidate: {} })), false, 'after the end nothing goes direct');
+});
+
+test('session groups: all member devices on XMPP -> one fan-out; otherwise the server; nobody reached -> server resend', async () => {
+  const h = sessionHarness();
+  let groupTargets = { targets: ['d1@h', 'd2@h'], complete: true, sender: ME };
+  const session = await startXmppSession({
+    sessionToken: 't', userId: ME.userId, deliver: (e) => h.delivered.push(e), legacySend: (e) => h.legacy.push(e),
+    targetsFor: async () => ({ targets: [], complete: false, sender: ME }), groupTargetsFor: async () => groupTargets,
+    fetchImpl: async () => new Response(JSON.stringify({ transport: 'xmpp' }), { status: 200 }),
+    createTransport: (opts) => { h.opts = opts; return h.fake; },
+  });
+  const envelope = `e2e2:text|${JSON.stringify({ v: 2, sd: 'phone', mh: 'hash-1', g: {} })}`;
+  let resent = 0;
+  const row = await session.sendGroup({ groupId: 'grp-1', messageId: 'gm-1', envelope, fallback: () => { resent += 1; } });
+  assert.deepEqual([row.id, row.groupId, row.content], ['gm-1', 'grp-1', envelope]);
+  const sealed = h.fake.sent.at(-1)[1];
+  assert.deepEqual([sealed.group, sealed.groupId, sealed.membersHash, sealed.to], [true, 'grp-1', 'hash-1', ['d1@h', 'd2@h']]);
+  h.opts.onEvent({ type: 'fanout-ack', id: 'gm-1', delivered: 0 });
+  assert.equal(resent, 1, 'nobody reached (stale hash, no right to post): sent through the server');
+  h.opts.onEvent({ type: 'fanout-ack', id: 'gm-1', delivered: 0 });
+  assert.equal(resent, 1, 'once');
+
+  groupTargets = { targets: ['d1@h'], complete: false, sender: ME };
+  assert.equal(await session.sendGroup({ groupId: 'grp-1', messageId: 'gm-2', envelope }), null, 'a member device not on XMPP: the server path');
+
+  h.opts.onEvent({ type: 'message', id: 'in-g', from: 'dpeer@h/app', userId: 'user-peer', deviceId: 'tablet', envelope: `e2e2:text|${JSON.stringify({ v: 2, sd: 'tablet', mh: 'h', g: {} })}`, group: true, groupId: 'grp-1', sentAt: '2026-11-15T10:00:00Z' });
+  const incoming = h.delivered.find((e) => e.type === 'group:message');
+  assert.deepEqual([incoming.message.id, incoming.message.groupId, incoming.message.senderId, incoming.message.createdAt], ['in-g', 'grp-1', 'user-peer', Date.parse('2026-11-15T10:00:00Z')]);
 });

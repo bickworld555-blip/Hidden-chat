@@ -12,7 +12,17 @@
 //        same sending device becomes the usual message:new; receipts and read markers become message:status; chat
 //        states from a known device become presence:typing.
 //
-// Everything else stays on the current connection for now (groups, statuses, account, calls).
+//   calls  the server stays in charge of a call's life: the first offer (ringing, the ring timeout, the call push that
+//        wakes a phone, silencing unknown callers), the first answer (answered elsewhere) and every end (missed and
+//        ended calls) go through it, each carrying this device's XMPP address (x). Once both sides know each other's
+//        address, every other signal — ICE candidates, renegotiation and ICE-restart offers/answers, media state,
+//        reactions — goes straight to the other call device over XMPP (live only); a refusal goes through the server.
+//        Call invites are deliberately not stored on XMPP: a stored invite could ring after the call has ended.
+//   groups a group message goes as one <fanout g=1 gid mh> to every member device when all have XMPP addresses
+//        (ejabberd checks with the server that the sender may post and the members hash is current); when nobody
+//        could be reached it is sent through the server instead, with the same message id.
+//
+// Everything else stays on the current connection for now (statuses, account, group admin).
 import { parseEnvelope } from '../e2e/envelope.js';
 import { XmppTransport } from './transport.js';
 
@@ -22,7 +32,7 @@ const RECEIPT_MEMORY = 5000;
  * Resolves null unless this account is moved over. `deliver(event)` feeds the app's realtime event handler;
  * `legacySend(event)` is the current connection's send.
  */
-export async function startXmppSession({ sessionToken, userId, deliver, legacySend, targetsFor, userForAddress = () => null, fetchImpl, createTransport = (options) => new XmppTransport(options) }) {
+export async function startXmppSession({ sessionToken, userId, deliver, legacySend, targetsFor, groupTargetsFor = async () => ({ targets: [], complete: false, sender: null }), userForAddress = () => null, fetchImpl, createTransport = (options) => new XmppTransport(options) }) {
   const auth = { Authorization: `Bearer ${sessionToken}` };
   let decision;
   try {
@@ -38,6 +48,14 @@ export async function startXmppSession({ sessionToken, userId, deliver, legacySe
   // Messages sent over XMPP and not refused yet, so a refusal can resend them through the current path.
   const inFlight = new Map();
   const remember = (map, key, value) => { map.set(key, value); if (map.size > RECEIPT_MEMORY) map.delete(map.keys().next().value); };
+  // Calls: callId -> { address, userId } of the other call device, learnt from the server-relayed offer/answer.
+  const callPeers = new Map();
+  const answeredThroughServer = new Set();
+  const callSignalsInFlight = new Map();
+  // Group messages sent over XMPP: id -> fallback() resending them through the server if nobody could be reached.
+  const groupFallbacks = new Map();
+  const CALL_ADDRESS = /^d[0-9a-f]{40}@[^/\s]+\/[^\s]{1,256}$/;
+  const bare = (address) => String(address ?? '').split('/')[0];
 
   const transport = createTransport({
     fetchToken: async () => {
@@ -50,7 +68,15 @@ export async function startXmppSession({ sessionToken, userId, deliver, legacySe
         const parsed = parseEnvelope(event.envelope);
         // The envelope must come from the device that sent the stanza (its ratchet is that device's).
         if (!parsed?.body || parsed.body.sd !== event.deviceId || !event.id) return;
+        // A group stanza must carry a group envelope and a direct one a direct envelope (never one taken for the other).
+        if (Boolean(event.group) !== Boolean(parsed.body.g)) return;
         remember(cameFrom, event.id, event.from);
+        if (event.group) {
+          if (!event.groupId) return;
+          const createdAt = Date.parse(event.sentAt ?? '') || Date.now();
+          deliver({ type: 'group:message', message: { id: event.id, groupId: event.groupId, senderId: event.userId, createdAt, content: event.envelope } });
+          return;
+        }
         deliver({
           type: 'message:new',
           message: { id: event.id, senderId: event.userId, receiverId: userId, content: event.envelope, timestamp: event.sentAt || new Date().toISOString(), status: 'sent' },
@@ -60,9 +86,22 @@ export async function startXmppSession({ sessionToken, userId, deliver, legacySe
         deliver({ type: 'message:status', messageId: event.id, status: 'delivered' });
       } else if (event.type === 'displayed') {
         deliver({ type: 'message:status', messageId: event.id, status: 'read' });
+      } else if (event.type === 'call') {
+        // Only from the device this call is with (learnt from the server-relayed offer or answer).
+        const peer = callPeers.get(event.callId);
+        if (!peer || bare(peer.address) !== bare(event.from)) return;
+        deliver({ type: 'call:signal', from: peer.userId, callId: event.callId, mode: event.mode, signal: event.signal, signalId: event.signalId, ...(event.roomId ? { roomId: event.roomId } : {}) });
+      } else if (event.type === 'fanout-ack') {
+        const fallback = groupFallbacks.get(event.id);
+        groupFallbacks.delete(event.id);
+        if (fallback && event.delivered === 0) fallback();
       } else if (event.type === 'chatstate') {
         const sender = userForAddress(event.from);
         if (sender && sender !== userId) deliver({ type: 'presence:typing', userId: sender, active: event.state === 'composing', ...(event.state === 'composing' ? { kind: event.kind } : {}) });
+      } else if (event.type === 'error' && callSignalsInFlight.has(event.id)) {
+        const original = callSignalsInFlight.get(event.id);
+        callSignalsInFlight.delete(event.id);
+        legacySend(original);
       } else if (event.type === 'error' && inFlight.has(event.id)) {
         // Refused (e.g. someone moved back to the current path): that path delivers it instead.
         const original = inFlight.get(event.id);
@@ -97,8 +136,56 @@ export async function startXmppSession({ sessionToken, userId, deliver, legacySe
     }
   }
 
+  function routeCallSignal(event) {
+    const { callId, signal } = event;
+    if (signal.type === 'end') {
+      callPeers.delete(callId);
+      answeredThroughServer.delete(callId);
+      return false;                                   // the server records how the call ended
+    }
+    if (signal.type === 'ringing') return false;
+    const withAddress = { ...event, signal: { ...signal, x: transport.fullJid } };
+    if (signal.type === 'offer' && !callPeers.has(callId)) { legacySend(withAddress); return true; }
+    if (signal.type === 'answer' && !answeredThroughServer.has(callId)) {
+      answeredThroughServer.add(callId);
+      legacySend(withAddress);
+      return true;
+    }
+    const peer = callPeers.get(callId);
+    if (!peer) return false;
+    const signalId = typeof event.signalId === 'string' ? event.signalId : crypto.randomUUID();
+    if (!transport.sendCall(peer.address, { callId, mode: event.mode, roomId: event.roomId ?? null, signalId }, signal)) return false;
+    remember(callSignalsInFlight, signalId, event);
+    return true;
+  }
+
   return {
     transport,
+    /** A server-relayed call signal arrived: learn the other device's XMPP address (or forget the call when it ends). */
+    observe(event) {
+      if (event?.type !== 'call:signal' || typeof event.callId !== 'string') return;
+      if (event.signal?.type === 'end') { callPeers.delete(event.callId); answeredThroughServer.delete(event.callId); return; }
+      const address = event.signal?.x;
+      // The address comes with the server-relayed, server-authenticated signal of that user, like the SDP itself.
+      if (typeof address === 'string' && CALL_ADDRESS.test(address) && typeof event.from === 'string') callPeers.set(event.callId, { address, userId: event.from });
+    },
+    /**
+     * Sends a sealed group message over XMPP when every member device can receive there. Resolves the row to show, or
+     * null to send it through the server. `fallback()` resends through the server when nobody could be reached.
+     */
+    async sendGroup({ groupId, messageId, envelope, fallback }) {
+      if (transport.state !== 'online') return null;
+      try {
+        const { targets, complete, sender } = await groupTargetsFor(groupId);
+        const membersHash = parseEnvelope(envelope)?.body?.mh;
+        if (!complete || !sender || !membersHash || !targets.length) return null;
+        if (fallback) remember(groupFallbacks, messageId, fallback);
+        transport.sendSealed({ id: messageId, to: targets, envelope, sender, group: true, groupId, membersHash });
+        return { id: messageId, groupId, senderId: userId, createdAt: Date.now(), content: envelope, expiresAt: null };
+      } catch {
+        return null;
+      }
+    },
     /**
      * Takes an outgoing realtime event if XMPP carries it: true when handled here (possibly falling back later),
      * false when the caller should send it on the current connection as usual.
@@ -122,6 +209,7 @@ export async function startXmppSession({ sessionToken, userId, deliver, legacySe
         if (rest.length || event.eventIds?.length) legacySend({ ...event, messageIds: rest });
         return true;
       }
+      if (event.type === 'call:signal' && event.signal && typeof event.callId === 'string') return routeCallSignal(event);
       if (event.type === 'presence:typing' && typeof event.peerId === 'string' && !event.groupId) {
         sendTyping(event);
         return true;

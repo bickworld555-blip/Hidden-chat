@@ -70,6 +70,15 @@ public class PushService extends FirebaseMessagingService {
     private void onXmppWake(RelaySession session, JSONObject body) {
         String from = body.optString("from");
         boolean running = HiddenNativePlugin.emitXmppWake();
+        String groupId = body.optString("groupId");
+        if (!groupId.isEmpty()) {
+            // A group message: the group's notification, as for "gmsg" pushes.
+            if (session.mutedGroups.contains(groupId)) return;
+            String tag = "group:" + groupId;
+            Alerts.showMessage(this, NotificationChannels.messageChannel(this, true, session.groupSound),
+                body.optString("groupName", "Group"), MessagePreview.of("e2e2:"), tag, tag, 0, null, body.optString("senderName"), null);
+            return;
+        }
         if (!from.isEmpty() && session.mutedChats.contains(from)) return;
         String tag = from.isEmpty() ? "xmpp-wake" : "chat:" + from;
         String avatar = body.isNull("avatar") ? null : body.optString("avatar", null);

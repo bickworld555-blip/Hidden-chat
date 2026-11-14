@@ -60,9 +60,9 @@ mod_doc() -> #{desc => [<<"Hidden Messenger: offline wake-up hook and group fan-
 
 %%% --- 1. Offline wake-up ---------------------------------------------------------------------------------
 
-offline_message({offlined, #message{to = #jid{luser = LUser, lserver = LServer}, from = From}} = Acc) ->
+offline_message({offlined, #message{to = #jid{luser = LUser, lserver = LServer}, from = From, sub_els = Els}} = Acc) ->
     case device_localpart(LUser) of
-        true -> notify(LServer, LUser, sender_localpart(From));
+        true -> notify(LServer, LUser, sender_localpart(From), group_of(Els));
         false -> ok
     end,
     Acc;
@@ -87,14 +87,21 @@ sender_localpart(#jid{luser = FromUser}) ->
 sender_localpart(_) ->
     <<>>.
 
-notify(LServer, LUser, FromUser) ->
+%% The group a stored message belongs to (the gid fan-out copied into its <hm>), or <<>>.
+group_of(Els) ->
+    case [fxml:get_attr_s(<<"gid">>, Attrs) || #xmlel{name = <<"hm">>, attrs = Attrs} <- Els, fxml:get_attr_s(<<"xmlns">>, Attrs) =:= ?NS_HM] of
+        [Gid | _] -> Gid;
+        [] -> <<>>
+    end.
+
+notify(LServer, LUser, FromUser, Group) ->
     Url = gen_mod:get_module_opt(LServer, ?MODULE, hook_url),
     Key = gen_mod:get_module_opt(LServer, ?MODULE, hook_key),
     case {Url, Key} of
         {<<>>, _} -> ok;
         {_, <<>>} -> ok;
         _ ->
-            Body = iolist_to_binary(json:encode(#{<<"to">> => LUser, <<"from">> => FromUser,
+            Body = iolist_to_binary(json:encode(#{<<"to">> => LUser, <<"from">> => FromUser, <<"group">> => Group,
                                                    <<"ts">> => erlang:system_time(second)})),
             Request = {binary_to_list(Url), signed_headers(Key, Body), "application/json", Body},
             case httpc:request(post, Request, [{timeout, 8000}, {connect_timeout, 4000}, {ssl, ssl_opts()}],
@@ -186,8 +193,12 @@ fetch_verdicts(LServer, FromUser, Targets, Group) ->
         {<<>>, _} -> {ok, maps:from_list([{T, <<"allow">>} || T <- Targets])};
         {_, <<>>} -> {ok, maps:from_list([{T, <<"allow">>} || T <- Targets])};
         _ ->
-            Body = iolist_to_binary(json:encode(#{<<"from">> => FromUser, <<"to">> => Targets, <<"group">> => Group,
-                                                   <<"ts">> => erlang:system_time(second)})),
+            GroupFields = case Group of
+                              {Gid, Mh} -> #{<<"group">> => true, <<"groupId">> => Gid, <<"membersHash">> => Mh};
+                              _ -> #{<<"group">> => Group}
+                          end,
+            Body = iolist_to_binary(json:encode(GroupFields#{<<"from">> => FromUser, <<"to">> => Targets,
+                                                              <<"ts">> => erlang:system_time(second)})),
             Request = {binary_to_list(Url), signed_headers(Key, Body), "application/json", Body},
             case httpc:request(post, Request, [{timeout, 5000}, {connect_timeout, 3000}, {ssl, ssl_opts()}],
                                [{body_format, binary}]) of
@@ -220,9 +231,16 @@ fanout_id(Msg, #xmlel{attrs = Attrs}) ->
 fan_out(From, LServer, Msg, #xmlel{attrs = FanAttrs, children = Children} = El) ->
     Id = fanout_id(Msg, El),
     %% g="0": one person's devices (a direct message), so direct rules apply; anything else is a group message.
-    Group = fxml:get_attr_s(<<"g">>, FanAttrs) =/= <<"0">>,
-    HmAttrs = [{<<"xmlns">>, ?NS_HM}, {<<"v">>, <<"1">>}, {<<"g">>, case Group of true -> <<"1">>; false -> <<"0">> end}]
-              ++ [{K, V} || K <- [<<"u">>, <<"d">>], V <- [fxml:get_attr_s(K, FanAttrs)], V =/= <<>>],
+    IsGroup = fxml:get_attr_s(<<"g">>, FanAttrs) =/= <<"0">>,
+    Gid = fxml:get_attr_s(<<"gid">>, FanAttrs),
+    %% A group message names its group and members hash: the server checks posting rights and the hash (verdicts).
+    Group = case {IsGroup, Gid} of
+                {false, _} -> false;
+                {true, <<>>} -> true;
+                {true, _} -> {Gid, fxml:get_attr_s(<<"mh">>, FanAttrs)}
+            end,
+    HmAttrs = [{<<"xmlns">>, ?NS_HM}, {<<"v">>, <<"1">>}, {<<"g">>, case IsGroup of true -> <<"1">>; false -> <<"0">> end}]
+              ++ [{K, V} || K <- [<<"u">>, <<"d">>, <<"gid">>], V <- [fxml:get_attr_s(K, FanAttrs)], V =/= <<>>],
     Items = lists:sublist([{To, fxml:get_tag_cdata(Item)}
                            || #xmlel{name = <<"item">>, attrs = ItemAttrs} = Item <- Children,
                               To <- [fxml:get_attr_s(<<"to">>, ItemAttrs)],

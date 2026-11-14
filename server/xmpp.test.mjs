@@ -419,3 +419,39 @@ test('a wake-up for a message from a known device names the sender, like today\'
   assert.equal((await woken.json()).pushed, 1);
   assert.equal(pushes[0].options.collapseKey, `chat:${vic.user.id}`, 'collapses with that chat, as message pushes do');
 });
+
+test('group fan-out: only a member allowed to post, with the current members hash, reaches other members', async () => {
+  const { membersHashOf } = await import('./e2e.mjs');
+  const wes = await account(), xia = await account(), yan = await account();
+  for (const person of [wes, xia, yan]) await withKeysAndPush(person.token, `fcm-${person.username}-${'q'.repeat(30)}`);
+  const [wesD, xiaD, yanD] = [await deviceOf(wes), await deviceOf(xia), await deviceOf(yan)];
+  const group = (await api('/api/v1/groups', { method: 'POST', token: wes.token, body: { name: 'Climbers', memberIds: [xia.user.id] } })).body;
+  const groupId = group.id ?? group.group?.id;
+  assert.ok(groupId, JSON.stringify(group));
+  const listed = (await api(`/api/v1/e2e/groups/${groupId}/devices`, { token: wes.token })).body;
+  const all = Object.entries(listed.devices).flatMap(([userId, list]) => list.map((device) => `${userId}/${device.deviceId}`));
+  const membersHash = membersHashOf(all);
+  const ask = async (body) => (await (await allow(body)).json()).verdicts;
+  assert.deepEqual(await ask({ from: wesD, to: [xiaD, yanD], group: true, groupId, membersHash }), { [xiaD]: 'allow', [yanD]: 'deny' }, 'a non-member is never reached');
+  assert.deepEqual(await ask({ from: wesD, to: [xiaD], group: true, groupId, membersHash: 'stale' }), { [xiaD]: 'deny' }, 'a stale members hash is refused (the sender encrypts again)');
+  assert.deepEqual(await ask({ from: yanD, to: [xiaD], group: true, groupId, membersHash }), { [xiaD]: 'deny' }, 'a non-member cannot post');
+
+  pushes.length = 0;
+  const woken = await hook({ to: xiaD, from: wesD, group: groupId, ts: Math.floor(Date.now() / 1000) });
+  assert.equal((await woken.json()).pushed, 1);
+  assert.equal(pushes[0].options.collapseKey, `group:${groupId}`, "a group wake-up is the group's notification");
+});
+
+test('a group message may carry its own id (the one it was first sent over XMPP with); a reused id is refused', async () => {
+  const zed = await account();
+  await withKeysAndPush(zed.token, `fcm-zed-${'r'.repeat(30)}`);
+  const group = (await api('/api/v1/groups', { method: 'POST', token: zed.token, body: { name: 'Solo', memberIds: [] } })).body;
+  const groupId = group.id ?? group.group?.id;
+  const id = '11111111-2222-4333-8444-555555555555';
+  const first = await api(`/api/v1/groups/${groupId}/messages`, { method: 'POST', token: zed.token, body: { content: 'hello', id } });
+  assert.equal(first.status, 201, JSON.stringify(first.body));
+  assert.equal(first.body.id, id);
+  assert.equal((await api(`/api/v1/groups/${groupId}/messages`, { method: 'POST', token: zed.token, body: { content: 'again', id } })).status, 409);
+  const named = await api(`/api/v1/groups/${groupId}/messages`, { method: 'POST', token: zed.token, body: { content: 'no id' } });
+  assert.match(named.body.id, /^[0-9a-f-]{36}$/, 'without one the server names it as before');
+});

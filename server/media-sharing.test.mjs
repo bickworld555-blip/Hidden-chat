@@ -37,7 +37,8 @@ test('the caption and the preview never travel next to the ciphertext', () => {
   const messaging = read('src/e2e/messaging.js');
   assert.match(messaging, /caption: _caption, album: _album, thumb: _thumb, poster: _poster, duration: _duration, \.\.\.rest \} = message;/, 'stripped from what the server receives');
   const groups = read('src/components/GroupsView.jsx');
-  assert.match(groups, /rawGroupRequest\(token, path, \{ \.\.\.options, extras: undefined, body: \{ \.\.\.options\.body, content \} \}\), extras\)/);
+  assert.match(groups, /rawGroupRequest\(token, path, \{ \.\.\.options, extras: undefined, body: \{ \.\.\.options\.body, content, id: messageId \} \}\)/);
+  assert.match(groups, /sendGroupContent\(id, plain, send, extras\)/, 'extras go to the sealing step only');
 });
 
 test('a video carries its sharp poster frame and length inside the encryption', () => {

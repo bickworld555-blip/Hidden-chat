@@ -23,6 +23,7 @@ import { handleFrom, lookupUsername } from '../contactsApi.js';
 import { uploadFile } from '../upload.js';
 import { attachmentContent, sealForUpload } from '../mediaCrypto.js';
 import { groupEncryption, sendGroupContent } from '../e2e/client.js';
+import { getXmppSession } from '../xmpp/active.js';
 import { fetchGroupMessages } from '../groupHistory.js';
 import { dropPending, enqueuePending, flushPending, pendingFor, usePending } from '../groupPending.js';
 import FormattedText from './FormattedText.jsx';
@@ -68,8 +69,21 @@ async function groupRequest(token, path, options = {}) {
     const plain = options.body.content;
     // extras (caption, thumbnail…) travel inside the encryption only, never in the request body.
     const extras = options.extras ?? {};
+    // One id for this message whichever way it goes, so a server resend after an XMPP attempt replaces it, not doubles it.
+    const messageId = options.body.id ?? crypto.randomUUID();
+    const viaServer = (content) => rawGroupRequest(token, path, { ...options, extras: undefined, body: { ...options.body, content, id: messageId } });
+    // Accounts moved to XMPP send to every member device through ejabberd when all can receive there
+    // (src/xmpp/session.js); if nobody could be reached it is sealed again and sent through the server.
+    const send = async (content) => {
+      const session = options.serverOnly ? null : getXmppSession();
+      const row = session ? await session.sendGroup({
+        groupId: id, messageId, envelope: content,
+        fallback: () => { groupRequest(token, path, { ...options, serverOnly: true, body: { ...options.body, id: messageId } }).catch(() => {}); },
+      }) : null;
+      return row ?? viaServer(content);
+    };
     try {
-      const row = await sendGroupContent(id, plain, (content) => rawGroupRequest(token, path, { ...options, extras: undefined, body: { ...options.body, content } }), extras);
+      const row = await sendGroupContent(id, plain, send, extras);
       return row ? { ...row, content: plain, ...extras } : row;
     } catch (error) {
       // Strict end-to-end encryption: a member has no keys yet, so the message waits on this device.

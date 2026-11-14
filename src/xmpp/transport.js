@@ -14,6 +14,8 @@ import { child, local, parseXml, xml } from './stanza.js';
 
 export const NS_HM = 'urn:hiddenmessenger:1';
 export const NS_FANOUT = 'urn:hiddenmessenger:fanout:1';
+export const NS_CALL = 'urn:hiddenmessenger:call:1';
+const MAX_CALL_SIGNAL_CHARS = 48 * 1024;
 const NS_FRAMING = 'urn:ietf:params:xml:ns:xmpp-framing';
 const NS_SASL = 'urn:ietf:params:xml:ns:xmpp-sasl';
 const NS_BIND = 'urn:ietf:params:xml:ns:xmpp-bind';
@@ -225,7 +227,7 @@ export class XmppTransport {
    * One sealed envelope to one or more device addresses. Several go as one <fanout> the server splits (mod_hm), so
    * a group or multi-device message costs one stanza. `sender` = { userId, deviceId } of this device.
    */
-  sendSealed({ id, to, envelope, sender, group = false }) {
+  sendSealed({ id, to, envelope, sender, group = false, groupId = null, membersHash = null }) {
     const targets = [...new Set(to)].filter(Boolean);
     if (!targets.length) return false;
     const payload = toBase64(envelope);
@@ -238,8 +240,24 @@ export class XmppTransport {
       ])));
     }
     const host = this.jid?.split('@')[1];
-    return this.#write(String(xml('message', { id, to: host }, xml('fanout', { xmlns: NS_FANOUT, id, u: sender.userId, d: sender.deviceId, g: group ? '1' : '0' },
+    // A group message names its group and members hash: ejabberd asks the server whether the sender may post there and
+    // whether the hash is current before relaying (mod_hm), as the server checks a group post today.
+    return this.#write(String(xml('message', { id, to: host }, xml('fanout', { xmlns: NS_FANOUT, id, u: sender.userId, d: sender.deviceId, g: group ? '1' : '0', gid: group ? groupId : null, mh: group ? membersHash : null },
       targets.map((target) => xml('item', { to: bareLocal(target) }, payload))))));
+  }
+
+  /**
+   * One call signal (offer/answer for renegotiation, ICE candidates, media state, reactions) to the other call device's
+   * full address. Live only: never stored — a signal is useless after the call, and a call that cannot reach the other
+   * device falls back to the server (session.js).
+   */
+  sendCall(to, { callId, mode, roomId = null, signalId }, signal) {
+    const payload = JSON.stringify(signal);
+    if (payload.length > MAX_CALL_SIGNAL_CHARS) return false;
+    return this.#write(String(xml('message', { to, type: 'chat', id: signalId }, [
+      xml('call', { xmlns: NS_CALL, id: callId, mode, room: roomId, sid: signalId }, payload),
+      xml('no-store', { xmlns: NS_HINTS }),
+    ])));
   }
 
   /** Delivered (XEP-0184): sent once the message (and its media) is stored on this device. */
@@ -289,7 +307,14 @@ export class XmppTransport {
       let envelope;
       try { envelope = fromBase64(hm.text.trim()); } catch { return emit({ type: 'rejected', id: el.attrs.id ?? null, from, reason: 'payload' }); }
       const delay = child(el, 'delay', NS_DELAY)?.attrs.stamp ?? null;
-      return emit({ type: 'message', id: el.attrs.id ?? null, from, userId, deviceId, envelope, group: hm.attrs.g === '1', sentAt: delay });
+      return emit({ type: 'message', id: el.attrs.id ?? null, from, userId, deviceId, envelope, group: hm.attrs.g === '1', groupId: hm.attrs.g === '1' ? hm.attrs.gid || null : null, sentAt: delay });
+    }
+    const call = child(el, 'call', NS_CALL);
+    if (call) {
+      let signal;
+      try { signal = JSON.parse(call.text); } catch { return; }
+      if (!signal || typeof signal !== 'object' || typeof signal.type !== 'string' || !call.attrs.id) return;
+      return emit({ type: 'call', from, callId: call.attrs.id, mode: call.attrs.mode, roomId: call.attrs.room || null, signalId: call.attrs.sid || el.attrs.id || null, signal });
     }
     const state = el.children.find((item) => item.attrs.xmlns === NS_CHATSTATES && CHAT_STATES.has(local(item)));
     if (state) return emit({ type: 'chatstate', from, state: local(state), kind: child(el, 'activity', NS_HM)?.attrs.kind === 'recording' ? 'recording' : 'typing' });

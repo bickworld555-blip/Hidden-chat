@@ -1191,7 +1191,10 @@ export function createChatServer({
       const owned = mediaId && await db.prepare('SELECT 1 FROM media WHERE id = ? AND group_id = ? AND sender_id = ?').get(mediaId, groupId, userId);
       if (!owned) return response.status(400).json({ error: 'Upload the attachment to this group first.' });
     }
-    const id = randomUUID();
+    // The app may name the message (it is the same message it first tried over XMPP); otherwise the server names it.
+    const clientId = typeof request.body?.id === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(request.body.id) ? request.body.id.toLowerCase() : null;
+    if (clientId && await db.prepare('SELECT 1 FROM group_messages WHERE id = ?').get(clientId)) return response.status(409).json({ error: 'Message ID is already in use.' });
+    const id = clientId ?? randomUUID();
     const now = Date.now();
     const row = await db.prepare(`INSERT INTO group_messages(id, group_id, sender_id, created_at, content, expires_at)
       SELECT ?, group_id, user_id, ?, ?, CASE WHEN auto_delete = 1 THEN CAST(? AS BIGINT) ELSE NULL END
@@ -1249,11 +1252,23 @@ export function createChatServer({
     return 'allow';
   }
   const xmpp = createXmpp({ db, config: xmppConfig, fetchImpl: xmppFetch, verdict: xmppVerdict,
+    groupPost: async ({ groupId, senderUserId, membersHash }) => {
+      if (!(await parity.canPostToGroup(groupId, senderUserId)).ok) return false;
+      return Boolean(membersHash) && membersHash === await e2e.groupMembersHash(groupId);
+    },
+    groupMember: async (groupId, memberId) => Boolean(await db.prepare(`SELECT 1 FROM group_members m JOIN users u ON u.id = m.user_id
+      WHERE m.group_id = ? AND m.user_id = ? AND u.deleted_at IS NULL`).get(groupId, memberId)),
     // A message waits on ejabberd for this device: the usual encrypted push, carrying nothing but "connect".
     // The push names the sender like today's message push ("New message" text: the content stays sealed), unless the
     // sender is unknown; the phone then shows a plain "New message" and connects to collect it.
-    wake: async (userId, deviceId, { fromUserId = null } = {}) => {
+    wake: async (userId, deviceId, { fromUserId = null, groupId = null } = {}) => {
       const sender = fromUserId ? await db.prepare(`SELECT ${USER_COLUMNS} FROM users WHERE id = ? AND deleted_at IS NULL`).get(fromUserId) : null;
+      // A group message: the group notification (group name, "sender: 🔒 Message"), collapsed per group.
+      const group = groupId && await db.prepare('SELECT g.name AS "name" FROM groups g JOIN group_members m ON m.group_id = g.id WHERE g.id = ? AND m.user_id = ?').get(groupId, userId);
+      if (group) {
+        return pushToDevice(userId, deviceId, { t: 'xwake', groupId, groupName: group.name ?? 'Group', senderName: sender ? sender.name || `@${sender.username}` : '' },
+          { collapseKey: `group:${groupId}`, ttlSeconds: 86_400 });
+      }
       const body = sender
         ? { t: 'xwake', from: sender.id, senderName: sender.name || `@${sender.username}`, avatar: publicUser(sender).avatar }
         : { t: 'xwake' };

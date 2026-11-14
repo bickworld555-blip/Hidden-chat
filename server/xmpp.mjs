@@ -89,7 +89,10 @@ export function ensureXmppSchema(db) {
 // `wake(userId, deviceId, { fromUserId })`: sends that one device the wake-up push (index.mjs pushToDevice); resolves how
 // many went. fromUserId (when the sender is known) lets the push name the sender.
 export function createXmpp({ db, config = xmppConfigFromEnv(), fetchImpl = globalThis.fetch, now = Date.now, log = console, wake = async () => 0,
-  verdict = async () => 'allow' } = {}) {
+  verdict = async () => 'allow',
+  // groupPost({ groupId, senderUserId, membersHash }) -> may this sender post there with this (current) members hash;
+  // groupMember(groupId, userId) -> is that user a member. Used for group fan-out (index.mjs).
+  groupPost = async () => false, groupMember = async () => false } = {}) {
   const accountOf = db.prepare('SELECT localpart FROM xmpp_accounts WHERE user_id = ? AND device_id = ?');
   const insertAccount = db.prepare('INSERT INTO xmpp_accounts(user_id, device_id, localpart, created_at) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING');
   const deleteAccount = db.prepare('DELETE FROM xmpp_accounts WHERE localpart = ?');
@@ -276,7 +279,8 @@ export function createXmpp({ db, config = xmppConfigFromEnv(), fetchImpl = globa
         if (lastWake.size > 10_000) for (const [key, value] of lastWake) if (at - value >= WAKE_COALESCE_MS) lastWake.delete(key);
         const sender = typeof event.from === 'string' && DEVICE.test(event.from) ? await accountByLocalpart.get(event.from) : null;
         let pushed = 0;
-        try { pushed = await wake(device.userId, device.deviceId, { fromUserId: sender?.userId ?? null }); } catch (error) { log.warn?.('xmpp: wake-up push failed', error?.message); }
+        const groupId = typeof event.group === 'string' && event.group.length > 0 && event.group.length <= 128 ? event.group : null;
+        try { pushed = await wake(device.userId, device.deviceId, { fromUserId: sender?.userId ?? null, groupId }); } catch (error) { log.warn?.('xmpp: wake-up push failed', error?.message); }
         response.status(202).json({ pushed });
       });
 
@@ -289,14 +293,23 @@ export function createXmpp({ db, config = xmppConfigFromEnv(), fetchImpl = globa
         const targets = Array.isArray(event.to) ? event.to : null;
         if (typeof event.from !== 'string' || !DEVICE.test(event.from) || !targets || targets.length === 0 || targets.length > 1024
           || !targets.every((to) => typeof to === 'string' && DEVICE.test(to))) return response.status(400).json({ error: 'Invalid body.' });
+        const groupId = typeof event.groupId === 'string' && event.groupId.length > 0 && event.groupId.length <= 128 ? event.groupId : null;
         const found = await accountByLocalpart.get(event.from);
         // A sender or target not moved over (or moved back) is refused: their app uses the current path.
         const sender = found && transportFor(found.userId) === 'xmpp' ? found : null;
         const verdicts = {};
         const byUser = new Map();
+        // A group message (fan-out with a group id): the sender must be allowed to post there with the group's current
+        // members hash — the checks a group post gets on this server — and each target must be a member.
+        const groupOk = groupId && sender ? await groupPost({ groupId, senderUserId: sender.userId, membersHash: typeof event.membersHash === 'string' ? event.membersHash : '' }) : false;
         for (const to of new Set(targets)) {
           const target = sender ? await accountByLocalpart.get(to) : null;
           if (!target || transportFor(target.userId) !== 'xmpp') { verdicts[to] = 'deny'; continue; }
+          if (groupId) {
+            if (!byUser.has(target.userId)) byUser.set(target.userId, groupOk && await groupMember(groupId, target.userId) ? 'allow' : 'deny');
+            verdicts[to] = byUser.get(target.userId);
+            continue;
+          }
           if (!byUser.has(target.userId)) byUser.set(target.userId, await verdict(sender.userId, target.userId, { group: event.group === true }));
           verdicts[to] = byUser.get(target.userId);
         }

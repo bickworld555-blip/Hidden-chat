@@ -17,8 +17,9 @@ import { getViewingGroup, readMutedGroups, setGroupMuted, useMutedGroups } from 
 import { classifyIncoming, groupNotificationText, parseConversationOpenParam, shouldAlertGroup } from './notificationChannels.js';
 import { nativeClearSession, nativeRequestStartupPermissions, nativeSetSession, nativeShell, nativeStartBackground, nativeState, nativeStopBackground, nativeTakePendingCall, nativeMoveToBackground, nativeClearShare, nativeSetCallActive, nativeClearMessageNotifications, nativeClearMissedCalls, nativeTakeMessageActions, nativeSetSystemBarsTheme, onNative } from './native.js';
 import { parseShare } from './shareTarget.js';
-import { onE2eEvent, startE2e, stopE2e, userForXmppAddress, xmppTargetsFor } from './e2e/client.js';
+import { onE2eEvent, startE2e, stopE2e, userForXmppAddress, xmppGroupTargetsFor, xmppTargetsFor } from './e2e/client.js';
 import { startXmppSession } from './xmpp/session.js';
+import { setXmppSession } from './xmpp/active.js';
 import { fetchGroupMessages } from './groupHistory.js';
 import { SECURITY_NOTICE } from './e2e/notices.js';
 import { LOCKED_NOTIFICATION } from './chatLock.js';
@@ -507,6 +508,8 @@ export default function App() {
         // Events that may carry ciphertext are opened in arrival order before they are handled (src/e2e/messaging.js).
         let openChain = Promise.resolve();
         const onRealtimeEvent = (event) => {
+          // A call's other device announces its XMPP address with the server-relayed offer/answer (src/xmpp/session.js).
+          if (event?.type === 'call:signal') xmppRef.current?.observe(event);
           if (event?.type === 'message:reaction:error' && handleReactionError(event, realtime)) return;
           if (event?.type === 'message:rejected') {
             handleRejected(event, realtime).catch(() => {});
@@ -524,11 +527,12 @@ export default function App() {
         // device traffic over XMPP; anything it cannot carry goes on this connection as before. Others never open it.
         const legacySend = realtime.send.bind(realtime);
         realtime.send = (event) => (xmppRef.current?.route(event) ? true : legacySend(event));
-        startXmppSession({ sessionToken, userId, deliver: onRealtimeEvent, legacySend, targetsFor: xmppTargetsFor, userForAddress: userForXmppAddress, fetchImpl: apiFetch })
+        startXmppSession({ sessionToken, userId, deliver: onRealtimeEvent, legacySend, targetsFor: xmppTargetsFor, groupTargetsFor: xmppGroupTargetsFor, userForAddress: userForXmppAddress, fetchImpl: apiFetch })
           .then((session) => {
             if (!session) return;
             if (cancelled) { session.close(); return; }
             xmppRef.current = session;
+            setXmppSession(session);
             session.setActive(document.visibilityState === 'visible');
             session.transport.connect();
           })
@@ -629,7 +633,7 @@ export default function App() {
       }
     }
     boot();
-    return () => { cancelled = true; realtime?.close(); xmppRef.current?.close(); xmppRef.current = null; setClient(null); useChatStore.getState().setClient(null); };
+    return () => { cancelled = true; realtime?.close(); xmppRef.current?.close(); xmppRef.current = null; setXmppSession(null); setClient(null); useChatStore.getState().setClient(null); };
   }, [authReady, userId, sessionToken]);
   // The XMPP session (when this account uses it) is told when the app goes to the background and back (XEP-0352), and
   // reconnects at once when the phone gets a wake-up push for a message waiting on the XMPP core (PushService.java).

@@ -225,5 +225,13 @@ export function registerE2e({ app, db, requireSession, xmppAddress = () => null 
     return null;
   }
 
-  return { checkDirectEnvelope, checkGroupEnvelope, forgetDevice, forgetStaleDevices, devicesOf };
+  /** The group's current members hash (what checkGroupEnvelope compares a group envelope's mh with). */
+  async function groupMembersHash(groupId) {
+    const { devices } = await groupDevices(groupId);
+    const all = [];
+    for (const [userId, list] of Object.entries(devices)) for (const device of list) all.push(`${userId}/${device.deviceId}`);
+    return membersHashOf(all);
+  }
+
+  return { checkDirectEnvelope, checkGroupEnvelope, groupMembersHash, forgetDevice, forgetStaleDevices, devicesOf };
 }
