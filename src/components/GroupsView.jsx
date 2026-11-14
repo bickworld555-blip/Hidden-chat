@@ -30,7 +30,7 @@ import { useChatStore } from '../store.js';
 import { formatMessageTime } from '../time.js';
 import { createActivitySender, groupActivityLabel, groupActivityPeople } from '../typing.js';
 import { cachedGroupDetails, cachedGroups, offlineGroupDetails, saveGroupDetails, saveGroups } from '../groupCache.js';
-import { isMediaContent } from '../media.js';
+import { isMediaContent, primeMediaBlob } from '../media.js';
 import { MAX_CALL_PARTICIPANTS } from '../callRoom.js';
 import { fetchCallTopology, newCallKey, parseRelayCall, relayCallContent, relayCallJoinable } from '../groupRelayCall.js';
 import { lazyComponent } from '../lazy.js';
@@ -543,6 +543,7 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
       // Encrypted on this device before upload; the key travels in the end-to-end encrypted group message.
       const { upload, descriptor } = await sealForUpload(plain);
       const data = await uploadFile(upload, { groupId: selected, sessionToken: token, onProgress: (done, total) => setUploading(Math.max(1, Math.round((done / total) * 100))) });
+      primeMediaBlob(data.id, token, plain); // our own bubble shows it from memory, not a re-download
       await groupRequest(token, `${groupPath}/messages`, { method: 'POST', body: { content: attachmentContent(data.id, descriptor ? prepared.filename || 'attachment' : data.filename || prepared.filename || 'attachment', descriptor) },
         extras: { ...(caption ? { caption } : {}), ...(thumb ? { thumb } : {}), ...(video?.poster ? { poster: video.poster } : {}), ...(video?.seconds ? { duration: video.seconds } : {}) } });
       await refresh(new AbortController().signal);
@@ -565,6 +566,7 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
       const plain = new File([blob], `voice-note.${voiceExtension(type)}`, { type: blob.type || type });
       const { upload, descriptor } = await sealForUpload(plain);
       const data = await uploadFile(upload, { groupId: selected, sessionToken: token, kind: 'voice', onProgress: (done, total) => setUploading(Math.max(1, Math.round((done / total) * 100))) });
+      primeMediaBlob(data.id, token, plain);
       await groupRequest(token, `${groupPath}/messages`, { method: 'POST', body: { content: voiceContent(data.id, seconds, { descriptor, lang: resolveVoiceLanguage(appSettings().get('chats.voiceLanguage')) }) } });
       await refresh(new AbortController().signal);
     } catch (caught) {

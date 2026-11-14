@@ -6,7 +6,7 @@ import { buildLinkPreview } from '../linkPreviewSender.js';
 import { translate, useLanguage } from '../i18n.js';
 import { contactEncrypted } from '../e2e/client.js';
 import { isNotice, noticeText } from '../e2e/notices.js';
-import { isMediaContent } from '../media.js';
+import { isMediaContent, primeMediaBlob } from '../media.js';
 import { LOAD_OLDER_STEP, RENDER_WINDOW, renderCountFor, windowedMessages } from '../messageWindow.js';
 import { attachmentContent, sealForUpload } from '../mediaCrypto.js';
 import { ArrowLeft, Ban, Camera, Check, CheckCheck, ChevronDown, ChevronUp, Clock, CornerUpLeft, FileText, Forward, Image as ImageIcon, Info, Link2, Mic, MoreVertical, Paperclip, Pencil, Phone, Pin, PinOff, Search, Send, Share2, ShoppingCart, Smile, Star, Timer, Trash2, Video, X } from 'lucide-react';
@@ -1191,8 +1191,12 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
         onProgress: (sent, total) => patchUpload(key, { sent, total }),
       });
       // This device keeps its own copy (the server deletes the file once every device has it); a view once item is
-      // not kept by its sender, as on WhatsApp.
-      if (kind !== 'voice-once' && kind !== 'viewonce') await storeMedia(data.id, file, { contentType: file.type || 'application/octet-stream', size: file.size });
+      // not kept by its sender, as on WhatsApp. The copy is written while the message goes out (not before it), and
+      // this bubble shows the file straight from memory.
+      if (kind !== 'voice-once' && kind !== 'viewonce') {
+        primeMediaBlob(data.id, sessionToken, plainFile);
+        storeMedia(data.id, file, { contentType: file.type || 'application/octet-stream', size: file.size }).catch(() => {});
+      }
       const attachment = attachmentContent(data.id, descriptor ? ready.filename : data.filename || ready.filename, descriptor);
       // View once photos/videos, video notes and made stickers wrap the attachment (src/mediaExtras.js).
       const wrapped = { viewonce: VIEW_ONCE_PREFIX, vnote: VIDEO_NOTE_PREFIX, csticker: CUSTOM_STICKER_PREFIX }[kind];

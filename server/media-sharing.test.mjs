@@ -89,3 +89,23 @@ test('chats send through the preview: caption in the bubble, albums, parallel up
   const composer = read('src/components/MediaComposer.jsx');
   for (const label of ['Add a caption…', 'Turn on view once', 'HD media upload quality', 'Add more', 'Discard']) assert.ok(composer.includes(label), label);
 });
+
+test('a picked video is compressed from the phone\'s own copy, never copied across the bridge as base64 first', () => {
+  const compress = read('src/videoCompress.js');
+  const picked = compress.indexOf('plugin.compressPickedVideo(');
+  const copy = compress.indexOf('toBase64(file.slice(');
+  assert.ok(picked > 0 && copy > picked, 'the zero-copy path is tried first; the base64 copy is only the fallback');
+  const java = read('android/app/src/main/java/io/github/bickworld555/hiddenchat/PickedFiles.java');
+  assert.match(java, /new BridgeWebChromeClient\(bridge\)/, 'Capacitor\'s own chooser, wrapped');
+  assert.match(java, /remember\(context, uris\);\s*\} catch \(RuntimeException ignored\) \{[^}]*\}\s*callback\.onReceiveValue\(uris\);/, 'the pick always reaches the web view');
+  const plugin = read('android/app/src/main/java/io/github/bickworld555/hiddenchat/HiddenNativePlugin.java');
+  assert.match(plugin, /VideoCompressor\.compress\(getContext\(\), uri, output,/, 'the encoder reads the content:// URI directly');
+  assert.ok(read('android/app/src/main/java/io/github/bickworld555/hiddenchat/AppActivity.java').includes('PickedFiles.install(getBridge())'));
+});
+
+test('sending does not wait for the local copy, and the sender\'s bubble reads from memory', () => {
+  const chat = read('src/components/ChatWindow.jsx');
+  assert.ok(chat.includes('primeMediaBlob(data.id, sessionToken, plainFile);'));
+  assert.ok(/storeMedia\(data\.id, file, \{[^}]*\}\)\.catch\(\(\) => \{\}\);/.test(chat), 'the device copy is written alongside, not awaited');
+  assert.ok(!/await storeMedia\(data\.id, file/.test(chat));
+});

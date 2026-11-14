@@ -348,6 +348,44 @@ public class HiddenNativePlugin extends Plugin {
         });
     }
 
+    /**
+     * Like compressVideo, for a video the user just picked (PickedFiles): the encoder reads its content:// URI
+     * directly, so nothing is copied through the web view as base64. Rejects with "not-picked" when this phone does
+     * not know the file (the web app then falls back to copying it).
+     */
+    @PluginMethod
+    public void compressPickedVideo(PluginCall call) {
+        String name = call.getString("name", "");
+        long size = call.getLong("size", -1L);
+        android.net.Uri uri = name.isEmpty() || size < 0 ? null : PickedFiles.find(name, size);
+        if (uri == null) {
+            call.reject("not-picked");
+            return;
+        }
+        java.io.File folder = new java.io.File(getContext().getCacheDir(), "upload");
+        if (!folder.isDirectory() && !folder.mkdirs()) {
+            call.reject("not-picked");
+            return;
+        }
+        String outputName = java.util.UUID.randomUUID() + ".standard.mp4";
+        java.io.File output = new java.io.File(folder, outputName);
+        // Media3 reads the picked content:// URI itself: no copy at all before the encoder starts.
+        VideoCompressor.compress(getContext(), uri, output, call.getInt("shortSide", 720), call.getInt("bitrate", 2_000_000), new VideoCompressor.Done() {
+            @Override
+            public void ok(java.io.File file) {
+                JSObject result = new JSObject();
+                result.put("path", "upload/" + outputName);
+                result.put("bytes", file.length());
+                call.resolve(result);
+            }
+
+            @Override
+            public void fail(String reason) {
+                call.reject(reason);
+            }
+        });
+    }
+
     @PluginMethod
     public void networkState(PluginCall call) {
         JSObject result = new JSObject();

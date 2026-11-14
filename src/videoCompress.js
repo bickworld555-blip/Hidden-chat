@@ -28,24 +28,42 @@ export async function compressVideoForUpload(file, filename) {
   const plugin = registerPlugin('HiddenNative');
   const path = `upload/${crypto.randomUUID()}.mp4`;
   let output = '';
+  let copied = false;
   try {
+    // A video picked in the chooser is compressed straight from the phone's own copy (PickedFiles.java): nothing
+    // crosses the bridge as base64 first. Only a file the phone does not know (shared in, recorded here) is copied.
+    let result = null;
+    try {
+      result = await plugin.compressPickedVideo({ name: file.name, size: file.size, shortSide: STANDARD_VIDEO.shortSide, bitrate: STANDARD_VIDEO.bitrate });
+    } catch { /* not picked here, or the encoder could not read it: copy below */ }
+    if (result) {
+      output = result.path;
+      return await readCompressed(Filesystem, Directory, result, file, filename);
+    }
+    copied = true;
     for (let offset = 0; offset < file.size; offset += WRITE_PIECE_BYTES) {
       const data = await toBase64(file.slice(offset, offset + WRITE_PIECE_BYTES));
       if (offset === 0) await Filesystem.writeFile({ path, data, directory: Directory.Cache, recursive: true });
       else await Filesystem.appendFile({ path, data, directory: Directory.Cache });
     }
-    const result = await plugin.compressVideo({ path, shortSide: STANDARD_VIDEO.shortSide, bitrate: STANDARD_VIDEO.bitrate });
+    result = await plugin.compressVideo({ path, shortSide: STANDARD_VIDEO.shortSide, bitrate: STANDARD_VIDEO.bitrate });
     output = result.path;
-    if (!(Number(result.bytes) > 0) || Number(result.bytes) >= file.size) return { blob: file, filename };
-    const { uri } = await Filesystem.getUri({ path: output, directory: Directory.Cache });
-    const response = await fetch(globalThis.Capacitor.convertFileSrc(uri));
-    if (!response.ok) return { blob: file, filename };
-    const name = String(filename || 'video').replace(/\.[^.]+$/, '') + '.mp4';
-    return { blob: new File([await response.blob()], name, { type: 'video/mp4' }), filename: name };
+    return await readCompressed(Filesystem, Directory, result, file, filename);
   } catch {
     return { blob: file, filename };
   } finally {
-    await Filesystem.deleteFile({ path, directory: Directory.Cache }).catch(() => {});
+    if (copied) await Filesystem.deleteFile({ path, directory: Directory.Cache }).catch(() => {});
     if (output) await Filesystem.deleteFile({ path: output, directory: Directory.Cache }).catch(() => {});
   }
+}
+
+// The compressed copy, read back through the WebView's local file URL (binary, no base64), or the original when the
+// copy is not smaller.
+async function readCompressed(Filesystem, Directory, result, file, filename) {
+  if (!(Number(result.bytes) > 0) || Number(result.bytes) >= file.size) return { blob: file, filename };
+  const { uri } = await Filesystem.getUri({ path: result.path, directory: Directory.Cache });
+  const response = await fetch(globalThis.Capacitor.convertFileSrc(uri));
+  if (!response.ok) return { blob: file, filename };
+  const name = String(filename || 'video').replace(/\.[^.]+$/, '') + '.mp4';
+  return { blob: new File([await response.blob()], name, { type: 'video/mp4' }), filename: name };
 }

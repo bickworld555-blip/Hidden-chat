@@ -196,12 +196,39 @@ export function peekMediaBlob(id, sessionToken) {
   return id && sessionToken ? touch(blobCache, cacheKey(id, sessionToken)) : null;
 }
 
+// An end-to-end encrypted attachment's type and size travel in its message (the descriptor), so no request is needed
+// for them: every HEAD saved is one full round trip through the CDN to the server (~300 ms measured) before a photo,
+// video or voice note can start downloading.
+function descriptorInfo(id) {
+  const descriptor = encryptedDescriptors.get(id);
+  return descriptor && Number.isFinite(descriptor.size) ? { contentType: descriptor.type || 'application/octet-stream', size: descriptor.size } : null;
+}
+
+/**
+ * The sender already holds what it just uploaded: its own bubble shows the file from memory at once instead of
+ * reading it back from the device store or the server.
+ */
+export function primeMediaBlob(id, sessionToken, blob) {
+  if (!id || !sessionToken || !blob) return;
+  const key = cacheKey(id, sessionToken);
+  infoCache.set(key, { contentType: essence(blob.type) || 'application/octet-stream', size: blob.size });
+  while (infoCache.size > INFO_CACHE_LIMIT) infoCache.delete(infoCache.keys().next().value);
+  if (blob.size > BLOB_CACHE_LIMIT_BYTES / 4 || blobCache.has(key)) return;
+  blobCache.set(key, blob);
+  blobCacheBytes += blob.size;
+  while (blobCacheBytes > BLOB_CACHE_LIMIT_BYTES) {
+    const [oldestKey, oldest] = blobCache.entries().next().value;
+    blobCache.delete(oldestKey);
+    blobCacheBytes -= oldest.size;
+  }
+}
+
 export async function loadMediaInfo(id, sessionToken, signal) {
   const cached = peekMediaInfo(id, sessionToken);
   if (cached) return cached;
   // Kept on this device (the server may already have deleted it): its info came with it.
   const stored = await readStoredMedia(id);
-  const fetched = stored?.info ?? await fetchMediaInfo(id, sessionToken, signal);
+  const fetched = stored?.info ?? descriptorInfo(id) ?? await fetchMediaInfo(id, sessionToken, signal);
   if (!stored?.info) storeMediaInfo(id, fetched);
   // The server only knows the ciphertext: an encrypted attachment's real type and size come from its descriptor.
   const descriptor = encryptedDescriptors.get(id);
@@ -264,7 +291,7 @@ export async function storeMediaLocally(id, sessionToken, { voice = false } = {}
   if (!id || !sessionToken) return false;
   if ((await readStoredMedia(id))?.blob) return true;
   try {
-    const info = await fetchMediaInfo(id, sessionToken);
+    const info = descriptorInfo(id) ?? await fetchMediaInfo(id, sessionToken);
     // Media auto-download (Storage and data): a kind switched off for this connection waits for a tap.
     if (!(await mayAutoDownload(info?.contentType, { voice }))) return false;
     const size = Number(info?.size ?? 0);

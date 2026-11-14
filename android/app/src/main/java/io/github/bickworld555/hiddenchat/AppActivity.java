@@ -66,6 +66,8 @@ public class AppActivity extends BridgeActivity {
         // The WebView takes over the connection; the service's own one would only duplicate notifications.
         NativeRelay.stop();
         super.onCreate(savedInstanceState);
+        // Remember what the file chooser returns, so picked videos are read natively (PickedFiles).
+        if (getBridge() != null) PickedFiles.install(getBridge());
         // Screen security (FLAG_SECURE) from the first frame, before the web app has loaded.
         AppSecurity.apply(this);
         // Opened by a ringing call's full-screen notification: show over the lock screen and light the screen at

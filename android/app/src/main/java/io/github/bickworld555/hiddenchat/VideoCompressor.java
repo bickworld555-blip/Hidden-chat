@@ -33,6 +33,11 @@ final class VideoCompressor {
     private VideoCompressor() {}
 
     static void compress(Context context, File input, File output, int shortSide, int bitrate, Done done) {
+        compress(context, Uri.fromFile(input), output, shortSide, bitrate, done);
+    }
+
+    /** Same, reading any URI Media3 can open (a file, or a content:// URI the user picked). */
+    static void compress(Context context, Uri input, File output, int shortSide, int bitrate, Done done) {
         Context app = context.getApplicationContext();
         new Handler(Looper.getMainLooper()).post(() -> {
             try {
@@ -56,7 +61,7 @@ final class VideoCompressor {
                         }
                     })
                     .build();
-                EditedMediaItem item = new EditedMediaItem.Builder(MediaItem.fromUri(Uri.fromFile(input)))
+                EditedMediaItem item = new EditedMediaItem.Builder(MediaItem.fromUri(input))
                     .setEffects(new Effects(Collections.emptyList(), Collections.singletonList(Presentation.createForShortSide(shortSide))))
                     .build();
                 transformer.start(item, output.getAbsolutePath());

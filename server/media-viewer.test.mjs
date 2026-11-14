@@ -4,7 +4,8 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { afterEach, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
-import { clearMediaCache, loadMediaBlob, loadMediaInfo, peekMediaBlob } from '../src/media.js';
+import { clearMediaCache, loadMediaBlob, loadMediaInfo, peekMediaBlob, primeMediaBlob, registerMediaDescriptor } from '../src/media.js';
+import { sealForUpload } from '../src/mediaCrypto.js';
 import { useChatStore } from '../src/store.js';
 import { formatViewerTimestamp } from '../src/time.js';
 
@@ -43,6 +44,29 @@ test('media bytes and details are fetched once and shared by bubble, viewer, and
   const info = await loadMediaInfo('photo', 'token-a');
   assert.deepEqual(info, { contentType: 'image/png', size: 4 });
   assert.deepEqual(calls.map((call) => call.method), ['GET', 'HEAD']);
+});
+
+test('an encrypted attachment needs no HEAD round trip: type and size come from its message, bytes in one GET', async () => {
+  const plain = new File([new Uint8Array(5000).fill(7)], 'pic.jpg', { type: 'image/jpeg' });
+  const { upload, descriptor } = await sealForUpload(plain);
+  const cipher = new Uint8Array(await upload.arrayBuffer());
+  const calls = stubMediaServer({ enc1: cipher });
+  registerMediaDescriptor('enc1', descriptor);
+  assert.deepEqual(await loadMediaInfo('enc1', 'token-a'), { contentType: 'image/jpeg', size: 5000 });
+  assert.equal(calls.length, 0, 'details without any request');
+  const blob = await loadMediaBlob('enc1', 'token-a');
+  assert.equal(blob.size, 5000);
+  assert.deepEqual(calls.map((call) => call.method), ['GET'], 'one request for the bytes');
+});
+
+test('the sender shows what it just uploaded from memory, without reading it back', async () => {
+  const calls = stubMediaServer({});
+  const plain = new File([new Uint8Array([1, 2, 3])], 'mine.png', { type: 'image/png' });
+  primeMediaBlob('mine', 'token-a', plain);
+  assert.deepEqual(await loadMediaInfo('mine', 'token-a'), { contentType: 'image/png', size: 3 });
+  assert.equal(await loadMediaBlob('mine', 'token-a'), plain);
+  assert.equal(calls.length, 0);
+  assert.equal(peekMediaBlob('mine', 'token-b'), null, 'per session');
 });
 
 test('the media cache is per session and cleared on sign-out', async () => {
