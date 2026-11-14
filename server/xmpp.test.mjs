@@ -307,3 +307,49 @@ test('the mirror sweep removes accounts ejabberd has but the table does not, and
   await assert.rejects(() => failing.ensureAccount('u2', 'dev'));
   assert.equal(db.prepare('SELECT COUNT(*) AS n FROM xmpp_accounts WHERE user_id = ?').get('u2').n, 0);
 });
+
+// --- Who may reach whom over XMPP (mod_hm asks before relaying) ---------------------------------------------------
+
+const allow = (body, options) => {
+  const raw = JSON.stringify({ ts: Math.floor(Date.now() / 1000), ...body });
+  return fetch(`${baseUrl}/api/v1/xmpp/allow`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-hm-signature': options?.signature ?? signOfflineHook(SECRET, raw) }, body: raw });
+};
+const deviceOf = async (person, token = person.token) => (await api('/api/v1/xmpp/token', { method: 'POST', token })).body.jid.split('@')[0];
+
+test('XMPP delivery follows the same block rules as the current server', async () => {
+  const ivy = await account(), jon = await account(), kim = await account(), lea = await account();
+  const [ivyD, ivyD2, jonD, kimD, leaD] = [await deviceOf(ivy), await deviceOf(ivy, ivy.otherToken), await deviceOf(jon), await deviceOf(kim), await deviceOf(lea)];
+  // jon blocked ivy; ivy blocked kim; lea is a stranger to everyone (no contact needed, as today).
+  assert.ok((await api(`/api/v1/blocks/${ivy.user.id}`, { method: 'PUT', token: jon.token })).status < 300);
+  assert.ok((await api(`/api/v1/blocks/${kim.user.id}`, { method: 'PUT', token: ivy.token })).status < 300);
+  const verdicts = (await (await allow({ from: ivyD, to: [jonD, kimD, leaD, ivyD2, `d${'1'.repeat(40)}`] })).json()).verdicts;
+  assert.deepEqual(verdicts, {
+    [jonD]: 'drop',            // jon blocked ivy: silently not delivered (ivy sees it as sent)
+    [kimD]: 'deny',            // ivy blocked kim: refused, ivy is told
+    [leaD]: 'allow',           // anyone may message anyone, as today
+    [ivyD2]: 'allow',          // her own other device
+    [`d${'1'.repeat(40)}`]: 'deny', // not a known device
+  });
+});
+
+test('group fan-out reaches members who share a group even across a block; a deleted account is never reached', async () => {
+  const max = await account(), ned = await account(), ola = await account();
+  const [maxD, nedD, olaD] = [await deviceOf(max), await deviceOf(ned), await deviceOf(ola)];
+  assert.ok((await api(`/api/v1/blocks/${max.user.id}`, { method: 'PUT', token: ned.token })).status < 300);
+  const group = await api('/api/v1/groups', { method: 'POST', token: max.token, body: { name: 'Hikers', memberIds: [ned.user.id] } });
+  assert.ok(group.status < 300, JSON.stringify(group.body));
+  assert.equal((await (await allow({ from: maxD, to: [nedD], group: true })).json()).verdicts[nedD], 'allow', 'shared group');
+  assert.equal((await (await allow({ from: maxD, to: [nedD] })).json()).verdicts[nedD], 'drop', 'but not one-to-one');
+  assert.equal((await api('/api/v1/account/delete', { method: 'POST', body: { username: ola.username, password: PASSWORD, confirm: 'DELETE' } })).status, 204);
+  assert.equal((await (await allow({ from: maxD, to: [olaD], group: true })).json()).verdicts[olaD], 'deny');
+});
+
+test('the delivery check refuses unsigned, stale or malformed requests', async () => {
+  const pia = await account();
+  const piaD = await deviceOf(pia);
+  assert.equal((await allow({ from: piaD, to: [piaD] }, { signature: 'a'.repeat(64) })).status, 401);
+  assert.equal((await allow({ from: piaD, to: [piaD], ts: 1 })).status, 400);
+  assert.equal((await allow({ from: piaD, to: [] })).status, 400);
+  assert.equal((await allow({ from: piaD, to: ['admin'] })).status, 400);
+  assert.equal((await allow({ from: piaD, to: Array(1025).fill(piaD) })).status, 400);
+});

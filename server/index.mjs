@@ -655,7 +655,7 @@ export function createChatServer({
   const largeJson = express.json({ limit: '1mb' });
   const LARGE_JSON_ROUTES = /^\/api\/v1\/(?:groups\/[^/]+\/messages(?:\/[^/]+)?|messages\/[^/]+|e2e\/keys|polls\/[^/]+\/sealed-vote|statuses)$/;
   // A linked device's encrypted history has its own, larger limit (server/linking.mjs).
-  const OWN_PARSER_ROUTES = /^\/api\/v1\/(link\/requests\/[^/]+\/history|xmpp\/offline)$/;
+  const OWN_PARSER_ROUTES = /^\/api\/v1\/(link\/requests\/[^/]+\/history|xmpp\/(offline|allow))$/;
   app.use((request, response, next) => (OWN_PARSER_ROUTES.test(request.path) ? next() : (LARGE_JSON_ROUTES.test(request.path) ? largeJson : smallJson)(request, response, next)));
   const server = createServer(app);
   const websocketServer = new WebSocketServer({
@@ -1236,7 +1236,20 @@ export function createChatServer({
   // End-to-end encryption: key directory and fan-out checks (server/e2e.mjs).
   const e2e = registerE2e({ app, db, requireSession, xmppHost: xmppConfig.enabled ? xmppConfig.host : null });
   // Device accounts and sign-in tokens for the XMPP core (Phase 2 of the BEAM/XMPP move).
-  const xmpp = createXmpp({ db, config: xmppConfig, fetchImpl: xmppFetch,
+  // Who may reach whom over XMPP: the same rules as message:send (deliverDirectMessage). 'allow'; 'deny' (the
+  // recipient's account is deleted, or the sender blocked them: the sender is told); 'drop' (the recipient blocked the
+  // sender: silently not delivered, as here). Group fan-out also allows people who share a group, blocked or not.
+  async function xmppVerdict(fromUserId, toUserId, { group = false } = {}) {
+    if (fromUserId === toUserId) return 'allow';
+    const target = await db.prepare('SELECT deleted_at AS "deletedAt" FROM users WHERE id = ?').get(toUserId);
+    if (!target || target.deletedAt) return 'deny';
+    if (group && await db.prepare(`SELECT 1 FROM group_members a JOIN group_members b ON b.group_id = a.group_id
+      WHERE a.user_id = ? AND b.user_id = ? LIMIT 1`).get(fromUserId, toUserId)) return 'allow';
+    if (await blocks.has(fromUserId, toUserId)) return 'deny';
+    if (await blocks.has(toUserId, fromUserId)) return 'drop';
+    return 'allow';
+  }
+  const xmpp = createXmpp({ db, config: xmppConfig, fetchImpl: xmppFetch, verdict: xmppVerdict,
     // A message waits on ejabberd for this device: the usual encrypted push, carrying nothing but "connect".
     wake: (userId, deviceId) => pushToDevice(userId, deviceId, { t: 'xwake' }, { collapseKey: 'xmpp-wake', ttlSeconds: 86_400 }) });
   xmpp.register(app, requireSession);

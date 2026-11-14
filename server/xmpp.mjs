@@ -71,7 +71,8 @@ export function ensureXmppSchema(db) {
 }
 
 // `wake(userId, deviceId)`: sends that one device the wake-up push (index.mjs pushToDevice); resolves how many went.
-export function createXmpp({ db, config = xmppConfigFromEnv(), fetchImpl = globalThis.fetch, now = Date.now, log = console, wake = async () => 0 } = {}) {
+export function createXmpp({ db, config = xmppConfigFromEnv(), fetchImpl = globalThis.fetch, now = Date.now, log = console, wake = async () => 0,
+  verdict = async () => 'allow' } = {}) {
   const accountOf = db.prepare('SELECT localpart FROM xmpp_accounts WHERE user_id = ? AND device_id = ?');
   const insertAccount = db.prepare('INSERT INTO xmpp_accounts(user_id, device_id, localpart, created_at) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING');
   const deleteAccount = db.prepare('DELETE FROM xmpp_accounts WHERE localpart = ?');
@@ -176,6 +177,22 @@ export function createXmpp({ db, config = xmppConfigFromEnv(), fetchImpl = globa
     return reconciling;
   }
 
+  const DEVICE = /^d[0-9a-f]{40}$/;
+  // A request from mod_hm: HMAC-SHA256 of the exact body under the shared key, sent within OFFLINE_HOOK_MAX_SKEW_SECONDS.
+  // Answers the error itself and returns null when the request is not one.
+  function signedEvent(request, response) {
+    if (!config.enabled) { response.status(404).end(); return null; }
+    const raw = Buffer.isBuffer(request.body) ? request.body : Buffer.alloc(0);
+    const given = Buffer.from(String(request.get('x-hm-signature') ?? ''), 'utf8');
+    const expected = Buffer.from(signOfflineHook(config.secret, raw), 'utf8');
+    if (given.length !== expected.length || !timingSafeEqual(given, expected)) { response.status(401).json({ error: 'Bad signature.' }); return null; }
+    let event;
+    try { event = JSON.parse(raw.toString('utf8')); } catch { response.status(400).json({ error: 'Invalid body.' }); return null; }
+    if (!event || typeof event !== 'object' || !Number.isInteger(event.ts)) { response.status(400).json({ error: 'Invalid body.' }); return null; }
+    if (Math.abs(Math.floor(now() / 1000) - event.ts) > OFFLINE_HOOK_MAX_SKEW_SECONDS) { response.status(400).json({ error: 'Stale request.' }); return null; }
+    return event;
+  }
+
   return {
     config,
     ensureAccount,
@@ -207,15 +224,9 @@ export function createXmpp({ db, config = xmppConfigFromEnv(), fetchImpl = globa
       // the usual encrypted push so it connects and collects it. The body is {"to": localpart, "ts": seconds};
       // nothing about the message itself is sent.
       app.post('/api/v1/xmpp/offline', express.raw({ type: () => true, limit: '2kb' }), async (request, response) => {
-        if (!config.enabled) return response.status(404).end();
-        const raw = Buffer.isBuffer(request.body) ? request.body : Buffer.alloc(0);
-        const given = Buffer.from(String(request.get('x-hm-signature') ?? ''), 'utf8');
-        const expected = Buffer.from(signOfflineHook(config.secret, raw), 'utf8');
-        if (given.length !== expected.length || !timingSafeEqual(given, expected)) return response.status(401).json({ error: 'Bad signature.' });
-        let event;
-        try { event = JSON.parse(raw.toString('utf8')); } catch { return response.status(400).json({ error: 'Invalid body.' }); }
-        if (typeof event?.to !== 'string' || !/^d[0-9a-f]{40}$/.test(event.to) || !Number.isInteger(event.ts)) return response.status(400).json({ error: 'Invalid body.' });
-        if (Math.abs(Math.floor(now() / 1000) - event.ts) > OFFLINE_HOOK_MAX_SKEW_SECONDS) return response.status(400).json({ error: 'Stale request.' });
+        const event = signedEvent(request, response);
+        if (!event) return;
+        if (typeof event.to !== 'string' || !DEVICE.test(event.to)) return response.status(400).json({ error: 'Invalid body.' });
         const device = await accountByLocalpart.get(event.to);
         if (!device) return response.status(202).json({ pushed: 0 });
         const at = now();
@@ -225,6 +236,27 @@ export function createXmpp({ db, config = xmppConfigFromEnv(), fetchImpl = globa
         let pushed = 0;
         try { pushed = await wake(device.userId, device.deviceId); } catch (error) { log.warn?.('xmpp: wake-up push failed', error?.message); }
         response.status(202).json({ pushed });
+      });
+
+      // mod_hm asks before relaying anything from one device to others: {"from": localpart, "to": [localparts],
+      // "group": bool, "ts": seconds} -> {"verdicts": {localpart: "allow" | "deny" | "drop"}}. The rules are this
+      // server's (index.mjs xmppVerdict); a device unknown here is never allowed. ejabberd caches the answers briefly.
+      app.post('/api/v1/xmpp/allow', express.raw({ type: () => true, limit: '64kb' }), async (request, response) => {
+        const event = signedEvent(request, response);
+        if (!event) return;
+        const targets = Array.isArray(event.to) ? event.to : null;
+        if (typeof event.from !== 'string' || !DEVICE.test(event.from) || !targets || targets.length === 0 || targets.length > 1024
+          || !targets.every((to) => typeof to === 'string' && DEVICE.test(to))) return response.status(400).json({ error: 'Invalid body.' });
+        const sender = await accountByLocalpart.get(event.from);
+        const verdicts = {};
+        const byUser = new Map();
+        for (const to of new Set(targets)) {
+          const target = sender ? await accountByLocalpart.get(to) : null;
+          if (!target) { verdicts[to] = 'deny'; continue; }
+          if (!byUser.has(target.userId)) byUser.set(target.userId, await verdict(sender.userId, target.userId, { group: event.group === true }));
+          verdicts[to] = byUser.get(target.userId);
+        }
+        response.json({ verdicts });
       });
     },
   };

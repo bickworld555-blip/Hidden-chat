@@ -10,8 +10,8 @@ const DOWNLOAD = '/download';
 const OPEN_PATHS = [
   /^\/(health|ready)$/,
   /^\/users\/[^/]+\/avatar$/,
-  // ejabberd's offline-message hook (server/xmpp.mjs): not an app, authenticated by its HMAC signature.
-  /^\/xmpp\/offline$/,
+  // ejabberd's offline-message hook and delivery check (server/xmpp.mjs): not an app, authenticated by HMAC.
+  /^\/xmpp\/(offline|allow)$/,
 ];
 
 export function clientProtocolOf(value) {
