@@ -60,9 +60,9 @@ mod_doc() -> #{desc => [<<"Hidden Messenger: offline wake-up hook and group fan-
 
 %%% --- 1. Offline wake-up ---------------------------------------------------------------------------------
 
-offline_message({offlined, #message{to = #jid{luser = LUser, lserver = LServer}}} = Acc) ->
+offline_message({offlined, #message{to = #jid{luser = LUser, lserver = LServer}, from = From}} = Acc) ->
     case device_localpart(LUser) of
-        true -> notify(LServer, LUser);
+        true -> notify(LServer, LUser, sender_localpart(From));
         false -> ok
     end,
     Acc;
@@ -78,15 +78,24 @@ signed_headers(Key, Body) ->
     Sig = binary:encode_hex(crypto:mac(hmac, sha256, KeyBytes, Body), lowercase),
     [{"x-hm-signature", binary_to_list(Sig)}, {"user-agent", "hm-ejabberd/1"}].
 
-notify(LServer, LUser) ->
+%% The sending device, when it is one (the push then names the sender, as today's message pushes do).
+sender_localpart(#jid{luser = FromUser}) ->
+    case device_localpart(FromUser) of
+        true -> FromUser;
+        false -> <<>>
+    end;
+sender_localpart(_) ->
+    <<>>.
+
+notify(LServer, LUser, FromUser) ->
     Url = gen_mod:get_module_opt(LServer, ?MODULE, hook_url),
     Key = gen_mod:get_module_opt(LServer, ?MODULE, hook_key),
     case {Url, Key} of
         {<<>>, _} -> ok;
         {_, <<>>} -> ok;
         _ ->
-            Body = iolist_to_binary([<<"{\"to\":\"">>, LUser, <<"\",\"ts\":">>,
-                                     integer_to_binary(erlang:system_time(second)), <<"}">>]),
+            Body = iolist_to_binary(json:encode(#{<<"to">> => LUser, <<"from">> => FromUser,
+                                                   <<"ts">> => erlang:system_time(second)})),
             Request = {binary_to_list(Url), signed_headers(Key, Body), "application/json", Body},
             case httpc:request(post, Request, [{timeout, 8000}, {connect_timeout, 4000}, {ssl, ssl_opts()}],
                                [{sync, false}, {receiver, fun(Reply) -> log_reply(LUser, Reply) end}]) of

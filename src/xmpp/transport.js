@@ -252,10 +252,14 @@ export class XmppTransport {
     return this.#write(String(xml('message', { to, id: `d-${id}`, type: 'chat' }, [xml('displayed', { xmlns: NS_MARKERS, id }), xml('store', { xmlns: NS_HINTS })])));
   }
 
-  /** Typing (XEP-0085): composing | paused | active. Never stored. */
-  sendChatState(to, state) {
+  /** Typing (XEP-0085): composing | paused | active. Never stored. kind "recording" = recording a voice note. */
+  sendChatState(to, state, { kind = null } = {}) {
     if (!CHAT_STATES.has(state)) return false;
-    return this.#write(String(xml('message', { to, type: 'chat' }, [xml(state, { xmlns: NS_CHATSTATES }), xml('no-store', { xmlns: NS_HINTS })])));
+    return this.#write(String(xml('message', { to, type: 'chat' }, [
+      xml(state, { xmlns: NS_CHATSTATES }),
+      kind === 'recording' ? xml('activity', { xmlns: NS_HM, kind }) : null,
+      xml('no-store', { xmlns: NS_HINTS }),
+    ])));
   }
 
   // --- Receiving -------------------------------------------------------------------------------------------------
@@ -288,6 +292,6 @@ export class XmppTransport {
       return emit({ type: 'message', id: el.attrs.id ?? null, from, userId, deviceId, envelope, group: hm.attrs.g === '1', sentAt: delay });
     }
     const state = el.children.find((item) => item.attrs.xmlns === NS_CHATSTATES && CHAT_STATES.has(local(item)));
-    if (state) return emit({ type: 'chatstate', from, state: local(state) });
+    if (state) return emit({ type: 'chatstate', from, state: local(state), kind: child(el, 'activity', NS_HM)?.attrs.kind === 'recording' ? 'recording' : 'typing' });
   }
 }

@@ -257,11 +257,12 @@ import { startXmppSession } from '../src/xmpp/session.js';
 function sessionHarness({ transportAnswer = 'xmpp', targets = { targets: ['d1@h', 'd2@h'], complete: true, sender: ME } } = {}) {
   const delivered = [];
   const legacy = [];
-  const fake = { state: 'online', sent: [], sendSealed(args) { this.sent.push(['sealed', args]); }, sendReceipt(to, id) { this.sent.push(['receipt', to, id]); }, sendDisplayed(to, id) { this.sent.push(['displayed', to, id]); }, setActive() {}, close() {} };
+  const fake = { state: 'online', sent: [], connects: 0, connect() { this.connects += 1; }, sendChatState(to, state, opts) { this.sent.push(['chatstate', to, state, opts?.kind ?? null]); }, sendSealed(args) { this.sent.push(['sealed', args]); }, sendReceipt(to, id) { this.sent.push(['receipt', to, id]); }, sendDisplayed(to, id) { this.sent.push(['displayed', to, id]); }, setActive() {}, close() {} };
   let options;
   const start = () => startXmppSession({
     sessionToken: 't', userId: ME.userId, deliver: (event) => delivered.push(event), legacySend: (event) => legacy.push(event),
-    targetsFor: async () => targets,
+    targetsFor: async (peerId, opts) => (opts?.peerOnly ? { ...targets, targets: targets.targets.slice(0, 1) } : targets),
+    userForAddress: (address) => (String(address).startsWith('dpeer@h') ? 'user-peer' : null),
     fetchImpl: async (path) => new Response(JSON.stringify(path.endsWith('/transport') ? { enabled: true, transport: transportAnswer } : {}), { status: 200 }),
     createTransport: (opts) => { options = opts; return fake; },
   });
@@ -313,9 +314,13 @@ test('session: incoming messages need the envelope to name the sending device; r
   assert.equal(h.delivered.length, 1, 'an envelope from another device is dropped');
   assert.deepEqual(h.delivered[0], { type: 'message:new', message: { id: 'in1', senderId: 'user-peer', receiverId: ME.userId, content: envelopeFrom('tablet'), timestamp: '2026-11-15T10:00:00Z', status: 'sent' } });
 
+  // The early "delivered" is not sent for XMPP messages: the receipt waits until the message is stored (queue:ack).
   assert.equal(session.route({ type: 'message:delivered', messageIds: ['in1', 'legacy-1'] }), true);
-  assert.deepEqual(h.fake.sent.at(-1), ['receipt', 'dpeer@h/app', 'in1']);
+  assert.ok(!h.fake.sent.some((item) => item[0] === 'receipt'), 'no receipt before local storage');
   assert.deepEqual(h.legacy.at(-1), { type: 'message:delivered', messageIds: ['legacy-1'] }, 'messages that came the old way are acknowledged the old way');
+  assert.equal(session.route({ type: 'queue:ack', messageIds: ['in1', 'legacy-2'], eventIds: [] }), true);
+  assert.deepEqual(h.fake.sent.at(-1), ['receipt', 'dpeer@h/app', 'in1'], 'stored (attachment included): now the receipt');
+  assert.deepEqual(h.legacy.at(-1), { type: 'queue:ack', messageIds: ['legacy-2'], eventIds: [] });
   assert.equal(session.route({ type: 'message:read', messageId: 'in1' }), true);
   assert.deepEqual(h.fake.sent.at(-1), ['displayed', 'dpeer@h/app', 'in1']);
   assert.equal(session.route({ type: 'message:read', messageId: 'legacy-1' }), false);
@@ -323,4 +328,53 @@ test('session: incoming messages need the envelope to name the sending device; r
   onEvent({ type: 'receipt', id: 'mine-1' });
   onEvent({ type: 'displayed', id: 'mine-1' });
   assert.deepEqual(h.delivered.slice(-2), [{ type: 'message:status', messageId: 'mine-1', status: 'delivered' }, { type: 'message:status', messageId: 'mine-1', status: 'read' }]);
+});
+
+test("session: typing goes to the contact's devices over XMPP and comes back as presence:typing; wake-up reconnects", async () => {
+  const h = sessionHarness();
+  const session = await h.start();
+  assert.equal(session.route({ type: 'presence:typing', peerId: 'peer', active: true, kind: 'recording' }), true);
+  await flush();
+  assert.deepEqual(h.fake.sent.at(-1), ['chatstate', 'd1@h', 'composing', 'recording'], "the contact's devices only, with the activity");
+  session.route({ type: 'presence:typing', peerId: 'peer', active: false });
+  await flush();
+  assert.equal(h.fake.sent.at(-1)[2], 'paused');
+  assert.equal(session.route({ type: 'presence:typing', groupId: 'g1', active: true }), false, 'group typing stays on the current connection');
+
+  const { onEvent } = h.options();
+  onEvent({ type: 'chatstate', from: 'dpeer@h/app', state: 'composing', kind: 'typing' });
+  onEvent({ type: 'chatstate', from: 'dstranger@h/app', state: 'composing', kind: 'typing' });
+  assert.deepEqual(h.delivered.filter((e) => e.type === 'presence:typing'), [{ type: 'presence:typing', userId: 'user-peer', active: true, kind: 'typing' }], 'unknown devices are ignored');
+
+  h.fake.state = 'offline';
+  session.wake();
+  assert.equal(h.fake.connects, 1, 'a wake-up push reconnects a dropped connection');
+  h.fake.state = 'online';
+  session.wake();
+  assert.equal(h.fake.connects, 1, 'an open connection is left alone');
+});
+
+test('session: when XMPP is down, everything takes the current path at once', async () => {
+  const h = sessionHarness();
+  const session = await h.start();
+  h.fake.state = 'connecting';
+  for (const event of [
+    { type: 'message:send', message: { id: 'x1', receiverId: 'peer', content: envelopeFrom('phone') } },
+    { type: 'presence:typing', peerId: 'peer', active: true },
+    { type: 'queue:ack', messageIds: ['a'], eventIds: [] },
+  ]) assert.equal(session.route(event), false, `${event.type} goes the current way while XMPP is not online`);
+});
+
+test('transport: a recording voice note travels as composing + activity and is read back', async () => {
+  const server = fakeServer();
+  const { t, events } = transport(server);
+  await t.connect();
+  await until(() => t.state === 'online', 'online');
+  t.sendChatState('dpeer@h/app', 'composing', { kind: 'recording' });
+  const sent = parseXml(server.sockets[0].sent.at(-1));
+  assert.ok(child(sent, 'composing') && child(sent, 'activity', 'urn:hiddenmessenger:1').attrs.kind === 'recording');
+  server.sockets[0].deliver(String(sent).replace ? server.sockets[0].sent.at(-1).replace('to="dpeer@h/app"', 'from="dpeer@h/app"') : '');
+  await until(() => events.length === 1, 'chatstate');
+  assert.deepEqual(events[0], { type: 'chatstate', from: 'dpeer@h/app', state: 'composing', kind: 'recording' });
+  t.close();
 });

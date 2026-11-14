@@ -39,6 +39,7 @@ public class PushService extends FirebaseMessagingService {
                 case "react": onReaction(session, body); break;
                 case "call": onCall(session, body); break;
                 case "call_end": Alerts.cancelIncomingCall(this, body.optString("callId")); break;
+                case "xwake": onXmppWake(session, body); break;
                 default: Log.i(TAG, "push of unknown type " + type);
             }
         } catch (RuntimeException failed) {
@@ -58,6 +59,24 @@ public class PushService extends FirebaseMessagingService {
         }
         // The phone has it: one tick becomes two for the sender, as with an open connection.
         PushRegistration.markDelivered(this, id);
+    }
+
+    /**
+     * A message waits on the XMPP core for this phone (server/xmpp.mjs). The notification is the one an encrypted
+     * message gets today (the sender's name, "New message": the content stays sealed until the app opens it), and a
+     * running app reconnects at once to collect it. No delivery tick here: the app sends that receipt only once the
+     * message is stored on the phone.
+     */
+    private void onXmppWake(RelaySession session, JSONObject body) {
+        String from = body.optString("from");
+        boolean running = HiddenNativePlugin.emitXmppWake();
+        if (!from.isEmpty() && session.mutedChats.contains(from)) return;
+        String tag = from.isEmpty() ? "xmpp-wake" : "chat:" + from;
+        String avatar = body.isNull("avatar") ? null : body.optString("avatar", null);
+        Alerts.showMessage(this, NotificationChannels.messageChannel(this, false, session.messageSound),
+            body.optString("senderName", "Hidden Messenger"), MessagePreview.of("e2e2:"), tag, tag, 0, null,
+            null, avatar == null || avatar.isEmpty() ? (from.isEmpty() ? null : Avatars.pathFor(from)) : avatar);
+        if (!running) Log.i(TAG, "xmpp wake-up while the app is closed: collected when it opens");
     }
 
     private void onGroupMessage(RelaySession session, JSONObject body) {

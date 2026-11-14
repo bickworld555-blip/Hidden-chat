@@ -190,13 +190,21 @@ async function devicesOf(userId, { fresh = false } = {}) {
  * account's other devices, by their XMPP addresses from the device lists. `complete` is false when any of them has none
  * (not moved over yet): the message then goes through the server, which reaches every device.
  */
-export async function xmppTargetsFor(peerId) {
+export async function xmppTargetsFor(peerId, { peerOnly = false } = {}) {
   const session = current;
   if (!session) return { targets: [], complete: false, sender: null };
-  const [peer, mine] = await Promise.all([devicesOf(peerId), devicesOf(session.userId)]);
+  const [peer, mine] = await Promise.all([devicesOf(peerId), peerOnly ? [] : devicesOf(session.userId)]);
   const devices = [...peer, ...mine.filter((device) => device.deviceId !== session.deviceId)];
   const targets = devices.map((device) => device.xmpp).filter(Boolean);
   return { targets, complete: devices.length > 0 && targets.length === devices.length, sender: { userId: session.userId, deviceId: session.deviceId } };
+}
+
+/** Whose device an XMPP address is, from the device lists this device has seen (null when unknown). */
+export function userForXmppAddress(address) {
+  const bare = String(address ?? '').split('/')[0];
+  if (!bare) return null;
+  for (const [userId, { devices }] of deviceLists) if (devices?.some((device) => device.xmpp === bare)) return userId;
+  return null;
 }
 
 /** The server's current list after it refused a message as out of date ({ [userId]: [{ deviceId, identity }] }). */

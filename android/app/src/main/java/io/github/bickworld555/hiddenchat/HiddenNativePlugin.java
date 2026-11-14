@@ -128,6 +128,14 @@ public class HiddenNativePlugin extends Plugin {
         }
     }
 
+    /** An XMPP wake-up push arrived (PushService): the app reconnects to collect what waits; false when it is not running. */
+    static boolean emitXmppWake() {
+        HiddenNativePlugin plugin = instance;
+        if (plugin == null) return false;
+        plugin.notifyListeners("xmppWake", new JSObject(), true);
+        return true;
+    }
+
     /** "reply" (with `text`) or "read" from a message notification; false when the app's screen is gone. */
     static boolean emitMessageAction(String action, String open, String text) {
         HiddenNativePlugin plugin = instance;

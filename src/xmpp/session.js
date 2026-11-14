@@ -4,11 +4,15 @@
 //
 //   out  message:send     sealed envelope to every target device over XMPP (src/e2e/client.js xmppTargetsFor) when
 //                         all of them have XMPP addresses; otherwise, or when XMPP refuses it, the current path.
-//        message:delivered / message:read for messages that came over XMPP: XEP-0184 receipt / XEP-0333 displayed.
+//        queue:ack (sent by deliveryAck.js only once a message and its attachment are stored on this device) for
+//        messages that came over XMPP: the XEP-0184 delivery receipt — so a sender's second tick means "stored on the
+//        phone", and nothing is acknowledged that a crash could still lose. message:delivered for them is not sent.
+//        message:read: XEP-0333 displayed. presence:typing (one-to-one): XEP-0085 chat states to the contact's devices.
 //   in   a sealed message whose claimed sender owns the sending address (transport.js) and whose envelope names the
-//        same sending device becomes the usual message:new; receipts and read markers become message:status.
+//        same sending device becomes the usual message:new; receipts and read markers become message:status; chat
+//        states from a known device become presence:typing.
 //
-// Everything else stays on the current connection for now (groups admin, statuses, account, calls, typing).
+// Everything else stays on the current connection for now (groups, statuses, account, calls).
 import { parseEnvelope } from '../e2e/envelope.js';
 import { XmppTransport } from './transport.js';
 
@@ -18,7 +22,7 @@ const RECEIPT_MEMORY = 5000;
  * Resolves null unless this account is moved over. `deliver(event)` feeds the app's realtime event handler;
  * `legacySend(event)` is the current connection's send.
  */
-export async function startXmppSession({ sessionToken, userId, deliver, legacySend, targetsFor, fetchImpl, createTransport = (options) => new XmppTransport(options) }) {
+export async function startXmppSession({ sessionToken, userId, deliver, legacySend, targetsFor, userForAddress = () => null, fetchImpl, createTransport = (options) => new XmppTransport(options) }) {
   const auth = { Authorization: `Bearer ${sessionToken}` };
   let decision;
   try {
@@ -56,6 +60,9 @@ export async function startXmppSession({ sessionToken, userId, deliver, legacySe
         deliver({ type: 'message:status', messageId: event.id, status: 'delivered' });
       } else if (event.type === 'displayed') {
         deliver({ type: 'message:status', messageId: event.id, status: 'read' });
+      } else if (event.type === 'chatstate') {
+        const sender = userForAddress(event.from);
+        if (sender && sender !== userId) deliver({ type: 'presence:typing', userId: sender, active: event.state === 'composing', ...(event.state === 'composing' ? { kind: event.kind } : {}) });
       } else if (event.type === 'error' && inFlight.has(event.id)) {
         // Refused (e.g. someone moved back to the current path): that path delivers it instead.
         const original = inFlight.get(event.id);
@@ -80,6 +87,16 @@ export async function startXmppSession({ sessionToken, userId, deliver, legacySe
     }
   }
 
+  async function sendTyping(event) {
+    try {
+      const { targets, complete } = await targetsFor(event.peerId, { peerOnly: true });
+      if (!complete || transport.state !== 'online') return legacySend(event);
+      for (const to of targets) transport.sendChatState(to, event.active ? 'composing' : 'paused', { kind: event.kind });
+    } catch {
+      legacySend(event);
+    }
+  }
+
   return {
     transport,
     /**
@@ -92,11 +109,21 @@ export async function startXmppSession({ sessionToken, userId, deliver, legacySe
         sendMessage(event);
         return true;
       }
+      // The receipt waits for local storage (queue:ack); the early "delivered" is not sent for XMPP messages.
       if (event.type === 'message:delivered' && Array.isArray(event.messageIds)) {
+        const rest = event.messageIds.filter((id) => !cameFrom.has(id));
+        if (rest.length) legacySend({ ...event, messageIds: rest });
+        return true;
+      }
+      if (event.type === 'queue:ack' && Array.isArray(event.messageIds)) {
         const ours = event.messageIds.filter((id) => cameFrom.has(id));
         for (const id of ours) transport.sendReceipt(cameFrom.get(id), id);
         const rest = event.messageIds.filter((id) => !cameFrom.has(id));
-        if (rest.length) legacySend({ ...event, messageIds: rest });
+        if (rest.length || event.eventIds?.length) legacySend({ ...event, messageIds: rest });
+        return true;
+      }
+      if (event.type === 'presence:typing' && typeof event.peerId === 'string' && !event.groupId) {
+        sendTyping(event);
         return true;
       }
       if (event.type === 'message:read' && cameFrom.has(event.messageId)) {
@@ -106,6 +133,8 @@ export async function startXmppSession({ sessionToken, userId, deliver, legacySe
       return false;
     },
     setActive: (active) => transport.setActive(active),
+    /** A wake-up push arrived (Android): connect now if the connection is down. */
+    wake: () => { if (transport.state !== 'online') transport.connect(); },
     close: () => transport.close(),
   };
 }

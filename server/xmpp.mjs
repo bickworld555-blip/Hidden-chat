@@ -86,7 +86,8 @@ export function ensureXmppSchema(db) {
   )`);
 }
 
-// `wake(userId, deviceId)`: sends that one device the wake-up push (index.mjs pushToDevice); resolves how many went.
+// `wake(userId, deviceId, { fromUserId })`: sends that one device the wake-up push (index.mjs pushToDevice); resolves how
+// many went. fromUserId (when the sender is known) lets the push name the sender.
 export function createXmpp({ db, config = xmppConfigFromEnv(), fetchImpl = globalThis.fetch, now = Date.now, log = console, wake = async () => 0,
   verdict = async () => 'allow' } = {}) {
   const accountOf = db.prepare('SELECT localpart FROM xmpp_accounts WHERE user_id = ? AND device_id = ?');
@@ -261,8 +262,8 @@ export function createXmpp({ db, config = xmppConfigFromEnv(), fetchImpl = globa
       });
 
       // ejabberd stored a message for a device that is offline (mod_hm, offline_message_hook): wake that phone with
-      // the usual encrypted push so it connects and collects it. The body is {"to": localpart, "ts": seconds};
-      // nothing about the message itself is sent.
+      // the usual encrypted push so it connects and collects it. The body is {"to": localpart, "from": localpart of the
+      // sending device or "", "ts": seconds}; nothing about the message itself is sent.
       app.post('/api/v1/xmpp/offline', express.raw({ type: () => true, limit: '2kb' }), async (request, response) => {
         const event = signedEvent(request, response);
         if (!event) return;
@@ -273,8 +274,9 @@ export function createXmpp({ db, config = xmppConfigFromEnv(), fetchImpl = globa
         if (at - (lastWake.get(event.to) ?? 0) < WAKE_COALESCE_MS) return response.status(202).json({ pushed: 0, coalesced: true });
         lastWake.set(event.to, at);
         if (lastWake.size > 10_000) for (const [key, value] of lastWake) if (at - value >= WAKE_COALESCE_MS) lastWake.delete(key);
+        const sender = typeof event.from === 'string' && DEVICE.test(event.from) ? await accountByLocalpart.get(event.from) : null;
         let pushed = 0;
-        try { pushed = await wake(device.userId, device.deviceId); } catch (error) { log.warn?.('xmpp: wake-up push failed', error?.message); }
+        try { pushed = await wake(device.userId, device.deviceId, { fromUserId: sender?.userId ?? null }); } catch (error) { log.warn?.('xmpp: wake-up push failed', error?.message); }
         response.status(202).json({ pushed });
       });
 

@@ -1250,7 +1250,15 @@ export function createChatServer({
   }
   const xmpp = createXmpp({ db, config: xmppConfig, fetchImpl: xmppFetch, verdict: xmppVerdict,
     // A message waits on ejabberd for this device: the usual encrypted push, carrying nothing but "connect".
-    wake: (userId, deviceId) => pushToDevice(userId, deviceId, { t: 'xwake' }, { collapseKey: 'xmpp-wake', ttlSeconds: 86_400 }) });
+    // The push names the sender like today's message push ("New message" text: the content stays sealed), unless the
+    // sender is unknown; the phone then shows a plain "New message" and connects to collect it.
+    wake: async (userId, deviceId, { fromUserId = null } = {}) => {
+      const sender = fromUserId ? await db.prepare(`SELECT ${USER_COLUMNS} FROM users WHERE id = ? AND deleted_at IS NULL`).get(fromUserId) : null;
+      const body = sender
+        ? { t: 'xwake', from: sender.id, senderName: sender.name || `@${sender.username}`, avatar: publicUser(sender).avatar }
+        : { t: 'xwake' };
+      return pushToDevice(userId, deviceId, body, { collapseKey: sender ? `chat:${sender.id}` : 'xmpp-wake', ttlSeconds: 86_400 });
+    } });
   xmpp.register(app, requireSession);
   const e2e = registerE2e({ app, db, requireSession, xmppAddress: xmpp.addressFor });
   // Signs an account out everywhere: sessions go, sockets close, push stops (suspension, account deletion).

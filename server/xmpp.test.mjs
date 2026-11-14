@@ -408,3 +408,14 @@ test('device lists only show XMPP addresses for users who are moved over', () =>
   assert.equal(x.addressFor('not-moved', `d${'2'.repeat(40)}`), null);
   assert.equal(x.addressFor('moved', null), null, 'no account, no address');
 });
+
+test('a wake-up for a message from a known device names the sender, like today\'s message push', async () => {
+  const uma = await account(), vic = await account();
+  await withKeysAndPush(uma.token, `fcm-uma-phone-${'z'.repeat(30)}`);
+  const umaDevice = (await api('/api/v1/xmpp/token', { method: 'POST', token: uma.token })).body.jid.split('@')[0];
+  const vicDevice = (await api('/api/v1/xmpp/token', { method: 'POST', token: vic.token })).body.jid.split('@')[0];
+  pushes.length = 0;
+  const woken = await hook({ to: umaDevice, from: vicDevice, ts: Math.floor(Date.now() / 1000) });
+  assert.equal((await woken.json()).pushed, 1);
+  assert.equal(pushes[0].options.collapseKey, `chat:${vic.user.id}`, 'collapses with that chat, as message pushes do');
+});
