@@ -1234,7 +1234,6 @@ export function createChatServer({
   });
 
   // End-to-end encryption: key directory and fan-out checks (server/e2e.mjs).
-  const e2e = registerE2e({ app, db, requireSession, xmppHost: xmppConfig.enabled ? xmppConfig.host : null });
   // Device accounts and sign-in tokens for the XMPP core (Phase 2 of the BEAM/XMPP move).
   // Who may reach whom over XMPP: the same rules as message:send (deliverDirectMessage). 'allow'; 'deny' (the
   // recipient's account is deleted, or the sender blocked them: the sender is told); 'drop' (the recipient blocked the
@@ -1253,6 +1252,7 @@ export function createChatServer({
     // A message waits on ejabberd for this device: the usual encrypted push, carrying nothing but "connect".
     wake: (userId, deviceId) => pushToDevice(userId, deviceId, { t: 'xwake' }, { collapseKey: 'xmpp-wake', ttlSeconds: 86_400 }) });
   xmpp.register(app, requireSession);
+  const e2e = registerE2e({ app, db, requireSession, xmppAddress: xmpp.addressFor });
   // Signs an account out everywhere: sessions go, sockets close, push stops (suspension, account deletion).
   async function closeUserSessions(userId, reason) {
     const removed = await db.prepare('DELETE FROM sessions WHERE user_id = ? RETURNING token_hash AS "hash"').all(userId);

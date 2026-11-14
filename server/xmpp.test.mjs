@@ -8,11 +8,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, test } from 'node:test';
 import { createChatServer } from './index.mjs';
-import { createXmpp, localpartFor, signOfflineHook, signXmppToken, xmppConfigFromEnv, XMPP_TOKEN_TTL_SECONDS } from './xmpp.mjs';
+import { createXmpp, localpartFor, rolloutBucket, rolloutFromEnv, signOfflineHook, signXmppToken, xmppConfigFromEnv, XMPP_TOKEN_TTL_SECONDS } from './xmpp.mjs';
 
 const PASSWORD = 'correct horse battery staple';
 const SECRET = Buffer.alloc(48, 7).toString('base64url');
-const config = xmppConfigFromEnv({ XMPP_JWT_SECRET: SECRET, XMPP_ADMIN_PASSWORD: 'admin-secret' });
+// Everyone moved over (the rollout flag's own tests below use a server at the default 0%).
+const config = xmppConfigFromEnv({ XMPP_JWT_SECRET: SECRET, XMPP_ADMIN_PASSWORD: 'admin-secret', XMPP_ROLLOUT_PERCENT: '100' });
 
 // A fake ejabberd admin API: accounts in a Set, every call recorded, failures switchable.
 const ejabberd = { accounts: new Set(), calls: [], down: false };
@@ -352,4 +353,58 @@ test('the delivery check refuses unsigned, stale or malformed requests', async (
   assert.equal((await allow({ from: piaD, to: [] })).status, 400);
   assert.equal((await allow({ from: piaD, to: ['admin'] })).status, 400);
   assert.equal((await allow({ from: piaD, to: Array(1025).fill(piaD) })).status, 400);
+});
+
+// --- Rollout flag (Phase 3 step 1) ---------------------------------------------------------------------------------
+
+test('the rollout defaults to nobody, reads a 0-100 percentage and an allow-list, and buckets users stably', () => {
+  assert.deepEqual(rolloutFromEnv({}), { percent: 0, userIds: new Set() });
+  assert.equal(rolloutFromEnv({ XMPP_ROLLOUT_PERCENT: '250' }).percent, 100);
+  assert.equal(rolloutFromEnv({ XMPP_ROLLOUT_PERCENT: 'lots' }).percent, 0);
+  assert.deepEqual([...rolloutFromEnv({ XMPP_ROLLOUT_USER_IDS: ' a , b,,' }).userIds], ['a', 'b']);
+  assert.equal(rolloutBucket('user-42'), rolloutBucket('user-42'), 'the same user, the same bucket, every time');
+  const buckets = Array.from({ length: 2000 }, (_, i) => rolloutBucket(`u${i}`));
+  assert.ok(buckets.every((b) => Number.isInteger(b) && b >= 0 && b < 100));
+  const under10 = buckets.filter((b) => b < 10).length / buckets.length;
+  assert.ok(under10 > 0.07 && under10 < 0.13, `about 10% fall under 10 (got ${under10})`);
+});
+
+test('at 0% nobody is moved over: no tokens, no XMPP addresses, no relaying; the allow-list moves only its users', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'relay-rollout-'));
+  const rolloutConfig = xmppConfigFromEnv({ XMPP_JWT_SECRET: SECRET, XMPP_ADMIN_PASSWORD: 'admin-secret' });
+  const svc = createChatServer({ port: 0, host: '127.0.0.1', databasePath: join(dir, 'db.sqlite'), pushSender: null, xmppConfig: rolloutConfig, xmppFetch: fakeEjabberd });
+  const base = `http://127.0.0.1:${(await svc.listen()).port}`;
+  try {
+    const quinn = await account(base), rae = await account(base);
+    assert.deepEqual((await api('/api/v1/xmpp/transport', { token: quinn.token, base })).body, { enabled: true, transport: 'legacy' });
+    const refused = await api('/api/v1/xmpp/token', { method: 'POST', token: quinn.token, base });
+    assert.equal(refused.status, 409);
+    assert.equal(refused.body.transport, 'legacy');
+
+    rolloutConfig.rollout.userIds.add(quinn.user.id);        // a test account on the allow-list
+    assert.equal((await api('/api/v1/xmpp/transport', { token: quinn.token, base })).body.transport, 'xmpp');
+    assert.equal((await api('/api/v1/xmpp/transport', { token: rae.token, base })).body.transport, 'legacy', 'everyone else stays');
+    const granted = await api('/api/v1/xmpp/token', { method: 'POST', token: quinn.token, base });
+    assert.equal(granted.status, 200);
+    assert.equal(granted.body.transport, 'xmpp');
+
+    // Delivery between a moved user and one who is not is refused, so the sender uses the current path.
+    rolloutConfig.rollout.userIds.add(rae.user.id);
+    const raeDevice = (await api('/api/v1/xmpp/token', { method: 'POST', token: rae.token, base })).body.jid.split('@')[0];
+    rolloutConfig.rollout.userIds.delete(rae.user.id);       // rae moved back
+    const raw = JSON.stringify({ from: granted.body.jid.split('@')[0], to: [raeDevice], ts: Math.floor(Date.now() / 1000) });
+    const verdicts = await (await fetch(`${base}/api/v1/xmpp/allow`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-hm-signature': signOfflineHook(SECRET, raw) }, body: raw })).json();
+    assert.equal(verdicts.verdicts[raeDevice], 'deny');
+  } finally {
+    await svc.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('device lists only show XMPP addresses for users who are moved over', () => {
+  const cfg = xmppConfigFromEnv({ XMPP_JWT_SECRET: SECRET, XMPP_ADMIN_PASSWORD: 'admin-secret', XMPP_ROLLOUT_USER_IDS: 'moved' });
+  const x = createXmpp({ db: { prepare: () => ({ get: async () => null, run: async () => {}, all: async () => [] }) }, config: cfg });
+  assert.equal(x.addressFor('moved', `d${'2'.repeat(40)}`), `d${'2'.repeat(40)}@chat.hiddenmessenger.com`);
+  assert.equal(x.addressFor('not-moved', `d${'2'.repeat(40)}`), null);
+  assert.equal(x.addressFor('moved', null), null, 'no account, no address');
 });

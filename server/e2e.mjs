@@ -62,10 +62,10 @@ export function parseKeyUpload(body) {
   return { identity, spk, preKeys };
 }
 
-// `xmppHost` (when the XMPP core is on): each device in a device list also carries its XMPP address, so senders can
-// see which devices are reachable over XMPP while devices move over (server/xmpp.mjs). A device without one has not
-// signed in to XMPP yet and is reached through this server as before.
-export function registerE2e({ app, db, requireSession, xmppHost = null }) {
+// `xmppAddress(userId, localpart)`: a device's XMPP address (server/xmpp.mjs addressFor) or null. Device lists carry it for
+// devices reachable over XMPP, so senders can route while users move over; a device without one is reached through
+// this server as before.
+export function registerE2e({ app, db, requireSession, xmppAddress = () => null }) {
   const json = express.json({ limit: '64kb' });
 
   // Devices that can receive end-to-end messages: they published keys and are still signed in.
@@ -75,11 +75,10 @@ export function registerE2e({ app, db, requireSession, xmppHost = null }) {
     ORDER BY d.device_id`);
 
   async function devicesOf(userId) {
-    return (await keyDevicesOf.all(userId)).map((row) => ({
-      deviceId: row.deviceId,
-      identity: { dh: row.dh, sig: row.sig },
-      ...(xmppHost && row.xmpp ? { xmpp: `${row.xmpp}@${xmppHost}` } : {}),
-    }));
+    return (await keyDevicesOf.all(userId)).map((row) => {
+      const xmpp = xmppAddress(userId, row.xmpp);
+      return { deviceId: row.deviceId, identity: { dh: row.dh, sig: row.sig }, ...(xmpp ? { xmpp } : {}) };
+    });
   }
 
   async function forgetStaleDevices() {

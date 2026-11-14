@@ -23,11 +23,27 @@ export const WAKE_COALESCE_MS = 15_000;
 export const DEFAULT_XMPP_HOST = 'chat.hiddenmessenger.com';
 const ADMIN_TIMEOUT_MS = 8000;
 
+// Rollout (Phase 3): who uses XMPP. XMPP_ROLLOUT_PERCENT (0-100, default 0) of users by a stable hash of the user id,
+// plus everyone in XMPP_ROLLOUT_USER_IDS (comma-separated, for test accounts). Everyone else stays on the current path.
+export function rolloutFromEnv(env = process.env) {
+  const percent = Number.parseInt(String(env.XMPP_ROLLOUT_PERCENT ?? '0'), 10);
+  return {
+    percent: Number.isInteger(percent) ? Math.min(100, Math.max(0, percent)) : 0,
+    userIds: new Set(String(env.XMPP_ROLLOUT_USER_IDS ?? '').split(',').map((id) => id.trim()).filter(Boolean)),
+  };
+}
+
+/** A user's rollout bucket, 0-99: the same on every device and every server, so a person moves over all at once. */
+export function rolloutBucket(userId) {
+  return createHash('sha256').update(`xmpp-rollout\n${userId}`).digest().readUInt32BE(0) % 100;
+}
+
 export function xmppConfigFromEnv(env = process.env) {
   const host = (env.XMPP_HOST || DEFAULT_XMPP_HOST).trim().toLowerCase();
   const secret = (env.XMPP_JWT_SECRET || '').trim();
   const adminPassword = (env.XMPP_ADMIN_PASSWORD || '').trim();
   return {
+    rollout: rolloutFromEnv(env),
     host,
     secret,
     adminPassword,
@@ -178,6 +194,17 @@ export function createXmpp({ db, config = xmppConfigFromEnv(), fetchImpl = globa
   }
 
   const DEVICE = /^d[0-9a-f]{40}$/;
+  const rollout = config.rollout ?? { percent: 0, userIds: new Set() };
+
+  /**
+   * 'xmpp' when this user is moved over (and the XMPP core is configured), else 'legacy'. Only users on 'xmpp' get
+   * device accounts, appear reachable in device lists and may send or receive through ejabberd, so nobody is sent
+   * anything over XMPP while their app still listens on the current path.
+   */
+  function transportFor(userId) {
+    if (!config.enabled || !userId) return 'legacy';
+    return rollout.userIds.has(userId) || rolloutBucket(userId) < rollout.percent ? 'xmpp' : 'legacy';
+  }
   // A request from mod_hm: HMAC-SHA256 of the exact body under the shared key, sent within OFFLINE_HOOK_MAX_SKEW_SECONDS.
   // Answers the error itself and returns null when the request is not one.
   function signedEvent(request, response) {
@@ -195,6 +222,11 @@ export function createXmpp({ db, config = xmppConfigFromEnv(), fetchImpl = globa
 
   return {
     config,
+    transportFor,
+    /** A device's XMPP address for device lists, only for users moved over (null otherwise). */
+    addressFor(userId, localpart) {
+      return localpart && transportFor(userId) === 'xmpp' ? `${localpart}@${config.host}` : null;
+    },
     ensureAccount,
     reconcile,
     /** Runs a reconcile without waiting on it (after sign-outs). */
@@ -203,10 +235,18 @@ export function createXmpp({ db, config = xmppConfigFromEnv(), fetchImpl = globa
     },
     /** POST /api/v1/xmpp/token: this device's address, a short-lived sign-in token and where to connect. */
     register(app, requireSession) {
+      // Which path this user's app should use. Cheap and side-effect free: the app asks before connecting anywhere.
+      app.get('/api/v1/xmpp/transport', requireSession, (request, response) => {
+        response.set('Cache-Control', 'no-store');
+        response.json({ enabled: config.enabled, transport: transportFor(request.session.user_id) });
+      });
+
       app.post('/api/v1/xmpp/token', requireSession, async (request, response) => {
         if (!config.enabled) return response.status(503).json({ error: 'Messaging over XMPP is not enabled on this server.', enabled: false });
         const { user_id: userId, device_id: deviceId } = request.session;
         if (!userId || !deviceId) return response.status(400).json({ error: 'This session has no device.' });
+        // Not moved over yet: no account, so nobody can reach this device over XMPP while it listens elsewhere.
+        if (transportFor(userId) !== 'xmpp') return response.status(409).json({ error: 'This account still uses the current messaging path.', transport: 'legacy' });
         let localpart;
         try {
           localpart = await ensureAccount(userId, deviceId);
@@ -217,7 +257,7 @@ export function createXmpp({ db, config = xmppConfigFromEnv(), fetchImpl = globa
         const jid = `${localpart}@${config.host}`;
         const { token, expiresAt } = signXmppToken({ secret: config.secret, jid, nowMs: now() });
         response.set('Cache-Control', 'no-store');
-        response.json({ enabled: true, jid, token, expiresAt, websocket: config.websocketUrl });
+        response.json({ enabled: true, transport: 'xmpp', jid, token, expiresAt, websocket: config.websocketUrl });
       });
 
       // ejabberd stored a message for a device that is offline (mod_hm, offline_message_hook): wake that phone with
@@ -247,12 +287,14 @@ export function createXmpp({ db, config = xmppConfigFromEnv(), fetchImpl = globa
         const targets = Array.isArray(event.to) ? event.to : null;
         if (typeof event.from !== 'string' || !DEVICE.test(event.from) || !targets || targets.length === 0 || targets.length > 1024
           || !targets.every((to) => typeof to === 'string' && DEVICE.test(to))) return response.status(400).json({ error: 'Invalid body.' });
-        const sender = await accountByLocalpart.get(event.from);
+        const found = await accountByLocalpart.get(event.from);
+        // A sender or target not moved over (or moved back) is refused: their app uses the current path.
+        const sender = found && transportFor(found.userId) === 'xmpp' ? found : null;
         const verdicts = {};
         const byUser = new Map();
         for (const to of new Set(targets)) {
           const target = sender ? await accountByLocalpart.get(to) : null;
-          if (!target) { verdicts[to] = 'deny'; continue; }
+          if (!target || transportFor(target.userId) !== 'xmpp') { verdicts[to] = 'deny'; continue; }
           if (!byUser.has(target.userId)) byUser.set(target.userId, await verdict(sender.userId, target.userId, { group: event.group === true }));
           verdicts[to] = byUser.get(target.userId);
         }
