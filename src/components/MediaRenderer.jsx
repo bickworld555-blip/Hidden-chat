@@ -7,6 +7,7 @@ import {
   fileTone,
   fileTypeLabel,
   formatFileSize,
+  formatVideoLength,
   mediaKind,
   isEncryptedMedia,
   loadMediaBlob,
@@ -229,9 +230,10 @@ function usePlaybackSource(id, sessionToken, info, media) {
     : { url: media.url, status: media.status, progress: media.progress, error: media.error, prepare };
 }
 
-// One card: size bottom-left, time and ticks bottom-right, download (or full screen) top-right. While it plays the
-// player's own controls take the bottom, so the time moves under it.
-function VideoAttachment({ id, filename, sessionToken, info, onOpen, meta = null, thumb = '' }) {
+// One card, as on WhatsApp: the video's own frame (the sender's poster, sharp; else its blurred micro thumbnail), a play
+// button in the middle, the length (or size) bottom-left, time and ticks bottom-right, download top-right. While it
+// plays the player's own controls take the bottom, so the time moves under it.
+function VideoAttachment({ id, filename, sessionToken, info, onOpen, meta = null, thumb = '', poster = '', duration = 0 }) {
   const media = useMediaBlob(id, sessionToken);
   const source = usePlaybackSource(id, sessionToken, info, media);
   const saver = useDownload(id, filename, sessionToken);
@@ -242,22 +244,23 @@ function VideoAttachment({ id, filename, sessionToken, info, onOpen, meta = null
     <div className="wa-video">
       <div className={`wa-visual ${meta && !(playing && source.url) ? 'has-meta' : ''}`}>
       {playing && source.url ? (
-        <video className="wa-video-player" src={source.url} controls autoPlay playsInline onClick={(event) => event.stopPropagation()} />
+        <video className="wa-video-player" src={source.url} poster={poster || undefined} controls autoPlay playsInline onClick={(event) => event.stopPropagation()} />
       ) : (
         <button
           type="button"
-          className="wa-video-poster"
+          className={`wa-video-poster${poster ? ' has-frame' : ''}`}
           onClick={(event) => {
             event.stopPropagation();
             source.prepare().then(() => setPlaying(true)).catch(() => {});
           }}
           aria-label={`Play ${filename}`}
         >
-          {thumb && <img className="wa-thumb-blur" src={thumb} alt="" aria-hidden="true" />}
+          {poster ? <img className="wa-video-frame" src={poster} alt="" aria-hidden="true" />
+            : thumb && <img className="wa-thumb-blur" src={thumb} alt="" aria-hidden="true" />}
           <span className="wa-video-play">
             {source.status === 'loading' ? <ProgressRing progress={source.progress} /> : <Play size={26} fill="currentColor" />}
           </span>
-          <span className="wa-video-caption"><Video size={14} /> {size || fileTypeLabel(filename)}</span>
+          <span className="wa-video-caption"><Video size={14} /> {duration ? formatVideoLength(duration) : size || fileTypeLabel(filename)}</span>
         </button>
       )}
       <span className="wa-media-tools">
@@ -379,9 +382,9 @@ function Captioned({ caption, meta, children }) {
   );
 }
 
-export default function MediaRenderer({ mediaRef, sessionToken, onOpen, meta = null, caption = '', thumb = '' }) {
+export default function MediaRenderer({ mediaRef, sessionToken, onOpen, meta = null, caption = '', thumb = '', poster = '', duration = 0 }) {
   if (caption) {
-    return <Captioned caption={caption} meta={meta}><MediaRenderer mediaRef={mediaRef} sessionToken={sessionToken} onOpen={onOpen} thumb={thumb} /></Captioned>;
+    return <Captioned caption={caption} meta={meta}><MediaRenderer mediaRef={mediaRef} sessionToken={sessionToken} onOpen={onOpen} thumb={thumb} poster={poster} duration={duration} /></Captioned>;
   }
   const ref = parseMediaRef(mediaRef);
   const id = ref?.id ?? '';
@@ -391,6 +394,8 @@ export default function MediaRenderer({ mediaRef, sessionToken, onOpen, meta = n
   if (!ref || !id || !sessionToken) {
     return <><span className="wa-file-error" role="alert"><AlertCircle size={12} /> Attachment unavailable</span>{meta}</>;
   }
+  // A video with the sender's poster shows its frame at once, while the file's details load.
+  if (!info && !error && poster) return <VideoAttachment id={id} filename={filename} sessionToken={sessionToken} info={null} onOpen={onOpen} meta={meta} thumb={thumb} poster={poster} duration={duration} />;
   if (!info && !error) {
     return (
       <div className="wa-file wa-file-pending" aria-busy="true">
@@ -409,7 +414,7 @@ export default function MediaRenderer({ mediaRef, sessionToken, onOpen, meta = n
   const props = { id, filename, sessionToken, info };
   const kind = info ? mediaKind(info.contentType) : 'file';
   if (kind === 'image') return <ImageAttachment {...props} onOpen={onOpen} meta={meta} thumb={thumb} />;
-  if (kind === 'video') return <VideoAttachment {...props} onOpen={onOpen} meta={meta} thumb={thumb} />;
+  if (kind === 'video') return <VideoAttachment {...props} onOpen={onOpen} meta={meta} thumb={thumb} poster={poster} duration={duration} />;
   if (kind === 'audio') return <><AudioAttachment {...props} />{meta}</>;
   return <><FileCard {...props} infoError={error} />{meta}</>;
 }
@@ -429,7 +434,7 @@ export function MediaAlbum({ items, sessionToken, onOpen, meta = null, caption =
         const last = index === shown.length - 1;
         return (
           <div key={item.id} className="wa-album-tile">
-            <MediaRenderer mediaRef={item.content} sessionToken={sessionToken} thumb={item.thumb} onOpen={() => onOpen?.(item.id)}
+            <MediaRenderer mediaRef={item.content} sessionToken={sessionToken} thumb={item.thumb} poster={item.poster} duration={item.duration} onOpen={() => onOpen?.(item.id)}
               meta={last && !caption && !hidden ? meta : null} />
             {last && hidden > 0 && (
               <button type="button" className="wa-album-more" onClick={(event) => { event.stopPropagation(); onOpen?.(item.id); }} aria-label={`${hidden} more`}>+{hidden}</button>

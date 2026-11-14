@@ -4070,18 +4070,24 @@ button.groups-setting:hover, label.groups-setting:hover { background: rgba(134, 
 /* ===== Sending an attachment: inline bubble with a progress ring (no separate upload bar) ===== */
 .pending-upload { position: relative; overflow: hidden; padding: 3px; }
 .pending-upload.is-image, .pending-upload.is-video { width: min(260px, 66vw); }
-.pending-upload-media { display: block; width: 100%; max-height: 320px; min-height: 140px; object-fit: cover; border-radius: 8px; filter: brightness(.55); }
-.pending-upload-overlay { position: absolute; inset: 3px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: #fff; }
-.pending-upload-overlay small { padding: 2px 8px; border-radius: 10px; background: rgba(0, 0, 0, .45); font-size: 12px; }
-.pending-upload.is-image:not(:has(img)) .pending-upload-overlay, .pending-upload.is-video:not(:has(video)) .pending-upload-overlay { position: static; min-height: 140px; }
-.pending-upload-ring { position: relative; width: 52px; height: 52px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 50%; background: rgba(0, 0, 0, .45); color: #fff; cursor: pointer; }
-.pending-upload-ring svg { position: absolute; inset: 2px; width: 48px; height: 48px; transform: rotate(-90deg); }
+/* The photo or video itself, at full brightness and its own shape; progress lives in the strip along its bottom edge. */
+.pending-upload-visual { position: relative; overflow: hidden; min-height: 140px; max-height: 340px; border-radius: 8px; background: #d9dee2; }
+.dark-theme .pending-upload-visual { background: #233138; }
+.pending-upload-media { display: block; width: 100%; height: 100%; max-height: 340px; min-height: 140px; object-fit: cover; }
+.pending-upload-placeholder { position: absolute; inset: 0; display: grid; place-items: center; color: rgba(84, 101, 111, .55); }
+.dark-theme .pending-upload-placeholder { color: rgba(233, 237, 239, .35); }
+.pending-upload-bar { position: absolute; inset: auto 0 0 0; display: flex; align-items: center; gap: 7px; padding: 18px 8px 6px 6px; color: #fff; background: linear-gradient(to top, rgba(0, 0, 0, .55), rgba(0, 0, 0, .25) 60%, transparent); font-size: 11.5px; text-shadow: 0 1px 2px rgba(0, 0, 0, .45); }
+.pending-upload-status { font-size: 11.5px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.pending-upload-meta { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; opacity: .95; }
+.pending-upload-length { display: inline-flex; align-items: center; gap: 3px; font-variant-numeric: tabular-nums; }
+.pending-upload-ring { --ring: 48px; position: relative; flex: none; width: var(--ring); height: var(--ring); display: grid; place-items: center; padding: 0; border: 0; border-radius: 50%; background: rgba(0, 0, 0, .45); color: #fff; cursor: pointer; }
+.pending-upload-ring-svg { position: absolute; inset: 0; width: 100%; height: 100%; transform: rotate(-90deg); }
+.pending-upload-ring > svg:not(.pending-upload-ring-svg) { position: relative; flex: none; }
 .pending-upload-ring circle { fill: none; stroke-width: 3; }
 .pending-upload-ring-track { stroke: rgba(255, 255, 255, .25); }
 .pending-upload-ring-fill { stroke: #fff; stroke-linecap: round; transition: stroke-dashoffset .25s ease; }
 .pending-upload-file { display: flex; align-items: center; gap: 10px; min-width: 220px; padding: 6px 8px; }
 .pending-upload-file .pending-upload-ring { width: 44px; height: 44px; background: #005ad1; }
-.pending-upload-file .pending-upload-ring svg { inset: 0; width: 44px; height: 44px; }
 .pending-upload-file-icon { display: none; }
 .pending-upload-file-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .pending-upload-file-text strong { overflow: hidden; font-size: 14px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
@@ -5702,7 +5708,7 @@ button.groups-sender { padding: 0; border: 0; background: none; font: inherit; f
 .wa-media-caption > .message-meta { float: right; margin: 6px 0 -4px 10px; }
 .pending-upload-caption { color: inherit; }
 .pending-upload-clock { float: right; margin: 6px 0 0 10px; opacity: .7; }
-.pending-upload-ring.is-preparing svg { animation: pending-spin 1s linear infinite; transform-origin: 50% 50%; }
+.pending-upload-ring.is-preparing .pending-upload-ring-svg { animation: pending-spin 1s linear infinite; transform-origin: 50% 50%; }
 .pending-upload-ring.is-preparing .pending-upload-ring-fill { stroke-dashoffset: 75 !important; }
 @keyframes pending-spin { from { transform: rotate(-90deg); } to { transform: rotate(270deg); } }
 
@@ -5724,3 +5730,10 @@ button.groups-sender { padding: 0; border: 0; background: none; font: inherit; f
 /* A quoted photo or video: its preview on the right of the quote card. */
 .wa-quoted-reply-preview:has(.wa-quoted-thumb) { display: flex; align-items: stretch; }
 .wa-quoted-thumb { flex: none; width: 58px; height: 58px; margin: -6px -8px -6px 8px; object-fit: cover; border-radius: 0 6px 6px 0; }
+
+/* A video bubble shows the sender's own frame (sharp poster), as on WhatsApp, instead of a dark gradient card. */
+.wa-video-poster.has-frame { display: block; height: auto; min-height: 120px; background: #000; }
+.wa-video-frame { display: block; width: 100%; max-height: 340px; min-height: 120px; object-fit: cover; }
+.wa-video-poster.has-frame .wa-video-play { position: absolute; left: 50%; top: 50%; z-index: 1; transform: translate(-50%, -50%); }
+.wa-video-poster.has-frame .wa-video-caption, .wa-video-poster .wa-video-caption { position: absolute; left: 8px; bottom: 6px; z-index: 2; }
+.wa-visual:has(.wa-video-poster)::after { content: ''; position: absolute; inset: auto 0 0 0; z-index: 1; height: 44px; background: linear-gradient(to top, rgba(0, 0, 0, .5), transparent); pointer-events: none; }

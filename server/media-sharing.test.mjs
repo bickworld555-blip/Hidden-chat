@@ -6,7 +6,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { innerFrom, innerOf, openedFrom } from '../src/e2e/client.js';
-import { cleanThumb, THUMB_MAX_CHARS } from '../src/mediaThumb.js';
+import { cleanDuration, cleanPoster, cleanThumb, POSTER_MAX_CHARS, THUMB_MAX_CHARS } from '../src/mediaThumb.js';
+import { formatVideoLength } from '../src/media.js';
 import { quoteView, resolveQuote } from '../src/replies.js';
 
 const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
@@ -34,9 +35,37 @@ test('what is not a caption, an album or a small JPEG preview is dropped', () =>
 
 test('the caption and the preview never travel next to the ciphertext', () => {
   const messaging = read('src/e2e/messaging.js');
-  assert.match(messaging, /caption: _caption, album: _album, thumb: _thumb, \.\.\.rest \} = message;/, 'stripped from what the server receives');
+  assert.match(messaging, /caption: _caption, album: _album, thumb: _thumb, poster: _poster, duration: _duration, \.\.\.rest \} = message;/, 'stripped from what the server receives');
   const groups = read('src/components/GroupsView.jsx');
   assert.match(groups, /rawGroupRequest\(token, path, \{ \.\.\.options, extras: undefined, body: \{ \.\.\.options\.body, content \} \}\), extras\)/);
+});
+
+test('a video carries its sharp poster frame and length inside the encryption', () => {
+  const POSTER = `data:image/jpeg;base64,${'B'.repeat(12000)}`;
+  const inner = innerOf('emedia:vid', { thumb: THUMB, poster: POSTER, duration: 42 });
+  assert.deepEqual({ th: inner.th, pv: inner.pv, du: inner.du }, { th: THUMB, pv: POSTER, du: 42 });
+  const opened = openedFrom(innerFrom(JSON.parse(JSON.stringify(inner))), null);
+  assert.deepEqual({ poster: opened.poster, duration: opened.duration, thumb: opened.thumb }, { poster: POSTER, duration: 42, thumb: THUMB });
+  assert.equal(cleanPoster(`data:image/jpeg;base64,${'A'.repeat(POSTER_MAX_CHARS)}`), '', 'bounded size');
+  assert.equal(cleanPoster('https://tracker.example/frame.jpg'), '', 'never a remote image');
+  for (const bad of [0, -3, 1.5, '42', 24 * 3600 + 1]) assert.equal(cleanDuration(bad), 0, String(bad));
+  assert.equal(innerFrom({ c: 'x', pv: 'data:image/png;base64,AAAA', du: 'long' }).pv, undefined);
+  assert.deepEqual([formatVideoLength(42), formatVideoLength(605), formatVideoLength(3725)], ['0:42', '10:05', '1:02:05']);
+});
+
+test('uploading photos and videos show themselves at full brightness with progress on the bottom edge', () => {
+  const pending = read('src/components/PendingUpload.jsx');
+  const css = read('src/styles.css');
+  assert.ok(!/filter: brightness(.55)/.test(css), 'no darkened preview');
+  assert.ok(!css.includes('.pending-upload-overlay'), 'no centred overlay');
+  assert.match(css, /.pending-upload-bar { position: absolute; inset: auto 0 0 0;/, 'progress strip along the bottom edge');
+  assert.ok(pending.includes("upload.kind === 'image' ? upload.previewUrl : upload.poster"), 'a video shows its own frame');
+  assert.ok(!pending.includes('<video'), 'no black <video> placeholder while uploading');
+  const chat = read('src/components/ChatWindow.jsx');
+  assert.ok(chat.includes("const previewJob = previewKind === 'video' ? videoPreview(blob) : null;"), 'the frame is taken as soon as the video is queued');
+  assert.ok(chat.includes("previewJob && kind === 'media'"), 'view once videos and video notes carry no poster');
+  const renderer = read('src/components/MediaRenderer.jsx');
+  assert.ok(renderer.includes('<img className="wa-video-frame" src={poster}'), 'the receiver sees the same frame');
 });
 
 test('a reply to a photo shows its preview and caption in the quote', () => {

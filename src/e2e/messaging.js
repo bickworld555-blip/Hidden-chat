@@ -30,7 +30,7 @@ export async function transmitDirect(client, message, { fresh = false } = {}) {
   let content;
   try {
     content = await sealDirect(message.receiverId, message.content, {
-      linkPreview: message.linkPreview, statusReply: message.statusReply, replyToId: message.replyTo?.id, forwarded: message.forwarded === true, caption: message.caption, album: message.album, thumb: message.thumb,
+      linkPreview: message.linkPreview, statusReply: message.statusReply, replyToId: message.replyTo?.id, forwarded: message.forwarded === true, caption: message.caption, album: message.album, thumb: message.thumb, poster: message.poster, duration: message.duration,
     }, { fresh: fresh || Boolean(message.awaitingKeys) });
   } catch (error) {
     // Strict end-to-end encryption: nothing people write is ever sent readable. When the contact has no keys yet
@@ -50,7 +50,7 @@ export async function transmitDirect(client, message, { fresh = false } = {}) {
   if (message.awaitingKeys) useChatStore.getState().updateMessage(message.id, { awaitingKeys: false, status: 'sent' });
   // The link preview, the quoted message and the forwarded mark only travel inside the encryption; a message that
   // could not be sealed (a call record) keeps its quote outside, as before.
-  const { replyTo, forwarded, linkPreview: _preview, statusReply: _statusReply, awaitingKeys: _waiting, caption: _caption, album: _album, thumb: _thumb, ...rest } = message;
+  const { replyTo, forwarded, linkPreview: _preview, statusReply: _statusReply, awaitingKeys: _waiting, caption: _caption, album: _album, thumb: _thumb, poster: _poster, duration: _duration, ...rest } = message;
   const sealed = isEnvelope(content);
   return Boolean(client.send({ type: 'message:send', message: { ...rest, content,
     ...(!sealed && replyTo?.id ? { replyTo: { id: replyTo.id } } : {}), ...(!sealed && forwarded ? { forwarded: true } : {}) } }));

@@ -338,3 +338,12 @@ export function saveBlob(blob, filename) {
   // Revoking immediately can cancel the download in some browsers.
   setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }
+
+// m:ss (h:mm:ss from an hour) for the length shown on a video, as on WhatsApp.
+export function formatVideoLength(seconds) {
+  const total = Math.max(0, Math.round(seconds));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const rest = String(total % 60).padStart(2, '0');
+  return hours ? `${hours}:${String(minutes).padStart(2, '0')}:${rest}` : `${minutes}:${rest}`;
+}

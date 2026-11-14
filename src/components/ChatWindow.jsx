@@ -57,7 +57,7 @@ import VoiceRecorderBar from './VoiceRecorderBar.jsx';
 import { presenceLine } from '../presence.js';
 import PendingUpload from './PendingUpload.jsx';
 import MediaComposer from './MediaComposer.jsx';
-import { makeThumb } from '../mediaThumb.js';
+import { makeThumb, videoPreview } from '../mediaThumb.js';
 import { EventBubble, EventComposer, PollBubble, PollComposer, ViewOnceVoice } from './RichMessages.jsx';
 import { parseScheduledCall } from '../groupChat.js';
 import CameraCapture from './CameraCapture.jsx';
@@ -489,7 +489,7 @@ function MessageBubble({
           ) : (
             <>
               {isMedia && album?.length > 1 ? <MediaAlbum items={album} sessionToken={sessionToken} onOpen={onOpenAlbumItem} meta={meta} caption={album.find((item) => item.caption)?.caption ?? ''} />
-                : isMedia ? <MediaRenderer mediaRef={content} sessionToken={sessionToken} onOpen={onOpenMedia} meta={meta} caption={message.caption} thumb={message.thumb} />
+                : isMedia ? <MediaRenderer mediaRef={content} sessionToken={sessionToken} onOpen={onOpenMedia} meta={meta} caption={message.caption} thumb={message.thumb} poster={message.poster} duration={message.duration} />
                 : sharedKind === 'location' && parseLocation(content) ? <LocationBubble location={parseLocation(content)} onOpen={shared.openLocation} />
                 : sharedKind === 'live' && parseLive(content) ? <LiveLocationBubble live={parseLive(content)} mine={mine} peerName={shared.peerName} send={shared.send} onOpen={shared.openLive} />
                 : sharedKind === 'contact' && parseContact(content) ? <ContactBubble contact={parseContact(content)} onMessage={shared.messageContact} />
@@ -1158,13 +1158,20 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
     const type = blob.type || '';
     const isVoiceNote = kind === 'voice' || kind === 'voice-once';
     const previewKind = isVoiceNote ? 'voice' : type.startsWith('image/') ? 'image' : type.startsWith('video/') ? 'video' : 'file';
-    const previewUrl = previewKind === 'image' || previewKind === 'video' ? URL.createObjectURL(blob) : '';
+    const previewUrl = previewKind === 'image' ? URL.createObjectURL(blob) : '';
+    // A video shows its own frame in the bubble at once (as on WhatsApp), not a dark placeholder: one decode gives the
+    // poster, the micro thumbnail and the length, which also travel to the receiver (view once and video notes excepted).
+    const previewJob = previewKind === 'video' ? videoPreview(blob) : null;
     const key = crypto.randomUUID();
     const controller = new AbortController();
     uploadControllersRef.current.set(key, controller);
     setUploads((list) => [...list, { key, filename, kind: previewKind, previewUrl, sent: 0, total: blob.size, caption: extras.caption ?? '', preparing: Boolean(prepare) }]);
     scrollToBottom('smooth');
     setError('');
+    previewJob?.then((preview) => patchUpload(key, {
+      poster: preview.poster || preview.thumb, seconds: preview.seconds,
+      aspect: preview.width && preview.height ? preview.width / preview.height : 0,
+    }));
 
     const job = withUploadSlot(async () => {
       const ready = prepare ? await prepare() : { blob, filename, extras: {} };
@@ -1191,7 +1198,9 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
       const wrapped = { viewonce: VIEW_ONCE_PREFIX, vnote: VIDEO_NOTE_PREFIX, csticker: CUSTOM_STICKER_PREFIX }[kind];
       const content = isVoiceNote ? voiceContent(data.id, seconds, { viewOnce: kind === 'voice-once', descriptor, lang: resolveVoiceLanguage(appSettings().get('chats.voiceLanguage')) })
         : wrapped ? wrapped + attachment : attachment;
-      return { content, extras: { ...extras, ...ready.extras } };
+      const preview = previewJob && kind === 'media' ? await previewJob : null;
+      const previewExtras = preview ? { ...(preview.thumb ? { thumb: preview.thumb } : {}), ...(preview.poster ? { poster: preview.poster } : {}), ...(preview.seconds ? { duration: preview.seconds } : {}) } : {};
+      return { content, extras: { ...extras, ...previewExtras, ...ready.extras } };
     });
 
     // Sent strictly in the order queued, whatever order the uploads finish in.
@@ -1228,8 +1237,9 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
         extras: { ...(item.caption ? { caption: item.caption } : {}), ...(album ? { album } : {}) },
         prepare: item.kind === 'file' ? null : async () => {
           const { thumb: photoThumb, ...prepared } = await prepareForSend(item.file, item.file.name, quality);
-          // A photo's preview comes from its own decode; a video's from a frame.
-          const thumb = viewOnce ? '' : photoThumb || await makeThumb(prepared.blob);
+          // A photo's preview comes from its own decode; a video's from the frame uploadAndSend already took.
+          const isVideo = (prepared.blob?.type || item.file.type || '').startsWith('video/');
+          const thumb = viewOnce || isVideo ? '' : photoThumb || await makeThumb(prepared.blob);
           return { ...prepared, extras: thumb ? { thumb } : {} };
         },
       });

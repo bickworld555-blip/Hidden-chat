@@ -47,7 +47,7 @@ import CameraCapture from './CameraCapture.jsx';
 import { parseVoiceContent, voiceContent, voiceExtension } from '../voice.js';
 import { resolveVoiceLanguage } from '../voiceLanguage.js';
 import MediaComposer from './MediaComposer.jsx';
-import { makeThumb } from '../mediaThumb.js';
+import { makeThumb, videoPreview } from '../mediaThumb.js';
 import { useBackHandler } from '../backStack.js';
 import { nativeClearMessageNotifications, nativeShell } from '../native.js';
 import { EventBubble, EventComposer, PollBubble, PollComposer } from './RichMessages.jsx';
@@ -536,13 +536,15 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
     setUploading(1);
     try {
       const prepared = document ? { blob: file, filename: file.name || 'attachment' } : await prepareForSend(file, file.name || 'attachment', quality);
-      const thumb = document ? '' : prepared.thumb || await makeThumb(prepared.blob);
+      // A video carries its poster frame and length too (src/mediaThumb.js), from one decode of the picked file.
+      const video = !document && (file.type || '').startsWith('video/') ? await videoPreview(file) : null;
+      const thumb = document ? '' : prepared.thumb || video?.thumb || (video ? '' : await makeThumb(prepared.blob));
       const plain = prepared.blob instanceof File ? prepared.blob : new File([prepared.blob], prepared.filename, { type: prepared.blob.type });
       // Encrypted on this device before upload; the key travels in the end-to-end encrypted group message.
       const { upload, descriptor } = await sealForUpload(plain);
       const data = await uploadFile(upload, { groupId: selected, sessionToken: token, onProgress: (done, total) => setUploading(Math.max(1, Math.round((done / total) * 100))) });
       await groupRequest(token, `${groupPath}/messages`, { method: 'POST', body: { content: attachmentContent(data.id, descriptor ? prepared.filename || 'attachment' : data.filename || prepared.filename || 'attachment', descriptor) },
-        extras: { ...(caption ? { caption } : {}), ...(thumb ? { thumb } : {}) } });
+        extras: { ...(caption ? { caption } : {}), ...(thumb ? { thumb } : {}), ...(video?.poster ? { poster: video.poster } : {}), ...(video?.seconds ? { duration: video.seconds } : {}) } });
       await refresh(new AbortController().signal);
     } catch (caught) {
       setError(caught.message);
@@ -1088,7 +1090,7 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
                         </div>
                       ) : message.e2eError ? <p className="deleted-text"><span aria-hidden="true">🔒</span> Waiting for this message. It is end-to-end encrypted.</p>
                         : voice?.id ? <VoiceMessage id={voice.id} seconds={voice.seconds} lang={voice.lang} sessionToken={token} sender={sender ?? group.members.find((member) => member.id === message.senderId)} played />
-                        : isMedia ? <MediaRenderer mediaRef={message.content} sessionToken={token} meta={meta} caption={message.caption} thumb={message.thumb} />
+                        : isMedia ? <MediaRenderer mediaRef={message.content} sessionToken={token} meta={meta} caption={message.caption} thumb={message.thumb} poster={message.poster} duration={message.duration} />
                         : poll ? <PollBubble messageId={message.id} poll={poll} sessionToken={token} userId={userId} nameFor={(id) => group.members.find((member) => member.id === id)?.name} context={{ groupId: selected }} />
                         : event ? <EventBubble messageId={message.id} event={event} />
                         : sticker ? <StickerMessage content={message.content} />
