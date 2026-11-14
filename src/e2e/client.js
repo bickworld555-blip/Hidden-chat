@@ -15,6 +15,7 @@ import { createProtocol } from './protocol.js';
 import { buildEnvelope, ENVELOPE_PREFIX, isEnvelope, parseEnvelope, routingFor, withRoutedMedia } from './envelope.js';
 import { sha256Hex } from './primitives.js';
 import { sanitizePreview } from '../linkPreviewParse.js';
+import { cleanThumb } from '../mediaThumb.js';
 
 // What travels inside the encryption: { c: content, lp?: link preview made by the sender, r?: the id of the message
 // it replies to, fw?: 1 when forwarded }. Replies and forwards are not visible to the server (like Signal).
@@ -27,11 +28,21 @@ const cleanStatusReply = (value) => (value && typeof value === 'object' && ['tex
     // A text status's background colour, for the little tile on the quote card.
     ...(typeof value.bg === 'string' && /^#[0-9a-f]{6}$/i.test(value.bg) ? { bg: value.bg } : {}),
   } : null);
+// A photo's, video's or document's caption (as on WhatsApp: in the same bubble), at most CAPTION_MAX characters.
+export const CAPTION_MAX = 1024;
+export const cleanCaption = (value) => (typeof value === 'string' ? value.trim().slice(0, CAPTION_MAX) : '');
+// Photos and videos sent together (as on WhatsApp) show as one album: { id, i (position), n (count) }.
+export const cleanAlbum = (value) => (value && typeof value.id === 'string' && /^[A-Za-z0-9_-]{6,40}$/.test(value.id)
+  && Number.isInteger(value.n) && value.n >= 2 && value.n <= 30 && Number.isInteger(value.i) && value.i >= 0 && value.i < value.n
+  ? { id: value.id, i: value.i, n: value.n } : null);
 export const innerOf = (content, extra = {}) => {
   const linkPreview = sanitizePreview(extra.linkPreview);
   const statusReply = cleanStatusReply(extra.statusReply);
   const replyToId = typeof extra.replyToId === 'string' && extra.replyToId.length < 120 ? extra.replyToId : null;
-  return { c: content, ...(linkPreview ? { lp: linkPreview } : {}), ...(statusReply ? { sr: statusReply } : {}), ...(replyToId ? { r: replyToId } : {}), ...(extra.forwarded ? { fw: 1 } : {}) };
+  const caption = cleanCaption(extra.caption);
+  const album = cleanAlbum(extra.album);
+  const thumb = cleanThumb(extra.thumb);
+  return { ...(thumb ? { th: thumb } : {}), c: content, ...(linkPreview ? { lp: linkPreview } : {}), ...(statusReply ? { sr: statusReply } : {}), ...(replyToId ? { r: replyToId } : {}), ...(extra.forwarded ? { fw: 1 } : {}), ...(caption ? { cp: caption } : {}), ...(album ? { al: album } : {}) };
 };
 
 /**
@@ -49,6 +60,9 @@ export const innerFrom = (value) => {
     ...(statusReply ? { sr: statusReply } : {}),
     ...(typeof value.r === 'string' && value.r.length > 0 && value.r.length < 120 ? { r: value.r } : {}),
     ...(value.fw === 1 ? { fw: 1 } : {}),
+    ...(cleanCaption(value.cp) ? { cp: cleanCaption(value.cp) } : {}),
+    ...(cleanAlbum(value.al) ? { al: cleanAlbum(value.al) } : {}),
+    ...(cleanThumb(value.th) ? { th: cleanThumb(value.th) } : {}),
   };
 };
 
@@ -215,6 +229,9 @@ export const openedFrom = (inner, route) => ({
   ...(inner.sr ? { statusReply: inner.sr } : {}),
   ...(inner.r ? { replyTo: { id: inner.r } } : {}),
   ...(inner.fw === 1 ? { forwarded: true } : {}),
+  ...(inner.cp ? { caption: inner.cp } : {}),
+  ...(inner.al ? { album: inner.al } : {}),
+  ...(inner.th ? { thumb: inner.th } : {}),
 });
 
 // --- Sealing ------------------------------------------------------------------------------------------
@@ -361,6 +378,7 @@ export async function openDirectMessage(message, known = null) {
     ...(opened.statusReply ? { statusReply: opened.statusReply } : {}), ...(opened.e2eError ? { e2eError: opened.e2eError } : {}),
     // Reply and forward travel inside the encryption; a copy the server still describes (older apps) keeps its own.
     ...(opened.replyTo && !base.replyTo ? { replyTo: opened.replyTo } : {}), ...(opened.forwarded ? { forwarded: true } : {}),
+    ...(opened.caption ? { caption: opened.caption } : {}), ...(opened.album ? { album: opened.album } : {}), ...(opened.thumb ? { thumb: opened.thumb } : {}),
   };
 }
 
@@ -374,7 +392,7 @@ export async function openDirectMessages(messages, knownById = () => null) {
 export async function openGroupMessage(groupId, message) {
   if (!message || typeof message.content !== 'string' || !isEnvelope(message.content)) return message;
   const opened = await openContent(message.content, { senderId: message.senderId, groupId });
-  return { ...message, content: opened.content, ...(opened.e2e ? { e2e: true } : {}), ...(opened.linkPreview ? { linkPreview: opened.linkPreview } : {}), ...(opened.e2eError ? { e2eError: opened.e2eError } : {}) };
+  return { ...message, content: opened.content, ...(opened.e2e ? { e2e: true } : {}), ...(opened.linkPreview ? { linkPreview: opened.linkPreview } : {}), ...(opened.caption ? { caption: opened.caption } : {}), ...(opened.album ? { album: opened.album } : {}), ...(opened.thumb ? { thumb: opened.thumb } : {}), ...(opened.e2eError ? { e2eError: opened.e2eError } : {}) };
 }
 
 export async function openGroupMessages(groupId, messages) {

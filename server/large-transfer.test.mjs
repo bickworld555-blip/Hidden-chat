@@ -279,7 +279,7 @@ test('the chat UI uploads through the resumable client and downloads stream to d
   const renderer = await read('../src/components/MediaRenderer.jsx');
   const viewer = await read('../src/components/MediaViewer.jsx');
   assert.ok(chatWindow.includes("import { uploadFile, uploadSizeError } from '../upload.js'"));
-  assert.ok(chatWindow.includes('signal: controller.signal') && chatWindow.includes('<PendingUpload upload={uploadProgress} onCancel={cancelUpload} />'), 'uploads show progress inline in the chat and can be cancelled');
+  assert.ok(chatWindow.includes('signal: controller.signal') && chatWindow.includes('{uploads.map((upload) => <PendingUpload key={upload.key} upload={upload} onCancel={() => cancelUpload(upload.key)} />)}'), 'uploads show progress inline in the chat and can be cancelled');
   assert.doesNotMatch(chatWindow, /MAX_UPLOAD_BYTES \/ \(1024 \* 1024\)/, 'no hardcoded megabyte cap remains');
   assert.doesNotMatch(renderer + viewer, /saveBlob\(/, 'attachments are never buffered into memory to save them');
   assert.ok(renderer.includes('downloadWithProgress(id, filename, sessionToken)') && viewer.includes('downloadWithProgress(ref?.id, filename, sessionToken)'), 'downloads go through the progress manager');

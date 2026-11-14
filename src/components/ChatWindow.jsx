@@ -37,7 +37,7 @@ import { orderStatusLabel, parseOrder, parseOrderStatus } from '../orders.js';
 import { CustomStickerBubble, MediaOpenedBubble, StickerMaker, VideoNoteBubble, VideoNoteRecorder, ViewOnceMediaBubble, ViewOnceViewerHost } from './MediaExtras.jsx';
 import { CUSTOM_STICKER_PREFIX, VIDEO_NOTE_PREFIX, VIEW_ONCE_PREFIX, isCustomSticker, isMediaOpened, isVideoNote, isViewOnceMedia } from '../mediaExtras.js';
 import { firstLink } from '../links.js';
-import MediaRenderer from './MediaRenderer.jsx';
+import MediaRenderer, { MediaAlbum } from './MediaRenderer.jsx';
 import { lazyComponent } from '../lazy.js';
 import { useBackHandler } from '../backStack.js';
 import { nativeClearMessageNotifications, nativeShell } from '../native.js';
@@ -56,6 +56,8 @@ import { cartCount, useCart } from '../cart.js';
 import VoiceRecorderBar from './VoiceRecorderBar.jsx';
 import { presenceLine } from '../presence.js';
 import PendingUpload from './PendingUpload.jsx';
+import MediaComposer from './MediaComposer.jsx';
+import { makeThumb } from '../mediaThumb.js';
 import { EventBubble, EventComposer, PollBubble, PollComposer, ViewOnceVoice } from './RichMessages.jsx';
 import { parseScheduledCall } from '../groupChat.js';
 import CameraCapture from './CameraCapture.jsx';
@@ -243,6 +245,9 @@ function MessageBubble({
   reactionTrayOpen,
   onTrayReact,
   shared,
+  // Photos and videos sent together (message.album): all of them, in order, drawn as one bubble here.
+  album = null,
+  onOpenAlbumItem,
 }) {
   const content = typeof message?.content === 'string' ? message.content : '';
   const time = formatMessageTime(message?.timestamp);
@@ -454,6 +459,7 @@ function MessageBubble({
                 <span className="wa-quoted-sender">{quote.sender}</span>
                 <span className="wa-quoted-text">{quote.text}</span>
               </span>
+              {quote.thumb && <img className="wa-quoted-thumb" src={quote.thumb} alt="" />}
             </button>
           )}
           {voice?.viewOnce ? (
@@ -482,7 +488,8 @@ function MessageBubble({
             <ProductCard itemId={productId} sessionToken={sessionToken}>{meta}</ProductCard>
           ) : (
             <>
-              {isMedia ? <MediaRenderer mediaRef={content} sessionToken={sessionToken} onOpen={onOpenMedia} meta={meta} />
+              {isMedia && album?.length > 1 ? <MediaAlbum items={album} sessionToken={sessionToken} onOpen={onOpenAlbumItem} meta={meta} caption={album.find((item) => item.caption)?.caption ?? ''} />
+                : isMedia ? <MediaRenderer mediaRef={content} sessionToken={sessionToken} onOpen={onOpenMedia} meta={meta} caption={message.caption} thumb={message.thumb} />
                 : sharedKind === 'location' && parseLocation(content) ? <LocationBubble location={parseLocation(content)} onOpen={shared.openLocation} />
                 : sharedKind === 'live' && parseLive(content) ? <LiveLocationBubble live={parseLive(content)} mine={mine} peerName={shared.peerName} send={shared.send} onOpen={shared.openLive} />
                 : sharedKind === 'contact' && parseContact(content) ? <ContactBubble contact={parseContact(content)} onMessage={shared.messageContact} />
@@ -732,9 +739,10 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
   const [menuOpen, setMenuOpen] = useState(false);
   const [picker, setPicker] = useState(null);
   const [error, setError] = useState('');
-  const [busy, setBusy] = useState(false);
-  const [uploadProgress, setUploadProgress] = useState(null);
-  const uploadAbortRef = useRef(null);
+  const [uploads, setUploads] = useState([]);
+  // The send preview (src/components/MediaComposer.jsx): { files, viewOnce, documents } while open.
+  const [composer, setComposer] = useState(null);
+  const [composerAdded, setComposerAdded] = useState(null);
   const [recording, setRecording] = useState(false);
   // While the mic is held: the finger's offset ({ x, y }); null when not held (tapped, or slid up to lock).
   const [voiceHold, setVoiceHold] = useState(null);
@@ -1096,7 +1104,8 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
     }).then((accepted) => { if (!accepted) updateMessage(message.id, { status: 'failed' }); });
   }, [userId, client, addMessage, queueMessage, updateMessage, sessionToken]);
 
-  const sendContent = useCallback((content, customReplyTo = null) => {
+  // extras: what travels with it inside the end-to-end encryption (caption, album, thumbnail).
+  const sendContent = useCallback((content, customReplyTo = null, extras = {}) => {
     if (!chatId || !content) return;
     // Privacy › Default message timer: the first message of a chat you start turns on disappearing messages.
     const defaultTimer = Number(appSettings().get('privacy.defaultTimer')) || 0;
@@ -1104,81 +1113,139 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
       useChatStore.getState().setDisappearing(chatId, defaultTimer);
     }
     const replyTo = customReplyTo ?? replyingTo;
-    sendToChat(chatId, content, replyTo ? { replyTo } : {});
+    sendToChat(chatId, content, { ...(replyTo ? { replyTo } : {}), ...extras });
     playNotificationTone('sent');
     if (!customReplyTo && replyingTo) setReplyingTo(null);
   }, [chatId, sendToChat, replyingTo, messages.length, chat?.disappearSeconds, client]);
 
   const closeForwardPicker = useCallback(() => setForwardSource(null), []);
 
-  async function uploadAndSend(blob, filename, kind, seconds) {
-    const sizeError = uploadSizeError(filename, blob.size);
-    if (sizeError) {
-      setError(sizeError);
-      return;
-    }
+  // --- Sending attachments, as on WhatsApp ---------------------------------------------------------------------
+  // Every picked item shows at once as an outgoing bubble with its own progress ring (photos and videos preview from
+  // the local file). Up to UPLOAD_PARALLEL upload at the same time; the messages still go out in the order picked.
+  // Typing, recording and sending other messages stay possible meanwhile.
+  const UPLOAD_PARALLEL = 3;
+  const uploadSlotsRef = useRef({ running: 0, waiting: [] });
+  const uploadControllersRef = useRef(new Map());
+  const sendOrderRef = useRef(Promise.resolve());
+
+  function withUploadSlot(task) {
+    const slots = uploadSlotsRef.current;
+    return new Promise((resolve, reject) => {
+      const start = () => {
+        slots.running += 1;
+        task().then(resolve, reject).finally(() => {
+          slots.running -= 1;
+          slots.waiting.shift()?.();
+        });
+      };
+      if (slots.running < UPLOAD_PARALLEL) start();
+      else slots.waiting.push(start);
+    });
+  }
+
+  const patchUpload = (key, patch) => setUploads((list) => list.map((entry) => (entry.key === key ? { ...entry, ...patch } : entry)));
+
+  /**
+   * Queues one attachment. `prepare` (optional) turns the picked file into what is sent (compression, a thumbnail);
+   * `extras` (caption, album, thumb…) travel inside the end-to-end encrypted message.
+   */
+  function uploadAndSend(blob, filename, kind = 'media', seconds, { prepare = null, extras = {} } = {}) {
     if (!sessionToken) {
       setError('Sign in again to share attachments.');
-      return;
+      return Promise.resolve();
     }
-    const controller = new AbortController();
-    uploadAbortRef.current = controller;
-    setBusy(true);
-    setError('');
-    // Shown as an outgoing bubble with a progress ring (photos and videos preview at once), like WhatsApp.
     const type = blob.type || '';
-    const previewKind = kind === 'voice' || kind === 'voice-once' ? 'voice' : type.startsWith('image/') ? 'image' : type.startsWith('video/') ? 'video' : 'file';
+    const isVoiceNote = kind === 'voice' || kind === 'voice-once';
+    const previewKind = isVoiceNote ? 'voice' : type.startsWith('image/') ? 'image' : type.startsWith('video/') ? 'video' : 'file';
     const previewUrl = previewKind === 'image' || previewKind === 'video' ? URL.createObjectURL(blob) : '';
-    const pending = { filename, kind: previewKind, previewUrl };
-    setUploadProgress({ ...pending, sent: 0, total: blob.size });
+    const key = crypto.randomUUID();
+    const controller = new AbortController();
+    uploadControllersRef.current.set(key, controller);
+    setUploads((list) => [...list, { key, filename, kind: previewKind, previewUrl, sent: 0, total: blob.size, caption: extras.caption ?? '', preparing: Boolean(prepare) }]);
     scrollToBottom('smooth');
-    try {
-      const plainFile = blob instanceof File ? blob : new File([blob], filename, { type: blob.type });
-      // Attachments and voice notes are encrypted on this device before upload (src/mediaCrypto.js); the key
-      // travels inside the end-to-end encrypted message, so the server stores only ciphertext under a neutral name.
-      const isVoiceNote = kind === 'voice' || kind === 'voice-once';
+    setError('');
+
+    const job = withUploadSlot(async () => {
+      const ready = prepare ? await prepare() : { blob, filename, extras: {} };
+      const sizeError = uploadSizeError(ready.filename, ready.blob.size);
+      if (sizeError) throw new Error(sizeError);
+      if (controller.signal.aborted) throw new DOMException('Cancelled', 'AbortError');
+      patchUpload(key, { preparing: false, total: ready.blob.size });
+      const plainFile = ready.blob instanceof File ? ready.blob : new File([ready.blob], ready.filename, { type: ready.blob.type });
+      // Encrypted on this device before upload (src/mediaCrypto.js); the key travels inside the end-to-end encrypted
+      // message, so the server stores only ciphertext under a neutral name.
       const { upload: file, descriptor } = await sealForUpload(plainFile);
       const data = await uploadFile(file, {
         receiverId: chatId,
         sessionToken,
         signal: controller.signal,
-        kind: kind === 'voice' || kind === 'voice-once' ? 'voice' : undefined,
-        onProgress: (sent, total) => setUploadProgress({ ...pending, sent, total }),
+        kind: isVoiceNote ? 'voice' : undefined,
+        onProgress: (sent, total) => patchUpload(key, { sent, total }),
       });
       // This device keeps its own copy (the server deletes the file once every device has it); a view once item is
       // not kept by its sender, as on WhatsApp.
       if (kind !== 'voice-once' && kind !== 'viewonce') await storeMedia(data.id, file, { contentType: file.type || 'application/octet-stream', size: file.size });
-      const attachment = attachmentContent(data.id, descriptor ? filename : data.filename || filename, descriptor);
+      const attachment = attachmentContent(data.id, descriptor ? ready.filename : data.filename || ready.filename, descriptor);
       // View once photos/videos, video notes and made stickers wrap the attachment (src/mediaExtras.js).
       const wrapped = { viewonce: VIEW_ONCE_PREFIX, vnote: VIDEO_NOTE_PREFIX, csticker: CUSTOM_STICKER_PREFIX }[kind];
-      sendContent(isVoiceNote ? voiceContent(data.id, seconds, { viewOnce: kind === 'voice-once', descriptor, lang: resolveVoiceLanguage(appSettings().get('chats.voiceLanguage')) })
-        : wrapped ? wrapped + attachment : attachment);
-    } catch (caught) {
+      const content = isVoiceNote ? voiceContent(data.id, seconds, { viewOnce: kind === 'voice-once', descriptor, lang: resolveVoiceLanguage(appSettings().get('chats.voiceLanguage')) })
+        : wrapped ? wrapped + attachment : attachment;
+      return { content, extras: { ...extras, ...ready.extras } };
+    });
+
+    // Sent strictly in the order queued, whatever order the uploads finish in.
+    const sent = sendOrderRef.current.then(() => job).then(({ content, extras: sealedExtras }) => {
+      sendContent(content, null, sealedExtras);
+    }).catch((caught) => {
       if (caught?.name !== 'AbortError') setError(caught?.message || 'Upload failed.');
-    } finally {
-      uploadAbortRef.current = null;
+    }).finally(() => {
+      uploadControllersRef.current.delete(key);
       if (previewUrl) URL.revokeObjectURL(previewUrl);
-      setUploadProgress(null);
-      setBusy(false);
+      setUploads((list) => list.filter((entry) => entry.key !== key));
+    });
+    sendOrderRef.current = sent;
+    return sent;
+  }
+
+  function cancelUpload(key) {
+    uploadControllersRef.current.get(key)?.abort();
+  }
+
+  useEffect(() => () => uploadControllersRef.current.forEach((controller) => controller.abort()), []);
+
+  // Photos and videos follow the Standard / HD choice and get a tiny preview for the receiver; documents go exactly
+  // as they are. Several photos or videos sent together form one album.
+  function sendPicked(items, { hd = false, viewOnce = false } = {}) {
+    const quality = hd ? 'hd' : 'standard';
+    const visual = items.filter((item) => item.kind !== 'file').length;
+    const albumId = visual >= 2 && !viewOnce ? crypto.randomUUID().replace(/-/g, '').slice(0, 16) : '';
+    let albumIndex = 0;
+    for (const item of items) {
+      const inAlbum = albumId && item.kind !== 'file';
+      const album = inAlbum ? { id: albumId, i: albumIndex++, n: visual } : undefined;
+      uploadAndSend(item.file, item.file.name, viewOnce ? 'viewonce' : 'media', undefined, {
+        extras: { ...(item.caption ? { caption: item.caption } : {}), ...(album ? { album } : {}) },
+        prepare: item.kind === 'file' ? null : async () => {
+          const prepared = await prepareForSend(item.file, item.file.name, quality);
+          const thumb = viewOnce ? '' : await makeThumb(prepared.blob);
+          return { ...prepared, extras: thumb ? { thumb } : {} };
+        },
+      });
     }
   }
-
-  function cancelUpload() {
-    uploadAbortRef.current?.abort();
-  }
-
-  useEffect(() => () => uploadAbortRef.current?.abort(), []);
 
   async function handleFileChange(event) {
     const files = Array.from(event.target.files ?? []);
     event.target.value = '';
-    // Photos follow the Standard / HD setting; documents are always sent exactly as they are.
-    const quality = pickKindRef.current === 'document' ? null : appSettings().get('media.uploadQuality');
-    const viewOnce = pickKindRef.current === 'viewonce';
-    for (const file of viewOnce ? files.slice(0, 1) : files) {
-      const prepared = quality ? await prepareForSend(file, file.name, quality) : { blob: file, filename: file.name };
-      await uploadAndSend(prepared.blob, prepared.filename, viewOnce ? 'viewonce' : 'media');
+    if (files.length === 0) return;
+    // "+" in the send preview adds to it; otherwise the preview opens with what was picked.
+    if (composer) {
+      setComposerAdded((current) => ({ version: (current?.version ?? 0) + 1, files }));
+      return;
     }
+    const kind = pickKindRef.current;
+    setComposer({ files: kind === 'viewonce' ? files.slice(0, 1) : files, viewOnce: kind === 'viewonce', documents: kind === 'document' });
   }
 
   function openFilePicker(accept, capture, kind = 'media') {
@@ -1289,7 +1356,7 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
   // The mic: a quick tap starts a locked recording (trash / pause / send); holding records while held — release to
   // send, slide up to lock, slide left to cancel. Too short a hold is discarded with a hint.
   function startVoiceGesture(event) {
-    if (busy || event.button > 0) return;
+    if (event.button > 0) return;
     event.preventDefault();
     const start = { x: event.clientX, y: event.clientY, at: Date.now() };
     setError('');
@@ -1396,8 +1463,26 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
     if (!chat) return null;
     let lastDay = '';
     let lastSender = null;
+    // Albums: a run of media messages with the same album id from the same sender draws as one bubble (its first).
+    const albumOf = new Map();
+    const inAlbum = new Set();
+    for (let index = 0; index < visibleMessages.length; index += 1) {
+      const first = visibleMessages[index];
+      if (!first?.album?.id || !isMediaContent(first.content) || first.deleted) continue;
+      const run = [first];
+      while (index + 1 < visibleMessages.length) {
+        const next = visibleMessages[index + 1];
+        if (next?.album?.id !== first.album.id || next.senderId !== first.senderId || !isMediaContent(next.content) || next.deleted) break;
+        run.push(next);
+        index += 1;
+      }
+      if (run.length > 1) {
+        albumOf.set(first.id, run);
+        run.slice(1).forEach((item) => inAlbum.add(item.id));
+      }
+    }
     return visibleMessages.map((message) => {
-            if (!message?.id) return null;
+            if (!message?.id || inAlbum.has(message.id)) return null;
             const day = localDateKey(message.timestamp);
             const showDay = day !== lastDay;
             lastDay = day;
@@ -1421,6 +1506,8 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
                   onToggleSelect={handleToggleSelect}
                   onReact={(emoji) => handlersRef.current.reactTo(message, emoji)}
                   onOpenMedia={() => setViewerMessageId(message.id)}
+                  album={albumOf.get(message.id) ?? null}
+                  onOpenAlbumItem={setViewerMessageId}
                   onSwipeReply={message.content?.startsWith('call:') || message.deleted ? null : stableStartReply}
                   onQuoteClick={stableShowInChat}
                   reactionTrayOpen={trayMessageId === message.id}
@@ -1823,7 +1910,7 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
       >
         <div className="message-stack" ref={messageStackRef}>
           {messageList}
-          {uploadProgress && <PendingUpload upload={uploadProgress} onCancel={cancelUpload} />}
+          {uploads.map((upload) => <PendingUpload key={upload.key} upload={upload} onCancel={() => cancelUpload(upload.key)} />)}
           {typing === 'recording' && (
             <div className="recording-indicator" role="status" aria-label={`${chat?.name ?? 'Contact'} is recording audio`}>
               <span className="recording-indicator-mic" aria-hidden="true"><Mic size={18} /></span>
@@ -1902,7 +1989,7 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
         ) : (
           <div className="composer-row">
             <div className="composer">
-              <button type="button" className={`composer-icon${emojiOpen ? ' toggled' : ''}`} onClick={() => setEmojiOpen((open) => !open)} aria-label="Emoji" aria-expanded={emojiOpen} disabled={busy}><Smile size={20} /></button>
+              <button type="button" className={`composer-icon${emojiOpen ? ' toggled' : ''}`} onClick={() => setEmojiOpen((open) => !open)} aria-label="Emoji" aria-expanded={emojiOpen}><Smile size={20} /></button>
               {hasFormatting(text) && <ComposerMirror inputRef={composerInputRef} text={text} />}
               <textarea ref={composerInputRef} rows={1} className={`composer-input${hasFormatting(text) ? ' has-mirror' : ''}`} value={text} onChange={(event) => { setCaret(event.target.selectionStart ?? event.target.value.length); handleTextChange(event); }}
                 onSelect={(event) => setCaret(event.target.selectionStart ?? 0)} onKeyDown={(event) => {
@@ -1911,9 +1998,9 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
                   if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && enterSends()) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); }
                 }}
                 placeholder={translate(editing ? 'Edit message' : 'Message', language)} aria-label={translate(editing ? 'Edit message' : 'Message', language)} maxLength={COMPOSER_MAX_LENGTH} />
-              <button type="button" className="composer-icon" onClick={() => setMenuOpen(true)} aria-label="Attach" disabled={busy}><Paperclip size={20} /></button>
+              <button type="button" className="composer-icon" onClick={() => setMenuOpen(true)} aria-label="Attach"><Paperclip size={20} /></button>
               {action === 'voice' && (
-                <button type="button" className="composer-icon composer-camera" onClick={() => setPicker('camera')} aria-label="Camera" disabled={busy}><Camera size={20} /></button>
+                <button type="button" className="composer-icon composer-camera" onClick={() => setPicker('camera')} aria-label="Camera"><Camera size={20} /></button>
               )}
             </div>
             {editing ? (
@@ -1921,7 +2008,7 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
             ) : action === 'send' ? (
               <button type="submit" className="composer-fab" onMouseDown={keepKeyboard} aria-label="Send"><Send size={20} /></button>
             ) : (
-              <button type="button" className="composer-fab composer-mic" onPointerDown={startVoiceGesture} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setError(''); setEmojiOpen(false); setRecording(true); } }} onContextMenu={(event) => event.preventDefault()} aria-label="Record voice note" title="Tap to record, or hold: release to send, slide up to lock" disabled={busy}><Mic size={20} /></button>
+              <button type="button" className="composer-fab composer-mic" onPointerDown={startVoiceGesture} onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setError(''); setEmojiOpen(false); setRecording(true); } }} onContextMenu={(event) => event.preventDefault()} aria-label="Record voice note" title="Tap to record, or hold: release to send, slide up to lock"><Mic size={20} /></button>
             )}
           </div>
         )}
@@ -1982,12 +2069,19 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
         <CameraCapture onClose={() => setPicker(null)}
           onGallery={() => { setPicker(null); openFilePicker('image/*,video/*'); }}
           onUnavailable={() => { setPicker(null); setError('The camera isn’t available. Allow camera access for Hidden Messenger, or pick from the gallery.'); }}
-          onSend={async (file, caption) => {
+          onSend={(file, caption) => {
             setPicker(null);
-            const prepared = await prepareForSend(file, file.name, appSettings().get('media.uploadQuality'));
-            await uploadAndSend(prepared.blob, prepared.filename, 'media');
-            if (caption) sendContent(caption);
+            // The caption travels with the photo or video, in the same bubble (as on WhatsApp).
+            sendPicked([{ file, kind: file.type.startsWith('video/') ? 'video' : 'image', caption }], { hd: appSettings().get('media.uploadQuality') === 'hd' });
           }} />
+      )}
+      {composer && (
+        <MediaComposer files={composer.files} added={composerAdded} recipient={chat?.name ?? 'this chat'}
+          quality={appSettings().get('media.uploadQuality')} initialViewOnce={composer.viewOnce} asDocuments={composer.documents}
+          allowViewOnce={!composer.documents}
+          onAddMore={() => openFilePicker(composer.documents ? '' : 'image/*,video/*', undefined, composer.documents ? 'document' : 'media')}
+          onClose={() => { setComposer(null); setComposerAdded(null); }}
+          onSend={(items, options) => { setComposer(null); setComposerAdded(null); sendPicked(items, options); }} />
       )}
       {picker === 'videonote' && (
         <VideoNoteRecorder onClose={() => setPicker(null)} onSend={(blob, seconds) => uploadAndSend(blob, `video-note.${blob.type.includes('mp4') ? 'mp4' : 'webm'}`, 'vnote', seconds)} />

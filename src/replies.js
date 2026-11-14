@@ -13,8 +13,10 @@ export function quoteView(replyTo, userId, peerName) {
   if (!replyTo.senderId) return { sender: replyTo.senderName ?? '', text: replyTo.content ?? '', self: replyTo.senderName === 'You' };
   return {
     sender: replyTo.senderId === userId ? 'You' : (peerName || 'Contact'),
-    text: replyTo.deleted ? '🚫 This message was deleted' : previewFor(replyTo.content),
+    text: replyTo.deleted ? '🚫 This message was deleted' : (replyTo.caption ? `${previewFor(replyTo.content).split(' ')[0]} ${replyTo.caption}` : previewFor(replyTo.content)),
     self: replyTo.senderId === userId,
+    // A quoted photo or video shows its small preview on the right, as on WhatsApp.
+    ...(replyTo.thumb && !replyTo.deleted ? { thumb: replyTo.thumb } : {}),
   };
 }
 
@@ -26,7 +28,10 @@ export function quoteView(replyTo, userId, peerName) {
 export function resolveQuote(replyTo, messages) {
   if (!replyTo?.id) return replyTo ?? null;
   const local = (messages ?? []).find((message) => message?.id === replyTo.id);
-  if (local) return { id: local.id, senderId: local.senderId, content: local.content, ...(local.deleted ? { deleted: true } : {}) };
+  if (local) {
+    return { id: local.id, senderId: local.senderId, content: local.content, ...(local.deleted ? { deleted: true } : {}),
+      ...(local.thumb ? { thumb: local.thumb } : {}), ...(local.caption ? { caption: local.caption } : {}) };
+  }
   // Described by the server (older apps): its content is still sealed for someone else's keys, so it is not shown.
   if (replyTo.senderId && typeof replyTo.content === 'string' && !replyTo.content.startsWith('e2e')) return replyTo;
   return { id: replyTo.id, senderName: '', content: 'Original message not on this device' };

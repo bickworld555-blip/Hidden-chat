@@ -46,6 +46,8 @@ import AttachmentMenu from './AttachmentMenu.jsx';
 import CameraCapture from './CameraCapture.jsx';
 import { parseVoiceContent, voiceContent, voiceExtension } from '../voice.js';
 import { resolveVoiceLanguage } from '../voiceLanguage.js';
+import MediaComposer from './MediaComposer.jsx';
+import { makeThumb } from '../mediaThumb.js';
 import { useBackHandler } from '../backStack.js';
 import { nativeClearMessageNotifications, nativeShell } from '../native.js';
 import { EventBubble, EventComposer, PollBubble, PollComposer } from './RichMessages.jsx';
@@ -64,9 +66,11 @@ async function groupRequest(token, path, options = {}) {
   if (groupId && options.method === 'POST' && typeof options.body?.content === 'string') {
     const id = decodeURIComponent(groupId);
     const plain = options.body.content;
+    // extras (caption, thumbnail…) travel inside the encryption only, never in the request body.
+    const extras = options.extras ?? {};
     try {
-      const row = await sendGroupContent(id, plain, (content) => rawGroupRequest(token, path, { ...options, body: { ...options.body, content } }));
-      return row ? { ...row, content: plain } : row;
+      const row = await sendGroupContent(id, plain, (content) => rawGroupRequest(token, path, { ...options, extras: undefined, body: { ...options.body, content } }), extras);
+      return row ? { ...row, content: plain, ...extras } : row;
     } catch (error) {
       // Strict end-to-end encryption: a member has no keys yet, so the message waits on this device.
       if (error?.code !== 'group-keys-missing') throw error;
@@ -381,6 +385,10 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
   const [joinCode, setJoinCode] = useState('');
   const draftRef = useRef(null);
   const [uploading, setUploading] = useState(0);
+  // The send preview (MediaComposer) for picked photos, videos and documents.
+  const [groupComposer, setGroupComposer] = useState(null);
+  const [groupComposerAdded, setGroupComposerAdded] = useState(null);
+  const pickKindRef = useRef('media');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -521,17 +529,20 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
     }
   }
 
-  async function sendAttachment(file) {
+  // { caption, quality ('standard' | 'hd'), document (send exactly as picked) } from the send preview.
+  async function sendAttachment(file, { caption = '', quality = appSettings().get('media.uploadQuality'), document = false } = {}) {
     if (!file || !selected) return;
     setError('');
     setUploading(1);
     try {
-      const prepared = await prepareForSend(file, file.name || 'attachment', appSettings().get('media.uploadQuality'));
+      const prepared = document ? { blob: file, filename: file.name || 'attachment' } : await prepareForSend(file, file.name || 'attachment', quality);
+      const thumb = document ? '' : await makeThumb(prepared.blob);
       const plain = prepared.blob instanceof File ? prepared.blob : new File([prepared.blob], prepared.filename, { type: prepared.blob.type });
       // Encrypted on this device before upload; the key travels in the end-to-end encrypted group message.
       const { upload, descriptor } = await sealForUpload(plain);
       const data = await uploadFile(upload, { groupId: selected, sessionToken: token, onProgress: (done, total) => setUploading(Math.max(1, Math.round((done / total) * 100))) });
-      await groupRequest(token, `${groupPath}/messages`, { method: 'POST', body: { content: attachmentContent(data.id, descriptor ? prepared.filename || 'attachment' : data.filename || prepared.filename || 'attachment', descriptor) } });
+      await groupRequest(token, `${groupPath}/messages`, { method: 'POST', body: { content: attachmentContent(data.id, descriptor ? prepared.filename || 'attachment' : data.filename || prepared.filename || 'attachment', descriptor) },
+        extras: { ...(caption ? { caption } : {}), ...(thumb ? { thumb } : {}) } });
       await refresh(new AbortController().signal);
     } catch (caught) {
       setError(caught.message);
@@ -560,9 +571,9 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
       setUploading(0);
     }
   }
-  // Several photos from the gallery go out one after another, each as its own message (as on WhatsApp).
-  async function sendAttachments(files) {
-    for (const file of files) await sendAttachment(file);
+  // What the send preview hands back: each item with its own caption, one after another.
+  async function sendPickedItems(items, { hd = false } = {}, documents = false) {
+    for (const item of items) await sendAttachment(item.file, { caption: item.caption, quality: hd ? 'hd' : 'standard', document: documents });
   }
   function pickFiles(accept, capture) {
     const input = fileInputRef.current;
@@ -575,9 +586,9 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
   // The same share sheet as a one-to-one chat, with what a group supports.
   function attachFrom(option) {
     setError('');
-    if (option === 'document') pickFiles('');
+    if (option === 'document') { pickKindRef.current = 'document'; pickFiles(''); }
     else if (option === 'camera') setCameraOpen(true);
-    else if (option === 'gallery') pickFiles('image/*,video/*');
+    else if (option === 'gallery') { pickKindRef.current = 'media'; pickFiles('image/*,video/*'); }
     else if (option === 'audio') pickFiles('audio/*');
     else if (option === 'poll' || option === 'event') setRichComposer(option);
     else if (option === 'sticker') setStickersOpen(true);
@@ -1077,7 +1088,7 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
                         </div>
                       ) : message.e2eError ? <p className="deleted-text"><span aria-hidden="true">🔒</span> Waiting for this message. It is end-to-end encrypted.</p>
                         : voice?.id ? <VoiceMessage id={voice.id} seconds={voice.seconds} lang={voice.lang} sessionToken={token} sender={sender ?? group.members.find((member) => member.id === message.senderId)} played />
-                        : isMedia ? <MediaRenderer mediaRef={message.content} sessionToken={token} meta={meta} />
+                        : isMedia ? <MediaRenderer mediaRef={message.content} sessionToken={token} meta={meta} caption={message.caption} thumb={message.thumb} />
                         : poll ? <PollBubble messageId={message.id} poll={poll} sessionToken={token} userId={userId} nameFor={(id) => group.members.find((member) => member.id === id)?.name} context={{ groupId: selected }} />
                         : event ? <EventBubble messageId={message.id} event={event} />
                         : sticker ? <StickerMessage content={message.content} />
@@ -1137,7 +1148,14 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
               <div className="groups-recorder"><VoiceRecorderBar onSend={sendVoiceNote} onCancel={() => { setRecordingVoice(false); activityRef.current?.recording(false); }} onError={(message) => { setRecordingVoice(false); activityRef.current?.recording(false); setError(message); }} /></div>
             ) : (
             <form className="groups-compose" onSubmit={(event) => { event.preventDefault(); submitDraft(); }}>
-              <input ref={fileInputRef} type="file" hidden onChange={(event) => { const files = [...(event.target.files ?? [])]; event.target.value = ''; sendAttachments(files); }} />
+              <input ref={fileInputRef} type="file" hidden onChange={(event) => {
+                const files = [...(event.target.files ?? [])];
+                event.target.value = '';
+                if (!files.length) return;
+                // The send preview, as in a one-to-one chat; "+" there adds to it.
+                if (groupComposer) setGroupComposerAdded((current) => ({ version: (current?.version ?? 0) + 1, files }));
+                else setGroupComposer({ files, documents: pickKindRef.current === 'document' });
+              }} />
               <span className="groups-compose-field">
                 {!editing && <button type="button" className="groups-attach groups-emoji" onClick={() => setStickersOpen((open) => !open)} disabled={busy} aria-label="Stickers" aria-expanded={stickersOpen} title="Stickers"><Smile size={20} /></button>}
                 <input ref={draftRef} aria-label="Group message" value={draft} maxLength={10000}
@@ -1166,7 +1184,14 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
           <CameraCapture onClose={() => setCameraOpen(false)}
             onGallery={() => { setCameraOpen(false); pickFiles('image/*,video/*'); }}
             onUnavailable={() => { setCameraOpen(false); setError('The camera isn’t available. Allow camera access for Hidden Messenger, or pick from the gallery.'); }}
-            onSend={async (file, caption) => { setCameraOpen(false); await sendAttachment(file); if (caption) sendText(caption); }} />
+            onSend={async (file, caption) => { setCameraOpen(false); await sendAttachment(file, { caption }); }} />
+        )}
+        {groupComposer && selected && (
+          <MediaComposer files={groupComposer.files} added={groupComposerAdded} recipient={group?.name ?? 'this group'}
+            quality={appSettings().get('media.uploadQuality')} asDocuments={groupComposer.documents} allowViewOnce={false}
+            onAddMore={() => pickFiles(groupComposer.documents ? '' : 'image/*,video/*')}
+            onClose={() => { setGroupComposer(null); setGroupComposerAdded(null); }}
+            onSend={(items, options) => { const documents = groupComposer.documents; setGroupComposer(null); setGroupComposerAdded(null); sendPickedItems(items, options, documents); }} />
         )}
         <AttachmentMenu isOpen={attachOpen} options={GROUP_ATTACH_OPTIONS} onSelect={attachFrom} onClose={() => setAttachOpen(false)} />
         {joinCode && <JoinGroupSheet code={joinCode} token={token} onClose={() => setJoinCode('')} onJoined={(groupId) => { setJoinCode(''); setSelected(groupId); }} />}

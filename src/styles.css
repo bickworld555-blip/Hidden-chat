@@ -5665,3 +5665,62 @@ button.groups-sender { padding: 0; border: 0; background: none; font: inherit; f
 .vt-action { display: inline-flex; align-items: center; gap: 4px; padding: 5px 12px; border: 0; border-radius: 14px; background: var(--wa-green, #1d4ed8); color: #fff; font: inherit; font-size: 13px; cursor: pointer; }
 .vt-action:disabled { opacity: .6; }
 .voice-transcript-note { font-style: normal; opacity: .7; }
+
+/* --- Media sharing, as inspected on WhatsApp Business (2026-11-14) --- */
+/* Send preview: dark full screen, large preview, item strip, caption with view once, recipient chip, send + count. */
+.media-composer { position: fixed; inset: 0; z-index: 1200; display: grid; grid-template-rows: auto 1fr auto auto auto; background: #0b141a; color: #e9edef; padding-bottom: env(safe-area-inset-bottom, 0px); }
+.mc-top { display: flex; align-items: center; gap: 8px; min-height: 64px; padding: calc(env(safe-area-inset-top, 0px) + 6px) 10px 6px; }
+.mc-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 19px; }
+.mc-icon { display: grid; place-items: center; width: 48px; height: 48px; padding: 0; border: 0; border-radius: 50%; background: none; color: inherit; cursor: pointer; }
+.mc-hd { min-width: 48px; height: 34px; padding: 0 8px; border: 2px solid currentColor; border-radius: 6px; background: none; color: #e9edef; font: 800 13px/1 system-ui, sans-serif; letter-spacing: .5px; cursor: pointer; opacity: .75; }
+.mc-hd.is-on { opacity: 1; background: #e9edef; color: #0b141a; border-color: #e9edef; }
+.mc-stage { min-height: 0; display: grid; place-items: center; overflow: hidden; }
+.mc-preview { max-width: 100%; max-height: 100%; object-fit: contain; }
+.mc-document { display: grid; justify-items: center; gap: 10px; max-width: 86%; padding: 28px 24px; border-radius: 12px; background: #fff; color: #111b21; text-align: center; }
+.mc-document svg { color: #e5533d; }
+.mc-document strong { max-width: 100%; overflow-wrap: anywhere; font-size: 17px; }
+.mc-document span { color: #667781; font-size: 14px; }
+.mc-strip { display: flex; gap: 8px; padding: 8px 12px; overflow-x: auto; scrollbar-width: none; }
+.mc-thumb { position: relative; flex: none; }
+.mc-thumb > button:first-child { display: grid; place-items: center; width: 56px; height: 56px; padding: 0; overflow: hidden; border: 2px solid transparent; border-radius: 8px; background: #202c33; color: #e9edef; cursor: pointer; }
+.mc-thumb.is-current > button:first-child { border-color: var(--wa-green, #1d4ed8); }
+.mc-thumb img, .mc-thumb video { width: 100%; height: 100%; object-fit: cover; }
+.mc-remove { position: absolute; top: -6px; right: -6px; display: grid; place-items: center; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 50%; background: #e9edef; color: #0b141a; cursor: pointer; }
+.mc-add { flex: none; display: grid; place-items: center; width: 56px; height: 56px; border: 2px dashed rgba(233, 237, 239, .4); border-radius: 8px; background: none; color: #e9edef; cursor: pointer; }
+.mc-caption { display: flex; align-items: center; gap: 6px; margin: 6px 12px; padding: 0 6px 0 18px; border-radius: 28px; background: #202c33; }
+.mc-caption input { flex: 1; min-width: 0; height: 52px; border: 0; background: none; color: #e9edef; font: inherit; font-size: 17px; outline: none; }
+.mc-caption input::placeholder { color: #8696a0; }
+.mc-once { display: grid; place-items: center; width: 34px; height: 34px; padding: 0; border: 2px dashed #8696a0; border-radius: 50%; background: none; color: #8696a0; font: 700 14px/1 system-ui, sans-serif; cursor: pointer; }
+.mc-once.is-on { border-style: solid; border-color: var(--wa-green, #1d4ed8); background: var(--wa-green, #1d4ed8); color: #fff; }
+.mc-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 12px 12px 18px; background: #111b21; }
+.mc-recipient { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 8px 14px; border-radius: 18px; background: #202c33; font-size: 15px; }
+.mc-send { position: relative; flex: none; display: grid; place-items: center; width: 60px; height: 60px; padding: 0; border: 0; border-radius: 50%; background: var(--wa-green, #1d4ed8); color: #fff; cursor: pointer; }
+.mc-count { position: absolute; top: -4px; right: -4px; min-width: 22px; height: 22px; padding: 0 5px; display: grid; place-items: center; border: 2px solid #111b21; border-radius: 11px; background: #e9edef; color: #0b141a; font-size: 12px; font-weight: 700; }
+
+/* Caption under a photo, video or document, with the time after it. */
+.wa-media-caption { margin: 4px 2px 0; padding: 2px 6px 0; font-size: 15px; line-height: 1.35; white-space: pre-wrap; overflow-wrap: anywhere; }
+.wa-media-caption > .message-meta { float: right; margin: 6px 0 -4px 10px; }
+.pending-upload-caption { color: inherit; }
+.pending-upload-clock { float: right; margin: 6px 0 0 10px; opacity: .7; }
+.pending-upload-ring.is-preparing svg { animation: pending-spin 1s linear infinite; transform-origin: 50% 50%; }
+.pending-upload-ring.is-preparing .pending-upload-ring-fill { stroke-dashoffset: 75 !important; }
+@keyframes pending-spin { from { transform: rotate(-90deg); } to { transform: rotate(270deg); } }
+
+/* The sender's tiny preview, blurred under the loading ring or the download pill until the photo or video is here. */
+.wa-thumb-blur { position: absolute; inset: 0; width: 100% !important; height: 100% !important; max-width: none !important; min-width: 0 !important; object-fit: cover; filter: blur(10px); transform: scale(1.12); pointer-events: none; }
+.wa-image:has(.wa-thumb-blur) .wa-image-manual, .wa-image:has(.wa-thumb-blur) .wa-image-loading, .wa-video-poster .wa-video-play, .wa-video-poster .wa-video-caption { position: relative; z-index: 1; }
+.wa-image:has(.wa-thumb-blur.wa-thumb-blur) { background: #000; }
+
+/* Albums: 2–3 stack, 4+ make a 2×2 grid; one bubble, small gaps, rounded outer corners. */
+.wa-album { display: grid; gap: 3px; width: min(300px, 68vw); overflow: hidden; border-radius: 6px; }
+.wa-album.is-grid { grid-template-columns: 1fr 1fr; }
+.wa-album-tile { position: relative; min-width: 0; }
+.wa-album-tile .wa-visual, .wa-album-tile .wa-image, .wa-album-tile .wa-video { width: 100%; border-radius: 0; }
+.wa-album-tile .wa-image img { width: 100%; max-width: none; min-width: 0; }
+.wa-album.is-grid .wa-album-tile .wa-image img, .wa-album.is-grid .wa-album-tile .wa-image { height: 148px; max-height: 148px; min-height: 0; }
+.wa-album.is-grid .wa-video-poster { height: 148px; }
+.wa-album-more { position: absolute; inset: 0; z-index: 3; display: grid; place-items: center; padding: 0; border: 0; background: rgba(11, 20, 26, .55); color: #fff; font-size: 30px; font-weight: 600; cursor: pointer; }
+
+/* A quoted photo or video: its preview on the right of the quote card. */
+.wa-quoted-reply-preview:has(.wa-quoted-thumb) { display: flex; align-items: stretch; }
+.wa-quoted-thumb { flex: none; width: 58px; height: 58px; margin: -6px -8px -6px 8px; object-fit: cover; border-radius: 0 6px 6px 0; }

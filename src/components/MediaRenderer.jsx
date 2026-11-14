@@ -159,7 +159,8 @@ export function FileCard({ id, filename, sessionToken, info, infoError }) {
   );
 }
 
-function ImageAttachment({ id, filename, sessionToken, info, onOpen, meta = null }) {
+// `thumb`: the sender's tiny preview (src/mediaThumb.js), shown blurred at the photo's shape until the photo is here.
+function ImageAttachment({ id, filename, sessionToken, info, onOpen, meta = null, thumb = '' }) {
   const media = useMediaBlob(id, sessionToken);
   const [broken, setBroken] = useState(false);
   const { load } = media;
@@ -195,6 +196,7 @@ function ImageAttachment({ id, filename, sessionToken, info, onOpen, meta = null
       }}
       aria-label={media.url || !manual ? `View ${filename}` : `Download ${filename}`}
     >
+      {!media.url && thumb && <img className="wa-thumb-blur" src={thumb} alt="" aria-hidden="true" />}
       {media.url
         ? <img src={media.url} alt={filename} onError={() => setBroken(true)} />
         : manual
@@ -229,7 +231,7 @@ function usePlaybackSource(id, sessionToken, info, media) {
 
 // One card: size bottom-left, time and ticks bottom-right, download (or full screen) top-right. While it plays the
 // player's own controls take the bottom, so the time moves under it.
-function VideoAttachment({ id, filename, sessionToken, info, onOpen, meta = null }) {
+function VideoAttachment({ id, filename, sessionToken, info, onOpen, meta = null, thumb = '' }) {
   const media = useMediaBlob(id, sessionToken);
   const source = usePlaybackSource(id, sessionToken, info, media);
   const saver = useDownload(id, filename, sessionToken);
@@ -251,6 +253,7 @@ function VideoAttachment({ id, filename, sessionToken, info, onOpen, meta = null
           }}
           aria-label={`Play ${filename}`}
         >
+          {thumb && <img className="wa-thumb-blur" src={thumb} alt="" aria-hidden="true" />}
           <span className="wa-video-play">
             {source.status === 'loading' ? <ProgressRing progress={source.progress} /> : <Play size={26} fill="currentColor" />}
           </span>
@@ -365,7 +368,21 @@ function AudioAttachment({ id, filename, sessionToken, info }) {
 // onOpen opens the chat's full-screen viewer for this message's photo or video.
 // `meta` (optional): the message's time and ticks. Photos and videos show it on the media's bottom-right corner, as
 // WhatsApp does; files, audio files and the loading and error states show it below.
-export default function MediaRenderer({ mediaRef, sessionToken, onOpen, meta = null }) {
+// A caption (as on WhatsApp) sits under the photo, video or file, and the time and ticks follow it instead of
+// covering the photo.
+function Captioned({ caption, meta, children }) {
+  return (
+    <>
+      {children}
+      <p className="wa-media-caption" dir="auto">{caption}{meta}</p>
+    </>
+  );
+}
+
+export default function MediaRenderer({ mediaRef, sessionToken, onOpen, meta = null, caption = '', thumb = '' }) {
+  if (caption) {
+    return <Captioned caption={caption} meta={meta}><MediaRenderer mediaRef={mediaRef} sessionToken={sessionToken} onOpen={onOpen} thumb={thumb} /></Captioned>;
+  }
   const ref = parseMediaRef(mediaRef);
   const id = ref?.id ?? '';
   const filename = ref?.filename ?? 'attachment';
@@ -391,8 +408,37 @@ export default function MediaRenderer({ mediaRef, sessionToken, onOpen, meta = n
 
   const props = { id, filename, sessionToken, info };
   const kind = info ? mediaKind(info.contentType) : 'file';
-  if (kind === 'image') return <ImageAttachment {...props} onOpen={onOpen} meta={meta} />;
-  if (kind === 'video') return <VideoAttachment {...props} onOpen={onOpen} meta={meta} />;
+  if (kind === 'image') return <ImageAttachment {...props} onOpen={onOpen} meta={meta} thumb={thumb} />;
+  if (kind === 'video') return <VideoAttachment {...props} onOpen={onOpen} meta={meta} thumb={thumb} />;
   if (kind === 'audio') return <><AudioAttachment {...props} />{meta}</>;
   return <><FileCard {...props} infoError={error} />{meta}</>;
+}
+
+/**
+ * Photos and videos sent together (an album), as on WhatsApp: two or three stack in one bubble; four or more show as
+ * a 2×2 grid whose last tile says "+N". Tapping a tile opens that one in the viewer. The caption and the time sit
+ * under the album (the time over its last tile when there is no caption).
+ */
+export function MediaAlbum({ items, sessionToken, onOpen, meta = null, caption = '' }) {
+  const grid = items.length >= 4;
+  const shown = grid ? items.slice(0, 4) : items;
+  const hidden = items.length - shown.length;
+  const body = (
+    <div className={`wa-album ${grid ? 'is-grid' : 'is-stack'}`} role="group" aria-label={`${items.length} photos and videos`}>
+      {shown.map((item, index) => {
+        const last = index === shown.length - 1;
+        return (
+          <div key={item.id} className="wa-album-tile">
+            <MediaRenderer mediaRef={item.content} sessionToken={sessionToken} thumb={item.thumb} onOpen={() => onOpen?.(item.id)}
+              meta={last && !caption && !hidden ? meta : null} />
+            {last && hidden > 0 && (
+              <button type="button" className="wa-album-more" onClick={(event) => { event.stopPropagation(); onOpen?.(item.id); }} aria-label={`${hidden} more`}>+{hidden}</button>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+  if (caption) return <Captioned caption={caption} meta={meta}>{body}</Captioned>;
+  return hidden > 0 ? <>{body}{meta}</> : body;
 }
