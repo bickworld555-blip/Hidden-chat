@@ -113,7 +113,7 @@ test('a message written to a screen that never confirms it still gets its push; 
   const sender = await connect(a);
   const screen = await connect(b);
   await Promise.all([ready(sender), ready(screen)]);
-  const pushes = () => sent.filter((item) => item.token === token && item.options?.collapseKey === `chat:${a.user.id}`);
+  const pushes = () => sent.filter((item) => item.token === token && item.data?.t === 'msg');
   sender.send(JSON.stringify({ type: 'message:send', message: { id: 'unconfirmed-1', receiverId: b.user.id, content: 'hi' } }));
   await until(() => screen.events.some((event) => event.type === 'message:new' && event.message.id === 'unconfirmed-1'), 'written to the screen');
   assert.equal(pushes().length, 0, 'someone is on screen: no push at once');
@@ -133,7 +133,7 @@ test('XMPP wake-up: only between linked people, content-free, rate limited', asy
   assert.deepEqual([result.status, result.body.sent], [202, 1]);
   const pushed = sent.filter((item) => item.token === token).at(-1);
   assert.equal(pushed.data.t, 'xwake');
-  assert.equal(pushed.options.collapseKey, `chat:${a.user.id}`);
+  assert.equal(pushed.options.collapseKey, undefined);
   counter += 1;
   const stranger = (await api('/api/v1/auth/register', { method: 'POST', body: { username: `reachs${counter}`, dob: '1990-04-12', password: PASSWORD } })).body;
   assert.equal((await api('/api/v1/xmpp/nudge', { session: stranger, method: 'POST', body: { userId: b.user.id } })).body.sent, 0, 'not linked: nothing');
@@ -176,5 +176,41 @@ test('a phone registered by an app too old to confirm calls (push only) is never
   await sleep(800);
   assert.equal(signalsOf(caller, 'c-old-phone', 'end').length, 0, 'it rings on its own timeout, as before');
   caller.send(JSON.stringify({ type: 'call:signal', targetId: b.user.id, callId: 'c-old-phone', mode: 'audio', signalId: 'e', signal: { type: 'end', reason: 'ended' } }));
+  caller.close();
+});
+
+test('a call to a phone that was offline the whole time leaves a missed-call push that waits for it; a call it rang for does not', async () => {
+  const { a, b, token } = await pair();
+  const caller = await connect(a);
+  await ready(caller);
+  const missedFor = (callId) => sent.filter((item) => item.token === token && item.data?.t === 'missed');
+  const before = missedFor().length;
+  offer(caller, b.user.id, 'c-missed');
+  await until(() => signalsOf(caller, 'c-missed', 'end')[0], 'ended as unavailable');
+  await until(() => missedFor().length === before + 1, 'a missed-call push');
+  const missed = missedFor().at(-1);
+  assert.equal(missed.options.ttlSeconds, undefined, 'the default lifetime: 4 weeks');
+  assert.equal(missed.options.collapseKey, undefined);
+
+  // The caller hangs up before the offline phone rings: missed too.
+  offer(caller, b.user.id, 'c-cancelled');
+  await sleep(100);
+  caller.send(JSON.stringify({ type: 'call:signal', targetId: b.user.id, callId: 'c-cancelled', mode: 'audio', signalId: 'e', signal: { type: 'end', reason: 'ended' } }));
+  await until(() => missedFor().length === before + 2, 'missed after the caller hung up');
+
+  // A call the phone confirmed (it rang there): the phone shows its own missed call, no second one by push.
+  offer(caller, b.user.id, 'c-rang');
+  await sleep(100);
+  await api('/api/v1/calls/c-rang/ringing', { session: b, method: 'POST' });
+  caller.send(JSON.stringify({ type: 'call:signal', targetId: b.user.id, callId: 'c-rang', mode: 'audio', signalId: 'e2', signal: { type: 'end', reason: 'ended' } }));
+  await sleep(300);
+  assert.equal(missedFor().length, before + 2);
+
+  // Declined by the callee from the push-rung screen: not missed.
+  offer(caller, b.user.id, 'c-declined');
+  await sleep(100);
+  await api('/api/v1/calls/c-declined/decline', { session: b, method: 'POST' });
+  await sleep(300);
+  assert.equal(missedFor().length, before + 2);
   caller.close();
 });

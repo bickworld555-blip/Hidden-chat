@@ -624,7 +624,7 @@ export function createChatServer({
     const delivered = await presentMessage(message);
     broadcastUser(receiverId, { type: 'message:new', message: delivered });
     broadcastUser(senderId, { type: 'message:new', message: delivered });
-    pushUnlessDelivered(receiverId, pushBody.message({ id: message.id, from: senderId }), { collapseKey: `chat:${senderId}` }, directDelivered(message.id));
+    pushUnlessDelivered(receiverId, pushBody.message({ id: message.id, from: senderId }), {}, directDelivered(message.id));
     return delivered;
   }
 
@@ -719,9 +719,16 @@ export function createChatServer({
     }
   }
 
-  function finishCall(callId, reason, exceptSocket) {
+  // `by`: who ended it (a user id), or null for the server's own timeouts.
+  function finishCall(callId, reason, exceptSocket, { by = null } = {}) {
     const activeCall = activeCalls.get(callId);
     if (!activeCall) return;
+    // Unanswered, not declined by the callee, and no callee device ever confirmed it rang (the phone was offline): it
+    // gets a missed-call push that waits in Firebase (4 weeks) and shows when the phone reconnects. A phone that did
+    // ring shows its own missed call when the ringing stops. Old phones (no confirmation) keep the old behaviour.
+    if (push && !activeCall.calleeSocket && activeCall.confirms && !activeCall.reached && by !== activeCall.calleeId && !activeCall.silenced && !activeCall.roomId) {
+      pushInBackground(activeCall.calleeId, pushBody.missedCall({ callId, from: activeCall.callerId, mode: activeCall.mode }), {});
+    }
     clearTimeout(activeCall.timer);
     clearTimeout(activeCall.reconnectTimer);
     clearTimeout(activeCall.reachTimer);
@@ -1307,7 +1314,7 @@ export function createChatServer({
     if (push) {
       const members = await db.prepare('SELECT user_id AS "userId" FROM group_members WHERE group_id = ? AND user_id <> ?').all(groupId, userId);
       for (const member of members) {
-        pushUnlessDelivered(member.userId, pushBody.groupMessage({ id: row.id, groupId, from: row.sender_id }), { collapseKey: `group:${groupId}` }, groupDelivered(row.id, member.userId));
+        pushUnlessDelivered(member.userId, pushBody.groupMessage({ id: row.id, groupId, from: row.sender_id }), {}, groupDelivered(row.id, member.userId));
       }
     }
     response.status(201).json(row);
@@ -2404,7 +2411,7 @@ export function createChatServer({
     const activeCall = activeCalls.get(request.params.callId);
     const userId = request.session.user_id;
     if (!activeCall || (activeCall.callerId !== userId && activeCall.calleeId !== userId)) return response.status(404).json({ error: 'No such call.' });
-    finishCall(request.params.callId, 'ended');
+    finishCall(request.params.callId, 'ended', null, { by: userId });
     response.status(204).end();
   });
   // Messages over XMPP never pass through this server, so it cannot see whether they arrived. The sending app waits
@@ -2417,7 +2424,7 @@ export function createChatServer({
     if (!targetId || targetId === userId) return response.status(400).json({ error: 'Name the person to wake.' });
     if (await nudgeLimiter.hit(`nudge:${userId}`, [{ limit: 30, windowMs: 60_000 }])) return response.status(429).json({ error: 'Too many wake-ups.' });
     if (!push || !(await areLinked(userId, targetId)) || await blocks.between(userId, targetId)) return response.status(202).json({ sent: 0 });
-    const sent = await pushToUser(targetId, pushBody.wake({ from: userId }), { collapseKey: `chat:${userId}`, ttlSeconds: 86_400 }).catch(() => 0);
+    const sent = await pushToUser(targetId, pushBody.wake({ from: userId }), {}).catch(() => 0);
     response.status(202).json({ sent });
   });
 
@@ -2434,7 +2441,7 @@ export function createChatServer({
   app.post('/api/v1/calls/:callId/decline', requireSession, async (request, response) => {
     const activeCall = activeCalls.get(request.params.callId);
     if (!activeCall || activeCall.calleeId !== request.session.user_id || activeCall.calleeSocket) return response.status(404).json({ error: 'No call is ringing.' });
-    finishCall(request.params.callId, 'ended');
+    finishCall(request.params.callId, 'ended', null, { by: request.session.user_id });
     response.status(204).end();
   });
 
@@ -3075,7 +3082,7 @@ export function createChatServer({
           broadcastUser(userId, elsewhere, socket);
         }
         if (signal.type === 'end' && activeCall) {
-          finishCall(callId, CALL_END_REASONS.has(signal.reason) ? signal.reason : 'ended', socket);
+          finishCall(callId, CALL_END_REASONS.has(signal.reason) ? signal.reason : 'ended', socket, { by: userId });
           return;
         }
         const signalId = typeof event.signalId === 'string' ? event.signalId : randomUUID();
@@ -3486,7 +3493,7 @@ export function createChatServer({
       (await linkUsers(receiverId, userId));
       const delivered = (await presentMessage(message));
       broadcastUser(receiverId, { type: 'message:new', message: delivered });
-      pushUnlessDelivered(receiverId, pushBody.message({ id: message.id, from: userId }), { collapseKey: `chat:${userId}` }, directDelivered(message.id));
+      pushUnlessDelivered(receiverId, pushBody.message({ id: message.id, from: userId }), {}, directDelivered(message.id));
       broadcastUser(userId, { type: 'message:new', message: delivered }, socket);
       json(socket, { type: 'message:ack', message: delivered });
       parity.afterDirectMessage({ senderId: userId, receiverId, messageId: message.id }).catch((error) => {

@@ -311,6 +311,14 @@ final class Alerts {
         new Thread(() -> postMissedCall(app, caller), "missed-call").start();
     }
 
+    /** A call that never rang here (the phone was offline), from the server's missed-call push. */
+    static void missedCallWhileAway(Context context, String callerId, String name, boolean video) {
+        if (callerId == null || callerId.isEmpty()) return;
+        final Context app = context.getApplicationContext();
+        final MissedCaller caller = new MissedCaller(callerId, name, video, null);
+        new Thread(() -> postMissedCall(app, caller), "missed-call").start();
+    }
+
     private static void postMissedCall(Context context, MissedCaller caller) {
         String tag = "missed:" + caller.id;
         int count;

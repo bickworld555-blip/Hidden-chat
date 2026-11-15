@@ -8,6 +8,10 @@ import { readFileSync } from 'node:fs';
 
 const FCM_SCOPE = 'https://www.googleapis.com/auth/firebase.messaging';
 const DEFAULT_TOKEN_URI = 'https://oauth2.googleapis.com/token';
+// How long Firebase keeps a push for a phone that is offline: its maximum, 4 weeks (like WhatsApp, a phone that comes
+// back after days still gets what it missed). Only ringing and its end are short (their callers pass ttlSeconds).
+// It was 60 s: a phone offline for longer lost every notification and showed nothing when it reconnected.
+export const PUSH_TTL_SECONDS = 28 * 24 * 60 * 60;
 // A wake-up with a few ids is under 300 bytes; FCM's limit is 4 KB.
 const MAX_PLAINTEXT_BYTES = 512;
 
@@ -37,6 +41,8 @@ export const pushBody = Object.freeze({
   reaction: ({ id: messageId, from }) => compact({ t: 'react', id: id(messageId), from: id(from) }),
   call: ({ callId, from, mode }) => compact({ t: 'call', callId: id(callId), from: id(from), mode: mode === 'video' ? 'video' : 'voice' }),
   callEnd: ({ callId }) => compact({ t: 'call_end', callId: id(callId) }),
+  // A call this phone never rang for (it was offline): shown as a missed call when it reconnects.
+  missedCall: ({ callId, from, mode }) => compact({ t: 'missed', callId: id(callId), from: id(from), mode: mode === 'video' ? 'video' : 'voice' }),
   wake: ({ from, groupId } = {}) => compact({ t: 'xwake', from: id(from), groupId: id(groupId) }),
 });
 
@@ -100,7 +106,7 @@ export function createPushSender({ serviceAccount, fetchImpl = fetch, now = () =
     return pending;
   }
 
-  async function send(token, data, { ttlSeconds = 60, collapseKey } = {}) {
+  async function send(token, data, { ttlSeconds = PUSH_TTL_SECONDS, collapseKey } = {}) {
     try {
       const response = await fetchImpl(endpoint, {
         method: 'POST',

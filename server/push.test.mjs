@@ -84,7 +84,7 @@ test('a message to a phone with no app on screen is pushed, encrypted for that p
   await until(() => sender.events.some((event) => event.type === 'connection:ready'), 'ready');
   sender.send(JSON.stringify({ type: 'message:send', message: { id: 'push-msg-1', receiverId: b.user.id, content: 'Hello 👋 secret' } }));
   const push = await until(() => pushesTo(token).find((item) => item.data.t === 'msg'), 'message push');
-  assert.equal(push.options.collapseKey, `chat:${a.user.id}`);
+  assert.equal(push.options.collapseKey, undefined, 'no collapse key: Firebase keeps only 4 collapse keys for an offline phone, but up to 100 plain pushes');
   assert.ok(!JSON.stringify(push.data).includes('secret'), 'Google sees no message text');
   const body = decrypt(key, push.data);
   // Content-free: a wake-up with the ids only. The phone shows the name it keeps locally; even our server's push
@@ -213,7 +213,7 @@ test('the FCM sender signs in with the service account (RS256 JWT) and sends hig
   assert.equal(calls[1].url, 'https://fcm.googleapis.com/v1/projects/hidden-test/messages:send');
   assert.equal(calls[1].init.headers.Authorization, 'Bearer ya29.test');
   const message = JSON.parse(calls[1].init.body).message;
-  assert.deepEqual([message.token, message.android.priority, message.android.ttl, message.android.collapse_key], ['tok', 'HIGH', '60s', 'chat:1']);
+  assert.deepEqual([message.token, message.android.priority, message.android.ttl, message.android.collapse_key], ['tok', 'HIGH', '2419200s', 'chat:1'], 'kept 4 weeks for an offline phone (it was 60 s: everything was lost after a minute offline)');
   assert.deepEqual(await sender.send('dead', { t: 'msg' }), { ok: false, invalidToken: true });
   assert.equal(calls.filter((call) => call.url.includes('oauth2')).length, 1, 'the access token is reused');
 

@@ -40,12 +40,32 @@ public class PushService extends FirebaseMessagingService {
                 case "react": onReaction(session, body); break;
                 case "call": onCall(session, body); break;
                 case "call_end": Alerts.cancelIncomingCall(this, body.optString("callId")); break;
+                case "missed": onMissedCall(body); break;
                 case "xwake": onXmppWake(session, body); break;
                 default: Log.i(TAG, "push of unknown type " + type);
             }
         } catch (RuntimeException failed) {
             Log.w(TAG, "push " + type + " not handled", failed);
         }
+    }
+
+    /** A call that rang while this phone was offline: "Missed voice call" with Call back, as soon as it reconnects. */
+    private void onMissedCall(JSONObject body) {
+        String from = body.optString("from");
+        Alerts.missedCallWhileAway(this, from, RelaySession.userName(this, from, "Hidden Messenger"), "video".equals(body.optString("mode")));
+    }
+
+    /**
+     * Firebase keeps up to 100 pushes for an offline phone; past that it drops them and says so here. Nothing is lost
+     * (the messages wait on the server), but the person must be told to open the app.
+     */
+    @Override
+    public void onDeletedMessages() {
+        RelaySession session = RelaySession.read(this);
+        if (session == null) return;
+        NotificationChannels.ensure(this);
+        Alerts.showMessage(this, NotificationChannels.messageChannel(this, false, session.messageSound),
+            "Hidden Messenger", "You have new messages", "hm-missed-while-away", "", 0);
     }
 
     private void onDirectMessage(RelaySession session, JSONObject body) {
