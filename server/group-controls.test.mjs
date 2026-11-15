@@ -162,3 +162,15 @@ test('groups over XMPP follow the server’s per-user rollout; a caller may stil
   const forced = await start({ transport: 'xmpp', groups: true }, { groupsOverXmpp: false });
   assert.equal(await forced.sendGroup({ groupId: GROUP, messageId: 'x4', envelope }), null);
 });
+
+test('a group message the sender sent over XMPP stays in their own history (live test: it vanished after the refresh)', async () => {
+  const { readFileSync } = await import('node:fs');
+  const source = readFileSync(new URL('../src/components/GroupsView.jsx', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+  const send = source.slice(source.indexOf('async function groupRequest'), source.indexOf('async function rawGroupRequest'));
+  assert.match(send, /const shown = \{ \.\.\.row, groupId: row\.groupId \?\? id, content: plain, \.\.\.extras \};/);
+  assert.match(send, /if \(!shown\.pending\) useChatStore\.getState\(\)\.mergeGroupMessages\(id, \[shown\]\);/, 'stored on this device whichever path it took');
+  const { useChatStore } = await import('../src/store.js');
+  useChatStore.getState().mergeGroupMessages('g-own', [{ id: 'own-1', groupId: 'g-own', senderId: AUTHOR, content: 'mine', createdAt: T0, via: 'xmpp' }]);
+  useChatStore.getState().mergeGroupMessages('g-own', []);
+  assert.equal(useChatStore.getState().groupMessage('g-own', 'own-1')?.content, 'mine', 'a refresh with nothing from the server keeps it');
+});

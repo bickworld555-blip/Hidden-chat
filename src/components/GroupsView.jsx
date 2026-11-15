@@ -86,7 +86,13 @@ async function groupRequest(token, path, options = {}) {
     };
     try {
       const row = await sendGroupContent(id, plain, send, extras);
-      return row ? { ...row, content: plain, ...extras } : row;
+      if (!row) return row;
+      const shown = { ...row, groupId: row.groupId ?? id, content: plain, ...extras };
+      // Kept on this device as sent, whichever way it went: a message sent over XMPP never reaches the server, so the
+      // history refresh that follows a send cannot bring it back (found in the live group test: the sender's own XMPP
+      // message vanished from their screen).
+      if (!shown.pending) useChatStore.getState().mergeGroupMessages(id, [shown]);
+      return shown;
     } catch (error) {
       // Strict end-to-end encryption: a member has no keys yet, so the message waits on this device.
       if (error?.code !== 'group-keys-missing') throw error;
