@@ -25,8 +25,9 @@
 //   changes  delete for everyone, edits, reactions and "played" on a message that travelled over XMPP (marked
 //        via: 'xmpp' on every device) go as a sealed control message (sendControl; src/e2e/lifecycle.js): the server
 //        never had that message. Messages the server stored keep the server's own path.
-//   groups over XMPP are off unless `groupsOverXmpp`: their deletes, edits and reactions still go through the
-//        server, which must therefore hold every group message until group controls exist.
+//   groups over XMPP are off unless `groupsOverXmpp`. A group message sent or received here is marked via: 'xmpp'
+//        and changes to it go as group controls through the same <fanout> (sendGroupControlFor); messages the
+//        server stored keep its endpoints.
 //
 // Everything else stays on the current connection for now (statuses, account, group admin).
 import { parseEnvelope } from '../e2e/envelope.js';
@@ -80,7 +81,8 @@ export async function startXmppSession({ sessionToken, userId, deliver, legacySe
         if (event.group) {
           if (!event.groupId) return;
           const createdAt = Date.parse(event.sentAt ?? '') || Date.now();
-          deliver({ type: 'group:message', message: { id: event.id, groupId: event.groupId, senderId: event.userId, createdAt, content: event.envelope } });
+          // Marked like direct ones: later changes to it go as group controls (src/e2e/messaging.js sendGroupControlFor).
+          deliver({ type: 'group:message', message: { id: event.id, groupId: event.groupId, senderId: event.userId, createdAt, content: event.envelope, via: 'xmpp' } });
           return;
         }
         deliver({
@@ -192,7 +194,7 @@ export async function startXmppSession({ sessionToken, userId, deliver, legacySe
         if (!complete || !sender || !membersHash || !targets.length) return null;
         if (fallback) remember(groupFallbacks, messageId, fallback);
         transport.sendSealed({ id: messageId, to: targets, envelope, sender, group: true, groupId, membersHash });
-        return { id: messageId, groupId, senderId: userId, createdAt: Date.now(), content: envelope, expiresAt: null };
+        return { id: messageId, groupId, senderId: userId, createdAt: Date.now(), content: envelope, expiresAt: null, via: 'xmpp' };
       } catch {
         return null;
       }

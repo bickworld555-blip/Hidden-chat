@@ -142,7 +142,7 @@ test('session: no control without sealing or with a device that cannot be reache
   const partial = await start({ seal: async () => 'e2e2:text|{}' });
   assert.equal(await partial.sendControl(PEER, 'ctl:{}'), false, 'a device without XMPP would miss it');
   const envelope = `e2e2:text|${JSON.stringify({ v: 2, sd: 'phone', mh: 'h', g: {} })}`;
-  assert.equal(await partial.sendGroup({ groupId: 'g', messageId: 'gm', envelope }), null, 'groups go through the server until group controls exist');
+  assert.equal(await partial.sendGroup({ groupId: 'g', messageId: 'gm', envelope }), null, 'groups over XMPP stay off until switched on');
 });
 
 test('the app sends changes to XMPP messages as controls and applies incoming ones through the same checks', () => {

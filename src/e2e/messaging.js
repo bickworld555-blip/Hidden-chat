@@ -3,7 +3,7 @@
 // sees it (live events, history, catch-up sync). Group messages are sealed and opened in GroupsView through
 // client.js, with the same plaintext memory.
 import { useChatStore } from '../store.js';
-import { forgetDeviceLists, e2eActive, isEnvelope, openContent, openDirectMessage, openDirectMessages, openGroupMessage, resealForDevice, sealDirect } from './client.js';
+import { forgetDeviceLists, e2eActive, isEnvelope, openContent, openDirectMessage, openDirectMessages, openGroupMessage, resealForDevice, sealDirect, sendGroupContent } from './client.js';
 import { isUserContent } from './envelope.js';
 import { controlContent, parseControl } from './lifecycle.js';
 import { getXmppSession } from '../xmpp/active.js';
@@ -176,6 +176,33 @@ export function sendControlFor(target, change) {
   if (!peerId) return false;
   session.sendControl(peerId, controlContent({ ...change, target: target.id, peerId })).catch(() => {});
   return true;
+}
+
+/** Thrown inside the sealing step when the XMPP session did not take the control, so its Sender Key is not confirmed. */
+class ControlNotSent extends Error {}
+
+/**
+ * A change (delete, edit, react, played) to a group message that travelled over XMPP, as a group control: sealed with
+ * the group's Sender Keys (sendGroupContent) and sent through the same <fanout> as group messages, which mod_hm
+ * checks like any group post. Resolves true when it went; false when the caller should use the server's endpoint
+ * (a message the server stored, XMPP off for groups or for this account, or a member device it cannot reach). A
+ * control that cannot be sealed yet (a member without keys) is not queued: false, and the server path decides.
+ * `session` and `seal` are injectable for tests.
+ */
+export async function sendGroupControlFor(target, change, { session = getXmppSession(), seal = sendGroupContent } = {}) {
+  if (!session?.sendGroup || target?.via !== 'xmpp' || typeof target.id !== 'string' || typeof target.groupId !== 'string') return false;
+  const groupId = target.groupId;
+  const content = controlContent({ ...change, target: target.id, groupId });
+  try {
+    await seal(groupId, content, async (envelope) => {
+      const sent = await session.sendGroup({ groupId, messageId: crypto.randomUUID(), envelope });
+      if (!sent) throw new ControlNotSent();
+      return sent;
+    });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 const reactionRetries = new Map();
