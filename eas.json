@@ -15,6 +15,19 @@
         "image": "latest",
         "applicationArchivePath": "android/app/build/outputs/apk/release/app-release.apk"
       }
+    },
+    "diagnostic": {
+      "distribution": "internal",
+      "env": {
+        "ANDROID_APP_URL": "https://hiddenmessenger.com",
+        "ANDROID_WEBVIEW_DEBUG": "1"
+      },
+      "android": {
+        "buildType": "apk",
+        "gradleCommand": ":app:assembleRelease",
+        "image": "latest",
+        "applicationArchivePath": "android/app/build/outputs/apk/release/app-release.apk"
+      }
     }
   }
 }

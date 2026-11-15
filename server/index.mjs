@@ -2847,6 +2847,18 @@ export function createChatServer({
           const silencedCall = activeCalls.get(callId);
           if (silencedCall) silencedCall.silenced = true;
         }
+        // A signal from the same signed-in device on another connection proves where that device is now (a network
+        // switch replaced its socket, and the old one may still look open here): the call follows it.
+        const pinnedCall = activeCalls.get(callId);
+        if (pinnedCall) {
+          const side = userId === pinnedCall.callerId ? 'callerSocket' : userId === pinnedCall.calleeId ? 'calleeSocket' : null;
+          const pinned = side ? pinnedCall[side] : null;
+          if (pinned && pinned !== socket && pinned.sessionHash === socket.sessionHash) {
+            pinnedCall[side] = socket;
+            clearTimeout(pinnedCall.reconnectTimer);
+            pinnedCall.reconnectTimer = null;
+          }
+        }
         const silenced = Boolean(activeCalls.get(callId)?.silenced);
         const signalEvent = { type: 'call:signal', from: userId, fromUser, callId, mode, signal, signalId, ...(roomId ? { roomId } : {}), ...(silenced ? { silenced: true } : {}) };
         const current = activeCalls.get(callId);

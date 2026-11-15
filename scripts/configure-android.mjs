@@ -21,7 +21,9 @@ export function apiOrigin(rawUrl) {
 }
 
 /** Capacitor config for the self-contained app: bundled web assets only, no server.url, no cleartext. */
-export function androidConfig(rawUrl) {
+// ANDROID_WEBVIEW_DEBUG=1 (only the "diagnostic" EAS profile): Chrome DevTools may attach over USB to read the
+// app's console while a problem is traced on a test phone. Never set for builds handed to people.
+export function androidConfig(rawUrl, { webviewDebug = process.env.ANDROID_WEBVIEW_DEBUG === '1' } = {}) {
   apiOrigin(rawUrl);
   return {
     appId: 'io.github.bickworld555.hiddenchat',
@@ -29,7 +31,7 @@ export function androidConfig(rawUrl) {
     webDir: ANDROID_WEB_DIR,
     loggingBehavior: 'none',
     server: { androidScheme: 'https', hostname: 'localhost', cleartext: false },
-    android: { allowMixedContent: false, webContentsDebuggingEnabled: false },
+    android: { allowMixedContent: false, webContentsDebuggingEnabled: Boolean(webviewDebug) },
     // The local-first message store on the phone (src/sqliteMessageDb.js): SQLite encrypted with SQLCipher; the
     // passphrase is kept by the plugin in Android's secure storage.
     plugins: { CapacitorSQLite: { androidIsEncryption: true, androidBiometric: { biometricAuth: false } } },

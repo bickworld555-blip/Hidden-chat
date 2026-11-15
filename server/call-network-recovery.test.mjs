@@ -319,3 +319,13 @@ test('a network switch whose restart request was lost is asked again when signal
   assert.equal(asked(), 2, 'once the caller answered with a new offer, nothing more');
   callee.engine.hangUp();
 });
+
+test('server: a call signal from the same device on a new connection moves the call there (the old socket may look open)', async () => {
+  const { readFileSync } = await import('node:fs');
+  const server = readFileSync(new URL('./index.mjs', import.meta.url), 'utf8');
+  assert.ok(server.includes('if (pinned && pinned !== socket && pinned.sessionHash === socket.sessionHash) {'), 'same device only');
+  assert.ok(server.includes('pinnedCall[side] = socket;'));
+  const { androidConfig } = await import('../scripts/configure-android.mjs');
+  assert.equal(androidConfig('https://example.com', { webviewDebug: false }).android.webContentsDebuggingEnabled, false, 'release builds stay closed');
+  assert.equal(androidConfig('https://example.com', { webviewDebug: true }).android.webContentsDebuggingEnabled, true, 'only the diagnostic profile');
+});
