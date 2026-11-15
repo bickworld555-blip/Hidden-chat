@@ -74,7 +74,9 @@ const MAX_STATUS_ENVELOPE = 900_000;
 // Bounds the request body of a "keep starred" clear; express.json already caps it at 16 kB.
 const MAX_CLEAR_KEEP_IDS = 500;
 const CALL_END_REASONS = new Set(['ended', 'no-answer', 'disconnected', 'busy', 'failed']);
-const CALL_SIGNAL_TYPES = new Set(['offer', 'answer', 'ice', 'end', 'connected', 'ringing', 'media', 'video-request', 'video-accept', 'video-decline', 'video-cancel', 'reaction']);
+// 'ice-restart': the callee asks the caller to restart ICE after a network switch (only the caller offers, so the two
+// phones never send crossing offers). Refused here before, the callee's request never reached a caller on this path.
+const CALL_SIGNAL_TYPES = new Set(['offer', 'answer', 'ice', 'ice-restart', 'end', 'connected', 'ringing', 'media', 'video-request', 'video-accept', 'video-decline', 'video-cancel', 'reaction']);
 const CALL_REACTION_EMOJI = new Set(['👍', '❤️', '😂', '😮', '😢', '🙏']);
 const LIVE_ACTIONS = new Set(['request', 'accept', 'decline', 'update', 'stop']);
 const MAX_CALL_PARTICIPANTS = 4;

@@ -98,6 +98,8 @@ export function createCallEngine({
   clearRepeat = (id) => clearInterval(id),
   // Calls the handler when the phone switches network (Wi-Fi ↔ mobile data) or comes back online; returns unsubscribe.
   onNetworkChange = browserNetworkChanges,
+  // Calls the handler when a signaling connection (the server's or XMPP) is back after a drop; returns unsubscribe.
+  onSignalingRestored = browserSignalingRestored,
   log = () => {},
 } = {}) {
   if (!rtc?.RTCPeerConnection) throw new Error('A WebRTC implementation is required.');
@@ -197,6 +199,7 @@ export function createCallEngine({
   let relayForced = false;
   let iceServersInUse = [];
   let stopNetworkWatch = null;
+  let stopSignalingWatch = null;
   const seenSignalIds = new Set();
 
   function emit() {
@@ -235,6 +238,8 @@ export function createCallEngine({
     qualityTimer = null;
     try { stopNetworkWatch?.(); } catch {}
     stopNetworkWatch = null;
+    try { stopSignalingWatch?.(); } catch {}
+    stopSignalingWatch = null;
     if (!current) return;
     sampleUsage(current); // the last few seconds (before close() ends the counters)
     current.onicecandidate = null;
@@ -666,6 +671,18 @@ export function createCallEngine({
         restartIce('network-change');
       }) ?? null;
     } catch (error) { log('network-watch-failed', error); }
+    try {
+      stopSignalingWatch = onSignalingRestored(() => {
+        if (closed || pc !== connection) return;
+        if (state.status !== 'reconnecting' && pc.connectionState !== 'disconnected' && pc.connectionState !== 'failed') return;
+        // Restarts tried while signaling was down went nowhere (and used up the budget): try again now, with a fresh
+        // budget; the reconnect grace still ends a call that cannot come back.
+        log('signaling-restored');
+        if (timers.cooldown != null) { clearTimer(timers.cooldown); timers.cooldown = null; }
+        set({ iceRestarts: 0 });
+        restartIce('signaling-restored', { relay: relayForced });
+      }) ?? null;
+    } catch (error) { log('signaling-watch-failed', error); }
     return pc;
   }
 
@@ -1165,6 +1182,16 @@ export function createCallEngine({
   // An incoming call rings from the moment it exists; unanswered it becomes a missed call.
   if (direction === 'incoming') armRingTimeout();
   return engine;
+}
+
+// A signaling connection is back after a drop (App.jsx dispatches SIGNALING_RESTORED for the server's connection and
+// for XMPP).
+export const SIGNALING_RESTORED = 'hm:signaling-restored';
+function browserSignalingRestored(handler) {
+  if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') return () => {};
+  const listener = () => handler();
+  window.addEventListener(SIGNALING_RESTORED, listener);
+  return () => window.removeEventListener(SIGNALING_RESTORED, listener);
 }
 
 // Wi-Fi ↔ mobile data switches (navigator.connection.type, where the browser reports it) and coming back online.

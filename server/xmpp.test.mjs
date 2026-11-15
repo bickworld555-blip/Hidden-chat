@@ -20,6 +20,9 @@ const ejabberd = { accounts: new Set(), calls: [], down: false };
 async function fakeEjabberd(url, init) {
   const command = String(url).split('/').pop();
   const body = JSON.parse(init.body);
+  // Emptying mod_hm's verdict cache follows any block, membership or account write (debounced): counted apart, so the
+  // account calls below are what the tests compare.
+  if (command === 'hm_clear_verdicts') { ejabberd.cleared = (ejabberd.cleared ?? 0) + 1; return new Response('0', { status: 200 }); }
   ejabberd.calls.push({ command, user: body.user, host: body.host, auth: init.headers.Authorization });
   if (ejabberd.down) throw new TypeError('fetch failed');
   const json = (status, value) => new Response(JSON.stringify(value), { status, headers: { 'Content-Type': 'application/json' } });

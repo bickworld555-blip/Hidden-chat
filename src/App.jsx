@@ -107,7 +107,10 @@ import { badgeCount, unseenMissedCalls, useNotificationSettings } from './notifi
 import { hiddenByBlock, isBlocked } from './blocking.js';
 import { fetchBlocks } from './blocksApi.js';
 import { activityFromEvent } from './typing.js';
-import { TERMINAL_STATUSES } from './callEngine.js';
+import { SIGNALING_RESTORED, TERMINAL_STATUSES } from './callEngine.js';
+
+// A signaling connection (the server's or XMPP) is back after a drop: an active call that was reconnecting restarts ICE.
+const signalingRestored = () => { try { window.dispatchEvent(new CustomEvent(SIGNALING_RESTORED)); } catch { /* no window */ } };
 import { isRoomOffer } from './callRoom.js';
 import { animationsAttribute, callAnimationsAttribute, resolveDark, startsDark, THEME_KEY, themeChoice, useAppearance, watchSystemTheme } from './appearance.js';
 import { useFontSize, useHighContrast } from './displayPrefs.js';
@@ -552,7 +555,7 @@ export default function App() {
         // device traffic over XMPP; anything it cannot carry goes on this connection as before. Others never open it.
         const legacySend = realtime.send.bind(realtime);
         realtime.send = (event) => (xmppRef.current?.route(event) ? true : legacySend(event));
-        startXmppSession({ sessionToken, userId, deliver: onRealtimeEvent, legacySend, targetsFor: xmppTargetsFor, groupTargetsFor: xmppGroupTargetsFor, userForAddress: userForXmppAddress, fetchImpl: apiFetch, seal: (peerId, content) => sealDirect(peerId, content) })
+        startXmppSession({ sessionToken, userId, deliver: onRealtimeEvent, legacySend, targetsFor: xmppTargetsFor, groupTargetsFor: xmppGroupTargetsFor, userForAddress: userForXmppAddress, fetchImpl: apiFetch, seal: (peerId, content) => sealDirect(peerId, content), signalingRestored })
           .then((session) => {
             if (!session) return;
             if (cancelled) { session.close(); return; }
@@ -586,6 +589,8 @@ export default function App() {
         waitingAskTimer = setInterval(() => { if (useChatStore.getState().connection === 'online') askForWaiting(); }, 5 * 60 * 1000);
         realtime.onReady = async () => {
           setTimeout(askForWaiting, 5000);
+          // A call that was reconnecting restarts ICE now: signals sent into the dead connection were lost.
+          signalingRestored();
           const outbox = await getOutbox(userId);
           for (const message of outbox) await transmitDirect(realtime, message);
           // What waited on the server for this device while it was away (src/deliveryAck.js): messages are opened

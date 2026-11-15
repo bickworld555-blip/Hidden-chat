@@ -103,6 +103,7 @@ async function connectedCall({ direction = 'outgoing', iceServers = TURN } = {})
   const sent = [];
   let sampler = null;
   let networkHandler = null;
+  let signalingHandler = null;
   const engine = createCallEngine({
     callId: 'net', direction, mode: 'video', rtc: fake.rtc, getUserMedia: fake.getUserMedia,
     offer: direction === 'incoming' ? { type: 'offer', sdp: 'v=0\r\nfake-offer' } : null,
@@ -111,6 +112,7 @@ async function connectedCall({ direction = 'outgoing', iceServers = TURN } = {})
     setTimer: clock.setTimer, clearTimer: clock.clearTimer,
     setRepeat: (fn) => { sampler = fn; return 1; }, clearRepeat: () => { sampler = null; },
     onNetworkChange: (handler) => { networkHandler = handler; return () => { networkHandler = null; }; },
+    onSignalingRestored: (handler) => { signalingHandler = handler; return () => { signalingHandler = null; }; },
   });
   if (direction === 'outgoing') {
     await engine.start();
@@ -122,7 +124,7 @@ async function connectedCall({ direction = 'outgoing', iceServers = TURN } = {})
   const pc = fake.connections[0];
   pc.transition('connected');
   const tick = async (stats) => { pc.nextReport = report(stats); sampler?.(); await flush(); await flush(); };
-  return { engine, pc, clock, sent, tick, get sampler() { return sampler; }, network: () => networkHandler?.('network-type') };
+  return { engine, pc, clock, sent, tick, get sampler() { return sampler; }, network: () => networkHandler?.('network-type'), signaling: () => signalingHandler?.() };
 }
 
 test('stats are read from the selected candidate pair, and each signal maps to a video level', () => {
@@ -256,4 +258,47 @@ test('switching between Wi-Fi and mobile data restarts ICE straight away', async
   call.engine.hangUp();
   call.network();
   assert.equal(call.pc.restarts, 1, 'the watcher is gone once the call ends');
+});
+
+test('signaling back after a network switch restarts ICE again, with a fresh budget (signals sent meanwhile were lost)', async () => {
+  const call = await connectedCall();
+  call.pc.transition('disconnected');
+  // The switch kills the signaling connections too: every restart in the outage goes nowhere and uses up the budget.
+  for (let i = 0; i < 4; i += 1) await call.clock.advance(i === 0 ? 2_000 : ICE_RETRY_MS);
+  assert.equal(call.pc.restarts, 4);
+  await call.clock.advance(ICE_RETRY_MS);
+  assert.equal(call.pc.restarts, 4, 'the budget is spent');
+  call.signaling();                                   // the server's connection (or XMPP) is back
+  assert.equal(call.pc.restarts, 5, 'a new offer goes out over the restored connection');
+  assert.equal(call.engine.state.iceRestarts, 1, 'with a fresh budget');
+  call.pc.transition('connected');
+  call.signaling();
+  assert.equal(call.pc.restarts, 5, 'a connected call is left alone');
+  call.engine.hangUp();
+  call.signaling();
+  assert.equal(call.pc.restarts, 5, 'and the watcher is gone once the call ends');
+});
+
+test('the callee, signaling back, asks the caller again', async () => {
+  const callee = await connectedCall({ direction: 'incoming' });
+  callee.pc.transition('failed');
+  await callee.clock.advance(3_000);
+  const before = callee.sent.filter((signal) => signal.type === 'ice-restart').length;
+  callee.signaling();
+  assert.equal(callee.sent.filter((signal) => signal.type === 'ice-restart').length, before + 1);
+  assert.equal(callee.pc.restarts, 0, 'still never a crossing offer');
+  callee.engine.hangUp();
+});
+
+test('the server relays the request to restart, and mid-call signals travel both ways with one id', async () => {
+  const { readFileSync } = await import('node:fs');
+  const server = readFileSync(new URL('./index.mjs', import.meta.url), 'utf8');
+  const allowed = server.split(/\r?\n/).find((line) => line.startsWith('const CALL_SIGNAL_TYPES = new Set('));
+  assert.ok(allowed.includes("'ice-restart'"), 'the request of the callee is no longer refused');
+  const session = readFileSync(new URL('../src/xmpp/session.js', import.meta.url), 'utf8');
+  assert.ok(session.includes('legacySend({ ...event, signalId });'), 'XMPP and the server, same id');
+  const engine = readFileSync(new URL('../src/callEngine.js', import.meta.url), 'utf8');
+  assert.ok(engine.includes('if (seenSignalIds.has(signalId)) { done?.(); return; }'), 'the second copy is dropped');
+  const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
+  assert.ok(app.includes('signalingRestored();') && app.includes('signalingRestored })'), 'both connections report coming back');
 });
