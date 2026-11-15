@@ -346,7 +346,7 @@ export class XmppTransport {
     ])));
   }
 
-  /** Delivered (XEP-0184): sent once the message (and its media) is stored on this device. */
+  /** Delivered (XEP-0184): the message reached this device (src/xmpp/session.js message:delivered). */
   sendReceipt(to, id) {
     return this.#write(String(xml('message', { to, id: `r-${id}` }, [xml('received', { xmlns: NS_RECEIPTS, id }), xml('store', { xmlns: NS_HINTS })])));
   }

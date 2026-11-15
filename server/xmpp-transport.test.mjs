@@ -314,12 +314,12 @@ test('session: incoming messages need the envelope to name the sending device; r
   assert.equal(h.delivered.length, 1, 'an envelope from another device is dropped');
   assert.deepEqual(h.delivered[0], { type: 'message:new', message: { id: 'in1', senderId: 'user-peer', receiverId: ME.userId, content: envelopeFrom('tablet'), timestamp: '2026-11-15T10:00:00Z', status: 'sent', via: 'xmpp', origin: 'dpeer@h' } });
 
-  // The early "delivered" is not sent for XMPP messages: the receipt waits until the message is stored (queue:ack).
+  // Delivered on arrival, as through the server: a voice note or file does not wait for its attachment's download.
   assert.equal(session.route({ type: 'message:delivered', messageIds: ['in1', 'legacy-1'] }), true);
-  assert.ok(!h.fake.sent.some((item) => item[0] === 'receipt'), 'no receipt before local storage');
+  assert.deepEqual(h.fake.sent.filter((item) => item[0] === 'receipt'), [['receipt', 'dpeer@h/app', 'in1']], 'the receipt as soon as it arrived');
   assert.deepEqual(h.legacy.at(-1), { type: 'message:delivered', messageIds: ['legacy-1'] }, 'messages that came the old way are acknowledged the old way');
   assert.equal(session.route({ type: 'queue:ack', messageIds: ['in1', 'legacy-2'], eventIds: [] }), true);
-  assert.deepEqual(h.fake.sent.at(-1), ['receipt', 'dpeer@h/app', 'in1'], 'stored (attachment included): now the receipt');
+  assert.equal(h.fake.sent.filter((item) => item[0] === 'receipt').length, 1, 'stored later: no second receipt');
   assert.deepEqual(h.legacy.at(-1), { type: 'queue:ack', messageIds: ['legacy-2'], eventIds: [] });
   assert.equal(session.route({ type: 'message:read', messageId: 'in1' }), true);
   assert.deepEqual(h.fake.sent.at(-1), ['displayed', 'dpeer@h/app', 'in1']);

@@ -4,9 +4,10 @@
 //
 //   out  message:send     sealed envelope to every target device over XMPP (src/e2e/client.js xmppTargetsFor) when
 //                         all of them have XMPP addresses; otherwise, or when XMPP refuses it, the current path.
-//        queue:ack (sent by deliveryAck.js only once a message and its attachment are stored on this device) for
-//        messages that came over XMPP: the XEP-0184 delivery receipt — so a sender's second tick means "stored on the
-//        phone", and nothing is acknowledged that a crash could still lose. message:delivered for them is not sent.
+//        message:delivered (App, as a message arrives and is opened here) for messages that came over XMPP: the
+//        XEP-0184 delivery receipt, once — the second grey tick, as for messages through the server. An attachment
+//        still downloading does not hold it back. queue:ack (deliveryAck.js, once stored) sends it if it was not yet
+//        (a message received in an earlier run, by its saved origin).
 //        message:read: XEP-0333 displayed. presence:typing (one-to-one): XEP-0085 chat states to the contact's devices.
 //   in   a sealed message whose claimed sender owns the sending address (transport.js) and whose envelope names the
 //        same sending device becomes the usual message:new; receipts and read markers become message:status; chat
@@ -84,6 +85,13 @@ export async function startXmppSession({ sessionToken, userId, deliver, legacySe
   // read marker reach it even after this app restarted (the in-memory cameFrom is gone by then).
   const ORIGIN = /^d[0-9a-f]{40}@[^/\s]+$/;
   const originOf = (id, saved) => cameFrom.get(id) ?? (typeof saved === 'string' && ORIGIN.test(saved) ? saved : null);
+  // Messages this run has already sent the delivery receipt for (on arrival; queue:ack would send it again).
+  const receipted = new Map();
+  const receiptOnce = (to, id) => {
+    if (receipted.has(id)) return;
+    remember(receipted, id, true);
+    transport.sendReceipt(to, id);
+  };
   const bare = (address) => String(address ?? '').split('/')[0];
 
   const transport = createTransport({
@@ -234,9 +242,15 @@ export async function startXmppSession({ sessionToken, userId, deliver, legacySe
       // Receipts and read markers for messages that came over XMPP go over XMPP whatever the connection's state: the
       // transport queues them until it is online. The server never saw those messages and would drop them (so the
       // sender kept one grey tick, or never saw blue ones).
+      // Delivered = the message reached this device and was opened here (App sends message:delivered on arrival),
+      // as for messages through the server. Not held until its attachment is downloaded too: a voice note or file
+      // waiting for Wi-Fi, for auto-download, or for a phone in the background kept the sender on one grey tick.
       if (event.type === 'message:delivered' && Array.isArray(event.messageIds)) {
-        // The receipt waits for local storage (queue:ack); the early "delivered" is not sent for XMPP messages.
-        const rest = event.messageIds.filter((id) => !cameFrom.has(id));
+        const rest = [];
+        for (const id of event.messageIds) {
+          const to = cameFrom.get(id);
+          if (to) receiptOnce(to, id); else rest.push(id);
+        }
         if (rest.length) legacySend({ ...event, messageIds: rest });
         return true;
       }
@@ -244,7 +258,7 @@ export async function startXmppSession({ sessionToken, userId, deliver, legacySe
         const rest = [];
         for (const id of event.messageIds) {
           const to = originOf(id, event.origins?.[id]);
-          if (to) transport.sendReceipt(to, id); else rest.push(id);
+          if (to) receiptOnce(to, id); else rest.push(id);
         }
         const { origins: _origins, ...plain } = event;
         if (rest.length || event.eventIds?.length) legacySend({ ...plain, messageIds: rest });
