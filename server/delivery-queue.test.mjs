@@ -200,3 +200,36 @@ test("a delivered message takes its reactions with it", async () => {
   aliceSocket.close();
   bobSocket.close();
 });
+
+test('the 30-day sweep works in bounded batches and never drops a route before its message', async () => {
+  const { DatabaseSync } = await import('node:sqlite');
+  const { createDeliveryQueue, ensureDeliveryQueueSchema } = await import('./deliveryQueue.mjs');
+  const db = new DatabaseSync(':memory:');
+  db.exec(`CREATE TABLE users (id TEXT PRIMARY KEY);
+    CREATE TABLE sessions (token_hash TEXT, user_id TEXT, device_id TEXT, expires_at INTEGER, last_active_at INTEGER, created_at INTEGER);
+    CREATE TABLE messages (id TEXT PRIMARY KEY, status TEXT, deleted_at TEXT, created_at TEXT);
+    CREATE TABLE group_messages (id TEXT PRIMARY KEY, created_at INTEGER)`);
+  ensureDeliveryQueueSchema(db);
+  const day = 24 * 60 * 60 * 1000;
+  const at = 100 * day;
+  const old = at - 31 * day;
+  for (let index = 0; index < 5; index += 1) {
+    db.prepare("INSERT INTO message_routes(message_id, kind, sender_id, created_at) VALUES (?, 'direct', 's', ?)").run(`kept-${index}`, old);
+    db.prepare("INSERT INTO message_deliveries(message_id, kind, user_id, device_id, created_at) VALUES (?, 'direct', 'u', 'd', ?)").run(`stale-${index}`, old);
+  }
+  for (let index = 0; index < 30; index += 1) db.prepare("INSERT INTO device_events(id, user_id, device_id, payload, created_at) VALUES (?, 'u', 'd', '{}', ?)").run(`event-${index}`, old);
+  const removed = [];
+  const queue = createDeliveryQueue({ db, now: () => at, sweepBatch: 2, removeMessage: async (kind, id) => {
+    assert.ok(db.prepare('SELECT 1 FROM message_routes WHERE message_id = ?').get(id) || id.startsWith('stale-'), 'the route is still there while its message goes');
+    removed.push(id);
+  } });
+  await queue.sweep();
+  assert.equal(db.prepare('SELECT count(*) AS n FROM message_routes').get().n, 3, 'two routes per pass');
+  assert.equal(db.prepare('SELECT count(DISTINCT message_id) AS n FROM message_deliveries').get().n, 3);
+  assert.equal(db.prepare('SELECT count(*) AS n FROM device_events').get().n, 10, 'events in batches of ten times the batch');
+  for (let pass = 0; pass < 3; pass += 1) await queue.sweep();
+  assert.equal(db.prepare('SELECT count(*) AS n FROM message_routes').get().n, 0);
+  assert.equal(db.prepare('SELECT count(*) AS n FROM message_deliveries').get().n, 0);
+  assert.equal(db.prepare('SELECT count(*) AS n FROM device_events').get().n, 0);
+  assert.equal(removed.filter((id) => id.startsWith('kept-')).length, 5);
+});

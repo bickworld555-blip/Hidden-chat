@@ -65,7 +65,11 @@ const cleanIds = (ids, limit = MAX_ACK) => (Array.isArray(ids) ? [...new Set(ids
  * `removeMessage(kind, messageId, { force })` → deletes a fully delivered message's row, reactions and media
  * (index.mjs owns those tables; without `force` it may keep a message that is still in use, such as an open poll).
  */
-export function createDeliveryQueue({ db, onlineDevices = () => [], removeMessage, now = () => Date.now(), devicesCache = null }) {
+// Each 30-second pass handles at most this many expired items per kind (the rest go on the next pass), so one pass
+// never loads an unbounded list or holds a pooled database connection for long after an outage.
+export const SWEEP_BATCH = 500;
+
+export function createDeliveryQueue({ db, onlineDevices = () => [], removeMessage, now = () => Date.now(), devicesCache = null, sweepBatch = SWEEP_BATCH }) {
   // The devices a message waits for: signed-in devices that published end-to-end keys (the ones messages are
   // encrypted for) and were active in the last 14 days. A session without keys (a script, a half-finished sign-in)
   // can never read an encrypted message, and an install left unused for weeks may never come back; waiting for either
@@ -237,17 +241,21 @@ export function createDeliveryQueue({ db, onlineDevices = () => [], removeMessag
       ({ released } = await releaseInactiveDevices());
     }
     const cutoff = now() - QUEUE_TTL_MS;
-    const stale = await db.prepare('SELECT DISTINCT message_id AS "messageId" FROM message_deliveries WHERE created_at <= ?').all(cutoff);
+    const stale = await db.prepare('SELECT DISTINCT message_id AS "messageId" FROM message_deliveries WHERE created_at <= ? LIMIT ?').all(cutoff, sweepBatch);
     for (const { messageId } of stale) {
       const route = await routeOf(messageId);
       await db.prepare('DELETE FROM message_deliveries WHERE message_id = ?').run(messageId);
       if (route) await removeMessage(route.kind, messageId);
     }
     // Messages kept past delivery on purpose (an open poll, an unopened view once note) end at 30 days too.
-    const kept = await db.prepare('SELECT message_id AS "messageId", kind FROM message_routes WHERE created_at <= ?').all(cutoff);
-    for (const { messageId, kind } of kept) await removeMessage(kind, messageId, { force: true });
-    await db.prepare('DELETE FROM message_routes WHERE created_at <= ?').run(cutoff);
-    await db.prepare('DELETE FROM device_events WHERE created_at <= ?').run(cutoff);
+    // A route goes only after its message is gone (a route left for a pass not yet reached keeps its message findable).
+    const kept = await db.prepare('SELECT message_id AS "messageId", kind FROM message_routes WHERE created_at <= ? ORDER BY created_at LIMIT ?').all(cutoff, sweepBatch);
+    for (const { messageId, kind } of kept) {
+      await removeMessage(kind, messageId, { force: true });
+      await db.prepare('DELETE FROM message_routes WHERE message_id = ?').run(messageId);
+    }
+    // Small rows with no media: deleted in bounded set-based batches (indexed by created_at, migration 030).
+    await db.prepare('DELETE FROM device_events WHERE id IN (SELECT id FROM device_events WHERE created_at <= ? LIMIT ?)').run(cutoff, sweepBatch * 10);
     // History from before the queue: delivered or read one-to-one messages, and anything older than 30 days.
     const isoCutoff = new Date(cutoff).toISOString();
     const legacy = await db.prepare(`SELECT id FROM messages m

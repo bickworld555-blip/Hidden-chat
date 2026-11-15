@@ -149,6 +149,14 @@ export function postgresOptions(env = process.env) {
   }
   const ca = databaseCertificateAuthority(env.DATABASE_SSL_CA);
   const mode = databasePoolMode(env);
+  // The URL must agree with the mode. Supabase's transaction pooler listens on 6543: in direct mode the server would
+  // send startup settings it drops, so queries fail later in confusing ways; its 5432 is the session pooler.
+  if (mode === 'direct' && url.port === '6543') {
+    throw new Error('DATABASE_URL uses port 6543, the transaction pooler: set DATABASE_POOL_MODE=transaction (after scripts/db-pooler-setup.sql).');
+  }
+  if (mode === 'transaction' && url.hostname.endsWith('.pooler.supabase.com') && url.port !== '6543') {
+    throw new Error("DATABASE_POOL_MODE=transaction needs Supabase's transaction pooler on port 6543 (5432 there is the session pooler).");
+  }
   const limits = POOL_LIMITS[mode];
   const max = Number(env.DATABASE_POOL_MAX ?? limits.initial);
   if (!Number.isInteger(max) || max < 1 || max > limits.max) throw new Error(`DATABASE_POOL_MAX must be an integer from 1 to ${limits.max} (${mode} connections).`);

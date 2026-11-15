@@ -186,6 +186,9 @@ test('PostgreSQL parameter ownership preserves literals, TLS verification and sa
   assert.equal(pooled.query_timeout, 30_000, 'the client still stops waiting');
   assert.equal(pooled.max, 20);
   assert.equal(postgresOptions({ DATABASE_URL: 'postgresql://u:p@h:6543/d', DATABASE_POOL_MODE: 'transaction', DATABASE_POOL_MAX: '200' }).max, 200, 'the pooler multiplexes many client connections');
+  assert.throws(() => postgresOptions({ DATABASE_URL: 'postgresql://u:p@aws-0-x.pooler.supabase.com:6543/d' }), /set DATABASE_POOL_MODE=transaction/, 'the transaction pooler port in direct mode is refused');
+  assert.throws(() => postgresOptions({ DATABASE_URL: 'postgresql://u:p@aws-0-x.pooler.supabase.com:5432/d', DATABASE_POOL_MODE: 'transaction' }), /port 6543/, 'the session pooler in transaction mode is refused');
+  assert.equal(postgresOptions({ DATABASE_URL: 'postgresql://u:p@pgbouncer.internal:6432/d', DATABASE_POOL_MODE: 'transaction' }).query_timeout, 30_000, 'a PgBouncer on its own port is fine');
   assert.throws(() => postgresOptions({ DATABASE_URL: 'postgresql://u:p@h:6543/d', DATABASE_POOL_MODE: 'transaction', DATABASE_POOL_MAX: '201' }), /1 to 200/);
   assert.throws(() => databasePoolMode({ DATABASE_URL: 'postgresql://u:p@h/d', DATABASE_POOL_MODE: 'session' }), /direct.*transaction/);
 });

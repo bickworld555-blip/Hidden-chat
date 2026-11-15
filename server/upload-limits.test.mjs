@@ -80,3 +80,19 @@ test('uploads past the allowance are refused with 429 and Retry-After, on the si
   const chunk = await fetch(`${baseUrl}/api/v1/uploads/${created.uploadId}`, { method: 'PUT', headers: { ...auth, 'Content-Type': 'application/octet-stream', 'X-Upload-Offset': '0' }, body: new Uint8Array(4 * 1024 ** 2) });
   assert.equal(chunk.status, 429);
 });
+
+test('without R2 settings the server keeps attachments on disk: no direct uploads offered, a direct request falls back', async () => {
+  assert.equal(process.env.MEDIA_STORAGE, undefined, 'the test environment has no object storage');
+  const headers = { 'X-HM-Client': '2', 'Content-Type': 'application/json' };
+  const user = await (await fetch(`${baseUrl}/api/v1/auth/register`, { method: 'POST', headers, body: JSON.stringify({ username: 'diskonly', dob: '1990-01-01', password: 'Correct-Horse-Battery-42!' }) })).json();
+  const auth = { 'X-HM-Client': '2', Authorization: `Bearer ${user.token}` };
+  assert.deepEqual(await (await fetch(`${baseUrl}/api/v1/uploads/config`, { headers: auth })).json(), { direct: false });
+  const created = await (await fetch(`${baseUrl}/api/v1/uploads`, { method: 'POST', headers: { ...auth, 'Content-Type': 'application/json' }, body: JSON.stringify({ receiverId: user.user.id, filename: 'c.bin', byteSize: 3, direct: true }) })).json();
+  assert.equal(created.direct, undefined, 'no bucket: the disk path');
+  assert.ok(created.chunkBytes > 0);
+  assert.equal((await fetch(`${baseUrl}/api/v1/uploads/${created.uploadId}`, { method: 'PUT', headers: { ...auth, 'Content-Type': 'application/octet-stream', 'X-Upload-Offset': '0' }, body: new Uint8Array([1, 2, 3]) })).status, 200);
+  const done = await (await fetch(`${baseUrl}/api/v1/uploads/${created.uploadId}/complete`, { method: 'POST', headers: auth })).json();
+  const download = await fetch(`${baseUrl}/api/v1/media/${done.id}?locate=1`, { headers: auth });
+  assert.equal(download.headers.get('x-hm-media-location'), null, 'served from disk, not located in a bucket');
+  assert.deepEqual([...new Uint8Array(await download.arrayBuffer())], [1, 2, 3]);
+});
