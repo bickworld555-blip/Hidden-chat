@@ -379,13 +379,22 @@ test('at 0% nobody is moved over: no tokens, no XMPP addresses, no relaying; the
   const base = `http://127.0.0.1:${(await svc.listen()).port}`;
   try {
     const quinn = await account(base), rae = await account(base);
-    assert.deepEqual((await api('/api/v1/xmpp/transport', { token: quinn.token, base })).body, { enabled: true, transport: 'legacy' });
+    assert.deepEqual((await api('/api/v1/xmpp/transport', { token: quinn.token, base })).body, { enabled: true, transport: 'legacy', groups: false });
     const refused = await api('/api/v1/xmpp/token', { method: 'POST', token: quinn.token, base });
     assert.equal(refused.status, 409);
     assert.equal(refused.body.transport, 'legacy');
 
     rolloutConfig.rollout.userIds.add(quinn.user.id);        // a test account on the allow-list
+    assert.equal((await api('/api/v1/xmpp/transport', { token: quinn.token, base })).body.groups, false, 'groups stay off until XMPP_GROUPS=on');
+    rolloutConfig.groups = true;
     assert.equal((await api('/api/v1/xmpp/transport', { token: quinn.token, base })).body.transport, 'xmpp');
+    assert.equal((await api('/api/v1/xmpp/transport', { token: quinn.token, base })).body.groups, true, 'groups over XMPP follow the rollout');
+    assert.equal((await api('/api/v1/xmpp/transport', { token: rae.token, base })).body.groups, false);
+    rolloutConfig.groups = false;                            // XMPP_GROUPS unset again: off
+    assert.equal((await api('/api/v1/xmpp/transport', { token: quinn.token, base })).body.groups, false);
+    rolloutConfig.groups = true;
+    assert.equal(xmppConfigFromEnv({ XMPP_GROUPS: 'on' }).groups, true);
+    assert.equal(xmppConfigFromEnv({}).groups, false, 'opt-in');
     assert.equal((await api('/api/v1/xmpp/transport', { token: rae.token, base })).body.transport, 'legacy', 'everyone else stays');
     const granted = await api('/api/v1/xmpp/token', { method: 'POST', token: quinn.token, base });
     assert.equal(granted.status, 200);

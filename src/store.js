@@ -761,6 +761,34 @@ export const useChatStore = create((setState, getState) => ({
   savedGroupMessages(groupId) {
     return getState().messages[groupChatKey(groupId)] ?? [];
   },
+  /** This device's copy of one group message, or null. */
+  groupMessage(groupId, messageId) {
+    return (getState().messages[groupChatKey(groupId)] ?? []).find((message) => message.id === messageId) ?? null;
+  },
+  /**
+   * Applies a change to one stored group message: `change(message)` returns the new message. Returns whether it was there.
+   * Delete for everyone keeps a placeholder (sender and time, nothing of what it said), as in one-to-one chats.
+   */
+  updateGroupMessage(groupId, messageId, change) {
+    const key = groupChatKey(groupId);
+    let found = false;
+    setState((state) => {
+      const list = state.messages[key];
+      if (!list) return state;
+      const next = list.map((message) => {
+        if (message.id !== messageId) return message;
+        found = true;
+        return change(message);
+      });
+      return found ? { messages: { ...state.messages, [key]: next } } : state;
+    });
+    const userId = getState().userId;
+    if (found && userId) getState().persistMessages(userId);
+    return found;
+  },
+  deleteGroupMessageForEveryone(groupId, messageId) {
+    return getState().updateGroupMessage(groupId, messageId, (message) => deletedPlaceholder(message));
+  },
   mergeHistory(chatId, history) {
     setState((state) => {
       const current = state.messages[chatId] ?? [];

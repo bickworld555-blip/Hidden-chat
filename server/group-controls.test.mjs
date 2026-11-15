@@ -113,3 +113,52 @@ test('sendGroupControlFor: sealed with the group keys and sent through the fanou
   const missingKeys = async () => { throw Object.assign(new Error('keys'), { code: 'group-keys-missing' }); };
   assert.equal(await sendGroupControlFor(post, { op: 'react', emoji: '👍' }, { session, seal: missingKeys }), false);
 });
+
+test('group changes apply to this device’s copy whichever way they come: a server delete no longer leaves the words behind', async () => {
+  const { useChatStore } = await import('../src/store.js');
+  const { applyGroupChange } = await import('../src/groupChanges.js');
+  const store = useChatStore.getState();
+  store.mergeGroupMessages('g-store', [
+    { id: 's1', groupId: 'g-store', senderId: AUTHOR, content: 'secret plans', createdAt: T0 },
+    { id: 's2', groupId: 'g-store', senderId: AUTHOR, content: 'typo', createdAt: T0 + 1 },
+    { id: 's3', groupId: 'g-store', senderId: AUTHOR, content: 'voice:media-9:4', createdAt: T0 + 2 },
+  ]);
+  // The server's own event (a message it stored, deleted by its author or an admin).
+  assert.equal(applyGroupChange(useChatStore.getState(), { type: 'group:message-deleted', groupId: 'g-store', messageId: 's1', reason: 'deleted' }), true);
+  const deleted = useChatStore.getState().groupMessage('g-store', 's1');
+  assert.deepEqual([deleted.deleted, deleted.content, deleted.senderId], [true, '', AUTHOR], 'a placeholder: sender and time, nothing of what it said');
+  // A control's edit carries open words; the server's carries sealed words, which the history refresh opens.
+  applyGroupChange(useChatStore.getState(), { type: 'group:message-edited', groupId: 'g-store', messageId: 's2', content: 'fixed', editedAt: new Date(T0 + 60_000).toISOString() });
+  assert.equal(useChatStore.getState().groupMessage('g-store', 's2').content, 'fixed');
+  assert.equal(applyGroupChange(useChatStore.getState(), { type: 'group:message-edited', groupId: 'g-store', messageId: 's2', content: 'e2e2:text|{}' }), false);
+  assert.equal(useChatStore.getState().groupMessage('g-store', 's2').content, 'fixed', 'sealed words are never shown as text');
+  applyGroupChange(useChatStore.getState(), { type: 'group:message-edited', groupId: 'g-store', messageId: 's1', content: 'back from the dead' });
+  assert.equal(useChatStore.getState().groupMessage('g-store', 's1').content, '', 'a deleted message is never edited back');
+  // Reactions per member, the latest wins (the rules decided that before); removal clears it.
+  applyGroupChange(useChatStore.getState(), { type: 'group:message-reaction', groupId: 'g-store', messageId: 's2', userId: MEMBER, emoji: '👍' });
+  applyGroupChange(useChatStore.getState(), { type: 'group:message-reaction', groupId: 'g-store', messageId: 's2', userId: ADMIN, emoji: '🎉' });
+  applyGroupChange(useChatStore.getState(), { type: 'group:message-reaction', groupId: 'g-store', messageId: 's2', userId: ADMIN, emoji: null });
+  assert.deepEqual(useChatStore.getState().groupMessage('g-store', 's2').reactions, { [MEMBER]: '👍' });
+  applyGroupChange(useChatStore.getState(), { type: 'group:message-played', groupId: 'g-store', messageId: 's3', userId: MEMBER });
+  assert.deepEqual(useChatStore.getState().groupMessage('g-store', 's3').playedBy, [MEMBER]);
+  assert.equal(applyGroupChange(useChatStore.getState(), { type: 'group:message-deleted', groupId: 'g-store', messageId: 'missing' }), false);
+});
+
+test('groups over XMPP follow the server’s per-user rollout; a caller may still decide', async () => {
+  const { startXmppSession } = await import('../src/xmpp/session.js');
+  const envelope = `e2e2:text|${JSON.stringify({ v: 2, sd: 'phone', mh: 'h', g: {} })}`;
+  const start = (decision, extra = {}) => startXmppSession({
+    sessionToken: 't', userId: AUTHOR, deliver: () => {}, legacySend: () => {}, targetsFor: async () => ({ targets: [], complete: false }),
+    groupTargetsFor: async () => ({ targets: ['d1@h'], complete: true, sender: { userId: AUTHOR, deviceId: 'phone' } }),
+    fetchImpl: async () => new Response(JSON.stringify(decision), { status: 200 }),
+    createTransport: () => ({ state: 'online', sendSealed() {}, setActive() {}, close() {}, checkNow() {} }), ...extra,
+  });
+  const on = await start({ transport: 'xmpp', groups: true });
+  assert.equal((await on.sendGroup({ groupId: GROUP, messageId: 'x1', envelope })).via, 'xmpp');
+  const off = await start({ transport: 'xmpp', groups: false });
+  assert.equal(await off.sendGroup({ groupId: GROUP, messageId: 'x2', envelope }), null, 'the server says not yet: the server path');
+  const old = await start({ transport: 'xmpp' });
+  assert.equal(await old.sendGroup({ groupId: GROUP, messageId: 'x3', envelope }), null, 'a server that does not say: off');
+  const forced = await start({ transport: 'xmpp', groups: true }, { groupsOverXmpp: false });
+  assert.equal(await forced.sendGroup({ groupId: GROUP, messageId: 'x4', envelope }), null);
+});

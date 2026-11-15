@@ -261,7 +261,13 @@ export async function openEvent(event) {
     return { ...event, content: opened.content, ...(opened.e2eError ? { e2eError: opened.e2eError } : {}) };
   }
   if (event.type === 'group:message' && event.message) {
-    return { ...event, message: await openGroupMessage(event.message.groupId, event.message) };
+    const message = await openGroupMessage(event.message.groupId, event.message);
+    // A sealed change to another group message (src/e2e/lifecycle.js group controls), never a message of its own; only
+    // an XMPP copy can carry one, and the Sender Keys that opened it name the group and the sender.
+    if (event.message.via === 'xmpp' && typeof message?.content === 'string' && message.content.startsWith('ctl:')) {
+      return { type: 'group:control', groupId: event.message.groupId, senderId: event.message.senderId, control: parseControl(message.content) };
+    }
+    return { ...event, message };
   }
   return event;
 }

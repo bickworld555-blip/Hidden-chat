@@ -16,11 +16,13 @@ import { countUnreadConversations, groupRow } from './groupRows.js';
 import { getViewingGroup, readMutedGroups, setGroupMuted, useMutedGroups } from './groupPrefs.js';
 import { classifyIncoming, groupNotificationText, parseConversationOpenParam, shouldAlertGroup } from './notificationChannels.js';
 import { companionOnly } from './companion.js';
+import { applyGroupChange, GROUP_CHANGE_EVENTS } from './groupChanges.js';
+import { cachedGroupDetails } from './groupCache.js';
 import { notificationNames } from './notificationNames.js';
 import { nativeClearSession, nativeRequestStartupPermissions, nativeSetSession, nativeShell, nativeStartBackground, nativeState, nativeStopBackground, nativeTakePendingCall, nativeMoveToBackground, nativeClearShare, nativeSetCallActive, nativeClearMessageNotifications, nativeClearMissedCalls, nativeTakeMessageActions, nativeSetSystemBarsTheme, onNative } from './native.js';
 import { parseShare } from './shareTarget.js';
 import { e2eDeviceId, onE2eEvent, sealDirect, startE2e, stopE2e, userForXmppAddress, xmppGroupTargetsFor, xmppTargetsFor } from './e2e/client.js';
-import { createControlBuffer, expiredIds, resolveControl } from './e2e/lifecycle.js';
+import { createControlBuffer, expiredIds, resolveControl, roleIn } from './e2e/lifecycle.js';
 import { startXmppSession } from './xmpp/session.js';
 import { setXmppSession } from './xmpp/active.js';
 import { fetchGroupMessages } from './groupHistory.js';
@@ -337,8 +339,24 @@ export default function App() {
         // own events; one that arrives before its message waits for it.
         const heldControls = createControlBuffer();
         const reactionTimes = new Map();
+        // Group controls: the same buffer (message ids are unique), the group rules, roles from this device's copy of
+        // the group details. What they change is applied locally (local: true), so the group screen is not refetched.
+        const applyGroupControl = async ({ control, senderId, groupId }) => {
+          if (!control || !groupId) return;
+          const details = await cachedGroupDetails(userId, groupId).catch(() => null);
+          const outcome = resolveControl(control, {
+            senderId, target: useChatStore.getState().groupMessage(groupId, control.target), me: userId, groupId,
+            roleOf: (memberId) => roleIn(details, memberId),
+            reactedAt: (messageId, reactorId) => reactionTimes.get(`${messageId}:${reactorId}`) ?? null,
+          });
+          if (outcome.action === 'hold') heldControls.hold(control, senderId);
+          if (outcome.action !== 'apply') return;
+          if (outcome.event.type === 'group:message-reaction') reactionTimes.set(`${outcome.event.messageId}:${outcome.event.userId}`, outcome.event.at);
+          handleEvent({ ...outcome.event, local: true });
+        };
         const applyControl = ({ control, senderId }) => {
           if (!control) return;
+          if (control.groupId) { applyGroupControl({ control, senderId, groupId: control.groupId }).catch(() => {}); return; }
           const outcome = resolveControl(control, {
             senderId, target: storedMessage(control.target), me: userId,
             reactedAt: (messageId, reactorId) => reactionTimes.get(`${messageId}:${reactorId}`) ?? null,
@@ -350,10 +368,15 @@ export default function App() {
         };
         const handleEvent = (event) => {
           if (event.type === 'message:control') { applyControl(event); return; }
+          if (event.type === 'group:control') { applyGroupControl(event).catch(() => {}); return; }
+          // Deletes, edits, reactions and "played" on group messages: applied to this device's copy, from the server's
+          // events and from group controls alike (src/groupChanges.js).
+          if (GROUP_CHANGE_EVENTS.has(event.type)) applyGroupChange(useChatStore.getState(), event);
           // "Waiting for this message": another device asks for a copy it can open, or answers this device's request.
           if (event.type === 'e2e:retry') { answerResendRequest(realtime, event, { deviceId: e2eDeviceId() }).catch(() => {}); return; }
           if (event.type === 'message:resealed') { applyResealed(event).catch(() => {}); return; }
-          if (event.type === 'connection:ready' || event.type === 'community:changed' || (typeof event.type === 'string' && event.type.startsWith('group:'))) setGroupRevision((current) => current + 1);
+          // A change applied locally from a group control needs no refetch; the server's group events still trigger one.
+          if (event.type === 'connection:ready' || event.type === 'community:changed' || (typeof event.type === 'string' && event.type.startsWith('group:') && !event.local)) setGroupRevision((current) => current + 1);
           handleAccountEvent(event);
           // Blocked or unblocked on another of this account's devices; a contact deleted their account.
           if (event.type === 'block:changed' && typeof event.userId === 'string') {
@@ -388,6 +411,8 @@ export default function App() {
           if (event.type === 'group:message') {
             // Kept on this device as it arrives (opened above), like a one-to-one message; saving acknowledges it.
             if (typeof event.message?.groupId === 'string') useChatStore.getState().mergeGroupMessages(event.message.groupId, [event.message]);
+            // Group controls that overtook this message on the way are applied now.
+            if (typeof event.message?.id === 'string') for (const held of heldControls.take(event.message.id)) applyControl(held);
             const alert = classifyIncoming(event, userId);
             if (event.message?.senderId !== userId) autoSaveIncoming(event.message?.content, sessionToken);
             if (event.message?.senderId !== userId && typeof event.message?.groupId === 'string') unarchiveOnMessage(groupChatKey(event.message.groupId));

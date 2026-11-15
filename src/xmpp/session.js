@@ -39,7 +39,7 @@ const RECEIPT_MEMORY = 5000;
  * Resolves null unless this account is moved over. `deliver(event)` feeds the app's realtime event handler;
  * `legacySend(event)` is the current connection's send.
  */
-export async function startXmppSession({ sessionToken, userId, deliver, legacySend, targetsFor, groupTargetsFor = async () => ({ targets: [], complete: false, sender: null }), userForAddress = () => null, fetchImpl, createTransport = (options) => new XmppTransport(options), seal = null, groupsOverXmpp = false, signalingRestored = () => {}, onTransportState = () => {} }) {
+export async function startXmppSession({ sessionToken, userId, deliver, legacySend, targetsFor, groupTargetsFor = async () => ({ targets: [], complete: false, sender: null }), userForAddress = () => null, fetchImpl, createTransport = (options) => new XmppTransport(options), seal = null, groupsOverXmpp: groupsOption = null, signalingRestored = () => {}, onTransportState = () => {} }) {
   const auth = { Authorization: `Bearer ${sessionToken}` };
   let decision;
   try {
@@ -49,6 +49,8 @@ export async function startXmppSession({ sessionToken, userId, deliver, legacySe
     return null;
   }
   if (decision?.transport !== 'xmpp') return null;
+  // Groups over XMPP follow the server's per-user rollout (GET /api/v1/xmpp/transport: groups), unless a caller decides.
+  const groupsOverXmpp = groupsOption ?? decision.groups === true;
 
   // Where the receipt for a message that came over XMPP goes (the sending device's full address).
   const cameFrom = new Map();

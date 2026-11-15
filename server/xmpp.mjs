@@ -46,6 +46,9 @@ export function xmppConfigFromEnv(env = process.env) {
   const adminPassword = (env.XMPP_ADMIN_PASSWORD || '').trim();
   return {
     rollout: rolloutFromEnv(env),
+    // Group messages and their controls over XMPP for accounts moved over (src/xmpp/session.js), once XMPP_GROUPS=on:
+    // opt-in, because apps built before group controls show an incoming control as text.
+    groups: (env.XMPP_GROUPS ?? '').trim().toLowerCase() === 'on',
     host,
     secret,
     adminPassword,
@@ -263,7 +266,8 @@ export function createXmpp({ db, config = xmppConfigFromEnv(), fetchImpl = globa
       // Which path this user's app should use. Cheap and side-effect free: the app asks before connecting anywhere.
       app.get('/api/v1/xmpp/transport', requireSession, (request, response) => {
         response.set('Cache-Control', 'no-store');
-        response.json({ enabled: config.enabled, transport: transportFor(request.session.user_id) });
+        const transport = transportFor(request.session.user_id);
+        response.json({ enabled: config.enabled, transport, groups: transport === 'xmpp' && config.groups !== false });
       });
 
       app.post('/api/v1/xmpp/token', requireSession, async (request, response) => {

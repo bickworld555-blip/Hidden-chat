@@ -13,7 +13,7 @@ import { canEditMessage } from '../selection.js';
 import { appSettings } from '../settings.js';
 import { prepareForSend } from '../mediaQuality.js';
 import { isStickerContent, stickerContent } from '../stickers.js';
-import { previewFor } from '../store.js';
+import { deletedLabel, previewFor } from '../store.js';
 import { StickerMessage, StickerPalette } from './parity/Stickers.jsx';
 import { ComposerAssist, MentionText } from './parity/ComposerAssist.jsx';
 import PinnedBanner from './parity/PinnedBanner.jsx';
@@ -28,6 +28,8 @@ import { fetchGroupMessages } from '../groupHistory.js';
 import { dropPending, enqueuePending, flushPending, pendingFor, usePending } from '../groupPending.js';
 import FormattedText from './FormattedText.jsx';
 import { useChatStore } from '../store.js';
+import { sendGroupControlFor } from '../e2e/messaging.js';
+import { applyGroupChange } from '../groupChanges.js';
 import { formatMessageTime } from '../time.js';
 import { createActivitySender, groupActivityLabel, groupActivityPeople } from '../typing.js';
 import { cachedGroupDetails, cachedGroups, offlineGroupDetails, saveGroupDetails, saveGroups } from '../groupCache.js';
@@ -414,6 +416,10 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
   const groupPath = selected ? `/${encodeURIComponent(selected)}` : '';
   const muted = Boolean(selected && mutedGroupIds.includes(selected));
   const chatKey = selected ? groupChatKey(selected) : '';
+  // The open group's messages follow this device's copy (src/store.js): a change applied from a group control, a
+  // server delete or a new XMPP message shows at once, without asking the server again.
+  const storedMessages = useChatStore((state) => (chatKey ? state.messages[chatKey] : undefined));
+  useEffect(() => { if (storedMessages) setMessages(storedMessages); }, [storedMessages]);
   const pins = useAccountData((state) => (chatKey ? state.pins[chatKey] : null));
   const starred = useAccountData((state) => state.starred);
   const pinnedIds = useMemo(() => new Set((pins ?? []).map((pin) => pin.messageId)), [pins]);
@@ -529,6 +535,22 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
     if (viewingId && nativeShell()) nativeClearMessageNotifications(`group:${viewingId}`);
     return () => setViewingGroup('');
   }, [viewingId]);
+
+  /**
+   * A change to a group message: a group control over XMPP when the message travelled there (src/e2e/messaging.js
+   * sendGroupControlFor), applied to this device's copy at once; otherwise the server endpoint (`viaServer`).
+   */
+  async function changeMessage(message, change, viaServer) {
+    if (await sendGroupControlFor({ ...message, groupId: message.groupId ?? selected }, change)) {
+      const groupId = message.groupId ?? selected;
+      const event = change.op === 'delete'
+        ? { type: 'group:message-deleted', groupId, messageId: message.id, reason: 'deleted' }
+        : { type: 'group:message-edited', groupId, messageId: message.id, senderId: message.senderId, content: change.text, editedAt: new Date().toISOString() };
+      applyGroupChange(useChatStore.getState(), event);
+      return;
+    }
+    await viaServer();
+  }
 
   async function perform(action) {
     setBusy(true);
@@ -706,7 +728,7 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
       const target = editing;
       setEditing(null);
       setDraft('');
-      if (content !== target.content) perform(() => editGroupMessage(token, selected, target.id, content));
+      if (content !== target.content) perform(() => changeMessage(target, { op: 'edit', text: content }, () => editGroupMessage(token, selected, target.id, content)));
       return;
     }
     activityRef.current?.stop();
@@ -1059,7 +1081,7 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
                 const { message } = item;
                 const mine = message.senderId === userId;
                 const sender = group.members.find((member) => member.id === message.senderId);
-                const canDelete = group.role === 'admin' || (mine && Date.now() - message.createdAt < DELETE_WINDOW_MS);
+                const canDelete = !message.deleted && (group.role === 'admin' || (mine && Date.now() - message.createdAt < DELETE_WINDOW_MS));
                 const isMedia = isMediaContent(message.content);
                 const scheduled = parseScheduledCall(message.content);
                 // Only a card that arrived end-to-end encrypted is joinable: its key must never have been readable on the way.
@@ -1075,7 +1097,7 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
                 // The time (and pin, star, Edited, delete): on a photo or video it sits on the media's corner, as on WhatsApp.
                 const meta = (
                   <span className="groups-message-meta">
-                    {canDelete && <button type="button" disabled={busy} aria-label="Delete message" title="Delete message" onClick={() => perform(() => groupRequest(token, `${groupPath}/messages/${encodeURIComponent(message.id)}`, { method: 'DELETE' }))}><Trash2 size={13} /></button>}
+                    {canDelete && <button type="button" disabled={busy} aria-label="Delete message" title="Delete message" onClick={() => perform(() => changeMessage(message, { op: 'delete' }, () => groupRequest(token, `${groupPath}/messages/${encodeURIComponent(message.id)}`, { method: 'DELETE' })))}><Trash2 size={13} /></button>}
                     {message.expiresAt && <Timer size={12} aria-label="Disappears after 24 hours" />}
                     {pinnedIds.has(message.id) && <Pin size={12} aria-label="Pinned" />}
                     {starred[message.id] && <Star size={12} fill="currentColor" aria-label="Starred" />}
@@ -1104,7 +1126,8 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
                           <span><strong>{scheduled.title}</strong><small>{scheduled.mode === 'video' ? 'Video call' : 'Voice call'} · {formatSchedule(scheduled.at)}</small></span>
                           {onStartGroupCall && <button type="button" onClick={() => setCallPicker(scheduled.mode)}>{scheduled.at > Date.now() ? 'Start early' : 'Start call'}</button>}
                         </div>
-                      ) : message.e2eError ? <p className="deleted-text"><span aria-hidden="true">🔒</span> Waiting for this message. It is end-to-end encrypted.</p>
+                      ) : message.deleted ? <p className="deleted-text"><span aria-hidden="true">🚫</span> {deletedLabel(message.senderId === userId)}</p>
+                        : message.e2eError ? <p className="deleted-text"><span aria-hidden="true">🔒</span> Waiting for this message. It is end-to-end encrypted.</p>
                         : voice?.id ? <VoiceMessage id={voice.id} seconds={voice.seconds} lang={voice.lang} sessionToken={token} sender={sender ?? group.members.find((member) => member.id === message.senderId)} played />
                         : isMedia ? <MediaRenderer mediaRef={message.content} sessionToken={token} meta={meta} caption={message.caption} thumb={message.thumb} poster={message.poster} duration={message.duration} />
                         : poll ? <PollBubble messageId={message.id} poll={poll} sessionToken={token} userId={userId} nameFor={(id) => group.members.find((member) => member.id === id)?.name} context={{ groupId: selected }} />
@@ -1123,7 +1146,7 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
                               {pinnedIds.has(message.id) ? <PinOff size={16} /> : <Pin size={16} />}
                             </button>
                           )}
-                          {canEditMessage(message, userId) && <button type="button" aria-label="Edit" onClick={() => startEdit(message)}><Pencil size={16} /></button>}
+                          {!message.deleted && canEditMessage(message, userId) && <button type="button" aria-label="Edit" onClick={() => startEdit(message)}><Pencil size={16} /></button>}
                           {!isMedia && !sticker && !poll && !event && !scheduled && !productId && (
                             <button type="button" aria-label="Copy" onClick={() => { setActiveMessageId(''); navigator.clipboard?.writeText(message.content).then(() => setNotice('Message copied.')).catch(() => {}); }}><Copy size={16} /></button>
                           )}
