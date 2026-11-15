@@ -682,7 +682,7 @@ export const useChatStore = create((setState, getState) => ({
     for (const message of client?.send ? messages[chatId] ?? [] : []) {
       // Marking it read locally (statuses only move forward, see mergeMessageStatus) is what stops a second receipt.
       if (message?.senderId === chatId && message.status !== 'read') {
-        client.send({ type: 'message:read', messageId: message.id });
+        client.send({ type: 'message:read', messageId: message.id, ...(typeof message.origin === 'string' ? { origin: message.origin } : {}) });
         getState().updateMessage(message.id, { status: 'read' });
       }
     }

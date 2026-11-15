@@ -26,4 +26,7 @@ terminates TLS and exposes `/xmpp-websocket` and `/api/` (admin API, admin login
       hook_key: "<the k value of /etc/ejabberd/jwt.jwk>"
   ```
 
+- The Node API's admin user (`api_permissions` "node api") may run, besides the account commands, `hm_clear_verdicts`
+  and `hm_receipt` (mod_hm: a delivery receipt on behalf of a phone that confirmed its wake-up push, POST
+  /api/v1/xmpp/woke; the offline hook carries the stored direct message's stanza id for it).
 - Device accounts are created and removed by the Node API (`server/xmpp.mjs`); devices sign in with its tokens.

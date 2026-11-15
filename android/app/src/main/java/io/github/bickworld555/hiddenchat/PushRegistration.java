@@ -186,7 +186,11 @@ final class PushRegistration {
         post(context, "/api/v1/messages/delivered", new JSONObjectBuilder().put("messageIds", new JSONArray().put(messageId)).build());
     }
 
-    /** Decline or hang up over HTTP (no connection needed): the server ends the call for both sides. */
+    /** A wake-up push for XMPP messages reached this phone: their senders get delivery receipts (server/xmpp.mjs). */
+    static void confirmXmppWake(Context context) {
+        post(context, "/api/v1/xmpp/woke", new JSONObject());
+    }
+
     /** Ends a call on the server (decline, cancel or hang up): the other side stops ringing / leaves at once. */
     static boolean endCall(Context context, String callId) {
         if (callId == null || callId.isEmpty()) return false;

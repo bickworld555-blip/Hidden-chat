@@ -3,7 +3,10 @@
 %%% 1. Offline wake-up: when mod_offline has stored a message for a device that is not connected, POST
 %%%    {"to": localpart, "ts": seconds} to the Node API (hook_url), signed with HMAC-SHA256 under the shared JWT key
 %%%    (hook_key, base64url) in the x-hm-signature header. The API sends that device's encrypted FCM wake-up.
-%%%    Nothing about the message is sent.
+%%%    For a direct message the body also has its stanza "id" (no content): when the phone confirms the wake-up push
+%%%    arrived, the API sends the sender the delivery receipt for it (5. below), as for messages through the API.
+%%% 5. hm_receipt (admin command, Node API only): routes a XEP-0184 receipt <received id=…/> from one device account
+%%%    to another, on behalf of a phone that got the wake-up push while its app was closed (so it had no connection).
 %%% 2. Group fan-out: a device sends ONE stanza to the server itself,
 %%%      <message to='chat.hiddenmessenger.com' id='G'><fanout xmlns='urn:hiddenmessenger:fanout:1' id='G'>
 %%%        <item to='d...'>BASE64</item> ... </fanout></message>
@@ -28,7 +31,7 @@
 
 -export([start/2, stop/1, reload/3, depends/2, mod_options/1, mod_opt_type/1, mod_doc/0]).
 -export([offline_message/1, user_send_packet/1]).
--export([clear_verdicts/0]).
+-export([clear_verdicts/0, send_receipt/4]).
 
 -include("logger.hrl").
 -include("ejabberd_commands.hrl").
@@ -73,17 +76,37 @@ mod_doc() -> #{desc => [<<"Hidden Messenger: offline wake-up hook and group fan-
 commands() ->
     [#ejabberd_commands{name = hm_clear_verdicts, tags = [hm],
                         desc = "Forget cached delivery verdicts (a block or a group membership changed)",
-                        module = ?MODULE, function = clear_verdicts, args = [], result = {res, rescode}}].
+                        module = ?MODULE, function = clear_verdicts, args = [], result = {res, rescode}},
+     #ejabberd_commands{name = hm_receipt, tags = [hm],
+                        desc = "Send a delivery receipt from one device account to another (a phone woken by push)",
+                        module = ?MODULE, function = send_receipt,
+                        args = [{host, binary}, {from, binary}, {to, binary}, {id, binary}], result = {res, rescode}}].
 
 clear_verdicts() ->
     ets_cache:clear(?VERDICTS),
     ok.
 
+%% Only between two device accounts of this server, for one message id: the same stanza the phone's app sends
+%% (src/xmpp/transport.js sendReceipt), stored for the sender if it is offline.
+send_receipt(Host, From, To, Id) ->
+    Valid = lists:member(Host, ejabberd_option:hosts()) andalso From =/= To
+        andalso device_localpart(From) andalso device_localpart(To)
+        andalso byte_size(Id) > 0 andalso byte_size(Id) =< 128,
+    case Valid of
+        false -> error;
+        true ->
+            ejabberd_router:route(#message{
+                id = <<"r-", Id/binary>>, type = normal, from = jid:make(From, Host), to = jid:make(To, Host),
+                sub_els = [#xmlel{name = <<"received">>, attrs = [{<<"xmlns">>, <<"urn:xmpp:receipts">>}, {<<"id">>, Id}]},
+                           #xmlel{name = <<"store">>, attrs = [{<<"xmlns">>, <<"urn:xmpp:hints">>}]}]}),
+            ok
+    end.
+
 %%% --- 1. Offline wake-up ---------------------------------------------------------------------------------
 
-offline_message({offlined, #message{to = #jid{luser = LUser, lserver = LServer}, from = From, sub_els = Els}} = Acc) ->
+offline_message({offlined, #message{to = #jid{luser = LUser, lserver = LServer}, from = From, sub_els = Els} = Msg} = Acc) ->
     case device_localpart(LUser) of
-        true -> notify(LServer, LUser, sender_localpart(From), group_of(Els));
+        true -> notify(LServer, LUser, sender_localpart(From), group_of(Els), direct_id(Msg));
         false -> ok
     end,
     Acc;
@@ -115,7 +138,20 @@ group_of(Els) ->
         [] -> <<>>
     end.
 
-notify(LServer, LUser, FromUser, Group) ->
+%% The stanza id of a stored direct message (one with an <hm> payload outside a group), or <<>>.
+direct_id(#message{id = Id, sub_els = Els}) when is_binary(Id), Id =/= <<>> ->
+    case [A || #xmlel{name = <<"hm">>, attrs = A} <- Els, fxml:get_attr_s(<<"xmlns">>, A) =:= ?NS_HM] of
+        [Attrs | _] ->
+            case fxml:get_attr_s(<<"g">>, Attrs) of
+                <<"1">> -> <<>>;
+                _ -> Id
+            end;
+        [] -> <<>>
+    end;
+direct_id(_) ->
+    <<>>.
+
+notify(LServer, LUser, FromUser, Group, Id) ->
     Url = gen_mod:get_module_opt(LServer, ?MODULE, hook_url),
     Key = gen_mod:get_module_opt(LServer, ?MODULE, hook_key),
     case {Url, Key} of
@@ -123,7 +159,7 @@ notify(LServer, LUser, FromUser, Group) ->
         {_, <<>>} -> ok;
         _ ->
             Body = iolist_to_binary(json:encode(#{<<"to">> => LUser, <<"from">> => FromUser, <<"group">> => Group,
-                                                   <<"ts">> => erlang:system_time(second)})),
+                                                   <<"id">> => Id, <<"ts">> => erlang:system_time(second)})),
             Request = {binary_to_list(Url), signed_headers(Key, Body), "application/json", Body},
             case httpc:request(post, Request, [{timeout, 8000}, {connect_timeout, 4000}, {ssl, ssl_opts()}],
                                [{sync, false}, {receiver, fun(Reply) -> log_reply(LUser, Reply) end}]) of

@@ -34,6 +34,7 @@ async function fakeEjabberd(url, init) {
   if (command === 'unregister') { ejabberd.accounts.delete(body.user); return json(200, ''); }
   if (command === 'kick_user') return json(200, 0);
   if (command === 'registered_users') return json(200, ['admin', ...ejabberd.accounts]);
+  if (command === 'hm_receipt') { (ejabberd.receipts ??= []).push({ from: body.from, to: body.to, id: body.id, host: body.host }); return json(200, 0); }
   return json(404, { status: 'error' });
 }
 
@@ -419,6 +420,32 @@ test('device lists only show XMPP addresses for users who are moved over', () =>
   assert.equal(x.addressFor('moved', `d${'2'.repeat(40)}`), `d${'2'.repeat(40)}@chat.hiddenmessenger.com`);
   assert.equal(x.addressFor('not-moved', `d${'2'.repeat(40)}`), null);
   assert.equal(x.addressFor('moved', null), null, 'no account, no address');
+});
+
+test('a phone that got the wake-up push confirms it: each waiting direct message gets its delivery receipt once', async () => {
+  const wes = await account(), xia = await account();
+  await withKeysAndPush(wes.token, `fcm-wes-phone-${'w'.repeat(30)}`);
+  const wesDevice = (await api('/api/v1/xmpp/token', { method: 'POST', token: wes.token })).body.jid.split('@')[0];
+  const xiaDevice = (await api('/api/v1/xmpp/token', { method: 'POST', token: xia.token })).body.jid.split('@')[0];
+  const ts = Math.floor(Date.now() / 1000);
+  pushes.length = 0;
+  ejabberd.receipts = [];
+  await hook({ to: wesDevice, from: xiaDevice, id: 'msg-1', ts });
+  await hook({ to: wesDevice, from: xiaDevice, id: 'msg-2', ts });
+  await hook({ to: wesDevice, from: xiaDevice, id: 'grp-1', group: 'g1', ts });
+  await hook({ to: wesDevice, from: xiaDevice, id: 'bad id!', ts });
+  assert.equal(pushes.length, 1, 'still one wake-up for the burst');
+  assert.equal((await api('/api/v1/xmpp/woke', { method: 'POST', token: xia.token })).body.confirmed, 0, 'another device confirms nothing of this one');
+  const woke = await api('/api/v1/xmpp/woke', { method: 'POST', token: wes.token });
+  assert.equal(woke.status, 202);
+  assert.equal(woke.body.confirmed, 2);
+  assert.deepEqual(ejabberd.receipts.map(({ from, to, id }) => ({ from, to, id })), [
+    { from: wesDevice, to: xiaDevice, id: 'msg-1' }, { from: wesDevice, to: xiaDevice, id: 'msg-2' },
+  ], 'direct messages only (group and malformed ids are not confirmed), from this device to the sender');
+  assert.equal((await api('/api/v1/xmpp/woke', { method: 'POST', token: wes.token })).body.confirmed, 0, 'each receipt once');
+  await hook({ to: wesDevice, from: xiaDevice, id: 'msg-3', ts });
+  assert.equal(pushes.length, 2, 'after a confirmed wake-up the next message wakes the phone again at once');
+  assert.equal((await api('/api/v1/xmpp/woke', { method: 'POST' })).status, 401, 'needs a signed-in device');
 });
 
 test('a wake-up for a message from a known device names the sender, like today\'s message push', async () => {

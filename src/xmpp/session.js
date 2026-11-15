@@ -80,6 +80,10 @@ export async function startXmppSession({ sessionToken, userId, deliver, legacySe
   // Group messages sent over XMPP: id -> fallback() resending them through the server if nobody could be reached.
   const groupFallbacks = new Map();
   const CALL_ADDRESS = /^d[0-9a-f]{40}@[^/\s]+\/[^\s]{1,256}$/;
+  // The sending device of a message that came over XMPP, kept with the message (origin) so its delivery receipt and
+  // read marker reach it even after this app restarted (the in-memory cameFrom is gone by then).
+  const ORIGIN = /^d[0-9a-f]{40}@[^/\s]+$/;
+  const originOf = (id, saved) => cameFrom.get(id) ?? (typeof saved === 'string' && ORIGIN.test(saved) ? saved : null);
   const bare = (address) => String(address ?? '').split('/')[0];
 
   const transport = createTransport({
@@ -105,7 +109,7 @@ export async function startXmppSession({ sessionToken, userId, deliver, legacySe
         }
         deliver({
           type: 'message:new',
-          message: { id: event.id, senderId: event.userId, receiverId: userId, content: event.envelope, timestamp: event.sentAt || new Date().toISOString(), status: 'sent', via: 'xmpp' },
+          message: { id: event.id, senderId: event.userId, receiverId: userId, content: event.envelope, timestamp: event.sentAt || new Date().toISOString(), status: 'sent', via: 'xmpp', origin: bare(event.from) },
         });
       } else if (event.type === 'receipt') {
         inFlight.delete(event.id);
@@ -226,31 +230,41 @@ export async function startXmppSession({ sessionToken, userId, deliver, legacySe
      * false when the caller should send it on the current connection as usual.
      */
     route(event) {
-      if (transport.state !== 'online' || !event || typeof event !== 'object') return false;
-      if (event.type === 'message:send' && typeof event.message?.content === 'string' && event.message.content.startsWith('e2e2:') && event.message.receiverId) {
-        sendMessage(event);
-        return true;
-      }
-      // The receipt waits for local storage (queue:ack); the early "delivered" is not sent for XMPP messages.
+      if (!event || typeof event !== 'object') return false;
+      // Receipts and read markers for messages that came over XMPP go over XMPP whatever the connection's state: the
+      // transport queues them until it is online. The server never saw those messages and would drop them (so the
+      // sender kept one grey tick, or never saw blue ones).
       if (event.type === 'message:delivered' && Array.isArray(event.messageIds)) {
+        // The receipt waits for local storage (queue:ack); the early "delivered" is not sent for XMPP messages.
         const rest = event.messageIds.filter((id) => !cameFrom.has(id));
         if (rest.length) legacySend({ ...event, messageIds: rest });
         return true;
       }
       if (event.type === 'queue:ack' && Array.isArray(event.messageIds)) {
-        const ours = event.messageIds.filter((id) => cameFrom.has(id));
-        for (const id of ours) transport.sendReceipt(cameFrom.get(id), id);
-        const rest = event.messageIds.filter((id) => !cameFrom.has(id));
-        if (rest.length || event.eventIds?.length) legacySend({ ...event, messageIds: rest });
+        const rest = [];
+        for (const id of event.messageIds) {
+          const to = originOf(id, event.origins?.[id]);
+          if (to) transport.sendReceipt(to, id); else rest.push(id);
+        }
+        const { origins: _origins, ...plain } = event;
+        if (rest.length || event.eventIds?.length) legacySend({ ...plain, messageIds: rest });
+        return true;
+      }
+      if (event.type === 'message:read') {
+        const to = originOf(event.messageId, event.origin);
+        if (to) { transport.sendDisplayed(to, event.messageId); return true; }
+        const { origin: _origin, ...plain } = event;
+        legacySend(plain);
+        return true;
+      }
+      if (transport.state !== 'online') return false;
+      if (event.type === 'message:send' && typeof event.message?.content === 'string' && event.message.content.startsWith('e2e2:') && event.message.receiverId) {
+        sendMessage(event);
         return true;
       }
       if (event.type === 'call:signal' && event.signal && typeof event.callId === 'string') return routeCallSignal(event);
       if (event.type === 'presence:typing' && typeof event.peerId === 'string' && !event.groupId) {
         sendTyping(event);
-        return true;
-      }
-      if (event.type === 'message:read' && cameFrom.has(event.messageId)) {
-        transport.sendDisplayed(cameFrom.get(event.messageId), event.messageId);
         return true;
       }
       return false;

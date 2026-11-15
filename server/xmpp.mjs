@@ -20,6 +20,14 @@ export const XMPP_TOKEN_TTL_SECONDS = 600;
 export const OFFLINE_HOOK_MAX_SKEW_SECONDS = 300;
 // A device gets at most one wake-up push this often, however many messages wait for it.
 export const WAKE_COALESCE_MS = 15_000;
+// Direct messages stored for an offline device, kept (ids and sending devices only) until that phone confirms the
+// wake-up push arrived (POST /api/v1/xmpp/woke): then each sender gets its delivery receipt, two grey ticks, as for
+// messages through this server (PushService markDelivered). Bounded; lost on a restart (the app's own receipt
+// still comes when it opens).
+export const PENDING_RECEIPTS_PER_DEVICE = 500;
+export const PENDING_RECEIPT_DEVICES = 20_000;
+export const PENDING_RECEIPT_LIFE_MS = 28 * 24 * 60 * 60 * 1000;
+const MESSAGE_ID = /^[A-Za-z0-9_-]{1,128}$/;
 export const DEFAULT_XMPP_HOST = 'chat.hiddenmessenger.com';
 const ADMIN_TIMEOUT_MS = 8000;
 const FORGET_DEBOUNCE_MS = 200;
@@ -105,6 +113,16 @@ export function createXmpp({ db, config = xmppConfigFromEnv(), fetchImpl = globa
   const deleteAccount = db.prepare('DELETE FROM xmpp_accounts WHERE localpart = ?');
   const accountByLocalpart = db.prepare('SELECT user_id AS "userId", device_id AS "deviceId" FROM xmpp_accounts WHERE localpart = ?');
   const lastWake = new Map();
+  // localpart -> [{ id, from, at }] (see PENDING_RECEIPTS_PER_DEVICE).
+  const pendingReceipts = new Map();
+  function rememberReceipt(to, id, from, at) {
+    const list = (pendingReceipts.get(to) ?? []).filter((item) => at - item.at < PENDING_RECEIPT_LIFE_MS && item.id !== id);
+    list.push({ id, from, at });
+    if (list.length > PENDING_RECEIPTS_PER_DEVICE) list.splice(0, list.length - PENDING_RECEIPTS_PER_DEVICE);
+    pendingReceipts.delete(to);
+    pendingReceipts.set(to, list);
+    if (pendingReceipts.size > PENDING_RECEIPT_DEVICES) pendingReceipts.delete(pendingReceipts.keys().next().value);
+  }
   const endedAccounts = db.prepare(`SELECT localpart FROM xmpp_accounts x
     WHERE NOT EXISTS (SELECT 1 FROM sessions s WHERE s.user_id = x.user_id AND s.device_id = x.device_id)`);
   const liveAccounts = db.prepare(`SELECT localpart FROM xmpp_accounts x
@@ -299,6 +317,10 @@ export function createXmpp({ db, config = xmppConfigFromEnv(), fetchImpl = globa
         const device = await accountByLocalpart.get(event.to);
         if (!device) return response.status(202).json({ pushed: 0 });
         const at = now();
+        // Kept before the coalescing below: a message that gets no push of its own still gets its receipt.
+        if (typeof event.id === 'string' && MESSAGE_ID.test(event.id) && typeof event.from === 'string' && DEVICE.test(event.from) && event.from !== event.to && !event.group) {
+          rememberReceipt(event.to, event.id, event.from, at);
+        }
         if (at - (lastWake.get(event.to) ?? 0) < WAKE_COALESCE_MS) return response.status(202).json({ pushed: 0, coalesced: true });
         lastWake.set(event.to, at);
         if (lastWake.size > 10_000) for (const [key, value] of lastWake) if (at - value >= WAKE_COALESCE_MS) lastWake.delete(key);
@@ -307,6 +329,32 @@ export function createXmpp({ db, config = xmppConfigFromEnv(), fetchImpl = globa
         const groupId = typeof event.group === 'string' && event.group.length > 0 && event.group.length <= 128 ? event.group : null;
         try { pushed = await wake(device.userId, device.deviceId, { fromUserId: sender?.userId ?? null, groupId }); } catch (error) { log.warn?.('xmpp: wake-up push failed', error?.message); }
         response.status(202).json({ pushed });
+      });
+
+      // The phone's push handler got a wake-up push (Android PushService, app closed or not): this device is online and
+      // the messages stored for it are as good as delivered. Each sender gets the receipt its app would have sent
+      // (mod_hm hm_receipt), so one grey tick becomes two now rather than when the app is next opened.
+      app.post('/api/v1/xmpp/woke', requireSession, async (request, response) => {
+        const { user_id: userId, device_id: deviceId } = request.session;
+        if (!config.enabled || !userId || !deviceId) return response.status(202).json({ confirmed: 0 });
+        const account = await accountOf.get(userId, deviceId);
+        if (!account) return response.status(202).json({ confirmed: 0 });
+        const localpart = account.localpart;
+        const list = pendingReceipts.get(localpart) ?? [];
+        pendingReceipts.delete(localpart);
+        // The next message wakes it again at once (the coalescing assumed this push would collect everything).
+        lastWake.delete(localpart);
+        const at = now();
+        let confirmed = 0;
+        for (const item of list) {
+          if (at - item.at >= PENDING_RECEIPT_LIFE_MS) continue;
+          try {
+            const { status } = await admin('hm_receipt', { from: localpart, to: item.from, id: item.id });
+            if (status === 200) confirmed += 1;
+            else log.warn?.('xmpp: receipt not sent', status);
+          } catch (error) { log.warn?.('xmpp: receipt not sent', error?.message); }
+        }
+        response.status(202).json({ confirmed });
       });
 
       // The VPS health check (deploy/ejabberd/ops/hm-health.sh, every 5 minutes) reports a problem there:

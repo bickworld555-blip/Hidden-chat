@@ -312,7 +312,7 @@ test('session: incoming messages need the envelope to name the sending device; r
   onEvent({ type: 'message', id: 'in1', from: 'dpeer@h/app', userId: 'user-peer', deviceId: 'tablet', envelope: envelopeFrom('tablet'), sentAt: '2026-11-15T10:00:00Z' });
   onEvent({ type: 'message', id: 'in2', from: 'dpeer@h/app', userId: 'user-peer', deviceId: 'tablet', envelope: envelopeFrom('another-device') });
   assert.equal(h.delivered.length, 1, 'an envelope from another device is dropped');
-  assert.deepEqual(h.delivered[0], { type: 'message:new', message: { id: 'in1', senderId: 'user-peer', receiverId: ME.userId, content: envelopeFrom('tablet'), timestamp: '2026-11-15T10:00:00Z', status: 'sent', via: 'xmpp' } });
+  assert.deepEqual(h.delivered[0], { type: 'message:new', message: { id: 'in1', senderId: 'user-peer', receiverId: ME.userId, content: envelopeFrom('tablet'), timestamp: '2026-11-15T10:00:00Z', status: 'sent', via: 'xmpp', origin: 'dpeer@h' } });
 
   // The early "delivered" is not sent for XMPP messages: the receipt waits until the message is stored (queue:ack).
   assert.equal(session.route({ type: 'message:delivered', messageIds: ['in1', 'legacy-1'] }), true);
@@ -323,7 +323,8 @@ test('session: incoming messages need the envelope to name the sending device; r
   assert.deepEqual(h.legacy.at(-1), { type: 'queue:ack', messageIds: ['legacy-2'], eventIds: [] });
   assert.equal(session.route({ type: 'message:read', messageId: 'in1' }), true);
   assert.deepEqual(h.fake.sent.at(-1), ['displayed', 'dpeer@h/app', 'in1']);
-  assert.equal(session.route({ type: 'message:read', messageId: 'legacy-1' }), false);
+  assert.equal(session.route({ type: 'message:read', messageId: 'legacy-1' }), true);
+  assert.deepEqual(h.legacy.at(-1), { type: 'message:read', messageId: 'legacy-1' }, 'a message that came the old way is read the old way');
 
   onEvent({ type: 'receipt', id: 'mine-1' });
   onEvent({ type: 'displayed', id: 'mine-1' });
@@ -360,8 +361,27 @@ test('session: when XMPP is down, everything takes the current path at once', as
   for (const event of [
     { type: 'message:send', message: { id: 'x1', receiverId: 'peer', content: envelopeFrom('phone') } },
     { type: 'presence:typing', peerId: 'peer', active: true },
-    { type: 'queue:ack', messageIds: ['a'], eventIds: [] },
   ]) assert.equal(session.route(event), false, `${event.type} goes the current way while XMPP is not online`);
+  // Acknowledgements of messages that came the old way still go the old way (the session sends them itself).
+  assert.equal(session.route({ type: 'queue:ack', messageIds: ['a'], eventIds: [] }), true);
+  assert.deepEqual(h.legacy.at(-1), { type: 'queue:ack', messageIds: ['a'], eventIds: [] });
+});
+
+test('session: receipts and read markers reach the sending device after a restart and while XMPP reconnects', async () => {
+  // A new app start: this session never saw the messages arrive (no cameFrom); the saved copies carry their origin.
+  const PEER_DEVICE = `d${'a'.repeat(40)}@h`;
+  const h = sessionHarness();
+  const session = await h.start();
+  h.fake.state = 'connecting';
+  assert.equal(session.route({ type: 'queue:ack', messageIds: ['old-1', 'legacy-3'], eventIds: ['e1'], origins: { 'old-1': PEER_DEVICE } }), true);
+  assert.deepEqual(h.fake.sent.at(-1), ['receipt', PEER_DEVICE, 'old-1'], 'queued on the transport, not given to the server that never saw it');
+  assert.deepEqual(h.legacy.at(-1), { type: 'queue:ack', messageIds: ['legacy-3'], eventIds: ['e1'] }, 'the rest the old way, without the addresses');
+  assert.equal(session.route({ type: 'message:read', messageId: 'old-1', origin: PEER_DEVICE }), true);
+  assert.deepEqual(h.fake.sent.at(-1), ['displayed', PEER_DEVICE, 'old-1'], 'blue ticks for a message received in an earlier run');
+  const before = h.fake.sent.length;
+  session.route({ type: 'message:read', messageId: 'odd-1', origin: 'admin@h/../x' });
+  assert.equal(h.fake.sent.length, before, 'only a device address is trusted as an origin');
+  assert.deepEqual(h.legacy.at(-1), { type: 'message:read', messageId: 'odd-1' });
 });
 
 test('transport: a recording voice note travels as composing + activity and is read back', async () => {

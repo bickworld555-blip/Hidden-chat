@@ -84,13 +84,14 @@ public class PushService extends FirebaseMessagingService {
     /**
      * A message waits on the XMPP core for this phone (server/xmpp.mjs). The notification is the one an encrypted
      * message gets today (the sender's name, "New message": the content stays sealed until the app opens it), and a
-     * running app reconnects at once to collect it. No delivery tick here: the app sends that receipt only once the
-     * message is stored on the phone.
+     * running app reconnects at once to collect it. The phone is online and has been told: the server sends the
+     * senders their delivery receipts (two grey ticks), as markDelivered does for messages through the server.
      */
     private void onXmppWake(RelaySession session, JSONObject body) {
         String from = body.optString("from");
         boolean running = HiddenNativePlugin.emitXmppWake();
         String groupId = body.optString("groupId");
+        if (groupId.isEmpty()) PushRegistration.confirmXmppWake(this);
         if (!groupId.isEmpty()) {
             // A group message: the group's notification, as for "gmsg" pushes.
             if (session.mutedGroups.contains(groupId)) return;

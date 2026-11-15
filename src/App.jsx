@@ -589,7 +589,19 @@ export default function App() {
         // Accounts moved over to the XMPP core (src/xmpp/session.js; the server decides, 0% by default) carry device-to-
         // device traffic over XMPP; anything it cannot carry goes on this connection as before. Others never open it.
         const legacySend = realtime.send.bind(realtime);
-        realtime.send = (event) => (xmppRef.current?.route(event) ? true : legacySend(event));
+        // Until the XMPP session is known, receipts and read markers for messages that came over XMPP (they carry the
+        // sender's address) wait for it: the server never saw those messages (an app opened from a notification
+        // reads the chat before XMPP is up). Without a session they go to the server as before.
+        let xmppStarting = true;
+        const heldForXmpp = [];
+        const forXmpp = (event) => (event?.type === 'message:read' && typeof event.origin === 'string')
+          || (event?.type === 'queue:ack' && event.origins && Object.keys(event.origins).length > 0);
+        const releaseHeld = () => { xmppStarting = false; for (const event of heldForXmpp.splice(0)) realtime.send(event); };
+        realtime.send = (event) => {
+          if (xmppRef.current) return xmppRef.current.route(event) ? true : legacySend(event);
+          if (xmppStarting && forXmpp(event) && heldForXmpp.length < 2000) { heldForXmpp.push(event); return true; }
+          return legacySend(event);
+        };
         startXmppSession({ sessionToken, userId, deliver: onRealtimeEvent, legacySend, targetsFor: xmppTargetsFor, groupTargetsFor: xmppGroupTargetsFor, userForAddress: userForXmppAddress, fetchImpl: apiFetch, seal: (peerId, content) => sealDirect(peerId, content), signalingRestored, onTransportState: (state) => noteCallEvent('xmpp', state) })
           .then((session) => {
             if (!session) return;
@@ -599,7 +611,8 @@ export default function App() {
             session.setActive(document.visibilityState === 'visible');
             session.transport.connect();
           })
-          .catch(() => {});
+          .catch(() => {})
+          .finally(() => { if (!cancelled) releaseHeld(); });
         let contactsLoaded = false;
         const loadContacts = async () => {
           const contactResponse = await apiFetch('/api/v1/contacts', { headers: { Authorization: `Bearer ${sessionToken}` } });

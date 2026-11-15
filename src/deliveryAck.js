@@ -22,9 +22,11 @@ export function acknowledgeable(message) {
   return Boolean(message?.id) && !message.e2eError && !isEnvelope(message.content) && !acknowledged.has(message.id);
 }
 
-async function send(messageIds, eventIds, { client, sessionToken }) {
+// origins: id -> the XMPP address of the device that sent it (messages that came over XMPP; src/xmpp/session.js).
+async function send(messageIds, eventIds, { client, sessionToken }, origins = {}) {
   if (messageIds.length === 0 && eventIds.length === 0) return true;
-  if (client?.send && client.send({ type: 'queue:ack', messageIds, eventIds }) !== false) return true;
+  const withOrigins = Object.keys(origins).length ? { origins } : {};
+  if (client?.send && client.send({ type: 'queue:ack', messageIds, eventIds, ...withOrigins }) !== false) return true;
   if (!sessionToken) return false;
   try {
     const response = await apiFetch('/api/v1/queue/ack', {
@@ -45,16 +47,19 @@ async function send(messageIds, eventIds, { client, sessionToken }) {
  */
 export async function acknowledgeSaved(messages, context) {
   const ready = [];
+  const origins = {};
   for (const message of messages) {
     if (!acknowledgeable(message)) continue;
     const mediaId = attachmentToKeep(message.content);
     const voice = parseRouting(routingFor(message.content))?.kind === 'voice';
     if (mediaId && !(await storeMediaLocally(mediaId, context.sessionToken, { voice }))) continue;
     ready.push(message.id);
+    if (typeof message.origin === 'string') origins[message.id] = message.origin;
   }
   for (let start = 0; start < ready.length; start += 200) {
     const batch = ready.slice(start, start + 200);
-    if (await send(batch, [], context)) for (const id of batch) acknowledged.add(id);
+    const batchOrigins = Object.fromEntries(batch.filter((id) => id in origins).map((id) => [id, origins[id]]));
+    if (await send(batch, [], context, batchOrigins)) for (const id of batch) acknowledged.add(id);
   }
   if (acknowledged.size > MAX_REMEMBERED) acknowledged.clear();
   return ready.length;
