@@ -1423,19 +1423,28 @@ export function createChatServer({
     await broadcastPresence(userId);
   }
 
+  // Presence goes to the people linked with this person (a contacts row: saved, or chatted with) and their own other
+  // devices, not to everyone connected: telling every socket about every change, and every new connection about
+  // everyone online, grew with the square of the number of people online (2,000 sockets could not all connect;
+  // scripts/load/run.mjs).
+  // Linked either way: in my contacts or chats, or I am in theirs.
+  const linkedPeople = db.prepare('SELECT contact_id AS "id" FROM contacts WHERE owner_id = ? UNION SELECT owner_id AS "id" FROM contacts WHERE contact_id = ?');
+
   async function broadcastPresence(userId) {
     const view = await presenceViewer(userId);
-    for (const [viewerId, sockets] of connections) {
+    const viewers = new Set([userId, ...(await linkedPeople.all(userId, userId)).map((row) => row.id)]);
+    for (const viewerId of viewers) {
+      const sockets = connections.get(viewerId);
+      if (!sockets?.size) continue;
       const presence = view(viewerId);
-      if (!presence) return;
+      if (!presence) continue;
       for (const socket of sockets) json(socket, { type: 'presence:update', ...presence });
     }
   }
 
-  // Everyone the viewer can see on connect: their chat partners (online or not, for last seen) and anyone online.
+  // What the viewer sees on connect: the people they are linked with (online or not, for last seen).
   async function presenceSnapshot(viewerId) {
-    const partners = (await db.prepare('SELECT contact_id AS "id" FROM contacts WHERE owner_id = ?').all(viewerId)).map((row) => row.id);
-    const ids = new Set([...partners, ...connections.keys()]);
+    const ids = new Set((await linkedPeople.all(viewerId, viewerId)).map((row) => row.id));
     ids.delete(viewerId);
     const views = await Promise.all([...ids].map(async (id) => (await presenceViewer(id))(viewerId)));
     return views.filter(Boolean);

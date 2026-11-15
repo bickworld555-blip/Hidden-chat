@@ -12,6 +12,7 @@
     "preview": "vite preview",
     "start": "node server/main.mjs",
     "test": "node --test server/*.test.mjs",
+    "load": "node scripts/load/run.mjs",
     "db:migrate": "node --env-file=.env scripts/migrate-postgres.mjs",
     "db:import": "node --env-file=.env scripts/import-sqlite.mjs",
     "start:production": "node --env-file=.env server/main.mjs",

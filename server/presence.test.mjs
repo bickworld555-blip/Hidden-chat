@@ -171,12 +171,18 @@ test('"Nobody" hides online and last seen from everyone; "My contacts" shows the
   const owner = await register('own');
   const friend = await register('fri');
   const stranger = await register('str');
+  const unlinked = await register('unl');
   assert.equal((await api('/api/v1/me/privacy', { session: owner })).body.lastSeen, 'everyone');
   assert.equal((await api('/api/v1/me/privacy', { session: owner, method: 'PUT', body: { lastSeen: 'friends' } })).status, 400);
   await api('/api/v1/contacts', { session: owner, method: 'POST', body: { userId: friend.user.id } });
   const friendSocket = await connect(friend);
   const strangerSocket = await connect(stranger);
   await until(() => strangerSocket.events.some((event) => event.type === 'connection:ready'), 'stranger ready');
+  // The "stranger" has chatted with the owner but is not a saved contact; `unlinked` has never been in touch.
+  strangerSocket.send(JSON.stringify({ type: 'message:send', message: { id: 'presence-hello', receiverId: owner.user.id, content: 'hi' } }));
+  await until(() => strangerSocket.events.some((event) => event.type === 'message:ack'), 'stranger wrote');
+  const unlinkedSocket = await connect(unlinked);
+  await until(() => unlinkedSocket.events.some((event) => event.type === 'connection:ready'), 'unlinked ready');
   const ownerSocket = await connect(owner);
   await until(() => latest(friendSocket, owner.user.id)?.status === 'online', 'friend sees online');
   await until(() => latest(strangerSocket, owner.user.id)?.status === 'online', 'stranger sees online');
@@ -193,8 +199,11 @@ test('"Nobody" hides online and last seen from everyone; "My contacts" shows the
     const update = latest(socket, owner.user.id);
     assert.deepEqual([update.status, update.lastSeenAt], ['hidden', null], 'no last seen time leaks');
   }
+  // Presence goes only to people linked with the owner, never to every connected socket.
+  assert.equal(unlinkedSocket.events.filter((event) => event.userId === owner.user.id).length, 0, 'no presence for people never in touch');
   friendSocket.close();
   strangerSocket.close();
+  unlinkedSocket.close();
 });
 
 test('changing the password needs the current one and signs other devices out', async () => {
