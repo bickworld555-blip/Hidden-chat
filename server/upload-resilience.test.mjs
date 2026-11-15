@@ -16,6 +16,7 @@ class FakeXhr {
   constructor() { this.upload = {}; this.headers = {}; requests.push(this); }
   open(method, url) { Object.assign(this, { method, url }); }
   setRequestHeader(name, value) { this.headers[name] = value; }
+  getResponseHeader() { return null; }
   abort() { this.aborted = true; this.onabort?.(); }
   send(body) {
     this.body = body;
@@ -34,6 +35,8 @@ class FakeXhr {
 }
 globalThis.XMLHttpRequest = FakeXhr;
 globalThis.location = { href: 'https://hiddenmessenger.com/' };
+// The only fetch here is the upload-config question (direct-to-bucket uploads): answered "no", never the network.
+globalThis.fetch = async () => new Response(JSON.stringify({ direct: false }), { status: 200, headers: { 'Content-Type': 'application/json' } });
 const { onCellular, retryableUpload, uploadFile, SINGLE_ATTEMPTS, STALL_MS } = await import('../src/upload.js');
 
 const voiceNote = () => new File([new Uint8Array(200 * 1024)], 'voice.webm', { type: 'audio/webm' });

@@ -130,6 +130,16 @@ function mediaUrl(id) {
   return `/api/v1/media/${encodeURIComponent(id)}`;
 }
 
+// The bytes of an attachment. Ones kept in object storage (server/objectStore.mjs) come from a short-lived bucket URL
+// that the server names (X-HM-Media-Location) when asked with ?locate=1; that URL is fetched without the session
+// token, so no credentials follow a redirect to another host. Others stream from the server as before.
+export async function fetchMediaResponse(id, sessionToken, signal) {
+  const response = await apiFetch(`${mediaUrl(id)}?locate=1`, { headers: { Authorization: `Bearer ${sessionToken}` }, signal });
+  if (!response.ok || response.headers.get('x-hm-media-location') !== '1') return response;
+  const { url } = await response.json();
+  return fetch(url, { signal, credentials: 'omit' });
+}
+
 async function fetchMediaInfo(id, sessionToken, signal) {
   const response = await apiFetch(mediaUrl(id), { method: 'HEAD', headers: { Authorization: `Bearer ${sessionToken}` }, signal });
   if (!response.ok) throw new Error(response.status === 404 ? 'File is no longer available.' : 'Could not load file details.');
@@ -150,7 +160,7 @@ async function fetchMediaBlob(id, sessionToken, { signal, onProgress } = {}) {
 }
 
 async function fetchMediaBytes(id, sessionToken, { signal, onProgress } = {}) {
-  const response = await apiFetch(mediaUrl(id), { headers: { Authorization: `Bearer ${sessionToken}` }, signal });
+  const response = await fetchMediaResponse(id, sessionToken, signal);
   if (!response.ok) throw new Error(response.status === 404 ? 'File is no longer available.' : 'Download failed.');
   const type = essence(response.headers.get('content-type'));
   const total = Number.parseInt(response.headers.get('content-length') ?? '', 10);

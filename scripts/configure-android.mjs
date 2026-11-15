@@ -67,13 +67,15 @@ export function bundledCsp(rawUrl) {
   // The XMPP core (ejabberd on the VPS, server/xmpp.mjs DEFAULT_XMPP_HOST): the app's WebSocket to it
   // (src/xmpp/transport.js). Another host is named in ANDROID_XMPP_ORIGINS (space-separated wss:// origins).
   const xmpp = sfuOrigins(process.env.ANDROID_XMPP_ORIGINS ?? DEFAULT_XMPP_ORIGIN);
+  // Attachments in Cloudflare R2 (server/objectStore.mjs): uploads and downloads go straight to the bucket.
+  const storage = ['https://*.r2.cloudflarestorage.com'];
   return [
     "default-src 'self'",
     "script-src 'self' 'wasm-unsafe-eval'",
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob: https:",
-    `media-src 'self' blob: data: ${api}`,
-    `connect-src 'self' blob: data: ${api} ${socket} ${xmpp.join(' ')} ${services.join(' ')} ${sfu.join(' ')}`,
+    `media-src 'self' blob: data: ${api} ${storage.join(' ')}`,
+    `connect-src 'self' blob: data: ${api} ${socket} ${xmpp.join(' ')} ${services.join(' ')} ${sfu.join(' ')} ${storage.join(' ')}`,
     "worker-src 'self' blob:",
     "font-src 'self' data:",
     "object-src 'none'",

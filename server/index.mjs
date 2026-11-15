@@ -2,6 +2,7 @@ import { createHash, createHmac, randomBytes, randomUUID, scrypt as scryptCallba
 import { copyFileSync, createWriteStream, existsSync, linkSync, mkdirSync } from 'node:fs';
 import { readdir, stat, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
+import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { createServer } from 'node:http';
 import { dirname, join, relative, resolve, isAbsolute } from 'node:path';
@@ -22,6 +23,7 @@ import { createEventPilot } from './eventPilot.mjs';
 import { pdfPageCountOfFile } from './pdfPages.mjs';
 import { createLinkPreviews } from './linkPreview.mjs';
 import { createPushSender, encryptForDevice, loadServiceAccount, pushBody, validDeviceKey } from './push.mjs';
+import { createObjectStore, MAX_PARTS, OBJECT_KEY_PREFIX, objectStoreConfigFromEnv, PART_BYTES, UPLOAD_URL_TTL_SECONDS } from './objectStore.mjs';
 import { createLoginThrottle, ensureParitySchema, registerParity } from './parity.mjs';
 import { createVerifiedAccounts, createVerifiedChannels, ensureVerificationSchema, registerVerification } from './verification.mjs';
 import { ensureRegionSchema, registerRegions } from './regions.mjs';
@@ -164,6 +166,8 @@ export function createChatServer({
   gifFetch = globalThis.fetch,
   // The XMPP core (server/xmpp.mjs): XMPP_JWT_SECRET, XMPP_ADMIN_PASSWORD; `xmppFetch` reaches its admin API.
   xmppConfig = xmppConfigFromEnv(process.env),
+  // Attachments in S3-compatible storage (server/objectStore.mjs) when MEDIA_STORAGE=r2; local disk otherwise.
+  objectStore: objectStoreOption = undefined,
   xmppFetch = globalThis.fetch,
 } = {}) {
   if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('PORT must be an integer from 0 to 65535.');
@@ -190,6 +194,7 @@ export function createChatServer({
     mkdirSync(join(dataDirectory, 'media'), { recursive: true });
   }
   const mediaDirectory = join(dataDirectory, 'media');
+  const objectStore = objectStoreOption === undefined ? (() => { const config = objectStoreConfigFromEnv(); return config ? createObjectStore(config) : null; })() : objectStoreOption;
   // What nearly every message and request asks again, kept in this process for up to a minute and dropped the moment
   // a write touches its table (server/memoryCache.mjs). Ignored writes are bookkeeping that changes nothing cached.
   const sessionCache = createTtlCache();
@@ -373,6 +378,11 @@ export function createChatServer({
       COMMIT;`);
   }
   db.exec('CREATE INDEX IF NOT EXISTS media_group ON media(group_id) WHERE group_id IS NOT NULL');
+  // Where an attachment's bytes live: 'disk' (disk_name is a file) or 'r2' (disk_name is the object key). Postgres: 031.
+  for (const table of ['media', 'uploads']) {
+    if (!db.prepare(`PRAGMA table_info(${table})`).all().some((column) => column.name === 'storage')) db.exec(`ALTER TABLE ${table} ADD COLUMN storage TEXT NOT NULL DEFAULT 'disk'`);
+  }
+  if (!db.prepare('PRAGMA table_info(uploads)').all().some((column) => column.name === 'remote_upload_id')) db.exec('ALTER TABLE uploads ADD COLUMN remote_upload_id TEXT');
   db.exec(`CREATE TABLE IF NOT EXISTS message_reactions (
     message_id TEXT NOT NULL,
     user_id TEXT NOT NULL,
@@ -996,13 +1006,17 @@ export function createChatServer({
         .get(...exact, ...prefixed, sealed));
     if (referenced) return false;
     if (await db.prepare('SELECT 1 FROM statuses WHERE content IN (?, ?) OR content LIKE ? LIMIT 1').get(exact[0], exact[1], prefixed[0])) return false;
-    const media = await db.prepare('DELETE FROM media WHERE id = ? RETURNING disk_name AS "diskName"').get(mediaId);
+    const media = await db.prepare('DELETE FROM media WHERE id = ? RETURNING disk_name AS "diskName", storage').get(mediaId);
     if (!media) return false;
-    await removeMediaFile(media.diskName);
+    await removeMediaFile(media.diskName, media.storage);
     return true;
   }
 
-  async function removeMediaFile(diskName) {
+  async function removeMediaFile(diskName, storage = 'disk') {
+    if (storage === 'r2') {
+      if (!objectStore) return console.error('An attachment is in object storage, which is not configured: it was not removed.');
+      return objectStore.remove(diskName).catch((error) => console.error(`Attachment could not be removed from object storage (${error.status ?? error.name}).`));
+    }
     try {
       await unlink(join(mediaDirectory, diskName));
     } catch (error) {
@@ -1321,7 +1335,8 @@ export function createChatServer({
   const admin = registerAdmin({
     requireAdmin: adminAuth.requireAdmin,
     onlineNow: () => connections.size,
-    mediaFileExists: async (diskName) => Boolean(diskName && await stat(join(mediaDirectory, diskName)).catch(() => null)),
+    // Object-storage attachments are not on this disk; the scan counts them as present.
+    mediaFileExists: async (diskName) => Boolean(diskName && (diskName.startsWith(OBJECT_KEY_PREFIX) || await stat(join(mediaDirectory, diskName)).catch(() => null))),
     app, db, requireSession, publicUser, userColumns: USER_COLUMNS, pushEnabled: () => Boolean(push),
     closeUserSessions,
     supportUnanswered: () => support.unanswered(),
@@ -1490,7 +1505,7 @@ export function createChatServer({
 
   // Of the newest attachments, how many have lost their file (a health signal; no ids or names are reported).
   async function missingRecentMedia(limit = 50) {
-    const rows = await db.prepare('SELECT disk_name AS "diskName" FROM media ORDER BY created_at DESC LIMIT ?').all(limit);
+    const rows = await db.prepare("SELECT disk_name AS \"diskName\" FROM media WHERE storage = 'disk' ORDER BY created_at DESC LIMIT ?").all(limit);
     let missing = 0;
     for (const row of rows) if (!(await stat(join(mediaDirectory, row.diskName)).catch(() => null))) missing += 1;
     return { checked: rows.length, missing };
@@ -1869,8 +1884,33 @@ export function createChatServer({
 
   async function discardUpload(upload) {
     (await db.prepare("DELETE FROM uploads WHERE id = ?").run(upload.id));
+    if (upload.storage === 'r2') {
+      await objectStore?.abortMultipart(upload.disk_name, upload.remote_upload_id).catch((error) => console.error(`An upload could not be aborted in object storage (${error.status ?? error.name}).`));
+      return;
+    }
     await unlink(join(mediaDirectory, upload.disk_name)).catch(() => {});
   }
+
+  // --- Direct uploads to object storage: the phone sends the parts straight to the bucket with presigned URLs. ---
+  // Part size: 8 MiB, larger only when a file would need more than the bucket's 10,000 parts (whole MiB).
+  const partBytesFor = (byteSize) => Math.max(PART_BYTES, Math.ceil(byteSize / MAX_PARTS / 1048576) * 1048576);
+  const MAX_PART_URLS = 20;
+  app.get('/api/v1/uploads/config', requireSession, (_request, response) => {
+    response.json(objectStore ? { direct: true, partBytes: PART_BYTES } : { direct: false });
+  });
+
+  app.post('/api/v1/uploads/:id/parts', requireSession, async (request, response) => {
+    const upload = (await ownUpload(request, response));
+    if (!upload) return;
+    if (upload.storage !== 'r2' || !objectStore) return response.status(409).json({ error: 'This upload goes through the server.' });
+    const partCount = Math.ceil(upload.byte_size / partBytesFor(upload.byte_size));
+    const numbers = Array.isArray(request.body?.partNumbers) ? request.body.partNumbers : [];
+    if (!numbers.length || numbers.length > MAX_PART_URLS || !numbers.every((n) => Number.isInteger(n) && n >= 1 && n <= partCount)) {
+      return response.status(400).json({ error: `Ask for 1 to ${MAX_PART_URLS} parts between 1 and ${partCount}.` });
+    }
+    (await db.prepare("UPDATE uploads SET updated_at = ? WHERE id = ?").run(Date.now(), upload.id));
+    response.json({ urls: Object.fromEntries(numbers.map((n) => [n, objectStore.presignPart(upload.disk_name, upload.remote_upload_id, n)])), expiresIn: UPLOAD_URL_TTL_SECONDS });
+  });
 
   async function discardStaleUploads() {
     const stale = (await db.prepare("SELECT * FROM uploads WHERE updated_at < ?").all(Date.now() - UPLOAD_STALE_MS));
@@ -1886,6 +1926,22 @@ export function createChatServer({
     const filename = sanitizeFilename(String(request.body?.filename ?? 'attachment').slice(0, 1024));
     const contentType = resolveContentType(request.body?.contentType, filename);
     const id = randomUUID();
+    if (request.body?.direct === true && objectStore) {
+      const key = `${OBJECT_KEY_PREFIX}${id}`;
+      let remoteUploadId;
+      try {
+        remoteUploadId = await objectStore.createMultipart(key, contentType);
+      } catch (error) {
+        console.error(`Object storage could not start an upload (${error.status ?? error.name}).`);
+        return response.status(503).json({ error: 'Attachments are briefly unavailable. Try again in a moment.' });
+      }
+      const now = Date.now();
+      (await db.prepare(`INSERT INTO uploads(id, owner_id, receiver_id, group_id, filename, content_type, byte_size, received, disk_name, created_at, updated_at, storage, remote_upload_id)
+        VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, 'r2', ?)`)
+        .run(id, request.session.user_id, target.receiverId, target.groupId, filename, contentType, byteSize, key, now, now, remoteUploadId));
+      const partBytes = partBytesFor(byteSize);
+      return response.status(201).json({ uploadId: id, byteSize, filename, contentType, direct: { partBytes, partCount: Math.ceil(byteSize / partBytes) } });
+    }
     const diskName = `${id}.blob`;
     await writeFile(join(mediaDirectory, diskName), '', { flag: 'wx' });
     const now = Date.now();
@@ -1912,6 +1968,10 @@ export function createChatServer({
   app.put('/api/v1/uploads/:id', requireSession, async (request, response) => {
     const upload = (await ownUpload(request, response));
     if (!upload) return request.resume();
+    if (upload.storage === 'r2') {
+      request.resume();
+      return response.status(409).json({ error: 'This upload goes straight to storage: send its parts there.' });
+    }
     const offset = Number.parseInt(request.get('x-upload-offset') ?? '', 10);
     if (!Number.isInteger(offset) || offset !== upload.received) {
       request.resume();
@@ -1957,6 +2017,7 @@ export function createChatServer({
   app.post('/api/v1/uploads/:id/complete', requireSession, async (request, response) => {
     const upload = (await ownUpload(request, response));
     if (!upload) return;
+    if (upload.storage === 'r2') return completeDirectUpload(upload, request, response);
     const size = await stat(join(mediaDirectory, upload.disk_name)).then((info) => info.size).catch(() => -1);
     if (upload.received !== upload.byte_size || size !== upload.byte_size) {
       return response.status(409).json({ error: 'The upload is incomplete.', received: upload.received, byteSize: upload.byte_size });
@@ -1968,6 +2029,32 @@ export function createChatServer({
     response.status(201).json({ id: upload.id, filename: upload.filename, contentType: upload.content_type, byteSize: upload.byte_size });
   });
 
+  // Every part exactly once, in order, each with the ETag the bucket gave it; the stored size must match.
+  async function completeDirectUpload(upload, request, response) {
+    if (!objectStore) return response.status(503).json({ error: 'Attachments are briefly unavailable. Try again in a moment.' });
+    const partCount = Math.ceil(upload.byte_size / partBytesFor(upload.byte_size));
+    const parts = Array.isArray(request.body?.parts) ? request.body.parts : [];
+    const valid = parts.length === partCount && parts.every((part, index) => part?.partNumber === index + 1 && typeof part.etag === 'string' && part.etag.length > 0 && part.etag.length <= 200);
+    if (!valid) return response.status(400).json({ error: `Give all ${partCount} parts with their ETags, in order.` });
+    try {
+      await objectStore.completeMultipart(upload.disk_name, upload.remote_upload_id, parts);
+      const size = await objectStore.size(upload.disk_name);
+      if (size !== upload.byte_size) {
+        await objectStore.remove(upload.disk_name).catch(() => {});
+        (await db.prepare("DELETE FROM uploads WHERE id = ?").run(upload.id));
+        return response.status(409).json({ error: 'The uploaded file is not the size announced. Please send it again.' });
+      }
+    } catch (error) {
+      console.error(`Object storage could not complete an upload (${error.status ?? error.name}).`);
+      return response.status(error.status === 400 ? 400 : 502).json({ error: 'The upload could not be completed. Please send the file again.' });
+    }
+    (await db.prepare(`INSERT INTO media(id, sender_id, receiver_id, group_id, filename, content_type, byte_size, disk_name, created_at, storage)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'r2')`)
+      .run(upload.id, upload.owner_id, upload.receiver_id, upload.group_id, upload.filename, upload.content_type, upload.byte_size, upload.disk_name, Date.now()));
+    (await db.prepare("DELETE FROM uploads WHERE id = ?").run(upload.id));
+    response.status(201).json({ id: upload.id, filename: upload.filename, contentType: upload.content_type, byteSize: upload.byte_size });
+  }
+
   // --- Downloads: a short-lived link lets the browser stream straight to disk (with range resume) without a header. ---
 
   const downloadLinks = new Map();
@@ -1978,7 +2065,7 @@ export function createChatServer({
 
   // Direct attachments are readable by both people; group attachments by the group's current members.
   async function mediaFor(userId, mediaId) {
-    return (await db.prepare(`SELECT id, filename, content_type AS "contentType", disk_name AS "diskName", byte_size AS "byteSize"
+    return (await db.prepare(`SELECT id, filename, content_type AS "contentType", disk_name AS "diskName", byte_size AS "byteSize", storage
       FROM media WHERE id = ? AND (sender_id = ? OR receiver_id = ?
         OR (group_id IS NOT NULL AND EXISTS (SELECT 1 FROM group_members WHERE group_id = media.group_id AND user_id = ?))
         OR EXISTS (SELECT 1 FROM statuses s JOIN contacts c ON c.owner_id = s.user_id AND c.contact_id = ? AND c.hidden = 0
@@ -2095,7 +2182,7 @@ export function createChatServer({
     const opened = route.kind === 'voice' ? `voice-opened:${route.seconds}` : 'media-opened:';
     const claimed = await db.prepare('UPDATE messages SET content = ? WHERE id = ? AND content = ? RETURNING id').get(opened, row.id, row.content);
     if (!claimed) return response.status(410).json({ error: 'This voice message was already played.' });
-    const media = await db.prepare('SELECT filename, content_type AS "contentType", disk_name AS "diskName" FROM media WHERE id = ?').get(mediaId);
+    const media = await db.prepare('SELECT filename, content_type AS "contentType", disk_name AS "diskName", storage FROM media WHERE id = ?').get(mediaId);
     const event = { type: 'message:updated', messageId: row.id, content: opened };
     broadcastUser(row.senderId, event);
     broadcastUser(row.receiverId, event);
@@ -2106,9 +2193,24 @@ export function createChatServer({
       'X-Content-Type-Options': 'nosniff',
       'Cache-Control': 'private, no-store',
     });
+    const purge = () => purgeUnreferencedMedia(row.content).catch((failure) => console.error('View once audio could not be removed:', failure.code ?? failure.name));
+    if (media.storage === 'r2') {
+      // Played once, then deleted: streamed through this server (a link to the bucket could be replayed until it
+      // expired, after the object is already gone from the chat).
+      try {
+        const stored = objectStore ? await fetch(objectStore.presignDownload(media.diskName)) : null;
+        if (!stored?.ok || !stored.body) throw new Error(`object storage answered ${stored?.status ?? 'nothing'}`);
+        if (stored.headers.get('content-length')) response.set('Content-Length', stored.headers.get('content-length'));
+        await pipeline(Readable.fromWeb(stored.body), response);
+      } catch {
+        if (!response.headersSent) response.status(410).json({ error: 'This voice message is no longer available.' });
+        else response.destroy();
+      }
+      return purge();
+    }
     response.sendFile(media.diskName, { root: mediaDirectory, cacheControl: false, dotfiles: 'deny' }, (error) => {
       if (error && !response.headersSent) response.status(410).json({ error: 'This voice message is no longer available.' });
-      purgeUnreferencedMedia(row.content).catch((failure) => console.error('View once audio could not be removed:', failure.code ?? failure.name));
+      purge();
     });
   });
 
@@ -2141,6 +2243,24 @@ export function createChatServer({
     // Rows stored before types were preserved hold the generic type; re-derive it from the filename.
     const contentType = resolveContentType(media.contentType, media.filename);
     const inline = Boolean(request.query.inline) && isInlineSafe(contentType);
+    if (media.storage === 'r2') {
+      if (!objectStore) return response.status(503).json({ error: 'Attachments are briefly unavailable. Try again in a moment.' });
+      // HEAD is answered here (a presigned URL is for GET only); GET goes straight to the bucket, so the bytes never
+      // pass through this server. Page counts are not read from stored PDFs.
+      response.set({ 'Cache-Control': 'private, no-store', 'Access-Control-Expose-Headers': 'Content-Disposition, Content-Length, X-Page-Count' });
+      if (request.method === 'HEAD') {
+        response.set({ 'Content-Type': contentType, 'Content-Length': String(media.byteSize), 'Content-Disposition': contentDisposition(media.filename, inline ? 'inline' : 'attachment') });
+        return response.status(200).end();
+      }
+      const location = objectStore.presignDownload(media.diskName, { contentType, filename: media.filename, inline });
+      // The app asks with ?locate=1 and fetches the URL itself, without its session token (src/media.js
+      // fetchMediaResponse); <img>, <video> and plain links follow the redirect, which carries no credentials.
+      if (request.query.locate === '1') {
+        response.set({ 'X-HM-Media-Location': '1', 'Access-Control-Expose-Headers': 'Content-Disposition, Content-Length, X-Page-Count, X-HM-Media-Location' });
+        return response.json({ url: location });
+      }
+      return response.redirect(302, location);
+    }
     // "1 page • 0.94 MB • PDF" under a document, like WhatsApp.
     const pages = contentType === 'application/pdf' ? await pdfPageCountOfFile(join(mediaDirectory, media.diskName)) : null;
     if (pages) response.set('X-Page-Count', String(pages));
@@ -3132,7 +3252,7 @@ export function createChatServer({
       }
       // Media from another conversation the sender can read (a forward) is re-shared to this receiver as its own copy.
       const media = mediaId ? (await db.prepare(`SELECT id, sender_id AS "senderId", receiver_id AS "receiverId", filename,
-        content_type AS "contentType", byte_size AS "byteSize", disk_name AS "diskName"
+        content_type AS "contentType", byte_size AS "byteSize", disk_name AS "diskName", storage
         FROM media WHERE id = ? AND (sender_id = ? OR receiver_id = ?)`).get(mediaId, userId, userId)) : null;
       if (!receiver || receiverId === userId || !content || content.length > (isEnvelope(content) ? MAX_DIRECT_ENVELOPE : 4000) || (mediaId && !media)) {
         return json(socket, { type: 'error', message: 'Message is invalid or too long.' });
@@ -3176,19 +3296,25 @@ export function createChatServer({
       let storedContent = content;
       if (media && !(media.senderId === userId && media.receiverId === receiverId)) {
         const copyId = randomUUID();
-        const diskName = `${copyId}.blob`;
+        const remote = media.storage === 'r2';
+        const diskName = remote ? `${OBJECT_KEY_PREFIX}${copyId}` : `${copyId}.blob`;
         try {
-          try {
-            linkSync(join(mediaDirectory, media.diskName), join(mediaDirectory, diskName));
-          } catch {
-            copyFileSync(join(mediaDirectory, media.diskName), join(mediaDirectory, diskName));
+          if (remote) {
+            if (!objectStore) throw new Error('object storage is not configured');
+            await objectStore.copy(media.diskName, diskName);
+          } else {
+            try {
+              linkSync(join(mediaDirectory, media.diskName), join(mediaDirectory, diskName));
+            } catch {
+              copyFileSync(join(mediaDirectory, media.diskName), join(mediaDirectory, diskName));
+            }
           }
         } catch {
           return json(socket, { type: 'error', message: 'This media is no longer available to forward.' });
         }
-        (await db.prepare(`INSERT INTO media(id, sender_id, receiver_id, filename, content_type, byte_size, disk_name, created_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)`)
-          .run(copyId, userId, receiverId, media.filename, media.contentType, media.byteSize, diskName, Date.now()));
+        (await db.prepare(`INSERT INTO media(id, sender_id, receiver_id, filename, content_type, byte_size, disk_name, created_at, storage)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+          .run(copyId, userId, receiverId, media.filename, media.contentType, media.byteSize, diskName, Date.now(), remote ? 'r2' : 'disk'));
         // An encrypted forward names the copy in its routing part; the receiver uses that id (envelope.js withRoutedMedia).
         const prefixLength = isEnvelope(content) ? content.indexOf(':', 5) + 1 : content.indexOf(':') + 1;
         storedContent = `${content.slice(0, prefixLength)}${copyId}${content.slice(prefixLength + mediaId.length)}`;

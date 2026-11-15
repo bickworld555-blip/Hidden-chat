@@ -21,7 +21,7 @@ function stubMediaServer(bodies) {
   const calls = [];
   globalThis.fetch = async (url, init = {}) => {
     calls.push({ url, method: init.method ?? 'GET' });
-    const id = decodeURIComponent(String(url).split('/').pop());
+    const id = decodeURIComponent(String(url).split('?')[0].split('/').pop());
     const body = bodies[id];
     if (!body) return new Response(null, { status: 404 });
     const headers = { 'Content-Type': 'image/png', 'Content-Length': String(body.length) };

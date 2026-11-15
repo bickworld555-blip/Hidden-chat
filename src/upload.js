@@ -46,6 +46,17 @@ function isAbort(error) {
 // Returns the same { response: { ok, status }, data } shape as api(); falls back to fetch where XHR is missing.
 function send(path, { sessionToken, signal, method, body, headers = {}, onBytes }) {
   if (typeof XMLHttpRequest === 'undefined') return api(path, { sessionToken, signal, method, body, headers });
+  return xhrSend(apiUrl(path), { signal, method, body, headers: { Authorization: 'Bearer ' + sessionToken, [CLIENT_HEADER]: String(CLIENT_PROTOCOL), ...headers }, onBytes })
+    .then(({ status, text }) => {
+      let data = {};
+      try { data = status === 204 ? {} : JSON.parse(text || '{}'); } catch { data = {}; }
+      return { response: { ok: status >= 200 && status < 300, status }, data };
+    });
+}
+
+// One XMLHttpRequest with the stall watchdog; resolves { status, text, etag }. Used for the app's server and for
+// the storage bucket (direct uploads), which gets no Authorization header: its URL is presigned.
+function xhrSend(url, { signal, method, body, headers = {}, onBytes }) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     // The watchdog: restarted by every progress event; after the last byte it waits for the answer instead.
@@ -56,9 +67,7 @@ function send(path, { sessionToken, signal, method, body, headers = {}, onBytes 
       watchdog = setTimeout(() => { stalled = true; xhr.abort(); }, ms);
     };
     const done = () => { clearTimeout(watchdog); signal?.removeEventListener('abort', abort); };
-    xhr.open(method, apiUrl(path));
-    xhr.setRequestHeader('Authorization', 'Bearer ' + sessionToken);
-    xhr.setRequestHeader(CLIENT_HEADER, String(CLIENT_PROTOCOL));
+    xhr.open(method, url);
     for (const [name, value] of Object.entries(headers)) xhr.setRequestHeader(name, value);
     xhr.upload.onprogress = (event) => {
       watch(STALL_MS);
@@ -69,9 +78,7 @@ function send(path, { sessionToken, signal, method, body, headers = {}, onBytes 
     signal?.addEventListener('abort', abort, { once: true });
     xhr.onload = () => {
       done();
-      let data = {};
-      try { data = xhr.status === 204 ? {} : JSON.parse(xhr.responseText || '{}'); } catch { data = {}; }
-      resolve({ response: { ok: xhr.status >= 200 && xhr.status < 300, status: xhr.status }, data });
+      try { resolve({ status: xhr.status, text: xhr.responseText, etag: xhr.getResponseHeader('ETag') }); } catch (error) { reject(error); }
     };
     xhr.onerror = () => { done(); reject(new TypeError('Network error during upload.')); };
     xhr.onabort = () => {
@@ -201,6 +208,105 @@ async function chunkedUpload(file, filename, { receiverId, groupId, sessionToken
   }
 }
 
+// --- Direct uploads to object storage (server/objectStore.mjs): the server signs, the bytes go to the bucket. ---
+
+const CONFIG_TTL_MS = 10 * 60 * 1000;
+const URL_MARGIN_MS = 60 * 1000;
+let storageConfig = null;
+/** Whether this server takes uploads straight into its bucket; asked once per 10 minutes, "no" on any failure. */
+export async function uploadConfig(sessionToken, signal) {
+  if (storageConfig && Date.now() - storageConfig.at < CONFIG_TTL_MS) return storageConfig;
+  // At most 5 s: a slow answer must not hold the upload back (it then goes through the server as before).
+  const ask = new AbortController();
+  const timer = setTimeout(() => ask.abort(), 5000);
+  const stop = () => ask.abort();
+  signal?.addEventListener('abort', stop, { once: true });
+  const result = await api('/api/v1/uploads/config', { sessionToken, signal: ask.signal }).catch(() => null);
+  clearTimeout(timer);
+  signal?.removeEventListener('abort', stop);
+  if (signal?.aborted) throw signal.reason ?? new DOMException('Aborted', 'AbortError');
+  storageConfig = { direct: Boolean(result?.response.ok && result.data?.direct), at: Date.now() };
+  return storageConfig;
+}
+export const forgetUploadConfig = () => { storageConfig = null; };
+
+// PUT one part to its presigned URL; resolves { status, etag }.
+function putPart(url, body, { signal, onBytes }) {
+  if (typeof XMLHttpRequest !== 'undefined') return xhrSend(url, { signal, method: 'PUT', body, onBytes });
+  return fetch(url, { method: 'PUT', body, signal }).then((response) => ({ status: response.status, etag: response.headers.get('etag') }));
+}
+
+async function directUpload(file, filename, { receiverId, groupId, sessionToken, signal, onProgress }) {
+  const created = await api('/api/v1/uploads', {
+    sessionToken, signal, method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...(groupId ? { groupId } : { receiverId }), filename, contentType: file.type || '', byteSize: file.size, direct: true }),
+  });
+  if (!created.response.ok || !created.data?.uploadId) throw new Error(created.data?.error || 'Upload could not start.');
+  const { uploadId } = created.data;
+  const base = `/api/v1/uploads/${encodeURIComponent(uploadId)}`;
+  if (!created.data.direct) {
+    // The server stopped offering direct uploads: start over through the server.
+    forgetUploadConfig();
+    api(base, { sessionToken, method: 'DELETE' }).catch(() => {});
+    return null;
+  }
+  const { partBytes, partCount } = created.data.direct;
+  const urls = new Map();
+  async function urlFor(partNumber) {
+    const known = urls.get(partNumber);
+    if (known && known.expiresAt - URL_MARGIN_MS > Date.now()) return known.url;
+    const numbers = Array.from({ length: Math.min(20, partCount - partNumber + 1) }, (_, index) => partNumber + index);
+    const signed = await api(`${base}/parts`, { sessionToken, signal, method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ partNumbers: numbers }) });
+    if (!signed.response.ok || !signed.data?.urls) {
+      const error = new Error(signed.data?.error || 'Upload could not continue.');
+      error.status = signed.response.status;
+      throw error;
+    }
+    const expiresAt = Date.now() + (Number(signed.data.expiresIn) || 900) * 1000;
+    for (const [number, url] of Object.entries(signed.data.urls)) urls.set(Number(number), { url, expiresAt });
+    return urls.get(partNumber).url;
+  }
+  const parts = [];
+  try {
+    for (let partNumber = 1; partNumber <= partCount; partNumber += 1) {
+      const start = (partNumber - 1) * partBytes;
+      const end = Math.min(start + partBytes, file.size);
+      for (let attempt = 1; ; attempt += 1) {
+        let result = null;
+        let failure = null;
+        try {
+          result = await putPart(await urlFor(partNumber), file.slice(start, end), {
+            signal, onBytes: onProgress ? (loaded) => onProgress(Math.min(start + loaded, file.size - 1), file.size) : null,
+          });
+        } catch (error) {
+          if (isAbort(error)) throw error;
+          if ([400, 401, 404, 409].includes(error.status)) throw error;
+          failure = error;
+        }
+        if (result && result.status >= 200 && result.status < 300 && result.etag) {
+          parts.push({ partNumber, etag: result.etag });
+          onProgress?.(end, file.size);
+          break;
+        }
+        // A 2xx without an ETag means the bucket's CORS rule does not expose it: retrying cannot help.
+        if (result && result.status >= 200 && result.status < 300) throw new Error('The storage bucket hides upload receipts (ETag). Ask the administrator to expose it in CORS.');
+        if (result?.status === 403) urls.delete(partNumber); // expired link: ask for a fresh one
+        else if (result && !retryableUpload(null, result.status)) throw new Error('Upload failed.');
+        if (attempt >= MAX_CHUNK_ATTEMPTS) throw failure ?? new Error('Upload failed after several retries. Check your connection and try again.');
+        await sleep(RETRY_BASE_MS * 2 ** (attempt - 1), signal);
+      }
+    }
+    const completed = await api(`${base}/complete`, { sessionToken, signal, method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ parts }) });
+    if (!completed.response.ok || !completed.data?.id) throw new Error(completed.data?.error || 'Upload could not be completed.');
+    return completed.data;
+  } catch (error) {
+    // Free the bucket's partial upload (the stale sweep covers a lost connection).
+    apiFetch(base, { method: 'DELETE', headers: { Authorization: 'Bearer ' + sessionToken }, keepalive: true }).catch(() => {});
+    throw error;
+  }
+}
+
 // Android: while anything uploads, a foreground "Sending…" notification keeps the app alive in the background.
 // Reported at most once a second while running, and at once when the queue empties.
 const NATIVE_REPORT_MS = 1000;
@@ -237,9 +343,12 @@ async function uploadFileNow(file, { receiverId, groupId, sessionToken, signal, 
   if (!sessionToken) throw new Error('Sign in again to share attachments.');
   const plan = uploadPlan(file.size, { cellular: onCellular() });
   onProgress?.(0, file.size);
-  const result = plan.chunked
+  const direct = (await uploadConfig(sessionToken, signal)).direct
+    ? await directUpload(file, filename, { receiverId, groupId, sessionToken, signal, onProgress })
+    : null;
+  const result = direct ?? (plan.chunked
     ? await chunkedUpload(file, filename, { receiverId, groupId, sessionToken, signal, onProgress, chunkBytes: plan.chunkBytes })
-    : await singleRequest(file, filename, { receiverId, groupId, sessionToken, signal, onProgress });
+    : await singleRequest(file, filename, { receiverId, groupId, sessionToken, signal, onProgress }));
   onProgress?.(file.size, file.size);
   // Network usage: a status photo or video counts under Status, everything else under Media.
   recordUsage(usage === 'status' ? 'status' : 'media', { sent: file.size });
