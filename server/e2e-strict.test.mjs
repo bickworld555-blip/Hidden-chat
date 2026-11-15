@@ -29,3 +29,25 @@ test('no code path sends people’s messages readable', async () => {
   assert.match(groups, /enqueuePending\(useChatStore\.getState\(\)\.userId, id, plain\);/);
   assert.match(pending, /if \(error\?\.code === 'group-keys-missing'\) break;/);
 });
+
+test('group messages waiting for keys are kept encrypted, not in plain localStorage; old lists move once', async () => {
+  const { createGroupPending } = await import('../src/groupPending.js');
+  const records = new Map();
+  const store = { get: async (key) => records.get(key), set: async (key, value) => { records.set(key, structuredClone(value)); }, del: async (key) => { records.delete(key); } };
+  const legacyData = new Map([['hm:group-pending:u1:g1', JSON.stringify([{ id: 'old-1', content: 'written before', createdAt: 1 }])]]);
+  const legacy = { getItem: (key) => legacyData.get(key) ?? null, setItem: (key, value) => legacyData.set(key, value), removeItem: (key) => legacyData.delete(key) };
+  const pending = createGroupPending({ store, legacy });
+  pending.pendingFor('u1', 'g1');
+  const added = pending.enqueuePending('u1', 'g1', 'hello group');
+  await pending.settled('u1', 'g1');
+  assert.deepEqual(pending.pendingFor('u1', 'g1').map((entry) => entry.content), ['written before', 'hello group'], 'old first, then what was queued while loading');
+  assert.equal(legacyData.size, 0, 'nothing readable left in localStorage');
+  assert.deepEqual(records.get('hm:group-pending:u1:g1').map((entry) => entry.id), ['old-1', added.id]);
+  const sent = [];
+  assert.equal(await pending.flushPending('u1', 'g1', async (content) => { sent.push(content); }), 2);
+  await pending.settled('u1', 'g1');
+  assert.deepEqual(sent, ['written before', 'hello group']);
+  assert.equal(records.has('hm:group-pending:u1:g1'), false, 'sent messages leave the store');
+  const source = await read('../src/groupPending.js');
+  assert.doesNotMatch(source, /deviceStorage\.setItem/, 'never written to localStorage again');
+});

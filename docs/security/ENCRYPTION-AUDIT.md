@@ -133,10 +133,17 @@ Tests: `server/e2e-strict.test.mjs`, and the browser check "after they update, i
 ## 4. Data at rest on devices
 
 - Private keys and chain keys: non-extractable `CryptoKey`s in IndexedDB (`idb-keyval`, store per device).
-- **Plaintext memory**: the client keeps the plaintext of messages it sealed or opened, keyed by the SHA-256 of
-  the envelope body (`hm:plain:<deviceId>:<hash>`), so history can be shown after the ratchet has moved on. This
-  is plaintext at rest on the device. The device's app lock and OS protections are its only defence.
-- Chats, call logs and preferences are stored per account in IndexedDB.
+- **Opened messages**: the client keeps what it sealed or opened, keyed by the SHA-256 of the envelope body
+  (`hm:plain:<deviceId>:<hash>`), so history can be shown after the ratchet has moved on. Like the message cache,
+  outbox, contacts, call log and backup secret, these records go through `src/secureStorage.js`: AES-256-GCM per
+  record, bound to its storage key as additional data, under one data key that the Android Keystore seals (in a
+  browser, a non-extractable Web Crypto key in IndexedDB). In the Android app the records sit in the app's SQLite
+  database (`src/recordStore.js`).
+- Group messages waiting for keys (strict mode, §3.9) are kept in the same encrypted store (`src/groupPending.js`);
+  older versions kept them in localStorage and they are moved once.
+- Display preferences (theme, wallpaper, language and the like) stay in localStorage; they hold no message content.
+- The data key protects copied files, not a running, unlocked app: anything that runs inside the app can read what
+  the app can read.
 
 ## 5. Metadata visible to the server
 
@@ -195,7 +202,8 @@ key is used once and then deleted.
    signing identity keys, and both are bound into AD and security codes.
 2. **Headers are not encrypted** (no header-encryption variant). Ratchet public keys and counters are visible.
 3. **Identity change handling** is notice-only (§3.8).
-4. **Plaintext memory at rest** (§4).
+4. **Local storage** (§4): records are encrypted with a Keystore-sealed key; review the scope (what stays in
+   localStorage) and the browser case (a non-extractable key in the same IndexedDB).
 5. **Group call key lifetime**: one key for the whole call. Members who leave are not re-keyed out, and anyone with
    the call card can rejoin within 6 hours.
 6. **Push payload key** is known to the server. Check whether pushes carry only the already-sealed envelope (they
