@@ -6,6 +6,11 @@ terminates TLS and exposes `/xmpp-websocket` and `/api/` (admin API, admin login
 - `/etc/ejabberd/ejabberd.yml`: hosts `chat.hiddenmessenger.com`; `auth_method: [jwt, internal]` with
   `/etc/ejabberd/jwt.jwk` (the key behind `XMPP_JWT_SECRET`); no mod_mam, mod_muc, mod_register, mod_stun or
   server-to-server; mod_offline, mod_stream_mgmt, mod_ping, mod_client_state, mod_http_api.
+
+  `mod_stream_mgmt`: `resume_timeout: 60`, `resend_on_timeout: if_offline` (changed from 300 on 2026-11-15). A phone that
+  loses its network leaves a resumable session; messages for it wait there and reach offline storage (and so the
+  `mod_hm` wake-up push) only when the timeout ends. 60 s bounds that delay; direct messages also get a wake-up
+  sooner through POST /api/v1/xmpp/nudge when no delivery receipt comes back (src/xmpp/session.js).
 - `mod_hm.erl` (this folder): offline wake-up hook and group fan-out. Built and loaded with:
 
   ```bash
