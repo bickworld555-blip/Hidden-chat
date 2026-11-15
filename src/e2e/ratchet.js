@@ -11,10 +11,18 @@ import {
 
 export const MAX_SKIP = 1000;
 export const MAX_STORED_SKIPPED = 2000;
-const X3DH_INFO = 'HiddenMessenger X3DH P-256 v1';
-const ROOT_INFO = 'HiddenMessenger DoubleRatchet root v1';
-const MESSAGE_INFO = 'HiddenMessenger DoubleRatchet message v1';
-const SPK_CONTEXT = utf8('HiddenMessenger signed prekey v1');
+// Domain-separation strings, part of the wire format (docs/security/ENCRYPTION-AUDIT.md §3; vectors in
+// server/e2e-vectors.test.mjs). Changing one breaks every session.
+export const KDF_INFO = Object.freeze({
+  x3dh: 'HiddenMessenger X3DH P-256 v1',
+  root: 'HiddenMessenger DoubleRatchet root v1',
+  message: 'HiddenMessenger DoubleRatchet message v1',
+  signedPreKey: 'HiddenMessenger signed prekey v1',
+});
+const X3DH_INFO = KDF_INFO.x3dh;
+const ROOT_INFO = KDF_INFO.root;
+const MESSAGE_INFO = KDF_INFO.message;
+const SPK_CONTEXT = utf8(KDF_INFO.signedPreKey);
 
 // --- Identities and prekeys ------------------------------------------------------------------------
 
@@ -41,7 +49,8 @@ export async function verifyPreKey(identitySig, publicKey, signature, api) {
 
 // --- X3DH ----------------------------------------------------------------------------------------
 
-async function deriveSharedSecret(parts, api) {
+/** X3DH: SK = HKDF(0xFF×32 ‖ DH1 ‖ DH2 ‖ DH3 [‖ DH4], salt 0×32, X3DH info, 32). Wipes the DH outputs. */
+export async function deriveSharedSecret(parts, api) {
   const secret = await hkdf(concat(new Uint8Array(32).fill(0xff), ...parts), new Uint8Array(32), X3DH_INFO, 32, api);
   for (const part of parts) part.fill(0);
   return secret;
@@ -99,7 +108,8 @@ export async function x3dhRespond(identity, header, signedPreKeyPair, preKeyPair
 
 // --- Double Ratchet ----------------------------------------------------------------------------------
 
-async function kdfRoot(rootKey, dhOutput, api) {
+/** Root KDF: HKDF(salt = root key, ikm = DH output, root info, 64) → [next root key, chain key]. */
+export async function kdfRoot(rootKey, dhOutput, api) {
   const okm = await hkdfWithKeySalt(rootKey, dhOutput, ROOT_INFO, 64, api);
   dhOutput.fill(0);
   const [nextRoot, chain] = await Promise.all([hmacKey(okm.slice(0, 32), api), hmacKey(okm.slice(32, 64), api)]);
@@ -107,7 +117,8 @@ async function kdfRoot(rootKey, dhOutput, api) {
   return [nextRoot, chain];
 }
 
-async function kdfChain(chainKey, api) {
+/** Chain KDF: message key = HMAC(chain key, 0x01), next chain key = HMAC(chain key, 0x02). */
+export async function kdfChain(chainKey, api) {
   const [messageKey, nextChain] = await Promise.all([hmac(chainKey, new Uint8Array([1]), api), hmac(chainKey, new Uint8Array([2]), api)]);
   return [await hmacKey(nextChain, api), messageKey];
 }
@@ -157,7 +168,7 @@ async function skipMessageKeys(state, until, api) {
 }
 
 function parseHeader(header) {
-  if (!header || typeof header.dh !== 'string' || !Number.isInteger(header.pn) || !Number.isInteger(header.n) || header.pn < 0 || header.n < 0) {
+  if (!header || typeof header.dh !== 'string' || !Number.isSafeInteger(header.pn) || !Number.isSafeInteger(header.n) || header.pn < 0 || header.n < 0) {
     throw new Error('Invalid message header.');
   }
   return checkPublicKey(fromBase64(header.dh));

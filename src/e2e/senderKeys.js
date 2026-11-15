@@ -8,6 +8,8 @@
 import { aeadDecrypt, aeadEncrypt, checkPublicKey, concat, fromBase64, generateSigningPair, hmac, hmacKey, messageCipher, randomBytes, sign, toBase64, utf8, verify } from './primitives.js';
 
 export const MAX_GROUP_SKIP = 2000;
+// Sender key ids are 12 random bytes in base64 (createSenderKey); anything else is refused before use.
+const KEY_ID = /^[A-Za-z0-9+/]{16}$/;
 const MESSAGE_INFO = 'HiddenMessenger SenderKey message v1';
 
 const groupAd = (groupId, senderAddress, keyId, n) => utf8(JSON.stringify(['hm-sk-v1', groupId, senderAddress, keyId, n]));
@@ -46,7 +48,7 @@ export async function senderKeyEncrypt(current, senderAddress, plaintext, api) {
 
 /** A received distribution → the receiving state for that sender key (iteration 0). */
 export async function acceptDistribution(distribution, expectedGroupId, api) {
-  if (distribution?.type !== 'skdm' || distribution.g !== expectedGroupId || typeof distribution.kid !== 'string') throw new Error('Invalid sender key distribution.');
+  if (distribution?.type !== 'skdm' || distribution.g !== expectedGroupId || typeof distribution.kid !== 'string' || !KEY_ID.test(distribution.kid)) throw new Error('Invalid sender key distribution.');
   const chainBytes = fromBase64(distribution.ck);
   if (chainBytes.length !== 32) throw new Error('Invalid sender key distribution.');
   return {
@@ -61,7 +63,7 @@ export async function acceptDistribution(distribution, expectedGroupId, api) {
 
 /** Decrypts with a receiving state: resolves { state, plaintext }; rejects with the state untouched. */
 export async function senderKeyDecrypt(current, senderAddress, message, api) {
-  if (!message || message.kid !== current.keyId || !Number.isInteger(message.n) || message.n < 0) throw new Error('Invalid group message.');
+  if (!message || message.kid !== current.keyId || !Number.isSafeInteger(message.n) || message.n < 0) throw new Error('Invalid group message.');
   const ciphertext = fromBase64(message.c);
   const ad = groupAd(current.groupId, senderAddress, current.keyId, message.n);
   if (!(await verify(current.signingPublic, fromBase64(message.s), concat(ad, ciphertext), api))) throw new Error('Group message signature is invalid.');

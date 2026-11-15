@@ -149,7 +149,7 @@ design and are not end-to-end encrypted).
 ```
 cd chat-app
 npm ci
-node --test server/e2e-protocol.test.mjs server/e2e-server.test.mjs server/e2e-strict.test.mjs server/call-e2e.test.mjs server/linking.test.mjs
+node --test server/e2e-vectors.test.mjs server/e2e-protocol.test.mjs server/e2e-server.test.mjs server/e2e-strict.test.mjs server/call-e2e.test.mjs server/linking.test.mjs
 npm test            # the whole suite
 ```
 
@@ -165,7 +165,29 @@ npm test            # the whole suite
 - the envelope routing contents;
 - device reset.
 
-There are no published test vectors yet; reviewers may want them added for each KDF step.
+`server/e2e-vectors.test.mjs` holds the test vectors:
+
+- Standards vectors through the app's own primitives: RFC 5869 test case 3 (HKDF-SHA-256), RFC 5903 §8.1 (P-256
+  ECDH), RFC 6979 A.2.5 (ECDSA P-256/SHA-256 verification, and refusal of an altered or short signature).
+- Protocol vectors with fixed inputs for X3DH (with and without a one-time prekey), the root KDF, the chain KDF (two
+  steps), the message cipher (key, nonce and an AES-256-GCM ciphertext) and the Sender Keys chain. Each output is
+  checked against fixed hex and against an independent node:crypto implementation of the formula in §3, so every
+  value can be recomputed from this brief alone. The fixed hex was produced with node:crypto, not the app's code.
+
+## 6a. Input handling
+
+Everything that arrives from the network is parsed before any key operation:
+
+- Public keys: 65-byte uncompressed P-256 points (`checkPublicKey`); Web Crypto's import also rejects points that are
+  not on the curve.
+- Signatures: exactly 64 bytes (r ‖ s); anything else fails verification without reaching Web Crypto.
+- Base64: canonical and padded only (`fromBase64` re-encodes and compares), so one byte string has one encoding.
+- Counters (`n`, `pn`, Sender Keys `n`): non-negative safe integers; skips are bounded (`MAX_SKIP`, `MAX_GROUP_SKIP`).
+- Sender key ids: 16 base64 characters (12 random bytes); chain keys exactly 32 bytes.
+- Failed decryption or verification never commits state (transactional sessions, §3.3).
+
+ECDSA signatures are not normalised to low-S. A re-encoded signature cannot replay a message, because each message
+key is used once and then deleted.
 
 ## 7. Known deviations and open questions for the reviewer
 

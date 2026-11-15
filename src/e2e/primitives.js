@@ -14,6 +14,7 @@ const SIG = { name: 'ECDSA', namedCurve: 'P-256' };
 const SIG_PARAMS = { name: 'ECDSA', hash: 'SHA-256' };
 const HMAC = { name: 'HMAC', hash: 'SHA-256' };
 export const PUBLIC_KEY_BYTES = 65; // uncompressed P-256 point
+export const SIGNATURE_BYTES = 64; // ECDSA P-256 as Web Crypto encodes it: r ‖ s, 32 bytes each
 
 export function cryptoApi(override) {
   const api = override ?? globalThis.crypto;
@@ -31,9 +32,13 @@ export function toBase64(bytes) {
   return btoa(text);
 }
 
+/** Canonical, padded base64 only (what toBase64 writes): one encoding per byte string, nothing lenient. */
 export function fromBase64(text) {
-  if (typeof text !== 'string' || !/^[A-Za-z0-9+/]*={0,2}$/.test(text)) throw new Error('Invalid base64.');
-  return Uint8Array.from(atob(text), (char) => char.charCodeAt(0));
+  if (typeof text !== 'string' || text.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(text)) throw new Error('Invalid base64.');
+  const bytes = Uint8Array.from(atob(text), (char) => char.charCodeAt(0));
+  // Unused bits in the last character must be zero ("QQ==" and "QR==" would otherwise both decode to "A").
+  if (toBase64(bytes) !== text) throw new Error('Invalid base64.');
+  return bytes;
 }
 
 export function concat(...parts) {
@@ -90,6 +95,7 @@ export async function sign(privateKey, data, api) {
 
 export async function verify(publicKeyBytes, signature, data, api) {
   const subtle = cryptoApi(api).subtle;
+  if (!(signature instanceof Uint8Array) || signature.length !== SIGNATURE_BYTES) return false;
   try {
     const key = await subtle.importKey('raw', checkPublicKey(publicKeyBytes), SIG, false, ['verify']);
     return await subtle.verify(SIG_PARAMS, key, signature, data);
