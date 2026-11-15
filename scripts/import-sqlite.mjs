@@ -27,7 +27,7 @@ export const IMPORT_TABLES = Object.freeze([
   { name: 'status_views', columns: ['status_id', 'viewer_id', 'viewed_at'], users: ['viewer_id'], key: ['status_id', 'viewer_id'] },
   // Phones registered for Firebase push (kept with their sessions, so push keeps working after the move).
   { name: 'identity_keys', columns: ['user_id', 'public_key', 'algorithm', 'updated_at'], users: ['user_id'] },
-  { name: 'push_devices', columns: ['token', 'user_id', 'session_hash', 'device_key', 'platform', 'updated_at'], users: ['user_id'], key: ['token'] },
+  { name: 'push_devices', columns: ['token', 'user_id', 'session_hash', 'device_key', 'platform', 'updated_at', 'client_protocol'], users: ['user_id'], key: ['token'] },
   // WhatsApp (Business) parity data (server/parity.mjs, migration 010).
   { name: 'group_join_requests', columns: ['group_id', 'user_id', 'requested_at'], users: ['user_id'], key: ['group_id', 'user_id'] },
   { name: 'communities', columns: ['id', 'name', 'description', 'created_by', 'created_at', 'announcement_group_id'], users: ['created_by'] },

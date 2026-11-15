@@ -69,7 +69,9 @@ async function pair() {
   await api('/api/v1/contacts', { session: b, method: 'POST', body: { userId: a.user.id } });
   const key = randomBytes(32).toString('base64');
   const token = `fcm-${randomBytes(12).toString('hex')}`;
-  const registered = await api('/api/v1/push/devices', { session: b, method: 'POST', body: { token, key, platform: 'android' } });
+  // Registered by a current app (wire version 3): its push handler confirms calls.
+  const response = await fetch(baseUrl + '/api/v1/push/devices', { method: 'POST', headers: { 'X-HM-Client': '3', Authorization: `Bearer ${b.token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ token, key, platform: 'android' }) });
+  const registered = { status: response.status, body: await response.json() };
   assert.equal(registered.status, 200);
   assert.deepEqual(registered.body, { push: true }, 'the phone learns this server sends pushes');
   return { a, b, key, token };

@@ -41,6 +41,11 @@ async function pair() {
   await api('/api/v1/push/devices', { session: b, method: 'POST', body: { token, key: randomBytes(32).toString('base64'), platform: 'android' } });
   return { a, b, token };
 }
+async function registerOldPhone(session) {
+  const token = `fcm-old-${randomBytes(8).toString('hex')}`;
+  await fetch(baseUrl + '/api/v1/push/devices', { method: 'POST', headers: { 'X-HM-Client': '2', Authorization: `Bearer ${session.token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ token, key: randomBytes(32).toString('base64'), platform: 'android' }) });
+  return token;
+}
 function connect(session, protocol = 'relay.client.3') {
   const socket = new WebSocket(baseUrl.replace('http:', 'ws:') + '/ws', [`relay.auth.${session.token}`, 'relay.v1', ...(protocol ? [protocol] : [])]);
   socket.events = [];
@@ -160,4 +165,16 @@ test('the XMPP session asks for a wake-up when the receiver does not confirm a m
   await sleep(300);
   assert.deepEqual(asked, [{ userId: 'peer', messageId: 'x-silent' }]);
   session.close();
+});
+
+test('a phone registered by an app too old to confirm calls (push only) is never cut as "unavailable"', async () => {
+  const { a, b } = await pair();
+  await registerOldPhone(b);
+  const caller = await connect(a);
+  await ready(caller);
+  offer(caller, b.user.id, 'c-old-phone');
+  await sleep(800);
+  assert.equal(signalsOf(caller, 'c-old-phone', 'end').length, 0, 'it rings on its own timeout, as before');
+  caller.send(JSON.stringify({ type: 'call:signal', targetId: b.user.id, callId: 'c-old-phone', mode: 'audio', signalId: 'e', signal: { type: 'end', reason: 'ended' } }));
+  caller.close();
 });

@@ -340,6 +340,8 @@ export function createChatServer({
   )`);
   db.exec('CREATE INDEX IF NOT EXISTS push_devices_user ON push_devices(user_id)');
   db.exec('CREATE INDEX IF NOT EXISTS push_devices_session ON push_devices(session_hash)');
+  // The wire version of the app that registered the phone (X-HM-Client): whether its push handler confirms calls.
+  if (!db.prepare('PRAGMA table_info(push_devices)').all().some((column) => column.name === 'client_protocol')) db.exec('ALTER TABLE push_devices ADD COLUMN client_protocol INTEGER NOT NULL DEFAULT 0');
   // Public identity keys for end-to-end encryption (Postgres: migration 008).
   db.exec(`CREATE TABLE IF NOT EXISTS identity_keys (
     user_id TEXT PRIMARY KEY,
@@ -2378,10 +2380,11 @@ export function createChatServer({
     if (typeof token !== 'string' || token.length < 20 || token.length > 4096 || !validDeviceKey(key) || platform !== 'android') {
       return response.status(400).json({ error: 'Give the FCM token, a 32-byte base64 key and platform "android".' });
     }
-    await db.prepare(`INSERT INTO push_devices(token, user_id, session_hash, device_key, platform, updated_at) VALUES (?, ?, ?, ?, ?, ?)
+    const clientProtocol = clientProtocolOf(request.get('x-hm-client'));
+    await db.prepare(`INSERT INTO push_devices(token, user_id, session_hash, device_key, platform, updated_at, client_protocol) VALUES (?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(token) DO UPDATE SET user_id = excluded.user_id, session_hash = excluded.session_hash,
-      device_key = excluded.device_key, platform = excluded.platform, updated_at = excluded.updated_at`)
-      .run(token, request.session.user_id, request.session.token_hash, key, platform, Date.now());
+      device_key = excluded.device_key, platform = excluded.platform, updated_at = excluded.updated_at, client_protocol = excluded.client_protocol`)
+      .run(token, request.session.user_id, request.session.token_hash, key, platform, Date.now(), clientProtocol);
     response.json({ push: Boolean(push) });
   });
 
@@ -3042,8 +3045,10 @@ export function createChatServer({
         const roomId = typeof event.roomId === 'string' && event.roomId.length <= 80 ? event.roomId : (activeCall?.roomId ?? null);
         if (initialOffer) {
           // A callee device on an app too old to confirm keeps the old rule (ringing once the offer reaches a socket).
+          // A phone rung by push (no socket) confirms only if the app that registered it can (client_protocol).
           const calleeSockets = [...userSockets(targetId)].filter((candidate) => candidate.readyState === WebSocket.OPEN);
-          const confirms = !calleeSockets.some((candidate) => (candidate.clientProtocol ?? 0) < CALL_CONFIRM_PROTOCOL);
+          const oldPhones = push ? Number((await db.prepare('SELECT COUNT(*) AS "count" FROM push_devices WHERE user_id = ? AND client_protocol < ?').get(targetId, CALL_CONFIRM_PROTOCOL))?.count ?? 0) : 0;
+          const confirms = oldPhones === 0 && !calleeSockets.some((candidate) => (candidate.clientProtocol ?? 0) < CALL_CONFIRM_PROTOCOL);
           const call = { callerId: userId, calleeId: targetId, callerSocket: socket, calleeSocket: null, mode, timer: null, roomId, held: [], pushed: false, confirms, reached: false, reachTimer: null };
           if (confirms && callUnreachableMs > 0 && !roomId) {
             call.reachTimer = setTimeout(() => { if (!call.reached && !call.calleeSocket && activeCalls.get(callId) === call) finishCall(callId, 'unavailable'); }, callUnreachableMs);
