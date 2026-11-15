@@ -222,7 +222,9 @@ export function createCallEngine({
 
   function sendSignal(signal) {
     if (closed && signal.type !== 'end') return false;
-    return send({ type: 'call:signal', callId, mode: state.mode, signal }) !== false;
+    const sent = send({ type: 'call:signal', callId, mode: state.mode, signal }) !== false;
+    if (signal.type !== 'ice') log('signal-out', signal.type, sent ? 'sent' : 'not-sent');
+    return sent;
   }
 
   function clearAllTimers() {
@@ -691,7 +693,7 @@ export function createCallEngine({
         if (closed || pc !== connection) return;
         if (state.status !== 'connected' && state.status !== 'reconnecting') return;
         // Wi-Fi ↔ mobile data: the old path is about to die (or already has); find the new one right away.
-        log('network-change', why);
+        log('network-change', why, (typeof navigator !== 'undefined' && navigator.connection?.type) || 'type-unknown');
         networkChangedAt = Date.now();
         restartIce('network-change');
       }) ?? null;
@@ -702,7 +704,10 @@ export function createCallEngine({
         // Also right after a network switch whose restart was never answered, even if ICE has not noticed yet (the
         // request went into the connection that died with the old network).
         const unansweredSwitch = networkChangedAt > 0 && Date.now() - networkChangedAt < NETWORK_RESTART_WINDOW_MS && renegotiatedAt < networkChangedAt;
-        if (!unansweredSwitch && state.status !== 'reconnecting' && pc.connectionState !== 'disconnected' && pc.connectionState !== 'failed') return;
+        if (!unansweredSwitch && state.status !== 'reconnecting' && pc.connectionState !== 'disconnected' && pc.connectionState !== 'failed') {
+          log('signaling-back-call-fine', state.status, pc.connectionState);
+          return;
+        }
         // Restarts tried while signaling was down went nowhere (and used up the budget): try again now, with a fresh
         // budget; the reconnect grace still ends a call that cannot come back.
         log('signaling-restored');
@@ -949,6 +954,7 @@ export function createCallEngine({
         if (seenSignalIds.has(signalId)) { done?.(); return; }
         seenSignalIds.add(signalId);
       }
+      if (signal?.type !== 'ice') log('signal-in', signal?.type);
       queue.push({ signal, done });
       drain();
     },

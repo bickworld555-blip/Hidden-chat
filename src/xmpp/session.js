@@ -38,7 +38,7 @@ const RECEIPT_MEMORY = 5000;
  * Resolves null unless this account is moved over. `deliver(event)` feeds the app's realtime event handler;
  * `legacySend(event)` is the current connection's send.
  */
-export async function startXmppSession({ sessionToken, userId, deliver, legacySend, targetsFor, groupTargetsFor = async () => ({ targets: [], complete: false, sender: null }), userForAddress = () => null, fetchImpl, createTransport = (options) => new XmppTransport(options), seal = null, groupsOverXmpp = false, signalingRestored = () => {} }) {
+export async function startXmppSession({ sessionToken, userId, deliver, legacySend, targetsFor, groupTargetsFor = async () => ({ targets: [], complete: false, sender: null }), userForAddress = () => null, fetchImpl, createTransport = (options) => new XmppTransport(options), seal = null, groupsOverXmpp = false, signalingRestored = () => {}, onTransportState = () => {} }) {
   const auth = { Authorization: `Bearer ${sessionToken}` };
   let decision;
   try {
@@ -117,7 +117,7 @@ export async function startXmppSession({ sessionToken, userId, deliver, legacySe
     },
     // Back online after a drop: a call that was reconnecting restarts ICE now (callEngine onSignalingRestored), since
     // signals sent into the dead connection were lost.
-    onState: (state) => { if (state === 'online') signalingRestored(); },
+    onState: (state) => { onTransportState(state); if (state === 'online') signalingRestored(); },
   });
 
   async function sendMessage(event) {

@@ -108,6 +108,7 @@ import { hiddenByBlock, isBlocked } from './blocking.js';
 import { fetchBlocks } from './blocksApi.js';
 import { activityFromEvent } from './typing.js';
 import { SIGNALING_RESTORED, TERMINAL_STATUSES } from './callEngine.js';
+import { noteCallEvent } from './callDiagnostics.js';
 
 // A signaling connection (the server's or XMPP) is back after a drop: an active call that was reconnecting restarts ICE.
 const signalingRestored = () => { try { window.dispatchEvent(new CustomEvent(SIGNALING_RESTORED)); } catch { /* no window */ } };
@@ -549,13 +550,13 @@ export default function App() {
           }
           openChain = openChain.then(() => openEvent(event)).then(handleEvent).catch((error) => console.error('Could not handle a message:', error));
         };
-        realtime = new RealtimeClient(sessionToken, onRealtimeEvent, setConnection);
+        realtime = new RealtimeClient(sessionToken, onRealtimeEvent, (state) => { noteCallEvent('relay', state); setConnection(state); });
         realtime.onRevoked = () => revokedRef.current?.();
         // Accounts moved over to the XMPP core (src/xmpp/session.js; the server decides, 0% by default) carry device-to-
         // device traffic over XMPP; anything it cannot carry goes on this connection as before. Others never open it.
         const legacySend = realtime.send.bind(realtime);
         realtime.send = (event) => (xmppRef.current?.route(event) ? true : legacySend(event));
-        startXmppSession({ sessionToken, userId, deliver: onRealtimeEvent, legacySend, targetsFor: xmppTargetsFor, groupTargetsFor: xmppGroupTargetsFor, userForAddress: userForXmppAddress, fetchImpl: apiFetch, seal: (peerId, content) => sealDirect(peerId, content), signalingRestored })
+        startXmppSession({ sessionToken, userId, deliver: onRealtimeEvent, legacySend, targetsFor: xmppTargetsFor, groupTargetsFor: xmppGroupTargetsFor, userForAddress: userForXmppAddress, fetchImpl: apiFetch, seal: (peerId, content) => sealDirect(peerId, content), signalingRestored, onTransportState: (state) => noteCallEvent('xmpp', state) })
           .then((session) => {
             if (!session) return;
             if (cancelled) { session.close(); return; }
@@ -590,6 +591,7 @@ export default function App() {
         realtime.onReady = async () => {
           setTimeout(askForWaiting, 5000);
           // A call that was reconnecting restarts ICE now: signals sent into the dead connection were lost.
+          noteCallEvent('relay', 'socket-ready');
           signalingRestored();
           const outbox = await getOutbox(userId);
           for (const message of outbox) await transmitDirect(realtime, message);

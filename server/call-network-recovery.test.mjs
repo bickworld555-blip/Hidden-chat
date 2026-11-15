@@ -300,7 +300,7 @@ test('the server relays the request to restart, and mid-call signals travel both
   const engine = readFileSync(new URL('../src/callEngine.js', import.meta.url), 'utf8');
   assert.ok(engine.includes('if (seenSignalIds.has(signalId)) { done?.(); return; }'), 'the second copy is dropped');
   const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
-  assert.ok(app.includes('signalingRestored();') && app.includes('signalingRestored })'), 'both connections report coming back');
+  assert.ok(app.includes('signalingRestored();') && app.includes('signalingRestored, onTransportState'), 'both connections report coming back');
 });
 
 test('a network switch whose restart request was lost is asked again when signaling is back, even while ICE says connected', async () => {

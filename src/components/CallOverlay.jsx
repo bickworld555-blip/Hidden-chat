@@ -1,4 +1,5 @@
 import { apiFetch } from '../api.js';
+import { noteCallEvent } from '../callDiagnostics.js';
 import { endCallOverHttp, ownedCallIds } from '../callEnd.js';
 import { nativeCallHeartbeat, nativeCancelIncomingCall, nativeEndCall, nativeEndCallWindow, nativeSetCallActive, nativeSetCallRinging, nativeSetCallVideoShown, nativeSetSpeaker, nativeShell, nativeShowIncomingCall, onNative } from '../native.js';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
@@ -206,7 +207,10 @@ export default function CallOverlay({
       fetchIceServers: () => loadIceServers(latest.current.sessionToken),
       send: (payload) => latest.current.client?.send({ ...payload, targetId: peerId, roomId: latest.current.call.roomId ?? latest.current.call.id, signalId: crypto.randomUUID() }),
       onSnapshot,
-      log: (...args) => { if (import.meta.env?.DEV) console.debug('[call]', peerId.slice(0, 6), ...args); },
+      log: (...args) => {
+        noteCallEvent(peerId, ...args);
+        if (import.meta.env?.DEV) console.debug('[call]', peerId.slice(0, 6), ...args);
+      },
     });
     engine.callId = callId;
     engine.peerId = peerId;
