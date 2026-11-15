@@ -3,7 +3,7 @@
 // sees it (live events, history, catch-up sync). Group messages are sealed and opened in GroupsView through
 // client.js, with the same plaintext memory.
 import { useChatStore } from '../store.js';
-import { applyDeviceLists, e2eActive, isEnvelope, openContent, openDirectMessage, openDirectMessages, openGroupMessage, resealForDevice, sealDirect } from './client.js';
+import { forgetDeviceLists, e2eActive, isEnvelope, openContent, openDirectMessage, openDirectMessages, openGroupMessage, resealForDevice, sealDirect } from './client.js';
 import { isUserContent } from './envelope.js';
 import { controlContent, parseControl } from './lifecycle.js';
 import { getXmppSession } from '../xmpp/active.js';
@@ -63,7 +63,7 @@ export async function transmitDirect(client, message, { fresh = false } = {}) {
 /** The server refused a sealed message because the device list changed: re-seal from the outbox and resend. */
 export async function handleRejected(event, client) {
   if (event?.code !== 'e2e-devices' || !event.messageId) return false;
-  applyDeviceLists(event.devices);
+  forgetDeviceLists(event.devices);
   const tries = (reseals.get(event.messageId) ?? 0) + 1;
   reseals.set(event.messageId, tries);
   if (tries > MAX_RESEALS) {
@@ -202,7 +202,7 @@ export async function transmitReaction(client, peerId, messageId, emoji) {
 export function handleReactionError(event, client) {
   const pending = reactionRetries.get(event?.messageId);
   if (event?.code !== 'e2e-devices' || !pending || pending.tries >= MAX_RESEALS) return false;
-  applyDeviceLists(event.devices);
+  forgetDeviceLists(event.devices);
   reactionRetries.set(event.messageId, { ...pending, tries: pending.tries + 1 });
   transmitReaction(client, pending.peerId, event.messageId, pending.emoji).catch(() => {});
   return true;

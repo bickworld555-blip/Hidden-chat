@@ -43,6 +43,8 @@ export const IMPORT_TABLES = Object.freeze([
   // End-to-end key directory (server/e2e.mjs, migration 011), kept with the sessions (devices) they belong to.
   { name: 'e2e_devices', columns: ['user_id', 'device_id', 'identity_dh', 'identity_sig', 'signed_prekey_id', 'signed_prekey', 'signed_prekey_signature', 'created_at', 'updated_at'], users: ['user_id'], key: ['user_id', 'device_id'] },
   { name: 'e2e_prekeys', columns: ['user_id', 'device_id', 'key_id', 'public_key'], users: ['user_id'], key: ['user_id', 'device_id', 'key_id'], numeric: ['key_id'] },
+  { name: 'e2e_device_lists', columns: ['user_id', 'account_key', 'counter', 'list', 'signature', 'updated_at'], users: ['user_id'], key: ['user_id'], numeric: ['counter'] },
+  { name: 'e2e_link_claims', columns: ['user_id', 'device_id', 'claim', 'created_at'], users: ['user_id'], key: ['user_id', 'device_id'] },
   // Stage A (migration 012).
   { name: 'poll_sealed_votes', columns: ['message_id', 'user_id', 'sealed', 'voted_at'], users: ['user_id'], key: ['message_id', 'user_id'] },
   { name: 'broadcast_lists', columns: ['id', 'owner_id', 'name', 'created_at'], users: ['owner_id'] },

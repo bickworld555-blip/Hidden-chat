@@ -5,7 +5,7 @@
 // Storage holds structured-clone values (IndexedDB in the app): private keys and chain keys are non-extractable
 // CryptoKeys. Every operation runs one at a time (a session must never be used by two operations at once), and
 // state is saved only after an operation fully succeeded.
-import { fromUtf8, generateDhPair, generateSigningPair, sha256Hex, toBase64, utf8 } from './primitives.js';
+import { dh, fromUtf8, generateDhPair, generateSigningPair, sha256Hex, toBase64, utf8 } from './primitives.js';
 import { identityBytes, initInitiator, initResponder, parseIdentity, publicIdentity, ratchetDecrypt, ratchetEncrypt, signPreKey, x3dhInitiate, x3dhRespond } from './ratchet.js';
 import { acceptDistribution, createSenderKey, senderKeyDecrypt, senderKeyEncrypt } from './senderKeys.js';
 import { membersHash } from './envelope.js';
@@ -43,7 +43,14 @@ export function createProtocol({ storage, api, onIdentityChange = null } = {}) {
     if (stored) return stored;
     const created = { dh: await generateDhPair(api), sig: await generateSigningPair(api), createdAt: Date.now() };
     await storage.set('identity', created);
+    // A new device (or one whose keys were wiped) still has to join the account's signed device list.
+    await storage.set('list-join-pending', true);
     return created;
+  }
+
+  /** ECDH of this device's identity key with `publicKeyBytes` (a linked device's link key): 32 bytes. */
+  function identityAgreement(publicKeyBytes) {
+    return exclusive(async () => dh((await identity()).dh.privateKey, publicKeyBytes, api));
   }
 
   async function newSignedPreKey(ownIdentity, id, now) {
@@ -312,6 +319,8 @@ export function createProtocol({ storage, api, onIdentityChange = null } = {}) {
 
   return {
     prepareUpload,
+    identityAgreement,
+    storage,
     encryptForDevices,
     decryptFromDevice,
     forgetSession,

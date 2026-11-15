@@ -15,6 +15,7 @@ import { initialTabFromUrl } from './pwa.js';
 import { countUnreadConversations, groupRow } from './groupRows.js';
 import { getViewingGroup, readMutedGroups, setGroupMuted, useMutedGroups } from './groupPrefs.js';
 import { classifyIncoming, groupNotificationText, parseConversationOpenParam, shouldAlertGroup } from './notificationChannels.js';
+import { companionOnly } from './companion.js';
 import { notificationNames } from './notificationNames.js';
 import { nativeClearSession, nativeRequestStartupPermissions, nativeSetSession, nativeShell, nativeStartBackground, nativeState, nativeStopBackground, nativeTakePendingCall, nativeMoveToBackground, nativeClearShare, nativeSetCallActive, nativeClearMessageNotifications, nativeClearMissedCalls, nativeTakeMessageActions, nativeSetSystemBarsTheme, onNative } from './native.js';
 import { parseShare } from './shareTarget.js';
@@ -228,7 +229,11 @@ export default function App() {
     }
     startE2e({ token: sessionToken, userId, deviceId }).catch(() => { /* retried on the next refresh */ });
   }, [sessionToken, userId, deviceId]);
+  // Another phone set up this account (signed device lists, option B): this device no longer receives new messages.
+  const [deviceExcluded, setDeviceExcluded] = useState(false);
+  useEffect(() => { setDeviceExcluded(false); }, [userId, deviceId]);
   useEffect(() => onE2eEvent((event) => {
+    if (event.type === 'device-list-excluded') { setDeviceExcluded(true); return; }
     if (event.type !== 'identity-changed') return;
     const state = useChatStore.getState();
     if (!state.userId || !state.chats.some((chat) => chat.id === event.userId)) return;
@@ -1233,6 +1238,9 @@ export default function App() {
   return (
     <main className={`app-shell ${darkMode ? 'dark-theme' : ''} ${isMobile ? 'is-mobile' : ''} ${chatOpenOnMobile ? 'chat-open' : ''}`} data-animations={animationsAttribute(appearance)} data-call-animations={callAnimationsAttribute(appearance)} data-font-size={fontSize} data-contrast={highContrast ? 'high' : undefined}>
       {storageProblem && <p className="storage-banner" role="alert">{storageProblemText(storageProblem)}</p>}
+      {deviceExcluded && <p className="storage-banner" role="alert">{companionOnly()
+        ? 'Hidden Messenger was set up on another phone, so this device no longer receives new messages. Sign out here, then link this device again from your phone.'
+        : 'Your account is now active on another phone, so this phone no longer receives new messages. Sign out and sign in again here to move it back to this phone.'}</p>}
       {!isMobile && <DesktopRail activeTab={desktopTab} onTab={setDesktopTab} onSheet={setParitySheet} unreadCount={unreadChats} darkMode={darkMode} onToggleTheme={toggleTheme} />}
       <Sidebar onPair={() => setAccountSettingsOpen('devices')} onSounds={() => setNotificationsOpen(true)} onNotifications={() => setNotificationsOpen(true)} onAccountSettings={() => setAccountSettingsOpen('account')} onSelectChat={() => setMobileListOpen(false)} onOpenAuth={() => setAuthOpen(true)} onAuthenticated={acceptSession} onLogout={logout} onAccounts={() => setAccountsOpen(true)} onGroups={() => openGroups()} groups={groupRows} onOpenGroup={(id) => openGroups(false, id)} />
       <div className="workspace">

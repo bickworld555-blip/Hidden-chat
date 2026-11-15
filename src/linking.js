@@ -5,6 +5,8 @@
 // messages of every chat first, then older ones (historyParts). With the typed code the key reaches the phone
 // through the server, so both screens show its security code (keyFingerprint) and history is sent only after
 // the person confirms they match. The browser's private key never leaves the page and is forgotten afterwards.
+import { set as idbSet } from 'idb-keyval';
+import { rememberLinkApproval } from './e2e/client.js';
 import { apiFetch } from './api.js';
 
 const QR_PREFIX = 'hmlink:1:';
@@ -45,7 +47,12 @@ export async function waitForApproval(link, { signal } = {}) {
   for (;;) {
     if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
     const body = await json(await apiFetch(`/api/v1/link/requests/${encodeURIComponent(link.id)}?secret=${encodeURIComponent(link.secret)}`, { signal }));
-    if (body.status === 'approved') return body.session;
+    if (body.status === 'approved') {
+      // Kept until this device's keys are in the account's signed list: the link key proves them to the phone that
+      // approved (src/e2e/client.js sendLinkClaim). The private key stays non-extractable.
+      await idbSet('hm:link-claim', { privateKey: link.privateKey, publicKey: link.publicKey, approver: body.approver ?? null, userId: body.session?.user?.id ?? null }).catch(() => {});
+      return body.session;
+    }
   }
 }
 
@@ -147,6 +154,8 @@ export async function approveLink(token, { id, secret, code, publicKey, confirme
   // Which key to encrypt to: the QR's own key, or on the code path the key the person verified (and only if the
   // server still reports that same key).
   const key = secret ? publicKey : confirmedKey && confirmedKey === approved.historyKey ? confirmedKey : null;
+  // The same trusted key admits the new device to the account's signed device list once it proves its keys.
+  if (key) await rememberLinkApproval(key).catch(() => {});
   if (!key || !buildHistory) return { ...approved, historySent: false };
   const parts = historyParts(await buildHistory());
   for (let index = 0; index < parts.length; index += 1) {

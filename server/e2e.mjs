@@ -7,6 +7,7 @@
 // with an outdated device list is told the current one and re-encrypts. A device is a signed-in session
 // (sessions.device_id); signing out removes its keys.
 import { createHash } from 'node:crypto';
+import { verifyDeviceList } from '../src/e2e/deviceList.js';
 import express from 'express';
 import { addressesOf, MAX_DIRECT_ENVELOPE, MAX_GROUP_ENVELOPE, parseEnvelope } from '../src/e2e/envelope.js';
 
@@ -40,6 +41,22 @@ export function ensureE2eSchema(db) {
     sealed TEXT NOT NULL,
     voted_at INTEGER NOT NULL,
     PRIMARY KEY (message_id, user_id)
+  )`);
+  // Signed device lists (src/e2e/deviceList.js) and pending link claims (a linked device proving its keys to the phone).
+  db.exec(`CREATE TABLE IF NOT EXISTS e2e_device_lists (
+    user_id TEXT PRIMARY KEY,
+    account_key TEXT NOT NULL,
+    counter INTEGER NOT NULL,
+    list TEXT NOT NULL,
+    signature TEXT NOT NULL,
+    updated_at INTEGER NOT NULL
+  )`);
+  db.exec(`CREATE TABLE IF NOT EXISTS e2e_link_claims (
+    user_id TEXT NOT NULL,
+    device_id TEXT NOT NULL,
+    claim TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (user_id, device_id)
   )`);
   db.exec(`CREATE TABLE IF NOT EXISTS e2e_prekeys (
     user_id TEXT NOT NULL,
@@ -96,11 +113,27 @@ export function registerE2e({ app, db, requireSession, xmppAddress = () => null,
     WHERE d.user_id = ? AND EXISTS (SELECT 1 FROM sessions s WHERE s.user_id = d.user_id AND s.device_id = d.device_id)
     ORDER BY d.device_id`);
 
+  // The account's signed device list ({ list, signature }) or null (an account whose apps predate signed lists).
+  const storedList = db.prepare('SELECT account_key AS "accountKey", counter, list, signature FROM e2e_device_lists WHERE user_id = ?');
+  async function signedListOf(userId) {
+    const row = await storedList.get(userId);
+    return row ? { list: row.list, signature: row.signature } : null;
+  }
+  // Devices the stored list names, with the identity it names (checked when it was stored, so parsing suffices).
+  async function listedIdentities(userId) {
+    const row = await storedList.get(userId);
+    if (!row) return null;
+    return new Map(JSON.parse(row.list).d.map((device) => [device.id, `${device.dh}|${device.sig}`]));
+  }
+
   async function devicesOf(userId) {
     const moved = Boolean(onXmpp(userId));
     const at = now();
     const connected = connectedDevices(userId);
+    const listed = await listedIdentities(userId);
     return (await keyDevicesOf.all(userId))
+      // An account with a signed list: only the devices it names are advertised (or checked for in envelopes).
+      .filter((row) => !listed || listed.get(row.deviceId) === `${row.dh}|${row.sig}`)
       .filter((row) => !isRetiredDevice({ lastActive: row.lastActive, hasXmpp: Boolean(row.xmpp), onXmpp: moved, now: at, connected: connected.has(row.deviceId) }))
       .map((row) => {
         const xmpp = xmppAddress(userId, row.xmpp);
@@ -115,6 +148,7 @@ export function registerE2e({ app, db, requireSession, xmppAddress = () => null,
 
   /** Removes one signed-out device's keys at once (sessions.mjs paths call this; stale rows are swept anyway). */
   async function forgetDevice(userId, deviceId) {
+    await db.prepare('DELETE FROM e2e_link_claims WHERE user_id = ? AND device_id = ?').run(userId, deviceId);
     await db.prepare('DELETE FROM e2e_prekeys WHERE user_id = ? AND device_id = ?').run(userId, deviceId);
     await db.prepare('DELETE FROM e2e_devices WHERE user_id = ? AND device_id = ?').run(userId, deviceId);
   }
@@ -158,7 +192,61 @@ export function registerE2e({ app, db, requireSession, xmppAddress = () => null,
 
   app.get('/api/v1/e2e/users/:userId/devices', requireSession, async (request, response) => {
     if (!await db.prepare('SELECT 1 FROM users WHERE id = ?').get(request.params.userId)) return response.status(404).json({ error: 'User not found.' });
-    response.json({ devices: await devicesOf(request.params.userId) });
+    const signedList = await signedListOf(request.params.userId);
+    response.json({ devices: await devicesOf(request.params.userId), ...(signedList ? { signedList } : {}) });
+  });
+
+  // A new signed list from one of the account's devices: signed by the key it names, naming the uploading device with
+  // its published identity, and newer than the stored one under the same key. Another key replaces the list (a fresh
+  // sign-in on a new phone): contacts' apps show that as a security code change.
+  app.put('/api/v1/e2e/device-list', requireSession, json, async (request, response) => {
+    const { user_id: userId, device_id: deviceId } = request.session;
+    let verified;
+    try {
+      verified = await verifyDeviceList(request.body, userId);
+    } catch (error) {
+      return response.status(400).json({ error: error.message });
+    }
+    const own = await db.prepare('SELECT identity_dh AS "dh", identity_sig AS "sig" FROM e2e_devices WHERE user_id = ? AND device_id = ?').get(userId, deviceId);
+    const listedSelf = verified.devices.get(deviceId);
+    if (!own || !listedSelf || listedSelf.dh !== own.dh || listedSelf.sig !== own.sig) {
+      return response.status(400).json({ error: 'The list must name this device with its published keys.' });
+    }
+    const stored = await storedList.get(userId);
+    if (stored && stored.accountKey === verified.accountKey && verified.counter <= Number(stored.counter)) {
+      return response.status(409).json({ error: 'A newer device list is already stored.', code: 'device-list-stale', signedList: { list: stored.list, signature: stored.signature } });
+    }
+    if (request.query.create === '1' && stored) {
+      // First list of an account whose apps are upgrading: only one device may create it; the others are named in it.
+      return response.status(409).json({ error: 'The account already has a device list.', code: 'device-list-exists', signedList: { list: stored.list, signature: stored.signature } });
+    }
+    await db.prepare(`INSERT INTO e2e_device_lists(user_id, account_key, counter, list, signature, updated_at) VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(user_id) DO UPDATE SET account_key = excluded.account_key, counter = excluded.counter, list = excluded.list, signature = excluded.signature, updated_at = excluded.updated_at`)
+      .run(userId, verified.accountKey, verified.counter, request.body.list, request.body.signature, Date.now());
+    response.json({ stored: true, counter: verified.counter });
+  });
+
+  // Link claims: a device linked by QR asks the phone that linked it to add it to the signed list. The claim carries
+  // an HMAC only that phone can check (src/e2e/deviceList.js linkClaimMac); the server only relays it.
+  const CLAIM = /^[A-Za-z0-9+/=]{1,200}$/;
+  app.post('/api/v1/e2e/link-claims', requireSession, json, async (request, response) => {
+    const { user_id: userId, device_id: deviceId } = request.session;
+    const { linkKey, mac, approver } = request.body ?? {};
+    const own = await db.prepare('SELECT identity_dh AS "dh", identity_sig AS "sig" FROM e2e_devices WHERE user_id = ? AND device_id = ?').get(userId, deviceId);
+    if (!own) return response.status(409).json({ error: 'Publish this device’s keys first.' });
+    if (!CLAIM.test(linkKey ?? '') || !CLAIM.test(mac ?? '') || typeof approver !== 'string' || approver.length > 128) return response.status(400).json({ error: 'Invalid link claim.' });
+    const claim = JSON.stringify({ deviceId, identity: { dh: own.dh, sig: own.sig }, linkKey, mac, approver });
+    await db.prepare(`INSERT INTO e2e_link_claims(user_id, device_id, claim, created_at) VALUES (?, ?, ?, ?)
+      ON CONFLICT(user_id, device_id) DO UPDATE SET claim = excluded.claim, created_at = excluded.created_at`).run(userId, deviceId, claim, Date.now());
+    response.status(202).json({ claimed: true });
+  });
+  app.get('/api/v1/e2e/link-claims', requireSession, async (request, response) => {
+    const rows = await db.prepare('SELECT claim FROM e2e_link_claims WHERE user_id = ? AND created_at > ? ORDER BY created_at').all(request.session.user_id, Date.now() - 7 * 24 * 60 * 60 * 1000);
+    response.json({ claims: rows.map((row) => JSON.parse(row.claim)) });
+  });
+  app.delete('/api/v1/e2e/link-claims/:deviceId', requireSession, async (request, response) => {
+    await db.prepare('DELETE FROM e2e_link_claims WHERE user_id = ? AND device_id = ?').run(request.session.user_id, String(request.params.deviceId));
+    response.status(204).end();
   });
 
   // Prekey bundles for starting sessions; each one-time prekey is given out once (taken atomically).
@@ -207,7 +295,13 @@ export function registerE2e({ app, db, requireSession, xmppAddress = () => null,
     if (!await db.prepare('SELECT 1 FROM group_members WHERE group_id = ? AND user_id = ?').get(request.params.groupId, request.session.user_id)) {
       return response.status(404).json({ error: 'Group not found.' });
     }
-    response.json(await groupDevices(request.params.groupId));
+    const group = await groupDevices(request.params.groupId);
+    const signedLists = {};
+    for (const userId of group.members) {
+      const signed = await signedListOf(userId);
+      if (signed) signedLists[userId] = signed;
+    }
+    response.json({ ...group, signedLists });
   });
 
   /**
@@ -260,5 +354,5 @@ export function registerE2e({ app, db, requireSession, xmppAddress = () => null,
     return membersHashOf(all);
   }
 
-  return { checkDirectEnvelope, checkGroupEnvelope, groupMembersHash, forgetDevice, forgetStaleDevices, devicesOf };
+  return { checkDirectEnvelope, checkGroupEnvelope, groupMembersHash, forgetDevice, forgetStaleDevices, devicesOf, signedListOf };
 }

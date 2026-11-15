@@ -11,6 +11,9 @@
 import { createStore, del as idbDel, get as idbGet, set as idbSet } from 'idb-keyval';
 import { apiFetch } from '../api.js';
 import { secureGet, secureSet } from '../secureStorage.js';
+import { companionOnly } from '../companion.js';
+import { createAccountKey, linkClaimMac, listedDevices, MAX_LISTED_DEVICES, pinDecision, signDeviceList, verifyDeviceList } from './deviceList.js';
+import { dh as agreeDh, equalBytes, fromBase64 as decodeBase64 } from './primitives.js';
 import { createProtocol } from './protocol.js';
 import { buildEnvelope, ENVELOPE_PREFIX, isEnvelope, parseEnvelope, routingFor, withRoutedMedia } from './envelope.js';
 import { sha256Hex } from './primitives.js';
@@ -105,7 +108,11 @@ function notify(event) {
   }
 }
 
-/** Events: { type: 'identity-changed', userId, deviceId } (a contact's security code changed). */
+/**
+ * Events: { type: 'identity-changed', userId, deviceId } (a contact's security code changed; deviceId null when their
+ * account key changed), { type: 'device-list-excluded' } (another phone set up this account: this device no longer
+ * receives until it is linked again).
+ */
 export function onE2eEvent(listener) {
   listeners.add(listener);
   return () => listeners.delete(listener);
@@ -144,7 +151,10 @@ async function publishKeys() {
  * Starts encryption for a signed-in device: { token, userId, deviceId }. Safe to call again (same device: no-op).
  * Resolves once this device's keys are published (rejects if that failed; sending still works for contacts).
  */
-export function startE2e({ token, userId, deviceId, storage, fetchImpl = apiFetch, api } = {}) {
+// `records` keeps pins and pending link approvals (encrypted store); `linkStore` the pending link claim of a device
+// linked by QR (written by src/linking.js); `canHoldAccountKey`: phones create and rotate the account key, linked
+// browsers and desktops never do. All three are injectable for tests.
+export function startE2e({ token, userId, deviceId, storage, fetchImpl = apiFetch, api, records = { get: secureGet, set: secureSet }, linkStore = { get: (key) => idbGet(key), del: (key) => idbDel(key) }, canHoldAccountKey = !companionOnly() } = {}) {
   if (!token || !userId || !deviceId) return Promise.resolve(false);
   if (current?.deviceId === deviceId && current.userId === userId) {
     current.token = token;
@@ -156,6 +166,10 @@ export function startE2e({ token, userId, deviceId, storage, fetchImpl = apiFetc
     userId,
     deviceId,
     fetchImpl,
+    api,
+    records,
+    linkStore,
+    canHoldAccountKey,
     protocol: createProtocol({
       storage: storage ?? browserKeyStorage(deviceId),
       api,
@@ -165,12 +179,15 @@ export function startE2e({ token, userId, deviceId, storage, fetchImpl = apiFetc
   current = session;
   session.ready = publishKeys().then(() => true);
   session.ready.catch(() => {});
-  session.timer = setInterval(() => { publishKeys().catch(() => {}); }, KEY_REFRESH_MS);
+  // The signed device list follows the keys; a failure there never stops sending.
+  session.listSync = session.ready.then(() => syncDeviceList()).catch(() => 'failed');
+  session.timer = setInterval(() => { publishKeys().then(() => syncDeviceList()).catch(() => {}); }, KEY_REFRESH_MS);
   return session.ready;
 }
 
 export function stopE2e() {
   if (current?.timer) clearInterval(current.timer);
+  if (current?.listTimer) clearInterval(current.listTimer);
   current = null;
   deviceLists.clear();
   groupLists.clear();
@@ -179,6 +196,8 @@ export function stopE2e() {
 }
 
 export const e2eActive = () => Boolean(current);
+/** What the start-up device-list sync found ('created', 'holder', 'member', 'rotated', 'claimed', 'waiting', 'excluded', 'failed'). */
+export const deviceListStatus = () => current?.listSync ?? Promise.resolve('stopped');
 /** This device's id in the end-to-end layer (null before it starts). */
 export const e2eDeviceId = () => current?.deviceId ?? null;
 
@@ -187,9 +206,167 @@ export const e2eDeviceId = () => current?.deviceId ?? null;
 async function devicesOf(userId, { fresh = false } = {}) {
   const cached = deviceLists.get(userId);
   if (!fresh && cached && Date.now() - cached.at < DEVICE_LIST_TTL_MS) return cached.devices;
-  const { devices } = await request(`/api/v1/e2e/users/${encodeURIComponent(userId)}/devices`);
-  deviceLists.set(userId, { at: Date.now(), devices });
-  return devices;
+  const { devices, signedList } = await request(`/api/v1/e2e/users/${encodeURIComponent(userId)}/devices`);
+  const trusted = await trustedDevices(userId, devices, signedList);
+  deviceLists.set(userId, { at: Date.now(), devices: trusted });
+  return trusted;
+}
+
+// --- Signed device lists (src/e2e/deviceList.js) ----------------------------------------------------------------
+
+const pinKey = (userId) => `hm:device-list-pin:${current?.userId}:${userId}`;
+const pendingLinksKey = () => `hm:pending-links:${current?.userId}`;
+const LINK_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
+ * The devices to encrypt to: only those the account's signed list names, once the account has one. The account key
+ * is pinned on first sight; an older list under the pinned key, or no list after one was seen, gives no devices (the
+ * message waits, as for a contact without keys). A new account key is accepted and reported as a security code change.
+ */
+async function trustedDevices(userId, devices, signedList) {
+  const session = current;
+  const pin = await session.records.get(pinKey(userId)).catch(() => null);
+  if (!signedList) return pin ? [] : devices;
+  let verified;
+  try { verified = await verifyDeviceList(signedList, userId, session.api); } catch { return []; }
+  const decision = pinDecision(pin, verified);
+  if (decision === 'rollback') return [];
+  if (decision !== 'same' || verified.counter > pin.counter) await session.records.set(pinKey(userId), { accountKey: verified.accountKey, counter: verified.counter }).catch(() => {});
+  if (decision === 'changed' && userId !== session.userId) notify({ type: 'identity-changed', userId, deviceId: null });
+  return listedDevices(devices, verified);
+}
+
+async function putDeviceList(accountKey, counter, devices, { create = false } = {}) {
+  const session = current;
+  const signed = await signDeviceList(accountKey, { userId: session.userId, counter, devices }, session.api);
+  try {
+    await request(`/api/v1/e2e/device-list${create ? '?create=1' : ''}`, { method: 'PUT', body: signed });
+    deviceLists.delete(session.userId);
+    return true;
+  } catch (error) {
+    if (error.status === 409) return false;
+    throw error;
+  }
+}
+
+/** Holds a new account key and stores a first list signed by it; the key is forgotten again if the list is refused. */
+async function establishAccountKey(devices, { create }) {
+  const storage = current.protocol.storage;
+  const key = await createAccountKey(current.api);
+  await storage.set('account-key', key);
+  if (await putDeviceList(key, 1, devices, { create })) {
+    await storage.del('list-join-pending');
+    return true;
+  }
+  if ((await storage.get('account-key'))?.publicKey === key.publicKey) await storage.del('account-key');
+  return false;
+}
+
+/**
+ * Keeps this device's place in the account's signed list. Resolves what it found or did:
+ *   'created'  first list of the account (every device the server lists today is named: trust on first use);
+ *   'holder'   this device holds the account key (and adds devices it linked whose claims check out);
+ *   'member'   named in the list held by another device;
+ *   'rotated'  a fresh sign-in on a new phone: a new account key naming only this device (contacts see a code change);
+ *   'claimed'  a device linked by QR asked the phone that linked it to add it;
+ *   'waiting'  a linked device on an account that has no list yet (its phone runs an older app);
+ *   'excluded' another phone took over the account; this one no longer receives until linked again.
+ */
+export function syncDeviceList() {
+  const session = current;
+  if (!session) return Promise.resolve('stopped');
+  // One at a time per device (start-up, the timers and a link approval can overlap).
+  const run = (session.listQueue ?? Promise.resolve()).then(() => (current === session ? syncDeviceListNow() : 'stopped'));
+  session.listQueue = run.catch(() => {});
+  return run;
+}
+
+async function syncDeviceListNow() {
+  const session = current;
+  const storage = session.protocol.storage;
+  const { devices, signedList } = await request(`/api/v1/e2e/users/${encodeURIComponent(session.userId)}/devices`);
+  const me = { deviceId: session.deviceId, identity: await session.protocol.publicIdentity() };
+  if (!signedList) {
+    if (!session.canHoldAccountKey) return 'waiting';
+    return (await establishAccountKey([...devices.filter((device) => device.deviceId !== me.deviceId), me], { create: true })) ? 'created' : 'raced';
+  }
+  let verified = null;
+  try { verified = await verifyDeviceList(signedList, session.userId, session.api); } catch { verified = null; }
+  const held = await storage.get('account-key');
+  if (verified && held?.publicKey === verified.accountKey) {
+    await storage.del('list-join-pending');
+    await acceptLinkClaims(verified, held);
+    return 'holder';
+  }
+  if (held) await storage.del('account-key');
+  const listed = verified?.devices.get(me.deviceId);
+  if (listed && listed.dh === me.identity.dh && listed.sig === me.identity.sig) {
+    await storage.del('list-join-pending');
+    await session.linkStore.del('hm:link-claim').catch(() => {});
+    if (session.listTimer) { clearInterval(session.listTimer); session.listTimer = null; }
+    return 'member';
+  }
+  if (session.canHoldAccountKey && await storage.get('list-join-pending')) {
+    return (await establishAccountKey([me], { create: false })) ? 'rotated' : 'failed';
+  }
+  if (!session.canHoldAccountKey) {
+    const sent = await sendLinkClaim(me, devices);
+    // Until the phone adds it, look again every 15 s for a few minutes (the phone checks claims as often).
+    if (sent && !session.listTimer) {
+      let left = 16;
+      session.listTimer = setInterval(() => { if (--left <= 0) { clearInterval(session.listTimer); session.listTimer = null; } syncDeviceList().catch(() => {}); }, 15_000);
+    }
+    return sent ? 'claimed' : 'waiting';
+  }
+  notify({ type: 'device-list-excluded' });
+  return 'excluded';
+}
+
+async function sendLinkClaim(me, devices) {
+  const session = current;
+  const pending = await session.linkStore.get('hm:link-claim').catch(() => null);
+  if (!pending?.privateKey || pending.userId !== session.userId) return false;
+  const approver = devices.find((device) => device.deviceId === pending.approver);
+  if (!approver) return false;
+  const shared = await agreeDh(pending.privateKey, decodeBase64(approver.identity.dh), session.api);
+  const mac = await linkClaimMac(shared, { userId: session.userId, deviceId: me.deviceId, identity: me.identity }, session.api);
+  await request('/api/v1/e2e/link-claims', { method: 'POST', body: { linkKey: pending.publicKey, mac, approver: approver.deviceId } });
+  return true;
+}
+
+/** Phone side: the link key of a device just linked (from the QR, or the code the person confirmed). */
+export async function rememberLinkApproval(linkKey) {
+  const session = current;
+  if (!session || typeof linkKey !== 'string') return;
+  const list = ((await session.records.get(pendingLinksKey()).catch(() => null)) ?? []).filter((item) => Date.now() - item.at < LINK_WINDOW_MS);
+  await session.records.set(pendingLinksKey(), [...list, { key: linkKey, at: Date.now() }]);
+  // The new device claims within a minute or two: look for it every 15 s for a few minutes.
+  let left = 16;
+  if (session.listTimer) clearInterval(session.listTimer);
+  session.listTimer = setInterval(() => { if (--left <= 0 || current !== session) { clearInterval(session.listTimer); session.listTimer = null; } syncDeviceList().catch(() => {}); }, 15_000);
+}
+
+async function acceptLinkClaims(verified, held) {
+  const session = current;
+  const { claims = [] } = await request('/api/v1/e2e/link-claims');
+  if (!claims.length) return;
+  const pending = ((await session.records.get(pendingLinksKey()).catch(() => null)) ?? []).filter((item) => Date.now() - item.at < LINK_WINDOW_MS);
+  const added = [];
+  for (const claim of claims) {
+    const link = claim.approver === session.deviceId ? pending.find((item) => item.key === claim.linkKey) : null;
+    if (!link || verified.devices.has(claim.deviceId)) continue;
+    const shared = await session.protocol.identityAgreement(decodeBase64(claim.linkKey));
+    const expected = await linkClaimMac(shared, { userId: session.userId, deviceId: claim.deviceId, identity: claim.identity }, session.api);
+    if (equalBytes(decodeBase64(expected), decodeBase64(claim.mac))) added.push(claim);
+  }
+  if (!added.length) return;
+  const devices = [...verified.devices].map(([deviceId, identity]) => ({ deviceId, identity }));
+  for (const claim of added) devices.push({ deviceId: claim.deviceId, identity: claim.identity });
+  // At most MAX_LISTED_DEVICES: the oldest entries other than this device go first.
+  while (devices.length > MAX_LISTED_DEVICES) devices.splice(devices.findIndex((device) => device.deviceId !== session.deviceId), 1);
+  if (!(await putDeviceList(held, verified.counter + 1, devices))) return;
+  for (const claim of added) await request(`/api/v1/e2e/link-claims/${encodeURIComponent(claim.deviceId)}`, { method: 'DELETE' }).catch(() => {});
+  await session.records.set(pendingLinksKey(), pending.filter((item) => !added.some((claim) => claim.linkKey === item.key))).catch(() => {});
 }
 
 /**
@@ -227,18 +404,24 @@ export function userForXmppAddress(address) {
   return null;
 }
 
-/** The server's current list after it refused a message as out of date ({ [userId]: [{ deviceId, identity }] }). */
-export function applyDeviceLists(devices) {
-  for (const [userId, list] of Object.entries(devices ?? {})) {
-    if (Array.isArray(list)) deviceLists.set(userId, { at: Date.now(), devices: list });
-  }
+/**
+ * The server refused a message because its device lists changed ({ [userId]: … }): those lists are fetched again,
+ * and checked against the signed lists, on the next seal. What the refusal itself carries is not trusted.
+ */
+export function forgetDeviceLists(devices) {
+  for (const userId of Object.keys(devices ?? {})) deviceLists.delete(userId);
 }
 
 async function groupDevicesOf(groupId, { fresh = false } = {}) {
   const cached = groupLists.get(groupId);
   if (!fresh && cached && Date.now() - cached.at < GROUP_DEVICE_TTL_MS) return cached;
   const data = await request(`/api/v1/e2e/groups/${encodeURIComponent(groupId)}/devices`);
-  const entry = { at: Date.now(), members: data.members ?? [], devices: data.devices ?? {} };
+  const devices = {};
+  for (const [userId, list] of Object.entries(data.devices ?? {})) {
+    const trusted = await trustedDevices(userId, list, data.signedLists?.[userId]);
+    if (trusted.length) devices[userId] = trusted;
+  }
+  const entry = { at: Date.now(), members: data.members ?? [], devices };
   groupLists.set(groupId, entry);
   return entry;
 }
@@ -374,9 +557,10 @@ export async function sendGroupContent(groupId, content, send, extra = {}) {
     } catch (error) {
       const data = error?.data ?? error?.body;
       if (error?.status !== 409 || !data?.devices) throw error;
-      groupLists.set(groupId, { at: Date.now(), members: data.members ?? [], devices: data.devices });
+      // Fetched again (and checked against the signed lists); the refusal's own copy is not trusted.
+      groupLists.delete(groupId);
       if (data.code === 'e2e-keys') await publishKeys().catch(() => {});
-      fresh = data.code === 'e2e-keys';
+      fresh = true;
     }
   }
   throw new Error('The group’s devices keep changing. Try again.');
@@ -391,7 +575,7 @@ export async function sendDirectContent(peerId, content, send) {
     } catch (error) {
       const data = error?.data ?? error?.body;
       if (error?.status !== 409 || !data?.devices) throw error;
-      applyDeviceLists(data.devices);
+      forgetDeviceLists(data.devices);
     }
   }
   throw new Error('This contact’s devices keep changing. Try again.');
@@ -527,9 +711,9 @@ export async function sealStatus(content) {
 }
 
 /** Whether a contact can receive end-to-end encrypted messages (has a device with keys). */
-export async function contactEncrypted(peerId) {
+export async function contactEncrypted(peerId, { fresh = false } = {}) {
   if (!current) return false;
-  return (await devicesOf(peerId).catch(() => [])).length > 0;
+  return (await devicesOf(peerId, { fresh }).catch(() => [])).length > 0;
 }
 
 export { ENVELOPE_PREFIX, isEnvelope };

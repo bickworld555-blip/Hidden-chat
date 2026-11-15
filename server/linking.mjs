@@ -89,7 +89,7 @@ export function registerLinking({ app, requireSession, issueSession, suspended, 
     if (item.status !== 'approved' || !item.session) return response.json({ status: item.status });
     const session = item.session;
     item.session = null;
-    response.json({ status: 'approved', session, history: Boolean(item.publicKey) });
+    response.json({ status: 'approved', session, history: Boolean(item.publicKey), approver: item.approver ?? null });
   });
 
   // Phone: what is about to be linked (from the scanned QR or the typed code).
@@ -115,6 +115,8 @@ export function registerLinking({ app, requireSession, issueSession, suspended, 
     item.approvedAt = now();
     item.activeAt = item.approvedAt;
     item.ownerId = userId;
+    // The new device later proves its keys to this device (src/e2e/client.js link claims).
+    item.approver = request.session.device_id;
     item.session = await issueSession(userId, item.deviceName);
     byCode.delete(item.code);
     for (const waiter of item.waiters) waiter();

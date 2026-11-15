@@ -119,6 +119,29 @@ is sent readable:
 
 Tests: `server/e2e-strict.test.mjs`, and the browser check "after they update, it arrives end-to-end encrypted".
 
+### 3.11 Signed device lists (`src/e2e/deviceList.js`, `client.js` `syncDeviceList`, `server/e2e.mjs`)
+
+- **Account key**: an ECDSA P-256 key created on one of the account's phones (never on a linked browser or desktop),
+  non-extractable, kept in that device's key storage. It signs `"HiddenMessenger device list v1" ‖ list`, where the list
+  is canonical JSON `{ v: 1, u: userId, ak, n: counter, at, d: [{ id, dh, sig }] }` (devices sorted by id).
+- **Server**: stores the latest list only if its signature verifies under the key it names, it names the uploading
+  device with that device's published identity, and its counter is higher than the stored one under the same key.
+  For an account with a list, only listed devices (same id and identity) are advertised and checked in envelopes.
+- **Contacts**: verify every list, pin the account key on first sight, and encrypt only to listed devices. An older
+  counter under the pinned key, a bad signature, or a missing list after a pin gives no devices (the message waits).
+  A different account key is accepted and shown as "security code changed" (`identity-changed` with no device).
+- **Adding a device by QR**: the phone records the new device's link key from the scanned QR (or from the security
+  code the person confirmed). The new device sends a claim with HMAC-SHA-256 over `[context, userId, deviceId, dh, sig]`,
+  keyed by HKDF of ECDH(its link key, the approving phone's identity key). Only that phone can check it; it then signs
+  a list naming the new device. The server relays the claim and cannot forge one.
+- **New phone (password sign-in)**: a device with a new identity, on a phone, whose list does not name it, creates a new
+  account key and a list naming only itself (option B, like re-registering WhatsApp). The other devices drop out of the
+  list and show a banner; contacts see a security code change.
+- **Upgrade**: an account without a list gets one from the first phone running this code, naming every device the
+  server lists at that moment (trust on first use, like the identity keys).
+- **Not covered**: the server can still withhold the newest list (contacts keep using the last list they verified),
+  and can replace the account key outright; that shows as a security code change, not as a silent device.
+
 ### 3.10 Other encrypted payloads
 
 | Payload | Scheme | Where |
@@ -210,7 +233,8 @@ key is used once and then deleted.
    are intended to) or any readable text.
 7. **Security codes and fingerprint lengths**: 60-digit safety numbers; 66-bit fingerprint on the linking
    typed-code path.
-8. **Server-distributed keys** with no key transparency.
+8. **Server-distributed keys** with no key transparency. Signed device lists (§3.11) stop the server from adding a
+   device unseen; replacing an account key still relies on users noticing the security code change.
 9. **No independent randomness test** beyond `crypto.getRandomValues`.
 
 ## 8. Suggested audit focus
