@@ -140,9 +140,21 @@ export async function fetchMediaResponse(id, sessionToken, signal) {
   return fetch(url, { signal, credentials: 'omit' });
 }
 
+// Type, size and page count as JSON (?info=1): a HEAD does not survive Hostinger's CDN (it reaches the app as a GET),
+// and for bucket-stored files it would follow the redirect to a link that refuses HEAD.
 async function fetchMediaInfo(id, sessionToken, signal) {
-  const response = await apiFetch(mediaUrl(id), { method: 'HEAD', headers: { Authorization: `Bearer ${sessionToken}` }, signal });
+  const response = await apiFetch(`${mediaUrl(id)}?info=1`, { headers: { Authorization: `Bearer ${sessionToken}` }, signal });
   if (!response.ok) throw new Error(response.status === 404 ? 'File is no longer available.' : 'Could not load file details.');
+  if ((response.headers.get('content-type') ?? '').startsWith('application/json')) {
+    const info = await response.json();
+    return {
+      contentType: essence(info.contentType) || 'application/octet-stream',
+      size: Number.isFinite(info.size) ? info.size : null,
+      ...(Number.isFinite(info.pages) && info.pages > 0 ? { pages: info.pages } : {}),
+    };
+  }
+  // An older server ignores ?info and sends the file: read the details from its headers.
+  response.body?.cancel?.().catch(() => {});
   const length = Number.parseInt(response.headers.get('content-length') ?? '', 10);
   const pages = Number.parseInt(response.headers.get('x-page-count') ?? '', 10);
   return {

@@ -24,8 +24,10 @@ function stubMediaServer(bodies) {
     const id = decodeURIComponent(String(url).split('?')[0].split('/').pop());
     const body = bodies[id];
     if (!body) return new Response(null, { status: 404 });
+    // ?info=1 answers JSON details (a HEAD does not survive the CDN); otherwise the bytes.
+    if (String(url).includes('info=1')) return new Response(JSON.stringify({ contentType: 'image/png', size: body.length }), { status: 200, headers: { 'Content-Type': 'application/json' } });
     const headers = { 'Content-Type': 'image/png', 'Content-Length': String(body.length) };
-    return new Response(init.method === 'HEAD' ? null : body, { status: 200, headers });
+    return new Response(body, { status: 200, headers });
   };
   return calls;
 }
@@ -43,7 +45,7 @@ test('media bytes and details are fetched once and shared by bubble, viewer, and
   await loadMediaInfo('photo', 'token-a');
   const info = await loadMediaInfo('photo', 'token-a');
   assert.deepEqual(info, { contentType: 'image/png', size: 4 });
-  assert.deepEqual(calls.map((call) => call.method), ['GET', 'HEAD']);
+  assert.deepEqual(calls.map((call) => [call.method, String(call.url).includes('info=1')]), [['GET', false], ['GET', true]], 'bytes once, details once, no HEAD');
 });
 
 test('an encrypted attachment needs no HEAD round trip: type and size come from its message, bytes in one GET', async () => {

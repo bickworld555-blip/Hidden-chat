@@ -2271,6 +2271,14 @@ export function createChatServer({
     // Rows stored before types were preserved hold the generic type; re-derive it from the filename.
     const contentType = resolveContentType(media.contentType, media.filename);
     const inline = Boolean(request.query.inline) && isInlineSafe(contentType);
+    // ?info=1: type, size and PDF page count as JSON, for every storage. Hostinger's CDN forwards HEAD to the app as a
+    // GET, so a HEAD never reached the HEAD branch below in production (and followed the redirect to the bucket, which
+    // refuses HEAD on a GET link): the app asks for details this way instead.
+    if (request.query.info === '1') {
+      const pages = media.storage === 'disk' && contentType === 'application/pdf' ? await pdfPageCountOfFile(join(mediaDirectory, media.diskName)) : null;
+      response.set('Cache-Control', 'private, no-store');
+      return response.json({ contentType, size: Number(media.byteSize), ...(pages ? { pages } : {}) });
+    }
     if (media.storage === 'r2') {
       if (!objectStore) return response.status(503).json({ error: 'Attachments are briefly unavailable. Try again in a moment.' });
       // HEAD is answered here (a presigned URL is for GET only); GET goes straight to the bucket, so the bytes never

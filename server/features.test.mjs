@@ -138,7 +138,8 @@ test('downloads stream to a picked file with live progress and can be cancelled'
   const originalFetch = globalThis.fetch;
   globalThis.window = { showSaveFilePicker: async () => ({ createWritable: async () => ({ write: async (chunk) => { written.push(chunk.byteLength); }, close: async () => { written.push('closed'); }, abort: async () => { written.push('aborted'); } }) }) };
   globalThis.fetch = async (url, init) => {
-    if (init?.method === 'HEAD') return new Response(null, { status: 200, headers: { 'content-length': '1000000', 'content-type': 'video/mp4' } });
+    // File details come as JSON (?info=1, src/media.js fetchMediaInfo); the bytes from the plain URL.
+    if (String(url).includes('info=1')) return new Response(JSON.stringify({ contentType: 'video/mp4', size: 1_000_000 }), { status: 200, headers: { 'content-type': 'application/json' } });
     let index = 0;
     const body = new ReadableStream({
       async pull(controller) {

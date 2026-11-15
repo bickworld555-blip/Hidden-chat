@@ -215,3 +215,14 @@ test('the app locates bucket-stored attachments and fetches them without its ses
   assert.ok(seen[0].url.includes('?locate=1') && seen[0].auth);
   assert.ok(seen[1].url.startsWith(bucketConfig.endpoint) && seen[1].auth === null, 'no session token goes to the bucket');
 });
+
+test('file details come as JSON (?info=1) for bucket-stored attachments, without touching the bucket', async () => {
+  const sender = await register('r2info');
+  const receiver = await register('r2infoto');
+  const { uploadFile } = await import('../src/upload.js');
+  const sent = await uploadFile(new File([new Uint8Array(1234)], 'report.bin', { type: 'application/octet-stream' }), { receiverId: receiver.user.id, sessionToken: sender.token });
+  const before = log.length;
+  const info = await api(`/api/v1/media/${sent.id}?info=1`, { token: receiver.token });
+  assert.deepEqual(info.data, { contentType: 'application/octet-stream', size: 1234 });
+  assert.equal(log.length, before, 'answered by the server alone');
+});
