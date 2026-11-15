@@ -34,12 +34,16 @@ import { parseEnvelope } from '../e2e/envelope.js';
 import { XmppTransport } from './transport.js';
 
 const RECEIPT_MEMORY = 5000;
+// A direct message over XMPP with no delivery receipt from the receiver's devices after this long: the server is asked
+// for a wake-up push (POST /api/v1/xmpp/nudge). ejabberd keeps a vanished connection resumable for minutes and pushes
+// only once the message reaches offline storage, so a phone that just lost its network would hear nothing until then.
+export const NUDGE_AFTER_MS = 10_000;
 
 /**
  * Resolves null unless this account is moved over. `deliver(event)` feeds the app's realtime event handler;
  * `legacySend(event)` is the current connection's send.
  */
-export async function startXmppSession({ sessionToken, userId, deliver, legacySend, targetsFor, groupTargetsFor = async () => ({ targets: [], complete: false, sender: null }), userForAddress = () => null, fetchImpl, createTransport = (options) => new XmppTransport(options), seal = null, groupsOverXmpp: groupsOption = null, signalingRestored = () => {}, onTransportState = () => {} }) {
+export async function startXmppSession({ sessionToken, userId, deliver, legacySend, targetsFor, groupTargetsFor = async () => ({ targets: [], complete: false, sender: null }), userForAddress = () => null, fetchImpl, createTransport = (options) => new XmppTransport(options), seal = null, groupsOverXmpp: groupsOption = null, signalingRestored = () => {}, onTransportState = () => {}, nudgeAfterMs = NUDGE_AFTER_MS }) {
   const auth = { Authorization: `Bearer ${sessionToken}` };
   let decision;
   try {
@@ -56,6 +60,18 @@ export async function startXmppSession({ sessionToken, userId, deliver, legacySe
   const cameFrom = new Map();
   // Messages sent over XMPP and not refused yet, so a refusal can resend them through the current path.
   const inFlight = new Map();
+  // Messages waiting for the receiver's delivery receipt: id -> { peerId, timer }.
+  const nudges = new Map();
+  const forgetNudge = (id) => { const pending = nudges.get(id); if (pending) { clearTimeout(pending.timer); nudges.delete(id); } };
+  const nudgeLater = (id, peerId) => {
+    forgetNudge(id);
+    const timer = setTimeout(() => {
+      nudges.delete(id);
+      fetchImpl('/api/v1/xmpp/nudge', { method: 'POST', headers: { ...auth, 'Content-Type': 'application/json' }, body: JSON.stringify({ userId: peerId, messageId: id }) }).catch(() => {});
+    }, nudgeAfterMs);
+    nudges.set(id, { peerId, timer });
+    if (nudges.size > RECEIPT_MEMORY) forgetNudge(nudges.keys().next().value);
+  };
   const remember = (map, key, value) => { map.set(key, value); if (map.size > RECEIPT_MEMORY) map.delete(map.keys().next().value); };
   // Calls: callId -> { address, userId } of the other call device, learnt from the server-relayed offer/answer.
   const callPeers = new Map();
@@ -93,6 +109,8 @@ export async function startXmppSession({ sessionToken, userId, deliver, legacySe
         });
       } else if (event.type === 'receipt') {
         inFlight.delete(event.id);
+        // Only the receiver's own receipt counts (the sender's other devices receive copies too).
+        if (nudges.get(event.id)?.peerId === userForAddress(event.from)) forgetNudge(event.id);
         deliver({ type: 'message:status', messageId: event.id, status: 'delivered' });
       } else if (event.type === 'displayed') {
         deliver({ type: 'message:status', messageId: event.id, status: 'read' });
@@ -116,6 +134,7 @@ export async function startXmppSession({ sessionToken, userId, deliver, legacySe
         // Refused (e.g. someone moved back to the current path): that path delivers it instead.
         const original = inFlight.get(event.id);
         inFlight.delete(event.id);
+        forgetNudge(event.id);
         legacySend(original);
       }
     },
@@ -131,6 +150,7 @@ export async function startXmppSession({ sessionToken, userId, deliver, legacySe
       if (!complete || !sender || transport.state !== 'online') return legacySend(event);
       remember(inFlight, message.id, event);
       transport.sendSealed({ id: message.id, to: targets, envelope: message.content, sender });
+      if (message.receiverId !== userId) nudgeLater(message.id, message.receiverId);
       // Sent: one tick, as the server's acknowledgement gives today.
       deliver({ type: 'message:ack', message: { ...message, senderId: userId, timestamp: message.timestamp || new Date().toISOString(), status: 'sent', via: 'xmpp' } });
     } catch {
@@ -252,6 +272,6 @@ export async function startXmppSession({ sessionToken, userId, deliver, legacySe
     /** A wake-up push arrived (Android): connect now if the connection is down. */
     // A push, a network change or the app returning: check the connection now (src/xmpp/transport.js checkNow).
     wake: () => transport.checkNow(),
-    close: () => transport.close(),
+    close: () => { for (const id of [...nudges.keys()]) forgetNudge(id); transport.close(); },
   };
 }

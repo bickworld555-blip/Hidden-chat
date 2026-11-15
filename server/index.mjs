@@ -29,7 +29,7 @@ import { createVerifiedAccounts, createVerifiedChannels, ensureVerificationSchem
 import { ensureRegionSchema, registerRegions } from './regions.mjs';
 import { createDeliveryQueue, ensureDeliveryQueueSchema } from './deliveryQueue.mjs';
 import { PLAINTEXT_REFUSED, refusesPlaintext, strictE2EFromEnv } from './strictE2E.mjs';
-import { clientGate, minimumClientProtocol, phoneOnlySignIn, socketClientAllowed, updateRequiredBody, webPasswordSignInAllowed } from './clientGate.mjs';
+import { clientGate, clientProtocolOf, minimumClientProtocol, phoneOnlySignIn, socketClientAllowed, updateRequiredBody, webPasswordSignInAllowed } from './clientGate.mjs';
 import { registerBackups } from './backups.mjs';
 import { registerBilling } from './billing.mjs';
 import { ensureE2eSchema, registerE2e } from './e2e.mjs';
@@ -75,7 +75,18 @@ const ACTIVITY_WRITE_MS = 60 * 60 * 1000;
 const MAX_STATUS_ENVELOPE = 900_000;
 // Bounds the request body of a "keep starred" clear; express.json already caps it at 16 kB.
 const MAX_CLEAR_KEEP_IDS = 500;
-const CALL_END_REASONS = new Set(['ended', 'no-answer', 'disconnected', 'busy', 'failed']);
+const CALL_END_REASONS = new Set(['ended', 'no-answer', 'disconnected', 'busy', 'failed', 'unavailable']);
+// Apps from this wire version on confirm an incoming call themselves (a "ringing" signal from the app, or
+// POST /api/v1/calls/:id/ringing from the phone's push handler). Until a callee device confirms, the caller sees
+// "Calling", not "Ringing"; with no confirmation within CALL_UNREACHABLE_MS the call ends as "unavailable" (an offline
+// phone). Neither writing the offer to a socket (it may be dead) nor Firebase accepting the push (it queues for
+// offline phones) proves the call reached anyone.
+export const CALL_CONFIRM_PROTOCOL = 3;
+export const CALL_UNREACHABLE_MS = 30_000;
+// A message written to a connection no device of the receiver has confirmed within this long gets its push anyway:
+// a connection that died a moment ago (the phone just lost its network) still looks connected here, and the message
+// written to it reached nobody (like WhatsApp: no delivery receipt, then a push).
+export const DELIVERY_PUSH_MS = 8_000;
 // 'ice-restart': the callee asks the caller to restart ICE after a network switch (only the caller offers, so the two
 // phones never send crossing offers). Refused here before, the callee's request never reached a caller on this path.
 const CALL_SIGNAL_TYPES = new Set(['offer', 'answer', 'ice', 'ice-restart', 'end', 'connected', 'ringing', 'media', 'video-request', 'video-accept', 'video-decline', 'video-cancel', 'reaction']);
@@ -148,6 +159,8 @@ export function createChatServer({
   // contacts see them go offline and before a call on it ends; the app reconnects within seconds.
   reconnectGraceMs = process.env.RECONNECT_GRACE_MS === undefined ? 10_000 : Number(process.env.RECONNECT_GRACE_MS) || 0,
   callReconnectGraceMs = process.env.CALL_RECONNECT_GRACE_MS === undefined ? 20_000 : Number(process.env.CALL_RECONNECT_GRACE_MS) || 0,
+  callUnreachableMs = CALL_UNREACHABLE_MS,
+  deliveryPushMs = DELIVERY_PUSH_MS,
   allowedOrigins = process.env.RELAY_ALLOWED_ORIGINS ?? '',
   webDirectory = join(directory, '..', 'dist'),
   migrate = false,
@@ -609,7 +622,7 @@ export function createChatServer({
     const delivered = await presentMessage(message);
     broadcastUser(receiverId, { type: 'message:new', message: delivered });
     broadcastUser(senderId, { type: 'message:new', message: delivered });
-    if (needsPush(receiverId)) pushInBackground(receiverId, pushBody.message({ id: message.id, from: senderId }), { collapseKey: `chat:${senderId}` });
+    pushUnlessDelivered(receiverId, pushBody.message({ id: message.id, from: senderId }), { collapseKey: `chat:${senderId}` }, directDelivered(message.id));
     return delivered;
   }
 
@@ -709,12 +722,13 @@ export function createChatServer({
     if (!activeCall) return;
     clearTimeout(activeCall.timer);
     clearTimeout(activeCall.reconnectTimer);
+    clearTimeout(activeCall.reachTimer);
     activeCalls.delete(callId);
     // A phone that was rung by push stops ringing even if its socket never connected.
     if (activeCall.pushed && !activeCall.calleeSocket) pushInBackground(activeCall.calleeId, pushBody.callEnd({ callId }), { ttlSeconds: 30, collapseKey: `call:${callId}` });
     const event = {
       type: 'call:signal',
-      from: reason === 'no-answer' ? activeCall.calleeId : activeCall.callerId,
+      from: reason === 'no-answer' || reason === 'unavailable' ? activeCall.calleeId : activeCall.callerId,
       callId,
       mode: activeCall.mode,
       signalId: randomUUID(),
@@ -723,6 +737,13 @@ export function createChatServer({
     // Every device of both people hears the end, so unanswered devices stop ringing too.
     broadcastUser(activeCall.callerId, event, exceptSocket);
     broadcastUser(activeCall.calleeId, event, exceptSocket);
+  }
+
+  // A callee device confirmed the call (or answered it): it is not "unavailable" any more.
+  function markCallReached(activeCall) {
+    activeCall.reached = true;
+    clearTimeout(activeCall.reachTimer);
+    activeCall.reachTimer = null;
   }
 
   // The same signed-in device reconnecting (a new socket after a network switch) takes its calls back: the old socket
@@ -902,6 +923,31 @@ export function createChatServer({
   function needsPush(userId) {
     return Boolean(push) && !isOnline(userId);
   }
+
+  /**
+   * Pushes a message now when nobody is on screen; otherwise once DELIVERY_PUSH_MS pass with no device of the receiver
+   * confirming it (`delivered()` resolves true once one has): the screen it was written to may belong to a phone that
+   * just lost its network.
+   */
+  function pushUnlessDelivered(userId, body, options, delivered) {
+    if (!push) return;
+    if (needsPush(userId)) { pushInBackground(userId, body, options); return; }
+    if (!(deliveryPushMs > 0)) return;
+    const timer = setTimeout(() => {
+      trackSocketTask(Promise.resolve(delivered()).then((done) => { if (!done && !closing) return pushToUser(userId, body, options); })
+        .catch((error) => console.error('Late push failed:', error.message)));
+    }, deliveryPushMs);
+    timer.unref?.();
+  }
+  const directDelivered = (messageId) => async () => {
+    const row = await db.prepare('SELECT status FROM messages WHERE id = ?').get(messageId);
+    return !row || row.status !== 'sent';
+  };
+  // A group member has it once any of their devices acknowledged it (or the queue no longer tracks it).
+  const groupDelivered = (messageId, userId) => async () => {
+    const rows = await db.prepare('SELECT delivered_at AS "deliveredAt" FROM message_deliveries WHERE message_id = ? AND user_id = ?').all(messageId, userId);
+    return !rows.length || rows.some((row) => row.deliveredAt !== null && row.deliveredAt !== undefined);
+  };
 
   /** Sends one encrypted push to every phone the person registered; forgets phones the app is gone from. */
   async function pushToUser(userId, body, options = {}) {
@@ -1259,8 +1305,7 @@ export function createChatServer({
     if (push) {
       const members = await db.prepare('SELECT user_id AS "userId" FROM group_members WHERE group_id = ? AND user_id <> ?').all(groupId, userId);
       for (const member of members) {
-        if (!needsPush(member.userId)) continue;
-        pushInBackground(member.userId, pushBody.groupMessage({ id: row.id, groupId, from: row.sender_id }), { collapseKey: `group:${groupId}` });
+        pushUnlessDelivered(member.userId, pushBody.groupMessage({ id: row.id, groupId, from: row.sender_id }), { collapseKey: `group:${groupId}` }, groupDelivered(row.id, member.userId));
       }
     }
     response.status(201).json(row);
@@ -2359,6 +2404,30 @@ export function createChatServer({
     finishCall(request.params.callId, 'ended');
     response.status(204).end();
   });
+  // Messages over XMPP never pass through this server, so it cannot see whether they arrived. The sending app waits
+  // for a delivery receipt (src/xmpp/session.js); when none comes in time it asks for this content-free wake-up push to
+  // the receiver's phones. Only between people linked with each other, and rate limited: no more than a message could.
+  const nudgeLimiter = createMemoryRateLimiter();
+  app.post('/api/v1/xmpp/nudge', requireSession, express.json({ limit: '4kb' }), async (request, response) => {
+    const userId = request.session.user_id;
+    const targetId = typeof request.body?.userId === 'string' ? request.body.userId : '';
+    if (!targetId || targetId === userId) return response.status(400).json({ error: 'Name the person to wake.' });
+    if (await nudgeLimiter.hit(`nudge:${userId}`, [{ limit: 30, windowMs: 60_000 }])) return response.status(429).json({ error: 'Too many wake-ups.' });
+    if (!push || !(await areLinked(userId, targetId)) || await blocks.between(userId, targetId)) return response.status(202).json({ sent: 0 });
+    const sent = await pushToUser(targetId, pushBody.wake({ from: userId }), { collapseKey: `chat:${userId}`, ttlSeconds: 86_400 }).catch(() => 0);
+    response.status(202).json({ sent });
+  });
+
+  // The phone's push handler confirms a call rang there (Android PushService), before any app connection exists.
+  app.post('/api/v1/calls/:callId/ringing', requireSession, async (request, response) => {
+    const activeCall = activeCalls.get(request.params.callId);
+    if (!activeCall || activeCall.calleeId !== request.session.user_id) return response.status(404).json({ error: 'No call is ringing.' });
+    if (!activeCall.reached) {
+      markCallReached(activeCall);
+      deliverCallSignal(activeCall, activeCall.callerId, { type: 'call:signal', from: activeCall.calleeId, callId: request.params.callId, mode: activeCall.mode, signal: { type: 'ringing' }, signalId: randomUUID() });
+    }
+    response.status(204).end();
+  });
   app.post('/api/v1/calls/:callId/decline', requireSession, async (request, response) => {
     const activeCall = activeCalls.get(request.params.callId);
     if (!activeCall || activeCall.calleeId !== request.session.user_id || activeCall.calleeSocket) return response.status(404).json({ error: 'No call is ringing.' });
@@ -2772,6 +2841,8 @@ export function createChatServer({
     }
     request.session = session;
     request.relayBackground = offered.includes('relay.background');
+    // The app's wire version on this socket (relay.client.<n>): what it can do (CALL_CONFIRM_PROTOCOL).
+    request.clientProtocol = Math.max(0, ...offered.filter((part) => part.startsWith('relay.client.')).map((part) => clientProtocolOf(part.slice('relay.client.'.length)) || 0));
     if (socket.destroyed || closing) {
       socket.destroy();
       return;
@@ -2788,6 +2859,7 @@ export function createChatServer({
     socket.sessionHash = request.session.token_hash;
     // The Android service's own connection only keeps the phone reachable; it never makes the user "online".
     socket.relayBackground = Boolean(request.relayBackground);
+    socket.clientProtocol = Number(request.clientProtocol) || 0;
     socket.backgrounded = socket.relayBackground;
     socket.idle = false;
     socket.awaitingPong = false;
@@ -2969,14 +3041,27 @@ export function createChatServer({
         // A pair inside a group call carries the room id, so devices already in that room join without ringing.
         const roomId = typeof event.roomId === 'string' && event.roomId.length <= 80 ? event.roomId : (activeCall?.roomId ?? null);
         if (initialOffer) {
-          const call = { callerId: userId, calleeId: targetId, callerSocket: socket, calleeSocket: null, mode, timer: null, roomId, held: [], pushed: false };
+          // A callee device on an app too old to confirm keeps the old rule (ringing once the offer reaches a socket).
+          const calleeSockets = [...userSockets(targetId)].filter((candidate) => candidate.readyState === WebSocket.OPEN);
+          const confirms = !calleeSockets.some((candidate) => (candidate.clientProtocol ?? 0) < CALL_CONFIRM_PROTOCOL);
+          const call = { callerId: userId, calleeId: targetId, callerSocket: socket, calleeSocket: null, mode, timer: null, roomId, held: [], pushed: false, confirms, reached: false, reachTimer: null };
+          if (confirms && callUnreachableMs > 0 && !roomId) {
+            call.reachTimer = setTimeout(() => { if (!call.reached && !call.calleeSocket && activeCalls.get(callId) === call) finishCall(callId, 'unavailable'); }, callUnreachableMs);
+            call.reachTimer.unref?.();
+          }
           if (callTimeoutMs > 0) {
             call.timer = setTimeout(() => finishCall(callId, 'no-answer'), callTimeoutMs);
             call.timer.unref?.();
           }
           activeCalls.set(callId, call);
         }
+        // A callee device confirms the call reached it: the caller now sees "Ringing" (relayed below).
+        if (signal.type === 'ringing' && activeCall && userId === activeCall.calleeId) {
+          if (activeCall.reached && activeCall.confirms) return;     // one "Ringing" per call, however many devices
+          markCallReached(activeCall);
+        }
         if (signal.type === 'answer' && activeCall && !activeCall.calleeSocket && userId === activeCall.calleeId) {
+          markCallReached(activeCall);
           clearTimeout(activeCall.timer);
           activeCall.timer = null;
           activeCall.calleeSocket = socket;
@@ -3022,15 +3107,16 @@ export function createChatServer({
           current.held.push(signalEvent);
         }
         const ringing = () => json(socket, { type: 'call:signal', from: targetId, callId, mode, signal: { type: 'ringing' }, signalId: randomUUID() });
-        // Only the caller's own socket learns that a callee device is ringing; an offline callee yields no signal.
-        if (initialOffer && delivered > 0) ringing();
+        // Old callee apps cannot confirm: for them the offer reaching a socket (or the push being accepted) still counts.
+        // Current apps confirm themselves (markCallReached), so the caller never sees "Ringing" for an offline phone.
+        if (initialOffer && delivered > 0 && current && !current.confirms) ringing();
         if (initialOffer && current && !current.silenced && needsPush(targetId)) {
           // Not awaited: the caller's candidates keep flowing while Firebase is asked to ring the phone.
           current.pushed = true;
           trackSocketTask(pushToUser(targetId, pushBody.call({ callId, from: userId, mode }), { ttlSeconds: 45, collapseKey: `call:${callId}` })
             .then((sent) => {
               if (sent === 0) current.pushed = false;
-              else if (delivered === 0 && activeCalls.get(callId) === current && socket.readyState === WebSocket.OPEN) ringing();
+              else if (!current.confirms && delivered === 0 && activeCalls.get(callId) === current && socket.readyState === WebSocket.OPEN) ringing();
             })
             .catch((error) => console.error('Call push failed:', error.message)));
         }
@@ -3395,9 +3481,7 @@ export function createChatServer({
       (await linkUsers(receiverId, userId));
       const delivered = (await presentMessage(message));
       broadcastUser(receiverId, { type: 'message:new', message: delivered });
-      if (needsPush(receiverId)) {
-        pushInBackground(receiverId, pushBody.message({ id: message.id, from: userId }), { collapseKey: `chat:${userId}` });
-      }
+      pushUnlessDelivered(receiverId, pushBody.message({ id: message.id, from: userId }), { collapseKey: `chat:${userId}` }, directDelivered(message.id));
       broadcastUser(userId, { type: 'message:new', message: delivered }, socket);
       json(socket, { type: 'message:ack', message: delivered });
       parity.afterDirectMessage({ senderId: userId, receiverId, messageId: message.id }).catch((error) => {

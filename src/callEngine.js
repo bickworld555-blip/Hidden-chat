@@ -64,6 +64,8 @@ export function cameraSwitchPlans({ facing, devices = [], currentDeviceId = '' }
 
 export function endReasonMessage(reason, direction) {
   if (reason === 'no-answer') return direction === 'outgoing' ? 'No answer.' : 'Missed call.';
+  // No device of theirs confirmed the call (the phone is offline or unreachable): the server ends it (CALL_UNREACHABLE_MS).
+  if (reason === 'unavailable') return direction === 'outgoing' ? 'Unavailable. They may be offline; try again later.' : 'Missed call.';
   if (reason === 'busy') return 'The other person is on another call.';
   if (reason === 'disconnected') return 'The other device disconnected.';
   if (reason === 'failed') return 'Could not connect this call.';
@@ -72,7 +74,7 @@ export function endReasonMessage(reason, direction) {
 }
 
 export function endReasonStatus(reason, direction) {
-  if (reason === 'no-answer' && direction === 'outgoing') return 'no-answer';
+  if ((reason === 'no-answer' || reason === 'unavailable') && direction === 'outgoing') return 'no-answer';
   if (reason === 'busy') return 'busy';
   if (reason === 'failed') return 'failed';
   return 'ended';
@@ -1214,8 +1216,12 @@ export function createCallEngine({
     },
   };
 
-  // An incoming call rings from the moment it exists; unanswered it becomes a missed call.
-  if (direction === 'incoming') armRingTimeout();
+  // An incoming call rings from the moment it exists; unanswered it becomes a missed call. This device confirms it rang,
+  // so the caller sees "Ringing" only when the call really reached a device (server/index.mjs CALL_CONFIRM_PROTOCOL).
+  if (direction === 'incoming') {
+    armRingTimeout();
+    sendSignal({ type: 'ringing' });
+  }
   return engine;
 }
 

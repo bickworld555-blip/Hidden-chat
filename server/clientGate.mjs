@@ -2,7 +2,10 @@
 // queue-based delivery and would send plaintext or rely on history the server no longer keeps. Requests say their
 // version in the X-HM-Client header, the realtime socket in a "relay.client.<n>" subprotocol. Old apps get 426 with
 // a pointer to the download page.
-export const CURRENT_CLIENT_PROTOCOL = 2;
+export const CURRENT_CLIENT_PROTOCOL = 3;
+// The oldest version production still accepts by default. A new version that only adds abilities (3: the app confirms
+// incoming calls) does not cut off the one before it; raise this only when older apps must stop working.
+export const MINIMUM_SUPPORTED_PROTOCOL = 2;
 const HEADER = 'x-hm-client';
 const DOWNLOAD = '/download';
 
@@ -19,10 +22,10 @@ export function clientProtocolOf(value) {
   return Number.isFinite(number) && number > 0 ? number : 0;
 }
 
-/** The minimum this server accepts: RELAY_MIN_CLIENT, else the current version in production and none locally. */
+/** The minimum this server accepts: RELAY_MIN_CLIENT, else MINIMUM_SUPPORTED_PROTOCOL in production and none locally. */
 export function minimumClientProtocol(env = process.env, { production = env.NODE_ENV === 'production' || Boolean(env.DATABASE_URL) } = {}) {
   if (env.RELAY_MIN_CLIENT !== undefined && env.RELAY_MIN_CLIENT !== '') return clientProtocolOf(env.RELAY_MIN_CLIENT);
-  return production ? CURRENT_CLIENT_PROTOCOL : 0;
+  return production ? MINIMUM_SUPPORTED_PROTOCOL : 0;
 }
 
 export function updateRequiredBody(minimum) {

@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import WebSocket from 'ws';
 import { createChatServer } from './index.mjs';
-import { CURRENT_CLIENT_PROTOCOL, minimumClientProtocol } from './clientGate.mjs';
+import { CURRENT_CLIENT_PROTOCOL, MINIMUM_SUPPORTED_PROTOCOL, minimumClientProtocol } from './clientGate.mjs';
 import { CLIENT_HEADER, CLIENT_PROTOCOL, CLIENT_SUBPROTOCOL } from '../src/clientVersion.js';
 
 let service;
@@ -33,8 +33,9 @@ const register = (headers) => fetch(`${baseUrl}/api/v1/auth/register`, {
 
 test('the app and the server agree on the current version; production refuses older apps by default', () => {
   assert.equal(CLIENT_PROTOCOL, CURRENT_CLIENT_PROTOCOL);
-  assert.equal(minimumClientProtocol({ NODE_ENV: 'production' }), CURRENT_CLIENT_PROTOCOL);
-  assert.equal(minimumClientProtocol({ DATABASE_URL: 'postgresql://x' }), CURRENT_CLIENT_PROTOCOL);
+  assert.equal(minimumClientProtocol({ NODE_ENV: 'production' }), MINIMUM_SUPPORTED_PROTOCOL);
+  assert.equal(minimumClientProtocol({ DATABASE_URL: 'postgresql://x' }), MINIMUM_SUPPORTED_PROTOCOL);
+  assert.equal(MINIMUM_SUPPORTED_PROTOCOL, 2, 'apps from before call confirmation (2) still work: 3 only adds abilities');
   assert.equal(minimumClientProtocol({}), 0, 'local development is open');
   assert.equal(minimumClientProtocol({ NODE_ENV: 'production', RELAY_MIN_CLIENT: '0' }), 0, 'an operator can open it again');
 });

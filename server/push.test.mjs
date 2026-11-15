@@ -122,6 +122,11 @@ test('a call rings a sleeping phone by push; the phone connecting later still ge
   const body = decrypt(key, push.data);
   assert.deepEqual(body, { t: 'call', callId, from: a.user.id, mode: 'video' }, 'no caller name or photo: the phone names the caller itself');
   assert.equal(push.options.ttlSeconds, 45, 'a call push is useless after the ring');
+  // Firebase accepting the push proves nothing (it queues for phones that are offline): no "Ringing" yet.
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  assert.ok(!caller.events.some((event) => event.type === 'call:signal' && event.callId === callId && event.signal.type === 'ringing'), 'not ringing before the phone confirms');
+  // The phone's push handler confirms it rang (PushService): now the caller hears ringing.
+  assert.equal((await api(`/api/v1/calls/${callId}/ringing`, { session: b, method: 'POST' })).status, 204);
   await until(() => caller.events.some((event) => event.type === 'call:signal' && event.callId === callId && event.signal.type === 'ringing'), 'the caller hears ringing');
 
   // The phone, woken by the push, connects its background socket: the kept offer and candidate arrive.

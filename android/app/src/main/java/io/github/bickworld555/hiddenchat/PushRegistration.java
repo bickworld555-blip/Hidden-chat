@@ -193,6 +193,12 @@ final class PushRegistration {
         return post(context, "/api/v1/calls/" + android.net.Uri.encode(callId) + "/end", new JSONObject());
     }
 
+    /** The phone rang for this call: the caller now sees "Ringing" (the server ends calls nobody confirms). */
+    static boolean confirmRinging(Context context, String callId) {
+        if (callId == null || callId.isEmpty()) return false;
+        return post(context, "/api/v1/calls/" + android.net.Uri.encode(callId) + "/ringing", new JSONObject());
+    }
+
     private static boolean post(Context context, String path, JSONObject body) {
         RelaySession session = RelaySession.read(context);
         if (session == null || body == null) return false;

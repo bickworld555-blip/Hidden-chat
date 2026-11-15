@@ -5,7 +5,8 @@ package io.github.bickworld555.hiddenchat;
  * the server (and on its background socket), which refuses older apps (server/clientGate.mjs).
  */
 final class ClientVersion {
-    static final int PROTOCOL = 2;
+    // 3: confirms incoming calls (PushService posts /api/v1/calls/:id/ringing; the app sends a "ringing" signal).
+    static final int PROTOCOL = 3;
     static final String HEADER = "X-HM-Client";
     static final String SUBPROTOCOL = "relay.client." + PROTOCOL;
 
