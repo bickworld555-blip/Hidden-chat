@@ -39,7 +39,7 @@ import { gifConfigFromEnv, registerGifs } from './gifs.mjs';
 import { alertWebhookFromEnv, createAlerts, serverErrorWatch } from './monitoring.mjs';
 import { createBlocks, ensureBlockSchema, registerBlocks } from './blocks.mjs';
 import { createMemoryRateLimiter, createTtlCache, invalidateOnWrite } from './memoryCache.mjs';
-import { abuseLimitsFromEnv, clientAddress, createSharedRateLimiter, ensureRateLimitSchema, tooManyMessages, tooManySignups } from './abuse.mjs';
+import { abuseLimitsFromEnv, clientAddress, createSharedRateLimiter, createTokenBuckets, ensureRateLimitSchema, tooManyMessages, tooManySignups, tooMuchUploading } from './abuse.mjs';
 import { ensureExtrasSchema, registerExtras, statusAudienceSql } from './extras.mjs';
 import { ensureAdminSchema, registerAdmin } from './admin.mjs';
 import { ensureSupportSchema, registerSupport } from './support.mjs';
@@ -1581,6 +1581,21 @@ export function createChatServer({
   // Messages are counted in memory (no database write per message); sign-ups on the shared, persistent counters.
   const messageLimiter = createMemoryRateLimiter();
   const rateLimiter = createSharedRateLimiter({ db, secret: process.env.RELAY_RATE_LIMIT_SECRET || digest(`hm-rate-limits:${databaseUrl ?? databasePath ?? 'local'}`) });
+  const uploadBuckets = createTokenBuckets({ db, secret: process.env.RELAY_RATE_LIMIT_SECRET || digest(`hm-rate-limits:${databaseUrl ?? databasePath ?? 'local'}`) });
+  // Upload allowance per account (abuse limits on): presigned parts, bytes per burst and per day, in every upload path.
+  // Resolves 0 when allowed, else the wait in ms (Infinity: larger than the allowance can ever hold).
+  async function chargeUpload(userId, { parts = 0, bytes = 0 }) {
+    if (!abuseLimits) return 0;
+    if (parts) { const wait = await uploadBuckets.take(`upload-parts:${userId}`, abuseLimits.uploadParts, parts); if (wait) return wait; }
+    if (bytes) {
+      const daily = await uploadBuckets.take(`upload-bytes-day:${userId}`, abuseLimits.uploadBytesDaily, bytes);
+      if (daily) return daily;
+      const burst = await uploadBuckets.take(`upload-bytes:${userId}`, abuseLimits.uploadBytes, bytes);
+      if (burst) return burst;
+    }
+    return 0;
+  }
+  const refuseUpload = (response, wait) => response.status(429).set(Number.isFinite(wait) ? { 'Retry-After': String(Math.ceil(wait / 1000)) } : {}).json(tooMuchUploading(wait));
   const messageWait = async (userId) => (abuseLimits ? messageLimiter.hit(`messages:${userId}`, abuseLimits.messages) : 0);
   app.post('/api/v1/auth/register', phoneOnly, async (request, response) => {
     if (abuseLimits) {
@@ -1859,6 +1874,8 @@ export function createChatServer({
     const target = await attachmentTarget(request.session.user_id, request.query.receiverId, request.query.groupId);
     if (!target) return response.status(400).json({ error: 'Choose a valid conversation.' });
     if (!Buffer.isBuffer(request.body) || request.body.length === 0) return response.status(400).json({ error: 'Choose a non-empty file.' });
+    const uploadWait = await chargeUpload(request.session.user_id, { bytes: request.body.length });
+    if (uploadWait) return refuseUpload(response, uploadWait);
     let rawName = String(request.get('x-file-name') ?? 'attachment').slice(0, 1024);
     try { rawName = decodeURIComponent(rawName); } catch { return response.status(400).json({ error: 'Filename encoding is invalid.' }); }
     const filename = sanitizeFilename(rawName);
@@ -1908,6 +1925,10 @@ export function createChatServer({
     if (!numbers.length || numbers.length > MAX_PART_URLS || !numbers.every((n) => Number.isInteger(n) && n >= 1 && n <= partCount)) {
       return response.status(400).json({ error: `Ask for 1 to ${MAX_PART_URLS} parts between 1 and ${partCount}.` });
     }
+    const partBytes = partBytesFor(upload.byte_size);
+    const signedBytes = numbers.reduce((sum, n) => sum + Math.min(partBytes, upload.byte_size - (n - 1) * partBytes), 0);
+    const partsWait = await chargeUpload(request.session.user_id, { parts: numbers.length, bytes: signedBytes });
+    if (partsWait) return refuseUpload(response, partsWait);
     (await db.prepare("UPDATE uploads SET updated_at = ? WHERE id = ?").run(Date.now(), upload.id));
     response.json({ urls: Object.fromEntries(numbers.map((n) => [n, objectStore.presignPart(upload.disk_name, upload.remote_upload_id, n)])), expiresIn: UPLOAD_URL_TTL_SECONDS });
   });
@@ -1987,6 +2008,11 @@ export function createChatServer({
     if (Number.isInteger(declared) && declared > limit) {
       request.resume();
       return response.status(413).json({ error: 'Chunk is larger than the remaining file size.', received: upload.received });
+    }
+    const chunkWait = await chargeUpload(request.session.user_id, { bytes: Number.isInteger(declared) && declared > 0 ? declared : limit });
+    if (chunkWait) {
+      request.resume();
+      return refuseUpload(response, chunkWait);
     }
     busyUploads.add(upload.id);
     let written = 0;
@@ -3490,6 +3516,7 @@ export function createChatServer({
         sweep(removeOrphanedMedia);
         sweep(() => backups.removeOrphanedBackups());
         sweep(() => rateLimiter.sweep());
+        sweep(() => uploadBuckets.sweep());
         sweep(() => messageLimiter.sweep());
         // Devices whose sessions expired lose their XMPP accounts too; ejabberd is brought back in line with the table.
         sweep(() => xmpp.reconcile({ mirror: true }));

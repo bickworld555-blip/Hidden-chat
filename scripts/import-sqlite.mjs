@@ -63,6 +63,7 @@ export const IMPORT_TABLES = Object.freeze([
   { name: 'backups', columns: ['user_id', 'disk_name', 'byte_size', 'kdf', 'updated_at'], users: ['user_id'], key: ['user_id'] },
   { name: 'blocks', columns: ['blocker_id', 'blocked_id', 'created_at'], users: ['blocker_id', 'blocked_id'], key: ['blocker_id', 'blocked_id'] },
   { name: 'rate_limit_hits', columns: ['key', 'window_start', 'count'], users: [], key: ['key', 'window_start'], numeric: ['window_start'] },
+  { name: 'token_buckets', columns: ['key', 'tokens', 'updated_at'], users: [], key: ['key'], numeric: ['updated_at'] },
   { name: 'channel_admins', columns: ['channel_id', 'user_id', 'added_at'], users: ['user_id'], key: ['channel_id', 'user_id'] },
   { name: 'channel_followers', columns: ['channel_id', 'user_id', 'followed_at'], users: ['user_id'], key: ['channel_id', 'user_id'] },
   { name: 'channel_posts', columns: ['id', 'channel_id', 'author_id', 'content', 'created_at'], users: ['author_id'] },

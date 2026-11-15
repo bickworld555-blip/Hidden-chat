@@ -506,3 +506,19 @@ test('behind a transaction pooler the server refuses to start until the role def
   const indexes = (await pool.query("SELECT indexname FROM pg_indexes WHERE schemaname = 'relay' AND indexname LIKE '%_created'")).rows.map((row) => row.indexname).sort();
   assert.deepEqual(indexes, ['device_events_created', 'message_deliveries_created', 'message_routes_created']);
 });
+
+test('PostgreSQL: upload token buckets refill, cap, and never spend the same tokens twice', async () => {
+  const { createTokenBuckets } = await import('./abuse.mjs');
+  const clock = { t: 10_000_000 };
+  const db = createPostgresDatabase({ pool });
+  const buckets = createTokenBuckets({ db, secret: 'pg', now: () => clock.t });
+  const rule = { capacity: 10, perSecond: 2 };
+  assert.equal(await buckets.take('k', rule, 10), 0);
+  assert.equal(await buckets.take('k', rule, 1), 500);
+  clock.t += 1500;
+  assert.equal(await buckets.take('k', rule, 3), 0);
+  clock.t += 3_600_000;
+  const results = await Promise.all(Array.from({ length: 15 }, () => buckets.take('k', rule, 1)));
+  assert.equal(results.filter((wait) => wait === 0).length, 10, 'refilled to the capacity, no more');
+  assert.equal(await buckets.take('big', rule, 11), Infinity);
+});
