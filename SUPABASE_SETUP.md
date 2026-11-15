@@ -91,6 +91,21 @@ omitted only when the endpoint's certificate is trusted by Node's CA store.
 On the eventual Linux VPS, use Linux paths for the certificate/data directory
 (for example `/etc/relay/supabase-ca.crt` and `/var/lib/relay`).
 
+### High throughput: the transaction pooler
+
+A direct or session-pooler connection holds one database connection per app connection, so
+`DATABASE_POOL_MAX` stays at 20 or below. For many messages per second, use Supabase's transaction pooler
+(Project › Connect › Transaction pooler, port **6543**) or PgBouncer with `pool_mode = transaction`:
+
+1. Run `scripts/db-pooler-setup.sql` once in the SQL editor, as the role in `DATABASE_URL`. Each query may land on
+   a different server connection, so the role, not the connection, sets `search_path = relay` and a statement
+   timeout.
+2. Set `DATABASE_URL` to the 6543 URI, `DATABASE_POOL_MODE=transaction` and, for example, `DATABASE_POOL_MAX=50`
+   (up to 200). The mode is never guessed from the URL.
+3. Restart. The server refuses to start if the role does not default to the relay schema (step 1 missing).
+
+Migrations run safely through the pooler (one transaction, transaction-scoped advisory lock).
+
 `RELAY_ALLOWED_ORIGINS` accepts comma-separated **exact HTTPS origins**.
 The TURN variables need a real relay for reliable mobile-network calls;
 database migration does not make TURN unnecessary. Keep TURN credentials private

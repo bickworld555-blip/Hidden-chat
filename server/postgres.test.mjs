@@ -8,7 +8,7 @@ import { after, before, beforeEach, test } from 'node:test';
 import { PGlite } from '@electric-sql/pglite';
 import WebSocket from 'ws';
 import { createChatServer } from './index.mjs';
-import { DATABASE_SCHEMA_VERSION, createPostgresDatabase, migratePostgres, postgresOptions, postgresParameters } from './database.mjs';
+import { DATABASE_SCHEMA_VERSION, createPostgresDatabase, databasePoolMode, migratePostgres, postgresOptions, postgresParameters } from './database.mjs';
 import { IMPORT_TABLES, importSqlite, planImport } from '../scripts/import-sqlite.mjs';
 import { checkGroupAttachments, checkGroupContract } from './group-contract.mjs';
 
@@ -174,6 +174,20 @@ test('PostgreSQL parameter ownership preserves literals, TLS verification and sa
   assert.throws(() => postgresOptions({ DATABASE_URL: 'postgresql://user:password@localhost/db?sslmode=disable' }), /Remove sslmode/);
   assert.throws(() => postgresOptions({ DATABASE_URL: 'https://localhost' }), /PostgreSQL URI/);
   assert.throws(() => postgresOptions({ DATABASE_URL: 'postgresql://localhost/db', DATABASE_POOL_MAX: '0' }), /POOL_MAX/);
+  assert.equal(options.statement_timeout, 30_000);
+  assert.equal(options.max, 5, 'direct connections stay few');
+  assert.throws(() => postgresOptions({ DATABASE_URL: 'postgresql://localhost/db', DATABASE_POOL_MAX: '21' }), /1 to 20/);
+
+  // Transaction pooler (Supavisor port 6543 / PgBouncer): nothing that only lasts for one server connection.
+  const pooled = postgresOptions({ DATABASE_URL: 'postgresql://postgres.ref:pw@aws-0-eu.pooler.supabase.com:6543/postgres', DATABASE_POOL_MODE: 'transaction' });
+  assert.equal(databasePoolMode({ DATABASE_URL: 'postgresql://u:p@h:6543/d' }), 'direct', 'never guessed from the port: a deliberate switch');
+  assert.equal(pooled.options, undefined, 'search_path comes from the role (scripts/db-pooler-setup.sql)');
+  assert.equal(pooled.statement_timeout, undefined);
+  assert.equal(pooled.query_timeout, 30_000, 'the client still stops waiting');
+  assert.equal(pooled.max, 20);
+  assert.equal(postgresOptions({ DATABASE_URL: 'postgresql://u:p@h:6543/d', DATABASE_POOL_MODE: 'transaction', DATABASE_POOL_MAX: '200' }).max, 200, 'the pooler multiplexes many client connections');
+  assert.throws(() => postgresOptions({ DATABASE_URL: 'postgresql://u:p@h:6543/d', DATABASE_POOL_MODE: 'transaction', DATABASE_POOL_MAX: '201' }), /1 to 200/);
+  assert.throws(() => databasePoolMode({ DATABASE_URL: 'postgresql://u:p@h/d', DATABASE_POOL_MODE: 'session' }), /direct.*transaction/);
 });
 
 test('DATABASE_SSL_CA accepts PEM text from hosting panels or a PEM file path', (t) => {
@@ -478,4 +492,17 @@ test('readiness checks the live PostgreSQL schema without changing liveness', as
   assert.equal(unavailable.headers.get('cache-control'), 'no-store');
   assert.deepEqual(await unavailable.json(), { error: 'The server could not complete this request. Please retry.' });
   assert.equal((await fetch(`${url}/api/v1/health`)).status, 200);
+});
+
+test('behind a transaction pooler the server refuses to start until the role defaults to the relay schema', async () => {
+  const env = { DATABASE_URL: 'postgresql://postgres.ref:pw@pooler.example:6543/postgres', DATABASE_POOL_MODE: 'transaction' };
+  await engine.exec('SET search_path TO public');
+  await assert.rejects(createPostgresDatabase({ env, pool }).ready(), /db-pooler-setup\.sql/);
+  await engine.exec('SET search_path TO relay, public');
+  await createPostgresDatabase({ env, pool }).ready();
+  const setup = readFileSync(new URL('../scripts/db-pooler-setup.sql', import.meta.url), 'utf8');
+  assert.match(setup, /ALTER ROLE CURRENT_USER SET search_path = relay/);
+  // The queue sweeps delete by age: indexed (migration 030).
+  const indexes = (await pool.query("SELECT indexname FROM pg_indexes WHERE schemaname = 'relay' AND indexname LIKE '%_created'")).rows.map((row) => row.indexname).sort();
+  assert.deepEqual(indexes, ['device_events_created', 'message_deliveries_created', 'message_routes_created']);
 });

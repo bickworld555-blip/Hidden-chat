@@ -43,6 +43,9 @@ export function ensureDeliveryQueueSchema(db) {
       id TEXT PRIMARY KEY, user_id TEXT NOT NULL, device_id TEXT NOT NULL, payload TEXT NOT NULL, created_at INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS device_events_device ON device_events(device_id, created_at);
+    CREATE INDEX IF NOT EXISTS device_events_created ON device_events(created_at);
+    CREATE INDEX IF NOT EXISTS message_deliveries_created ON message_deliveries(created_at);
+    CREATE INDEX IF NOT EXISTS message_routes_created ON message_routes(created_at);
         CREATE TABLE IF NOT EXISTS backups (
       user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE, disk_name TEXT NOT NULL, byte_size INTEGER NOT NULL,
       kdf TEXT NOT NULL, updated_at INTEGER NOT NULL
