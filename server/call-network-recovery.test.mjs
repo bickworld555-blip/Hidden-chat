@@ -302,3 +302,20 @@ test('the server relays the request to restart, and mid-call signals travel both
   const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
   assert.ok(app.includes('signalingRestored();') && app.includes('signalingRestored })'), 'both connections report coming back');
 });
+
+test('a network switch whose restart request was lost is asked again when signaling is back, even while ICE says connected', async () => {
+  const callee = await connectedCall({ direction: 'incoming' });
+  callee.network();                                    // Wi-Fi -> mobile data: the request goes into the dying connection
+  const asked = () => callee.sent.filter((signal) => signal.type === 'ice-restart').length;
+  assert.equal(asked(), 1);
+  assert.equal(callee.pc.connectionState, 'connected', 'ICE has not noticed yet');
+  await callee.clock.advance(4_000);                   // past the cooldown
+  callee.signaling();                                  // the server's connection is back on the new network
+  assert.equal(asked(), 2, 'asked again over the restored connection');
+  callee.engine.deliver({ type: 'offer', sdp: 'v=0\r\nfake-restart-offer' }, { signalId: 'r1' });
+  for (let i = 0; i < 5; i += 1) await flush();
+  await callee.clock.advance(4_000);
+  callee.signaling();
+  assert.equal(asked(), 2, 'once the caller answered with a new offer, nothing more');
+  callee.engine.hangUp();
+});

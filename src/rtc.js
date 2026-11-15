@@ -23,9 +23,12 @@ export function normalizeIceServers(servers) {
     if (!server || typeof server !== 'object') continue;
     const hasCredentials = typeof server.username === 'string' && server.username !== ''
       && typeof server.credential === 'string' && server.credential !== '';
+    // The same relay with other credentials is another server (per-user credentials before the shared ones).
     const urls = iceUrlList(server.urls).filter((url) => {
-      if (seen.has(url) || (TURN_SCHEME.test(url) && !hasCredentials)) return false;
-      seen.add(url);
+      const key = TURN_SCHEME.test(url) ? `${url}
+${server.username}` : url;
+      if (seen.has(key) || (TURN_SCHEME.test(url) && !hasCredentials)) return false;
+      seen.add(key);
       return true;
     });
     if (urls.length === 0) continue;
@@ -41,6 +44,11 @@ export function normalizeIceServers(servers) {
 
 // RELAY_TURN_URL accepts several ports/transports separated by commas or spaces,
 // e.g. "turn:host:3478?transport=udp, turn:host:3478?transport=tcp, turns:host:443?transport=tcp".
+// Per-user, expiring TURN credentials (the TURN REST API, coturn use-auth-secret): username "<expiry>:<userId>",
+// password base64(HMAC-SHA1(secret, username)). Each user has their own allocation quota on the relay; one shared
+// username let a few calls use up the whole app's quota, so ICE restarts after a network switch found no relay.
+export const TURN_CREDENTIAL_TTL_SECONDS = 24 * 60 * 60;
+
 export function turnServerFromEnv({ url, username, credential } = {}) {
   const urls = String(url ?? '').split(/[\s,]+/).filter(Boolean);
   if (urls.length === 0) return null;

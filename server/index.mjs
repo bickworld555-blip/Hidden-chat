@@ -1,4 +1,4 @@
-import { createHash, randomBytes, randomUUID, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, randomBytes, randomUUID, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto';
 import { copyFileSync, createWriteStream, existsSync, linkSync, mkdirSync } from 'node:fs';
 import { readdir, stat, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
@@ -12,7 +12,7 @@ import express from 'express';
 import { WebSocket, WebSocketServer } from 'ws';
 import { contentDisposition, isInlineSafe, MAX_MEDIA_BYTES, resolveContentType, sanitizeFilename, SINGLE_REQUEST_MEDIA_BYTES } from './media.mjs';
 import { isDisappearingDuration } from '../src/disappearing.js';
-import { DEFAULT_ICE_SERVERS, normalizeIceServers, turnServerFromEnv } from '../src/rtc.js';
+import { DEFAULT_ICE_SERVERS, normalizeIceServers, TURN_CREDENTIAL_TTL_SECONDS, turnServerFromEnv } from '../src/rtc.js';
 import { DOWNLOAD_LINK_TTL_MS, UPLOAD_CHUNK_BYTES, UPLOAD_STALE_MS } from '../src/transfer.js';
 import { LIVE_DURATIONS } from '../src/geo.js';
 import { displayNameError, initialsFor, normalizeDisplayName } from '../src/profile.js';
@@ -1525,7 +1525,12 @@ export function createChatServer({
     response.json(preview);
   });
 
-  app.get('/api/v1/rtc-config', requireSession, (_request, response) => {
+  const turnRestSecret = () => (xmppConfig?.secret ? createHmac('sha256', Buffer.from(xmppConfig.secret, 'base64url')).update('hm-turn-rest-v1').digest('hex') : '');
+  const turnRestCredentialSync = ({ secret, userId, now = Date.now() }) => {
+    const username = `${Math.floor(now / 1000) + TURN_CREDENTIAL_TTL_SECONDS}:${userId}`;
+    return { username, credential: createHmac('sha1', secret).update(username).digest('base64') };
+  };
+  app.get('/api/v1/rtc-config', requireSession, (request, response) => {
     let configured = [];
     if (process.env.RELAY_ICE_SERVERS) {
       try {
@@ -1540,7 +1545,11 @@ export function createChatServer({
       username: process.env.RELAY_TURN_USERNAME,
       credential: process.env.RELAY_TURN_CREDENTIAL,
     });
-    response.json({ iceServers: normalizeIceServers([...DEFAULT_ICE_SERVERS, ...(turn ? [turn] : []), ...configured]) });
+    // Per-user credentials for the same relay, first (the TURN secret is derived from the XMPP key, which the VPS also
+    // holds; deploy/coturn/README.md). The shared static user stays after it while the relay moves over.
+    const secret = turnRestSecret();
+    const personal = turn && secret ? { urls: turn.urls, ...turnRestCredentialSync({ secret, userId: request.session.user_id }) } : null;
+    response.json({ iceServers: normalizeIceServers([...DEFAULT_ICE_SERVERS, ...(personal ? [personal] : []), ...(turn ? [turn] : []), ...configured]) });
   });
 
   app.get('/api/v1/auth/availability', async (request, response) => {

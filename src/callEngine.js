@@ -28,6 +28,12 @@ export const ICE_RETRY_MS = 6_000;
 // Two restarts (from either side, or a network switch and a stall at once) are at least this far apart.
 export const ICE_RESTART_COOLDOWN_MS = 3_000;
 export const MAX_ICE_RESTARTS = 4;
+// A network switch whose restart has not been answered within this long is asked again once signaling is back: the
+// request may have gone into the connection that died with the old network.
+export const NETWORK_RESTART_WINDOW_MS = 30_000;
+// TURN credentials are per user and expire after a day (server/index.mjs rtc-config); a restart after this long
+// fetches fresh ones first so a long call still finds the relay.
+export const ICE_SERVERS_REFRESH_MS = 6 * 60 * 60 * 1000;
 export const VIDEO_REQUEST_TIMEOUT_MS = 30_000;
 // Quick reactions that float over the call, sent to everyone in it.
 export const CALL_REACTIONS = Object.freeze(['👍', '❤️', '😂', '😮', '😢', '🙏']);
@@ -198,6 +204,9 @@ export function createCallEngine({
   let stallRestarts = 0;
   let relayForced = false;
   let iceServersInUse = [];
+  let iceServersAt = 0;
+  let networkChangedAt = 0;   // last Wi-Fi <-> mobile data switch during this call
+  let renegotiatedAt = 0;     // last offer or answer from the other side
   let stopNetworkWatch = null;
   let stopSignalingWatch = null;
   const seenSignalIds = new Set();
@@ -352,6 +361,7 @@ export function createCallEngine({
     if (timers.cooldown != null || state.iceRestarts >= MAX_ICE_RESTARTS) return false;
     timers.cooldown = setTimer(() => { timers.cooldown = null; }, ICE_RESTART_COOLDOWN_MS);
     if (relay) forceRelay();
+    refreshIceServersIfOld();
     set({ iceRestarts: state.iceRestarts + 1 });
     log('ice-restart', reason, state.iceRestarts, relayForced ? 'relay-only' : 'any-path');
     if (polite) sendSignal({ type: 'ice-restart', relay: relayForced });
@@ -372,6 +382,19 @@ export function createCallEngine({
       // The direct path has now failed at least twice in a row: go through the relay.
       restartIce('retry', { relay: state.iceRestarts >= 2 });
     }, ICE_RETRY_MS);
+  }
+
+  // Long call: fetch fresh TURN credentials (the next gathering uses them); the restart itself does not wait.
+  function refreshIceServersIfOld() {
+    if (!connection || typeof connection.setConfiguration !== 'function' || Date.now() - iceServersAt < ICE_SERVERS_REFRESH_MS) return;
+    iceServersAt = Date.now();
+    const pc = connection;
+    Promise.resolve().then(() => fetchIceServers()).then((servers) => {
+      if (closed || pc !== connection || !Array.isArray(servers) || !servers.length) return;
+      pc.setConfiguration({ ...(pc.getConfiguration?.() ?? {}), iceServers: servers, ...(relayForced ? { iceTransportPolicy: 'relay' } : {}) });
+      iceServersInUse = servers;
+      log('ice-servers-refreshed');
+    }).catch((error) => log('ice-servers-refresh-failed', error));
   }
 
   // From now on this side only offers TURN relay candidates (needs a TURN server with credentials).
@@ -661,6 +684,7 @@ export function createCallEngine({
     });
     connection = pc;
     iceServersInUse = Array.isArray(iceServers) ? iceServers : [];
+    iceServersAt = Date.now();
     wireConnection(pc);
     try {
       stopNetworkWatch = onNetworkChange((why) => {
@@ -668,13 +692,17 @@ export function createCallEngine({
         if (state.status !== 'connected' && state.status !== 'reconnecting') return;
         // Wi-Fi ↔ mobile data: the old path is about to die (or already has); find the new one right away.
         log('network-change', why);
+        networkChangedAt = Date.now();
         restartIce('network-change');
       }) ?? null;
     } catch (error) { log('network-watch-failed', error); }
     try {
       stopSignalingWatch = onSignalingRestored(() => {
         if (closed || pc !== connection) return;
-        if (state.status !== 'reconnecting' && pc.connectionState !== 'disconnected' && pc.connectionState !== 'failed') return;
+        // Also right after a network switch whose restart was never answered, even if ICE has not noticed yet (the
+        // request went into the connection that died with the old network).
+        const unansweredSwitch = networkChangedAt > 0 && Date.now() - networkChangedAt < NETWORK_RESTART_WINDOW_MS && renegotiatedAt < networkChangedAt;
+        if (!unansweredSwitch && state.status !== 'reconnecting' && pc.connectionState !== 'disconnected' && pc.connectionState !== 'failed') return;
         // Restarts tried while signaling was down went nowhere (and used up the budget): try again now, with a fresh
         // budget; the reconnect grace still ends a call that cannot come back.
         log('signaling-restored');
@@ -772,6 +800,7 @@ export function createCallEngine({
       case 'answer': {
         const description = readDescription(signal);
         if (!description) return;
+        renegotiatedAt = Date.now();
         await handleDescription(description);
         return;
       }
