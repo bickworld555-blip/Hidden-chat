@@ -61,6 +61,7 @@ export class XmppTransport {
     Object.assign(this, { fetchToken, onEvent, onState, createSocket, setTimer, clearTimer, subtle, random, resource });
     this.state = 'offline';
     this.closed = false;
+    this.suspended = false;   // off screen on the phone (suspend): no connection until resume()
     this.attempt = 0;
     this.socket = null;
     this.jid = null;          // bare address of this device
@@ -83,7 +84,7 @@ export class XmppTransport {
   }
 
   async connect() {
-    if (this.closed || this.state === 'connecting' || this.state === 'online') return;
+    if (this.closed || this.suspended || this.state === 'connecting' || this.state === 'online') return;
     this.#setState('connecting');
     let grant;
     try {
@@ -93,6 +94,7 @@ export class XmppTransport {
       return;
     }
     if (this.closed) return;
+    if (this.suspended) { this.#setState('offline'); return; }
     if (grant?.transport !== 'xmpp' || !grant.token || !grant.jid) {
       this.#setState('legacy');
       return;
@@ -239,7 +241,7 @@ export class XmppTransport {
    * check a live socket now, and reconnect at once (backoff starts over) when there is none.
    */
   checkNow() {
-    if (this.closed || this.state === 'legacy' || this.state === 'connecting') return;
+    if (this.closed || this.suspended || this.state === 'legacy' || this.state === 'connecting') return;
     if (this.state === 'online') { this.#probe(); return; }
     this.clearTimer(this.retryTimer);
     this.retryTimer = null;
@@ -284,7 +286,7 @@ export class XmppTransport {
   }
 
   #scheduleReconnect(immediate = null) {
-    if (this.closed) return;
+    if (this.closed || this.suspended) return;
     this.clearTimer(this.retryTimer);
     const delay = immediate ?? Math.min(RECONNECT_MAX_MS, RECONNECT_MIN_MS * 2 ** this.attempt) * (0.8 + 0.4 * this.random());
     this.attempt += 1;
@@ -295,6 +297,41 @@ export class XmppTransport {
   setActive(active) {
     this.active = Boolean(active);
     if (this.state === 'online') this.socket?.send(String(xml(this.active ? 'active' : 'inactive', { xmlns: NS_CSI })));
+  }
+
+  /**
+   * The app left the screen on the phone, where Android soon freezes it: end the session cleanly now instead of
+   * leaving a half-open connection ejabberd keeps resumable for 60 s (messages sent meanwhile waited there, with no
+   * push and no delivery receipt). Closed cleanly, ejabberd stores what arrives at once, the phone is woken by push
+   * and its senders get their receipts (server/xmpp.mjs /woke). What this device received is acknowledged first so it
+   * is not stored again; what it sent and the server did not acknowledge goes again on the next session. Stays
+   * disconnected (wake-ups and network changes included) until resume().
+   */
+  suspend() {
+    if (this.closed || this.suspended) return;
+    this.suspended = true;
+    this.clearTimer(this.retryTimer);
+    this.retryTimer = null;
+    this.clearTimer(this.ackTimer);
+    this.ackTimer = null;
+    this.#stopLiveness();
+    const socket = this.socket;
+    this.socket = null;
+    if (socket) {
+      try { if (this.sm.enabled) socket.send(String(xml('a', { xmlns: NS_SM, h: this.sm.inbound }))); } catch { /* already gone */ }
+      try { socket.send(String(xml('close', { xmlns: NS_FRAMING }))); } catch { /* already gone */ }
+      try { socket.close(); } catch { /* already gone */ }
+    }
+    // Not resumable after a clean close: the next connection starts a fresh session (and resends the unacknowledged).
+    this.sm = { ...this.sm, id: null, inbound: 0, acknowledged: 0, enabled: false };
+    if (this.state !== 'legacy') this.#setState('offline');
+  }
+
+  /** Back on screen: connect at once. */
+  resume() {
+    if (!this.suspended) return;
+    this.suspended = false;
+    this.checkNow();
   }
 
   close() {

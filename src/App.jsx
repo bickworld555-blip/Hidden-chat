@@ -50,6 +50,9 @@ import { lazyComponent, preloadLazyScreens } from './lazy.js';
 import { handleBack, useBackHandler } from './backStack.js';
 import { phoneSoundSession } from './phoneSounds.js';
 import { autoSaveIncoming } from './mediaSave.js';
+// The phone app off screen this long ends its XMPP session cleanly (see the effect using it); Android freezes a
+// backgrounded app about 10 s after it leaves the screen.
+const XMPP_SUSPEND_MS = 3000;
 const AccountSwitcher = lazyComponent(() => import('./components/AccountSwitcher.jsx'));
 const AvatarStudio = lazyComponent(() => import('./components/AvatarStudio.jsx'));
 const PermissionsSheet = lazyComponent(() => import('./components/PermissionsSheet.jsx'));
@@ -609,7 +612,9 @@ export default function App() {
             xmppRef.current = session;
             setXmppSession(session);
             session.setActive(document.visibilityState === 'visible');
-            session.transport.connect();
+            // Started off screen in the phone app: stays disconnected until it is opened (pushes wake it meanwhile).
+            if (nativeShell() && document.visibilityState !== 'visible') session.suspend();
+            else session.transport.connect();
           })
           .catch(() => {})
           .finally(() => { if (!cancelled) releaseHeld(); });
@@ -743,18 +748,40 @@ export default function App() {
     return () => { clearInterval(timer); document.removeEventListener('visibilitychange', onVisible); };
   }, []);
   // A network change (Wi-Fi <-> mobile data), coming back online or returning to screen checks the connection at once.
+  // In the phone app, off screen for XMPP_SUSPEND_MS ends the XMPP session cleanly (src/xmpp/transport.js suspend):
+  // messages then wait on ejabberd and wake the phone by push, with an immediate delivery receipt, rather than
+  // sitting in a connection Android froze. Never during a call (its signals may travel there).
   useEffect(() => {
     const wake = () => xmppRef.current?.wake();
+    let suspendTimer = null;
+    const inCall = () => { const active = callRef.current; return Boolean(active && !TERMINAL_STATUSES.includes(active.status)); };
+    const suspendLater = () => {
+      clearTimeout(suspendTimer);
+      suspendTimer = setTimeout(() => {
+        suspendTimer = null;
+        if (document.visibilityState === 'visible') return;
+        if (inCall()) { suspendLater(); return; }
+        xmppRef.current?.suspend?.();
+      }, XMPP_SUSPEND_MS);
+    };
     const sync = () => {
       const visible = document.visibilityState === 'visible';
       xmppRef.current?.setActive(visible);
-      if (visible) wake();
+      if (visible) {
+        clearTimeout(suspendTimer);
+        suspendTimer = null;
+        xmppRef.current?.resume?.();
+        wake();
+      } else if (nativeShell()) {
+        suspendLater();
+      }
     };
     document.addEventListener('visibilitychange', sync);
     window.addEventListener('online', wake);
     navigator.connection?.addEventListener?.('change', wake);
     const stopWake = onNative('xmppWake', wake);
     return () => {
+      clearTimeout(suspendTimer);
       document.removeEventListener('visibilitychange', sync);
       window.removeEventListener('online', wake);
       navigator.connection?.removeEventListener?.('change', wake);

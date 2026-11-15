@@ -185,6 +185,37 @@ test('Stream Management: acknowledged stanzas are forgotten; after a drop the se
   t.close();
 });
 
+test('suspend (phone app off screen): a clean close, nothing reconnects until resume, then a fresh session', async () => {
+  const server = fakeServer();
+  const { t, timers } = transport(server);
+  await t.connect();
+  await until(() => t.state === 'online', 'online');
+  const first = server.sockets[0];
+  first.deliver(xml('message', { from: `${localpartOf('peer', 'p1')}@${HOST}/app`, id: 'r1' }, xml('received', { xmlns: 'urn:xmpp:receipts', id: 'm0' })));
+  t.sendSealed({ id: 'unsure', to: [`${localpartOf('peer', 'p1')}@${HOST}`], envelope: 'e2e2:text|x', sender: ME });
+  await flush();
+  t.suspend();
+  assert.deepEqual(sentNames(first).slice(-2), ['a', 'close'], 'what arrived is acknowledged, then the stream is closed cleanly');
+  assert.match(first.sent.at(-2), /h="1"/);
+  assert.ok(first.closed);
+  assert.equal(t.state, 'offline');
+  const timersBefore = timers.length;
+  t.checkNow();
+  await t.connect();
+  await flush();
+  assert.equal(server.sockets.length, 1, 'no wake-up, network change or retry reconnects while suspended');
+  assert.equal(timers.length, timersBefore, 'no retry scheduled');
+  assert.equal(t.sendReceipt('dx@h', 'queued'), false, 'sends wait for the next session');
+
+  t.resume();
+  await until(() => t.state === 'online', 'online after resume');
+  const names = sentNames(server.sockets[1]);
+  assert.ok(!names.includes('resume'), 'a cleanly closed session is not resumed: a fresh one');
+  assert.ok(server.sockets[1].sent.some((frame) => frame.includes('id="unsure"')), 'what the server never acknowledged goes again');
+  assert.ok(server.sockets[1].sent.some((frame) => frame.includes('id="r-queued"')), 'and what waited while suspended');
+  t.close();
+});
+
 test('a failed resume starts a fresh session and still resends what was never acknowledged', async () => {
   const server = fakeServer();
   const { t, timers } = transport(server);

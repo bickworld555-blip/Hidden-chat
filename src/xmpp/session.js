@@ -297,6 +297,9 @@ export async function startXmppSession({ sessionToken, userId, deliver, legacySe
       return true;
     },
     setActive: (active) => transport.setActive(active),
+    // The phone app off screen / back (src/App.jsx): see transport.js suspend.
+    suspend: () => transport.suspend(),
+    resume: () => transport.resume(),
     /** A wake-up push arrived (Android): connect now if the connection is down. */
     // A push, a network change or the app returning: check the connection now (src/xmpp/transport.js checkNow).
     wake: () => transport.checkNow(),
