@@ -1015,7 +1015,7 @@ export function createChatServer({
   async function removeMediaFile(diskName, storage = 'disk') {
     if (storage === 'r2') {
       if (!objectStore) return console.error('An attachment is in object storage, which is not configured: it was not removed.');
-      return objectStore.remove(diskName).catch((error) => console.error(`Attachment could not be removed from object storage (${error.status ?? error.name}).`));
+      return objectStore.remove(diskName).catch((error) => console.error(`Attachment could not be removed from object storage (${error.message}).`));
     }
     try {
       await unlink(join(mediaDirectory, diskName));
@@ -1561,7 +1561,9 @@ export function createChatServer({
     // holds; deploy/coturn/README.md). The shared static user stays after it while the relay moves over.
     const secret = turnRestSecret();
     const personal = turn && secret ? { urls: turn.urls, ...turnRestCredentialSync({ secret, userId: request.session.user_id }) } : null;
-    response.json({ iceServers: normalizeIceServers([...DEFAULT_ICE_SERVERS, ...(personal ? [personal] : []), ...(turn ? [turn] : []), ...configured]) });
+    // The shared static login only when it is configured (an entry with an empty login makes browsers refuse the whole list).
+    const shared = turn && turn.username && turn.credential ? turn : null;
+    response.json({ iceServers: normalizeIceServers([...DEFAULT_ICE_SERVERS, ...(personal ? [personal] : []), ...(shared ? [shared] : []), ...configured]) });
   });
 
   app.get('/api/v1/auth/availability', async (request, response) => {
@@ -1902,7 +1904,7 @@ export function createChatServer({
   async function discardUpload(upload) {
     (await db.prepare("DELETE FROM uploads WHERE id = ?").run(upload.id));
     if (upload.storage === 'r2') {
-      await objectStore?.abortMultipart(upload.disk_name, upload.remote_upload_id).catch((error) => console.error(`An upload could not be aborted in object storage (${error.status ?? error.name}).`));
+      await objectStore?.abortMultipart(upload.disk_name, upload.remote_upload_id).catch((error) => console.error(`An upload could not be aborted in object storage (${error.message}).`));
       return;
     }
     await unlink(join(mediaDirectory, upload.disk_name)).catch(() => {});
@@ -1953,7 +1955,7 @@ export function createChatServer({
       try {
         remoteUploadId = await objectStore.createMultipart(key, contentType);
       } catch (error) {
-        console.error(`Object storage could not start an upload (${error.status ?? error.name}).`);
+        console.error(`Object storage could not start an upload (${error.message}).`);
         return response.status(503).json({ error: 'Attachments are briefly unavailable. Try again in a moment.' });
       }
       const now = Date.now();
@@ -2071,7 +2073,7 @@ export function createChatServer({
         return response.status(409).json({ error: 'The uploaded file is not the size announced. Please send it again.' });
       }
     } catch (error) {
-      console.error(`Object storage could not complete an upload (${error.status ?? error.name}).`);
+      console.error(`Object storage could not complete an upload (${error.message}).`);
       return response.status(error.status === 400 ? 400 : 502).json({ error: 'The upload could not be completed. Please send the file again.' });
     }
     (await db.prepare(`INSERT INTO media(id, sender_id, receiver_id, group_id, filename, content_type, byte_size, disk_name, created_at, storage)

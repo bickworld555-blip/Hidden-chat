@@ -59,3 +59,20 @@ test('the same relay with other credentials is kept as another server; exact rep
   ]);
   assert.deepEqual(servers.map((server) => server.username ?? 'stun'), ['1:u', 'shared', 'stun']);
 });
+
+test('without the shared static login, only the personal TURN entry is sent (never an entry with an empty login)', async () => {
+  const register = await fetch(`${baseUrl}/api/v1/auth/register`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: 'turnnoshared', dob: '1990-04-12', password: 'Correct-Horse-Battery-42!' }) });
+  const user = await register.json();
+  const keep = [process.env.RELAY_TURN_USERNAME, process.env.RELAY_TURN_CREDENTIAL];
+  delete process.env.RELAY_TURN_USERNAME;
+  delete process.env.RELAY_TURN_CREDENTIAL;
+  try {
+    const { iceServers } = await (await fetch(`${baseUrl}/api/v1/rtc-config`, { headers: { Authorization: `Bearer ${user.token}` } })).json();
+    const turn = iceServers.filter((server) => [].concat(server.urls).some((url) => url.startsWith('turn')));
+    assert.equal(turn.length, 1);
+    assert.match(turn[0].username, /^\d+:/, 'the per-user credential');
+    assert.ok(turn[0].credential);
+  } finally {
+    [process.env.RELAY_TURN_USERNAME, process.env.RELAY_TURN_CREDENTIAL] = keep;
+  }
+});
