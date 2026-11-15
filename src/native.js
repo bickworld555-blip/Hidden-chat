@@ -117,6 +117,8 @@ export const nativeShowIncomingCall = (options) => invoke('showIncomingCall', op
 // Missed-call notifications: all of them (Calls tab opened) or one person's (their chat was opened).
 export const nativeClearMissedCalls = (peerId) => invoke('clearMissedCalls', peerId ? { peerId } : {});
 export const nativeTakeMessageActions = async () => (await invoke('takeMessageActions'))?.actions ?? [];
+// Calls the phone handled while the app's screen was gone (missed, declined, missed while offline): emptied on read.
+export const nativeTakeCallEvents = async () => (await invoke('takeCallEvents'))?.events ?? [];
 // Stops the ringing notification; `missed`: the caller hung up first, so a "Missed call" notification takes its place.
 export const nativeCancelIncomingCall = ({ missed = false } = {}) => invoke('cancelIncomingCall', { missed: Boolean(missed) });
 export const nativeEndCallWindow = () => invoke('endCallWindow');

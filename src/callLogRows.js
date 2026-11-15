@@ -1,27 +1,35 @@
-// The Calls tab merges back-to-back calls with the same person, in the same direction and with the same outcome
-// (answered or not), on the same day, into one row with a count: "Panna (3)". Newest first, like the log itself.
-
-const dayOf = (timestamp) => {
-  const date = new Date(timestamp);
-  return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
-};
+// The Calls tab lists every call as its own row, newest first, like WhatsApp's call log: five missed calls from
+// the same person are five rows, each with its own time, voice or video, and outcome.
 
 /** Whether a log entry is an answered call (it connected and lasted). */
 export const answered = (log) => log.status === 'completed' && Number(log.duration) > 0;
 
-/** Groups call logs (newest first) into rows: { key, peerId, direction, answered, mode, timestamp, duration, count, logs }. */
-export function groupCallLogs(logs = []) {
-  const sorted = [...logs].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-  const rows = [];
-  for (const log of sorted) {
-    const last = rows.at(-1);
-    const isAnswered = answered(log);
-    if (last && last.peerId === log.peerId && last.direction === log.direction && last.answered === isAnswered && dayOf(last.logs.at(-1).timestamp) === dayOf(log.timestamp)) {
-      last.logs.push(log);
-      last.count += 1;
-      continue;
-    }
-    rows.push({ key: log.id, peerId: log.peerId, direction: log.direction, answered: isAnswered, silenced: log.status === 'silenced', mode: log.mode, timestamp: log.timestamp, duration: log.duration, count: 1, logs: [log] });
-  }
-  return rows;
+/**
+ * Rows for call logs: { key, peerId, direction, answered, missed, declined, silenced, mode, timestamp, duration }.
+ * `missed`: an incoming call nobody answered here (declined and silenced calls are not missed).
+ */
+export function callLogRows(logs = []) {
+  return [...logs]
+    .filter((log) => log && log.peerId)
+    .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
+    .map((log) => {
+      const isAnswered = answered(log);
+      const declined = log.status === 'declined';
+      const silenced = log.status === 'silenced';
+      return {
+        key: log.id, peerId: log.peerId, direction: log.direction, mode: log.mode === 'video' ? 'video' : 'audio',
+        timestamp: log.timestamp, duration: log.duration, answered: isAnswered, declined, silenced,
+        missed: log.direction === 'incoming' && !isAnswered && !declined && !silenced,
+      };
+    });
+}
+
+/** "Missed voice call", "Outgoing video call", "Declined voice call"… for a row. */
+export function callRowLabel(row) {
+  const kind = row.mode === 'video' ? 'video call' : 'voice call';
+  if (row.silenced) return `Silenced ${kind}`;
+  if (row.declined) return `Declined ${kind}`;
+  if (row.missed) return `Missed ${kind}`;
+  if (row.direction === 'incoming') return `Incoming ${kind}`;
+  return row.answered ? `Outgoing ${kind}` : `Outgoing ${kind} · No answer`;
 }

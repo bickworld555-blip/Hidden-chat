@@ -160,6 +160,18 @@ public class HiddenNativePlugin extends Plugin {
         call.resolve(result);
     }
 
+    /** Calls handled without the app's screen (CallEvents): { events: [{ callId, peerId, mode, status, direction, at }] }. */
+    @PluginMethod
+    public void takeCallEvents(PluginCall call) {
+        JSObject result = new JSObject();
+        try {
+            result.put("events", new JSArray(CallEvents.take(getContext()).toString()));
+        } catch (JSONException broken) {
+            result.put("events", new JSArray());
+        }
+        call.resolve(result);
+    }
+
     /** Returns false when no WebView is listening (the app's screen is gone). */
     static boolean emitCallAction(String action, String callId) {
         return emitCallAction(action, callId, null);

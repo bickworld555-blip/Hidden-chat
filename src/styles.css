@@ -4753,7 +4753,6 @@ canvas.recording-wave { color: #5d6662; }
 .app-shell .tools-header, .app-shell .updates-header, .app-shell .calls-header { display: flex; align-items: center; justify-content: flex-start; gap: 12px; padding: 14px 16px 10px; background: var(--wa-bg); border-bottom: 0; }
 .app-shell .tools-header h2, .app-shell .updates-header h2, .app-shell .calls-header h2 { flex: 1; margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -.2px; text-transform: none; color: var(--wa-text); }
 .app-shell .calls-section { margin: 4px 16px 4px; font-size: 15px; font-weight: 600; color: var(--wa-text); }
-.app-shell .call-log-count { font-weight: 400; color: var(--wa-sub); }
 /* Bubble runs (ChatWindow: run-start / run-continued): the first bubble from a sender has a pointed corner with a
    small tail; following ones are fully rounded and stack closer, as in WhatsApp. */
 .app-shell .message-day-group.run-start { margin-top: 6px; }

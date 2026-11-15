@@ -16,6 +16,7 @@ export function callCardView(call = {}, isOutgoing = false) {
   const video = call.mode === 'video';
   const kind = video ? 'video call' : 'voice call';
   const answered = call.status === 'completed' && Number(call.duration) > 0;
+  if (call.status === 'declined') return { title: video ? 'Video call' : 'Voice call', detail: 'Declined', missed: false, answered, video };
   const missed = !isOutgoing && !answered;
   if (missed) return { title: `Missed ${kind}`, detail: 'Tap to call back', missed, answered, video };
   const title = video ? 'Video call' : 'Voice call';

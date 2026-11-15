@@ -56,6 +56,8 @@ public class CallActionReceiver extends BroadcastReceiver {
     /** Declines the ringing call (notification, call screen, or a headset / car / watch through Android). */
     static void decline(Context context, String callId) {
         TelecomCalls.rejected();
+        // For the call log (before the ringing caller is forgotten).
+        Alerts.recordDeclined(context, callId);
         Alerts.cancelIncomingCall(context);
         // The caller's phone stops ringing at once: the server is told directly (it ends the call once; a later copy
         // is a no-op), besides the service's connection or the web app, which may be paused in the background.

@@ -336,3 +336,21 @@ test('a status reply carries the status colour inside the encryption, and nothin
   assert.deepEqual(openedFrom(inner, {}).statusReply, { kind: 'text', text: 'Hi', bg: '#7e57c2' });
   assert.equal(innerOf('x', { statusReply: { kind: 'text', text: '', bg: 'url(x)' } }).sr.bg, undefined);
 });
+
+test('every call is one log entry and one call card in the chat; the same call logged twice is kept once', async () => {
+  const { useChatStore } = await import('../src/store.js');
+  // Saving to IndexedDB is the browser's part; this checks what the store keeps.
+  useChatStore.setState({ userId: 'me', chats: [{ id: 'ava', name: 'Ava' }], messages: {}, callLogs: [], persistCallLogs: async () => {} });
+  const { logCall } = useChatStore.getState();
+  // Five missed calls from the same person: five entries, five cards.
+  for (let i = 0; i < 5; i += 1) logCall('ava', { callId: `c${i}`, mode: i % 2 ? 'video' : 'audio', status: 'missed', direction: 'incoming', timestamp: `2026-11-16T10:0${i}:00.000Z` });
+  // The phone's background code reports call c4 again (it rang there too): not a sixth entry.
+  logCall('ava', { callId: 'c4', mode: 'video', status: 'missed', direction: 'incoming' });
+  const state = useChatStore.getState();
+  assert.equal(state.callLogs.length, 5);
+  assert.deepEqual(state.callLogs.map((entry) => entry.timestamp).sort().at(0), '2026-11-16T10:00:00.000Z', 'kept at the time the call happened');
+  const cards = (state.messages.ava ?? []).filter((message) => message.content.startsWith('call:'));
+  assert.equal(cards.length, 5);
+  assert.deepEqual(cards.map((card) => JSON.parse(card.content.slice(5)).mode), ['audio', 'video', 'audio', 'video', 'audio']);
+  assert.ok(cards.every((card) => card.senderId === 'ava'), 'shown as incoming');
+});

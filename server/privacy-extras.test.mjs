@@ -14,7 +14,7 @@ import { needsVideoCompression, STANDARD_VIDEO } from '../src/videoCompress.js';
 import { addUsage, emptyUsage, usageTotals } from '../src/networkUsage.js';
 import { APP_ICONS } from '../src/appIcons.js';
 import { PUBLIC_PATH } from '../src/site/links.js';
-import { groupCallLogs } from '../src/callLogGroups.js';
+import { callLogRows } from '../src/callLogRows.js';
 
 const PASSWORD = 'Correct-Horse-Battery-42!';
 let service;
@@ -137,9 +137,10 @@ test('network usage: Roaming is counted alongside, never added to the totals', (
 });
 
 test('silenced calls show as silenced in Calls, never as answered', () => {
-  const [row] = groupCallLogs([{ id: 'a', peerId: 'p', direction: 'incoming', status: 'silenced', duration: 0, mode: 'audio', timestamp: '2026-11-13T10:00:00Z' }]);
+  const [row] = callLogRows([{ id: 'a', peerId: 'p', direction: 'incoming', status: 'silenced', duration: 0, mode: 'audio', timestamp: '2026-11-13T10:00:00Z' }]);
   assert.equal(row.silenced, true);
   assert.equal(row.answered, false);
+  assert.equal(row.missed, false, 'not counted as missed either');
 });
 
 test('one brand mark everywhere: the in-app mark draws the app icon; the shield is gone', () => {

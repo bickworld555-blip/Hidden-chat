@@ -734,7 +734,7 @@ export function createChatServer({
     clearTimeout(activeCall.reachTimer);
     activeCalls.delete(callId);
     // A phone that was rung by push stops ringing even if its socket never connected.
-    if (activeCall.pushed && !activeCall.calleeSocket) pushInBackground(activeCall.calleeId, pushBody.callEnd({ callId }), { ttlSeconds: 30, collapseKey: `call:${callId}` });
+    if (activeCall.pushed && !activeCall.calleeSocket) pushInBackground(activeCall.calleeId, pushBody.callEnd({ callId, reason: by === activeCall.calleeId ? 'declined' : undefined }), { ttlSeconds: 30, collapseKey: `call:${callId}` });
     const event = {
       type: 'call:signal',
       from: reason === 'no-answer' || reason === 'unavailable' ? activeCall.calleeId : activeCall.callerId,

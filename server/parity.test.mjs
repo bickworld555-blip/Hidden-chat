@@ -418,8 +418,8 @@ test('a business profile is saved with the business settings and shown to custom
   assert.deepEqual([updated.profile.category, updated.profile.address], ['Café', '12 Lake Road, Dhaka']);
 });
 
-test('the Calls tab merges back-to-back calls with the same person, direction and outcome on one day', async () => {
-  const { groupCallLogs } = await import('../src/callLogGroups.js');
+test('the Calls tab lists every call as its own row, newest first, labelled voice or video and by outcome', async () => {
+  const { callLogRows, callRowLabel } = await import('../src/callLogRows.js');
   const at = (hour, minute = 0) => new Date(2026, 10, 11, hour, minute).toISOString();
   const logs = [
     { id: 'a', peerId: 'p', direction: 'incoming', status: 'missed', duration: 0, mode: 'audio', timestamp: at(5, 2) },
@@ -429,8 +429,9 @@ test('the Calls tab merges back-to-back calls with the same person, direction an
     { id: 'e', peerId: 'p', direction: 'incoming', status: 'completed', duration: 2, mode: 'audio', timestamp: at(12, 41) },
     { id: 'f', peerId: 'q', direction: 'incoming', status: 'missed', duration: 0, mode: 'audio', timestamp: new Date(2026, 10, 10, 23, 0).toISOString() },
   ];
-  const rows = groupCallLogs(logs);
-  assert.deepEqual(rows.map((row) => [row.key, row.count, row.answered]), [['e', 1, true], ['d', 1, false], ['c', 1, false], ['b', 2, false], ['f', 1, false]]);
-  assert.equal(rows[0].timestamp, at(12, 41), 'a row shows its newest call');
-  assert.deepEqual(groupCallLogs([]), []);
+  const rows = callLogRows(logs);
+  assert.deepEqual(rows.map((row) => row.key), ['e', 'd', 'c', 'b', 'a', 'f'], 'two missed calls from the same person are two rows');
+  assert.deepEqual(rows.map(callRowLabel), ['Incoming voice call', 'Missed video call', 'Outgoing voice call · No answer', 'Missed voice call', 'Missed voice call', 'Missed voice call']);
+  assert.equal(callRowLabel(callLogRows([{ id: 'g', peerId: 'p', direction: 'incoming', status: 'declined', duration: 0, mode: 'video', timestamp: at(13) }])[0]), 'Declined video call');
+  assert.deepEqual(callLogRows([]), []);
 });

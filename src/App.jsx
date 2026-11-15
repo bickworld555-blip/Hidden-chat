@@ -19,7 +19,7 @@ import { companionOnly } from './companion.js';
 import { applyGroupChange, GROUP_CHANGE_EVENTS } from './groupChanges.js';
 import { cachedGroupDetails } from './groupCache.js';
 import { notificationNames } from './notificationNames.js';
-import { nativeClearSession, nativeRequestStartupPermissions, nativeSetSession, nativeShell, nativeStartBackground, nativeState, nativeStopBackground, nativeTakePendingCall, nativeMoveToBackground, nativeClearShare, nativeSetCallActive, nativeClearMessageNotifications, nativeClearMissedCalls, nativeTakeMessageActions, nativeSetSystemBarsTheme, onNative } from './native.js';
+import { nativeClearSession, nativeRequestStartupPermissions, nativeSetSession, nativeShell, nativeStartBackground, nativeState, nativeStopBackground, nativeTakePendingCall, nativeMoveToBackground, nativeClearShare, nativeSetCallActive, nativeClearMessageNotifications, nativeClearMissedCalls, nativeTakeMessageActions, nativeTakeCallEvents, nativeSetSystemBarsTheme, onNative } from './native.js';
 import { parseShare } from './shareTarget.js';
 import { e2eDeviceId, onE2eEvent, sealDirect, startE2e, stopE2e, userForXmppAddress, xmppGroupTargetsFor, xmppTargetsFor } from './e2e/client.js';
 import { createControlBuffer, expiredIds, resolveControl, roleIn } from './e2e/lifecycle.js';
@@ -524,7 +524,7 @@ export default function App() {
               // Privacy › Silence unknown callers (the server decides): no ringing, a silenced call in Calls instead.
               if (event.silenced) {
                 if (event.fromUser && !useChatStore.getState().chats.some((c) => c.id === event.from)) useChatStore.getState().addContact(event.fromUser);
-                useChatStore.getState().logCall(event.from, { mode: event.mode, status: 'silenced', direction: 'incoming' });
+                useChatStore.getState().logCall(event.from, { mode: event.mode, status: 'silenced', direction: 'incoming', callId: event.callId });
                 return;
               }
               if (active && !TERMINAL_STATUSES.includes(active.status)) {
@@ -826,7 +826,7 @@ export default function App() {
     const startedAt = callStartTimeRef.current;
     const duration = startedAt ? Math.floor((Date.now() - startedAt) / 1000) : 0;
     const status = startedAt ? 'completed' : finished.direction === 'incoming' ? 'missed' : 'no-answer';
-    logCall(finished.peerId, { duration, mode: finished.mode, status, direction: finished.direction });
+    logCall(finished.peerId, { duration, mode: finished.mode, status, direction: finished.direction, callId: finished.callId });
     callStartTimeRef.current = null;
   }
 
@@ -840,6 +840,27 @@ export default function App() {
 
   // "Call back" on Android's missed-call notification.
   const initiateCallRef = useRef(null);
+  // Calls the phone handled while the app's screen was gone (rung by push and missed or declined, or missed while
+  // offline): into the call log and the chat when the app opens or returns to screen, one entry per call.
+  useEffect(() => {
+    if (!nativeShell() || !userId) return undefined;
+    let live = true;
+    const take = () => nativeTakeCallEvents().then((events) => {
+      if (!live) return;
+      for (const event of events) {
+        if (!event?.peerId) continue;
+        useChatStore.getState().logCall(event.peerId, {
+          callId: event.callId || null, mode: event.mode === 'video' ? 'video' : 'audio', direction: 'incoming',
+          status: event.status === 'declined' ? 'declined' : 'missed', timestamp: Number.isFinite(event.at) ? new Date(event.at).toISOString() : null,
+        });
+      }
+    }).catch(() => {});
+    take();
+    const onVisible = () => { if (document.visibilityState === 'visible') take(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => { live = false; document.removeEventListener('visibilitychange', onVisible); };
+  }, [userId]);
+
   useEffect(() => onNative('callBack', ({ peerId, mode } = {}) => {
     if (typeof peerId === 'string' && peerId) initiateCallRef.current?.(peerId, mode === 'video' ? 'video' : 'audio');
   }), []);

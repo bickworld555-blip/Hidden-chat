@@ -1,11 +1,11 @@
 import { useMemo, useState } from 'react';
 import CallAccessNotice from './CallAccessNotice.jsx';
-import { Phone, Video, ArrowDownLeft, ArrowUpRight, CalendarClock, Grid3x3, Heart, PhoneCall, Search, X } from 'lucide-react';
+import { Phone, Video, ArrowDownLeft, ArrowUpRight, CalendarClock, Grid3x3, Heart, PhoneCall, PhoneMissed, Search, VideoOff, X } from 'lucide-react';
 import { scheduledCallContent } from '../groupChat.js';
 import { lookupUsername } from '../contactsApi.js';
 import { useChatStore } from '../store.js';
 import { formatViewerTimestamp } from '../time.js';
-import { groupCallLogs } from '../callLogGroups.js';
+import { callLogRows, callRowLabel } from '../callLogRows.js';
 import { presentName } from '../profile.js';
 import { useBackHandler } from '../backStack.js';
 import Avatar from './Avatar.jsx';
@@ -143,7 +143,7 @@ function ContactPicker({ title, chats, onClose, onPick, onCall }) {
 }
 
 // Calls tab: shortcuts (new call, call links, favourites), Favourites (shared with the Favourites chat filter) with one-tap voice and video, the Recent list
-// (back-to-back calls with the same person are one row with a count), and a new-call button.
+// (every call its own row: voice or video, incoming / outgoing / missed / declined, its time and length), and a new-call button.
 export default function CallsView({ onCall, onSheet, onSettings, onOpenChat }) {
   const clearCallLogs = useChatStore((state) => state.clearCallLogs);
   const callLogs = useChatStore((state) => state.callLogs);
@@ -153,7 +153,7 @@ export default function CallsView({ onCall, onSheet, onSettings, onOpenChat }) {
   const [picker, setPicker] = useState(null);
   const people = useMemo(() => chats.filter((chat) => !chat.isGroup && !chat.group && chat.id), [chats]);
   const favourites = favouriteChatIds.map((id) => people.find((chat) => chat.id === id)).filter(Boolean);
-  const rows = groupCallLogs(callLogs ?? []);
+  const rows = callLogRows(callLogs ?? []);
   const call = (peerId, mode) => { setPicker(null); onCall?.(peerId, mode); };
 
   return (
@@ -199,21 +199,24 @@ export default function CallsView({ onCall, onSheet, onSettings, onOpenChat }) {
         {rows.map((row) => {
           const chat = chats.find((c) => c.id === row.peerId);
           const name = nameOf(chat);
-          const isIncoming = row.direction === 'incoming';
-          const missed = !row.answered;
-          const Arrow = isIncoming ? ArrowDownLeft : ArrowUpRight;
-          const ModeIcon = row.mode === 'video' ? Video : Phone;
+          const video = row.mode === 'video';
+          const Arrow = row.direction === 'incoming' ? ArrowDownLeft : ArrowUpRight;
+          // Voice and video calls look different at a glance; a missed one has the crossed-out icon, in red.
+          const KindIcon = row.missed ? (video ? VideoOff : PhoneMissed) : video ? Video : Phone;
+          const ModeIcon = video ? Video : Phone;
+          const label = callRowLabel(row);
           return (
             <div key={row.key} className="call-log-item">
               <Avatar {...avatarOf(chat, name)} online={chat?.online} size="small" />
               <div className="call-log-details">
                 <div className="call-log-header">
-                  <strong className={missed && isIncoming ? 'call-log-missed' : ''}>{name}{row.count > 1 && <span className="call-log-count"> ({row.count})</span>}</strong>
+                  <strong className={row.missed ? 'call-log-missed' : ''}>{name}</strong>
                 </div>
                 <div className="call-log-meta">
-                  <span className={`call-status ${missed && isIncoming ? 'call-log-missed' : ''}`}>
-                    <Arrow size={12} />
-                    {row.answered ? `${formatViewerTimestamp(row.timestamp)} · ${describeDuration(row.duration)}` : row.silenced ? `Silenced · ${formatViewerTimestamp(row.timestamp)}` : formatViewerTimestamp(row.timestamp)}
+                  <span className={`call-status ${row.missed ? 'call-log-missed' : ''}`} aria-label={`${label}, ${formatViewerTimestamp(row.timestamp)}`}>
+                    <Arrow size={12} aria-hidden="true" />
+                    <KindIcon size={12} aria-hidden="true" />
+                    {label} · {formatViewerTimestamp(row.timestamp)}{row.answered ? ` · ${describeDuration(row.duration)}` : ''}
                   </span>
                 </div>
               </div>

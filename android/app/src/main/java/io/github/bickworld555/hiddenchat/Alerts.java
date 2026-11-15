@@ -144,7 +144,7 @@ final class Alerts {
      */
     static boolean showIncomingCall(Context context, String callId, String callerId, String caller, boolean video, String ringtoneSound, String avatar) {
         String id = callId == null ? "" : callId;
-        ringingCaller = new MissedCaller(callerId, caller, video, avatar);
+        ringingCaller = new MissedCaller(callId, callerId, caller, video, avatar);
         // Already ringing for this call (the push rang first, then the connection brought the offer): keep ringing.
         if (ringing && !id.isEmpty() && id.equals(ringingCallId)) return true;
         String name = caller == null || caller.isEmpty() ? "Hidden Messenger" : caller;
@@ -285,11 +285,20 @@ final class Alerts {
 
     // Who is ringing now, so a call that stops ringing unanswered can be shown as missed.
     private static final class MissedCaller {
+        final String callId;
         final String id;
         final String name;
         final boolean video;
         final String avatar;
-        MissedCaller(String id, String name, boolean video, String avatar) { this.id = id; this.name = name; this.video = video; this.avatar = avatar; }
+        MissedCaller(String callId, String id, String name, boolean video, String avatar) { this.callId = callId; this.id = id; this.name = name; this.video = video; this.avatar = avatar; }
+    }
+
+    /** The call ringing now was declined here: kept for the app's call log (CallEvents). */
+    static void recordDeclined(Context context, String callId) {
+        MissedCaller caller = ringingCaller;
+        if (caller == null || caller.id == null || caller.id.isEmpty()) return;
+        if (callId != null && !callId.isEmpty() && caller.callId != null && !caller.callId.isEmpty() && !callId.equals(caller.callId)) return;
+        CallEvents.record(context, caller.callId, caller.id, caller.video, "declined");
     }
     private static volatile MissedCaller ringingCaller;
     private static final java.util.Map<String, Integer> missedCounts = new java.util.HashMap<>();
@@ -312,14 +321,16 @@ final class Alerts {
     }
 
     /** A call that never rang here (the phone was offline), from the server's missed-call push. */
-    static void missedCallWhileAway(Context context, String callerId, String name, boolean video) {
+    static void missedCallWhileAway(Context context, String callId, String callerId, String name, boolean video) {
         if (callerId == null || callerId.isEmpty()) return;
         final Context app = context.getApplicationContext();
-        final MissedCaller caller = new MissedCaller(callerId, name, video, null);
+        final MissedCaller caller = new MissedCaller(callId, callerId, name, video, null);
         new Thread(() -> postMissedCall(app, caller), "missed-call").start();
     }
 
     private static void postMissedCall(Context context, MissedCaller caller) {
+        // Every missed call is a call log entry and a "Missed voice call" in the chat once the app opens.
+        CallEvents.record(context, caller.callId, caller.id, caller.video, "missed");
         String tag = "missed:" + caller.id;
         int count;
         synchronized (Alerts.class) {

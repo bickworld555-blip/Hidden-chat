@@ -835,11 +835,17 @@ export const useChatStore = create((setState, getState) => ({
     setState({ callLogs: [] });
     getState().persistCallLogs(getState().userId);
   },
-  logCall(peerId, { duration = 0, mode = 'audio', status = 'completed', direction = 'outgoing' } = {}) {
+  // One entry per call (the call log and a call card in the chat). `callId`: the call's own id, so a call logged by
+  // both the app and the phone's background code (src/App.jsx, Android CallEvents) is written once.
+  logCall(peerId, { duration = 0, mode = 'audio', status = 'completed', direction = 'outgoing', callId = null, timestamp: at = null } = {}) {
     const state = getState();
-    const timestamp = new Date().toISOString();
+    if (!peerId) return;
+    const id = typeof callId === 'string' && callId ? `call-${callId}` : crypto.randomUUID();
+    if (state.callLogs.some((entry) => entry.id === id)) return;
+    const parsed = at ? new Date(at) : null;
+    const timestamp = parsed && !Number.isNaN(parsed.getTime()) ? parsed.toISOString() : new Date().toISOString();
     const incoming = direction === 'incoming';
-    const entry = { id: crypto.randomUUID(), peerId, mode, direction, status, duration, timestamp };
+    const entry = { id, peerId, mode, direction, status, duration, timestamp };
     setState((current) => ({ callLogs: [entry, ...current.callLogs] }));
     getState().persistCallLogs(state.userId);
     if (!state.chats.some((chat) => chat.id === peerId)) return;

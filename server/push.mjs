@@ -40,7 +40,8 @@ export const pushBody = Object.freeze({
   groupMessage: ({ id: messageId, groupId, from }) => compact({ t: 'gmsg', id: id(messageId), groupId: id(groupId), from: id(from) }),
   reaction: ({ id: messageId, from }) => compact({ t: 'react', id: id(messageId), from: id(from) }),
   call: ({ callId, from, mode }) => compact({ t: 'call', callId: id(callId), from: id(from), mode: mode === 'video' ? 'video' : 'voice' }),
-  callEnd: ({ callId }) => compact({ t: 'call_end', callId: id(callId) }),
+  // reason 'declined': the callee declined it on another device (the phone stops ringing without a missed call).
+  callEnd: ({ callId, reason }) => compact({ t: 'call_end', callId: id(callId), reason: reason === 'declined' ? 'declined' : undefined }),
   // A call this phone never rang for (it was offline): shown as a missed call when it reconnects.
   missedCall: ({ callId, from, mode }) => compact({ t: 'missed', callId: id(callId), from: id(from), mode: mode === 'video' ? 'video' : 'voice' }),
   wake: ({ from, groupId } = {}) => compact({ t: 'xwake', from: id(from), groupId: id(groupId) }),

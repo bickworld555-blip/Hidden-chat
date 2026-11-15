@@ -39,7 +39,7 @@ public class PushService extends FirebaseMessagingService {
                 case "gmsg": onGroupMessage(session, body); break;
                 case "react": onReaction(session, body); break;
                 case "call": onCall(session, body); break;
-                case "call_end": Alerts.cancelIncomingCall(this, body.optString("callId")); break;
+                case "call_end": onCallEnd(body); break;
                 case "missed": onMissedCall(body); break;
                 case "xwake": onXmppWake(session, body); break;
                 default: Log.i(TAG, "push of unknown type " + type);
@@ -52,7 +52,16 @@ public class PushService extends FirebaseMessagingService {
     /** A call that rang while this phone was offline: "Missed voice call" with Call back, as soon as it reconnects. */
     private void onMissedCall(JSONObject body) {
         String from = body.optString("from");
-        Alerts.missedCallWhileAway(this, from, RelaySession.userName(this, from, "Hidden Messenger"), "video".equals(body.optString("mode")));
+        Alerts.missedCallWhileAway(this, body.optString("callId"), from, RelaySession.userName(this, from, "Hidden Messenger"), "video".equals(body.optString("mode")));
+    }
+
+    /**
+     * The call this phone was rung for by push ended unanswered: still ringing here, it becomes a missed call
+     * (notification and call log). Declined on another of my devices, it just stops.
+     */
+    private void onCallEnd(JSONObject body) {
+        if ("declined".equals(body.optString("reason"))) Alerts.cancelIncomingCall(this, body.optString("callId"));
+        else Alerts.missedCall(this);
     }
 
     /**

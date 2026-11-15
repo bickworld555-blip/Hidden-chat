@@ -239,7 +239,9 @@ test('Android: idle with push (no always-on service), woken by Firebase like Wha
   assert.ok(pushService.includes('PushRegistration.decrypt(this, message.getData().get("enc"), message.getData().get("iv"))'), 'payloads are decrypted on the phone');
   assert.match(pushService, /private void onDirectMessage[\s\S]*?Alerts\.showMessage\([\s\S]*?PushRegistration\.markDelivered\(this, id\);/, 'notify straight from the push, then two ticks over HTTP');
   assert.match(pushService, /private void onCall[\s\S]*?Alerts\.showIncomingCall\([\s\S]*?MessagingService\.startSync\(this, CALL_SYNC_MS\);/, 'ring at once, then a short sync collects the offer');
-  assert.ok(pushService.includes('case "call_end": Alerts.cancelIncomingCall(this, body.optString("callId")); break;'));
+  assert.ok(pushService.includes('case "call_end": onCallEnd(body); break;'));
+  // A push-rung call that ends unanswered is a missed call (notification + call log), unless declined on another device.
+  assert.match(pushService, /private void onCallEnd[\s\S]*?"declined"\.equals\(body\.optString\("reason"\)\)\) Alerts\.cancelIncomingCall\(this, body\.optString\("callId"\)\);\s*else Alerts\.missedCall\(this\);/);
 
   const registration = await java('PushRegistration.java');
   assert.ok(registration.includes('Cipher.getInstance("AES/GCM/NoPadding")') && registration.includes('new GCMParameterSpec(128'));
