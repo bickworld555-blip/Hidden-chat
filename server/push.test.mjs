@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import WebSocket from 'ws';
 import { createChatServer } from './index.mjs';
-import { createPushSender, encryptForDevice, loadServiceAccount, validDeviceKey } from './push.mjs';
+import { createPushSender, encryptForDevice, loadServiceAccount, pushBody, validDeviceKey } from './push.mjs';
 
 const PASSWORD = 'Correct-Horse-Battery-42!';
 const sent = [];
@@ -85,8 +85,9 @@ test('a message to a phone with no app on screen is pushed, encrypted for that p
   assert.equal(push.options.collapseKey, `chat:${a.user.id}`);
   assert.ok(!JSON.stringify(push.data).includes('secret'), 'Google sees no message text');
   const body = decrypt(key, push.data);
-  assert.deepEqual([body.t, body.id, body.from, body.content], ['msg', 'push-msg-1', a.user.id, 'Hello 👋 secret']);
-  assert.ok(body.senderName);
+  // Content-free: a wake-up with the ids only. The phone shows the name it keeps locally; even our server's push
+  // key (known to the server) opens no text, name or photo.
+  assert.deepEqual(body, { t: 'msg', id: 'push-msg-1', from: a.user.id });
 
   // Two ticks from the push, over HTTP (no socket needed on the phone).
   const delivered = await api('/api/v1/messages/delivered', { session: b, method: 'POST', body: { messageIds: ['push-msg-1'] } });
@@ -119,8 +120,7 @@ test('a call rings a sleeping phone by push; the phone connecting later still ge
   caller.send(JSON.stringify({ type: 'call:signal', targetId: b.user.id, callId, mode: 'video', signalId: 's2', signal: { type: 'ice', candidate: { candidate: 'c1' } } }));
   const push = await until(() => pushesTo(token).find((item) => item.data.t === 'call'), 'call push');
   const body = decrypt(key, push.data);
-  assert.deepEqual([body.callId, body.from, body.mode], [callId, a.user.id, 'video']);
-  assert.ok(body.callerName);
+  assert.deepEqual(body, { t: 'call', callId, from: a.user.id, mode: 'video' }, 'no caller name or photo: the phone names the caller itself');
   assert.equal(push.options.ttlSeconds, 45, 'a call push is useless after the ring');
   await until(() => caller.events.some((event) => event.type === 'call:signal' && event.callId === callId && event.signal.type === 'ringing'), 'the caller hears ringing');
 
@@ -156,7 +156,7 @@ test('reactions to my message are pushed; a phone the app is gone from is forgot
   await new Promise((resolve) => setTimeout(resolve, 100));
   reader.send(JSON.stringify({ type: 'message:reaction', messageId: 'push-react-target', emoji: '❤️' }));
   const push = await until(() => pushesTo(token).find((item) => item.data.t === 'react'), 'reaction push');
-  assert.deepEqual([decrypt(key, push.data).emoji, decrypt(key, push.data).content], ['❤️', 'photo time']);
+  assert.deepEqual(decrypt(key, push.data), { t: 'react', id: 'push-react-target', from: a.user.id }, 'no emoji, no quoted text');
 
   // An uninstalled app's token is dropped on the first failed send.
   const gone = `gone-${randomBytes(8).toString('hex')}`;
@@ -211,9 +211,9 @@ test('the FCM sender signs in with the service account (RS256 JWT) and sends hig
   assert.equal(calls.filter((call) => call.url.includes('oauth2')).length, 1, 'the access token is reused');
 
   const key = randomBytes(32).toString('base64');
-  const long = encryptForDevice(key, { t: 'msg', content: 'x'.repeat(9000) });
-  assert.ok(Buffer.from(long.enc, 'base64').length < 3000, 'fits in an FCM message');
-  assert.ok(decrypt(key, long).content.endsWith('…'));
+  const sealed = encryptForDevice(key, pushBody.groupMessage({ id: 'm', groupId: 'g', from: 'u' }));
+  assert.deepEqual(decrypt(key, sealed), { t: 'gmsg', id: 'm', groupId: 'g', from: 'u' });
+  assert.throws(() => encryptForDevice(key, { t: 'msg', content: 'x'.repeat(9000) }), /too large/, 'a push never carries a payload');
 });
 
 test('Android: idle with push (no always-on service), woken by Firebase like WhatsApp; always-on only as a fallback', async () => {
@@ -252,4 +252,23 @@ test('Android: idle with push (no always-on service), woken by Firebase like Wha
   assert.ok(receiver.includes('PushRegistration.endCall(app, callId)') && receiver.includes('endOnServer(context.getApplicationContext(), callId, "decline")'), 'Decline reaches the server at once, also before the connection is up');
   const plugin = await java('HiddenNativePlugin.java');
   assert.match(plugin, /public void clearSession\(PluginCall call\) \{[\s\S]*?PushRegistration\.unregister\(getContext\(\)\);\s*RelaySession\.clear/);
+});
+
+test('notifications name chats from the phone, not from the push', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const { notificationNames } = await import('../src/notificationNames.js');
+  const names = notificationNames(
+    [{ id: 'u1', name: 'Rina', username: 'rina' }, { id: 'u2', username: 'tom', name: 'tom' }, { id: 'g9', name: 'x', isGroup: true }, null],
+    [{ id: 'g1', name: '  Family  ' }, { id: 'g2', name: '' }],
+  );
+  assert.equal(names.users.u1, 'Rina');
+  assert.ok(names.users.u2, 'a person with no display name still gets their handle');
+  assert.equal(names.users.g9, undefined, 'groups come from the group list');
+  assert.deepEqual(names.groups, { g1: 'Family' });
+  const root = new URL('../android/app/src/main/java/io/github/bickworld555/hiddenchat/', import.meta.url);
+  const service = await readFile(new URL('PushService.java', root), 'utf8');
+  assert.doesNotMatch(service, /senderName|groupName"|callerName|reactorName|optString\("content"\)|optString\("emoji"\)|optString\("avatar"/, 'nothing read from a push but ids');
+  assert.match(service, /RelaySession\.userName\(/);
+  const session = await readFile(new URL('RelaySession.java', root), 'utf8');
+  assert.match(session, /SecureStore\.sealOrKeep\(namesJson\)/, 'the names are sealed with the Keystore');
 });

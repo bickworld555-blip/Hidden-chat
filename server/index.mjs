@@ -21,7 +21,7 @@ import { DEMO_USERS } from './demo.mjs';
 import { createEventPilot } from './eventPilot.mjs';
 import { pdfPageCountOfFile } from './pdfPages.mjs';
 import { createLinkPreviews } from './linkPreview.mjs';
-import { createPushSender, encryptForDevice, loadServiceAccount, validDeviceKey } from './push.mjs';
+import { createPushSender, encryptForDevice, loadServiceAccount, pushBody, validDeviceKey } from './push.mjs';
 import { createLoginThrottle, ensureParitySchema, registerParity } from './parity.mjs';
 import { createVerifiedAccounts, createVerifiedChannels, ensureVerificationSchema, registerVerification } from './verification.mjs';
 import { ensureRegionSchema, registerRegions } from './regions.mjs';
@@ -599,7 +599,7 @@ export function createChatServer({
     const delivered = await presentMessage(message);
     broadcastUser(receiverId, { type: 'message:new', message: delivered });
     broadcastUser(senderId, { type: 'message:new', message: delivered });
-    if (needsPush(receiverId)) pushInBackground(receiverId, { t: 'msg', id: message.id, from: senderId, senderName: sender.name || `@${sender.username}`, avatar: publicUser(sender).avatar, content: pushContent(content) }, { collapseKey: `chat:${senderId}` });
+    if (needsPush(receiverId)) pushInBackground(receiverId, pushBody.message({ id: message.id, from: senderId }), { collapseKey: `chat:${senderId}` });
     return delivered;
   }
 
@@ -701,7 +701,7 @@ export function createChatServer({
     clearTimeout(activeCall.reconnectTimer);
     activeCalls.delete(callId);
     // A phone that was rung by push stops ringing even if its socket never connected.
-    if (activeCall.pushed && !activeCall.calleeSocket) pushInBackground(activeCall.calleeId, { t: 'call_end', callId }, { ttlSeconds: 30, collapseKey: `call:${callId}` });
+    if (activeCall.pushed && !activeCall.calleeSocket) pushInBackground(activeCall.calleeId, pushBody.callEnd({ callId }), { ttlSeconds: 30, collapseKey: `call:${callId}` });
     const event = {
       type: 'call:signal',
       from: reason === 'no-answer' ? activeCall.calleeId : activeCall.callerId,
@@ -793,12 +793,6 @@ export function createChatServer({
       .run(digest(token), userId, deviceId, deviceName, null, now, now));
     const user = (await db.prepare(`SELECT ${USER_COLUMNS} FROM users WHERE id = ?`).get(userId));
     return { token, deviceId, deviceName, user: publicUser(user) };
-  }
-
-  // The sender's photo path for a notification (the phone fetches it with its own session), or null.
-  async function avatarPathOf(userId) {
-    const row = await db.prepare('SELECT id, username, name, initials, color, avatar_disk_name, avatar_updated_at FROM users WHERE id = ?').get(userId);
-    return row ? publicUser(row).avatar : null;
   }
 
   function publicUser(row) {
@@ -933,10 +927,6 @@ export function createChatServer({
     }));
     return sent;
   }
-
-  // A push carries no ciphertext (it could not be read in the notification and would not fit): the phone shows
-  // "New message" for an end-to-end encrypted one (MessagePreview.java, store.js previewFor).
-  const pushContent = (content) => (isEnvelope(content) ? 'e2e2:' : content);
 
   /** Fire-and-forget push for an event that already went out over the sockets. */
   function pushInBackground(userId, body, options) {
@@ -1256,7 +1246,7 @@ export function createChatServer({
       const members = await db.prepare('SELECT user_id AS "userId" FROM group_members WHERE group_id = ? AND user_id <> ?').all(groupId, userId);
       for (const member of members) {
         if (!needsPush(member.userId)) continue;
-        pushInBackground(member.userId, { t: 'gmsg', id: row.id, groupId, groupName: names?.groupName ?? 'Group', senderName: names?.senderName ?? '', content: pushContent(row.content) }, { collapseKey: `group:${groupId}` });
+        pushInBackground(member.userId, pushBody.groupMessage({ id: row.id, groupId, from: row.sender_id }), { collapseKey: `group:${groupId}` });
       }
     }
     response.status(201).json(row);
@@ -1309,12 +1299,10 @@ export function createChatServer({
       // A group message: the group notification (group name, "sender: 🔒 Message"), collapsed per group.
       const group = groupId && await db.prepare('SELECT g.name AS "name" FROM groups g JOIN group_members m ON m.group_id = g.id WHERE g.id = ? AND m.user_id = ?').get(groupId, userId);
       if (group) {
-        return pushToDevice(userId, deviceId, { t: 'xwake', groupId, groupName: group.name ?? 'Group', senderName: sender ? sender.name || `@${sender.username}` : '' },
+        return pushToDevice(userId, deviceId, pushBody.wake({ groupId, from: sender?.id }),
           { collapseKey: `group:${groupId}`, ttlSeconds: 86_400 });
       }
-      const body = sender
-        ? { t: 'xwake', from: sender.id, senderName: sender.name || `@${sender.username}`, avatar: publicUser(sender).avatar }
-        : { t: 'xwake' };
+      const body = pushBody.wake({ from: sender?.id });
       return pushToDevice(userId, deviceId, body, { collapseKey: sender ? `chat:${sender.id}` : 'xmpp-wake', ttlSeconds: 86_400 });
     } });
   xmpp.register(app, requireSession);
@@ -2874,7 +2862,7 @@ export function createChatServer({
         if (initialOffer && current && !current.silenced && needsPush(targetId)) {
           // Not awaited: the caller's candidates keep flowing while Firebase is asked to ring the phone.
           current.pushed = true;
-          trackSocketTask(pushToUser(targetId, { t: 'call', callId, from: userId, callerName: fromUser?.name || `@${fromUser?.username ?? 'someone'}`, avatar: fromUser?.avatar ?? null, mode }, { ttlSeconds: 45, collapseKey: `call:${callId}` })
+          trackSocketTask(pushToUser(targetId, pushBody.call({ callId, from: userId, mode }), { ttlSeconds: 45, collapseKey: `call:${callId}` })
             .then((sent) => {
               if (sent === 0) current.pushed = false;
               else if (delivered === 0 && activeCalls.get(callId) === current && socket.readyState === WebSocket.OPEN) ringing();
@@ -2996,7 +2984,7 @@ export function createChatServer({
           const quoted = isEnvelope(reacted?.content) ? '' : String(reacted?.content ?? '').slice(0, 200);
           await notifyUser(peerId, { ...reactionEvent, messageSenderId: row.sender_id, reactorName: reactor?.name || `@${reactor?.username ?? 'someone'}`, messageContent: quoted });
           if (needsPush(peerId)) {
-            pushInBackground(peerId, { t: 'react', id: messageId, from: userId, emoji: sealedReaction ? '' : emoji, reactorName: reactor?.name || `@${reactor?.username ?? 'someone'}`, content: quoted });
+            pushInBackground(peerId, pushBody.reaction({ id: messageId, from: userId }));
           }
         } else await notifyUser(peerId, reactionEvent);
         await notifyUser(userId, reactionEvent);
@@ -3237,7 +3225,7 @@ export function createChatServer({
       const delivered = (await presentMessage(message));
       broadcastUser(receiverId, { type: 'message:new', message: delivered });
       if (needsPush(receiverId)) {
-        pushInBackground(receiverId, { t: 'msg', id: message.id, from: userId, senderName: message.senderName || `@${message.senderUsername}`, avatar: await avatarPathOf(userId), content: pushContent(message.content) }, { collapseKey: `chat:${userId}` });
+        pushInBackground(receiverId, pushBody.message({ id: message.id, from: userId }), { collapseKey: `chat:${userId}` });
       }
       broadcastUser(userId, { type: 'message:new', message: delivered }, socket);
       json(socket, { type: 'message:ack', message: delivered });

@@ -106,7 +106,8 @@ test('encrypted content never shows as text: chat list, notifications and the ba
   const java = await source('android/app/src/main/java/io/github/bickworld555/hiddenchat/MessagePreview.java');
   assert.ok(java.includes('if (content.startsWith("e2e1:") || content.startsWith("e2e2:")) return "🔒 Message";'));
   const server = await source('server/index.mjs');
-  assert.ok(server.includes("const pushContent = (content) => (isEnvelope(content) ? 'e2e2:' : content);"), 'pushes carry no ciphertext');
+  // Pushes carry no content at all (server/push.mjs pushBody, tested in push.test.mjs): every push is built there.
+  assert.doesNotMatch(server, /push(InBackground|ToUser|ToDevice)\([^)]*\{ t: '/, 'no push body is written by hand');
 });
 
 test('voice notes: Opus at a voice bitrate, noise suppression / echo cancellation / auto gain, pause-aware length', () => {

@@ -1,15 +1,15 @@
 // Firebase Cloud Messaging (HTTP v1) for Android: wakes a phone whose app is closed or in the background when a
 // message or call arrives, the way WhatsApp's GcmListenerService is woken. No socket stays open on the phone.
 //
-// Payloads are end-to-end encrypted between this server and the device (AES-256-GCM with a key the device made
-// and registered), like WhatsApp's enc_p / enc_iv fields: Google relays them but cannot read who wrote what.
+// Payloads are wake-ups with ids only (pushBody), encrypted between this server and the device (AES-256-GCM with a
+// key the device made and registered): Google relays them but cannot read who wrote; no push carries a name or text.
 import { createCipheriv, createSign, randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
 const FCM_SCOPE = 'https://www.googleapis.com/auth/firebase.messaging';
 const DEFAULT_TOKEN_URI = 'https://oauth2.googleapis.com/token';
-// FCM accepts at most 4 KB of data per message; the encrypted body stays well below that.
-const MAX_PLAINTEXT_BYTES = 2800;
+// A wake-up with a few ids is under 300 bytes; FCM's limit is 4 KB.
+const MAX_PLAINTEXT_BYTES = 512;
 
 /**
  * The Firebase service account the server sends with: FCM_SERVICE_ACCOUNT (the JSON itself) or
@@ -26,6 +26,20 @@ export function loadServiceAccount(env = process.env) {
   return account;
 }
 
+// What a push may say: a wake-up and the ids the phone needs to find the chat. No names, no avatars, no text, no
+// emoji. The phone shows the names it keeps locally (handed over by the app, RelaySession) and opens the content
+// itself, as WhatsApp's wake-up pushes leave everything to the app. Every body is built here, and nowhere else.
+const id = (value) => (typeof value === 'string' && value ? value : undefined);
+const compact = (body) => Object.fromEntries(Object.entries(body).filter(([, value]) => value !== undefined));
+export const pushBody = Object.freeze({
+  message: ({ id: messageId, from }) => compact({ t: 'msg', id: id(messageId), from: id(from) }),
+  groupMessage: ({ id: messageId, groupId, from }) => compact({ t: 'gmsg', id: id(messageId), groupId: id(groupId), from: id(from) }),
+  reaction: ({ id: messageId, from }) => compact({ t: 'react', id: id(messageId), from: id(from) }),
+  call: ({ callId, from, mode }) => compact({ t: 'call', callId: id(callId), from: id(from), mode: mode === 'video' ? 'video' : 'voice' }),
+  callEnd: ({ callId }) => compact({ t: 'call_end', callId: id(callId) }),
+  wake: ({ from, groupId } = {}) => compact({ t: 'xwake', from: id(from), groupId: id(groupId) }),
+});
+
 /** A device key as registered by the app: 32 random bytes, base64. */
 export function validDeviceKey(value) {
   if (typeof value !== 'string' || value.length > 64) return false;
@@ -38,12 +52,9 @@ export function validDeviceKey(value) {
 
 /** Encrypts a push body for one device: { enc: base64(ciphertext || tag), iv: base64(12 bytes) }. */
 export function encryptForDevice(deviceKey, body) {
-  let plaintext = Buffer.from(JSON.stringify(body), 'utf8');
-  if (plaintext.length > MAX_PLAINTEXT_BYTES && typeof body.content === 'string') {
-    // Long texts are cut for the notification; the full message comes from the server when the chat opens.
-    const room = body.content.length - (plaintext.length - MAX_PLAINTEXT_BYTES) - 8;
-    plaintext = Buffer.from(JSON.stringify({ ...body, content: `${body.content.slice(0, Math.max(0, room))}…` }), 'utf8');
-  }
+  const plaintext = Buffer.from(JSON.stringify(body), 'utf8');
+  // Bodies are ids only (pushBody); anything bigger is a payload that has no business in a push.
+  if (plaintext.length > MAX_PLAINTEXT_BYTES) throw new Error('Push body too large: a push carries ids only.');
   const iv = randomBytes(12);
   const cipher = createCipheriv('aes-256-gcm', Buffer.from(deviceKey, 'base64'), iv);
   const ciphertext = Buffer.concat([cipher.update(plaintext), cipher.final(), cipher.getAuthTag()]);

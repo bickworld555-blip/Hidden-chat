@@ -15,6 +15,7 @@ import { initialTabFromUrl } from './pwa.js';
 import { countUnreadConversations, groupRow } from './groupRows.js';
 import { getViewingGroup, readMutedGroups, setGroupMuted, useMutedGroups } from './groupPrefs.js';
 import { classifyIncoming, groupNotificationText, parseConversationOpenParam, shouldAlertGroup } from './notificationChannels.js';
+import { notificationNames } from './notificationNames.js';
 import { nativeClearSession, nativeRequestStartupPermissions, nativeSetSession, nativeShell, nativeStartBackground, nativeState, nativeStopBackground, nativeTakePendingCall, nativeMoveToBackground, nativeClearShare, nativeSetCallActive, nativeClearMessageNotifications, nativeClearMissedCalls, nativeTakeMessageActions, nativeSetSystemBarsTheme, onNative } from './native.js';
 import { parseShare } from './shareTarget.js';
 import { e2eDeviceId, onE2eEvent, sealDirect, startE2e, stopE2e, userForXmppAddress, xmppGroupTargetsFor, xmppTargetsFor } from './e2e/client.js';
@@ -190,6 +191,9 @@ export default function App() {
     if (callLinkCode && globalThis.history?.replaceState) globalThis.history.replaceState(null, '', '/');
   }, [callLinkCode]);
   const [groupSummaries, setGroupSummaries] = useState([]);
+  // Read when the session is handed to the Android service (notification names), without re-running that effect.
+  const groupSummariesRef = useRef(groupSummaries);
+  groupSummariesRef.current = groupSummaries;
   const [permissionsOpen, setPermissionsOpen] = useState(false);
   // Something shared to Hidden Messenger from another app's share sheet, waiting for the user to pick chats.
   const [incomingShare, setIncomingShare] = useState(null);
@@ -1161,7 +1165,8 @@ export default function App() {
   useEffect(() => {
     if (!nativeShell() || !userId || !sessionToken) return undefined;
     const origin = new URL(apiUrl('/api/v1/health'), window.location.href).origin;
-    const sync = () => nativeSetSession({ origin, token: sessionToken, userId, mutedChats: useChatStore.getState().mutedChatIds ?? [], mutedGroups: readMutedGroups(userId), ...phoneSoundSession() });
+    const sync = () => nativeSetSession({ origin, token: sessionToken, userId, mutedChats: useChatStore.getState().mutedChatIds ?? [], mutedGroups: readMutedGroups(userId), ...phoneSoundSession(),
+      names: notificationNames(useChatStore.getState().chats, groupSummariesRef.current) });
     sync();
     const onHide = () => { if (document.visibilityState === 'hidden') sync(); };
     document.addEventListener('visibilitychange', onHide);

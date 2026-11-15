@@ -6,6 +6,7 @@ import android.net.Uri;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.Set;
+import org.json.JSONObject;
 
 /**
  * The signed-in account the background connection uses, handed over by the web app (HiddenNative.setSession)
@@ -97,6 +98,34 @@ final class RelaySession {
         Set<String> muted = new HashSet<>(prefs.getStringSet(key, Collections.emptySet()));
         muted.add(open.substring(open.indexOf(':') + 1));
         prefs.edit().putStringSet(key, muted).apply();
+    }
+
+    /**
+     * The names notifications show (pushes carry ids only: server/push.mjs pushBody): { users: {id: name},
+     * groups: {id: name} } from the app, as the person sees them there. Sealed with the Keystore like the token.
+     */
+    static void saveNames(Context context, String namesJson) {
+        if (namesJson == null) return;
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putString("names", SecureStore.sealOrKeep(namesJson)).apply();
+    }
+
+    private static JSONObject names(Context context) {
+        String opened = SecureStore.openOrNull(context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString("names", null));
+        if (opened == null) return new JSONObject();
+        try { return new JSONObject(opened); } catch (org.json.JSONException broken) { return new JSONObject(); }
+    }
+
+    /** The person's name as the app shows it, or `fallback` for someone the app has not told us about. */
+    static String userName(Context context, String userId, String fallback) {
+        JSONObject users = names(context).optJSONObject("users");
+        String name = userId == null || users == null ? "" : users.optString(userId, "");
+        return name.isEmpty() ? fallback : name;
+    }
+
+    static String groupName(Context context, String groupId, String fallback) {
+        JSONObject groups = names(context).optJSONObject("groups");
+        String name = groupId == null || groups == null ? "" : groups.optString(groupId, "");
+        return name.isEmpty() ? fallback : name;
     }
 
     static void clear(Context context) {

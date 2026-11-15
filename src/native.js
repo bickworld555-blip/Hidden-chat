@@ -55,8 +55,9 @@ export const nativeRequestStartupPermissions = async () => remember(await invoke
 // session hand-over still in flight.
 let sessionSaved = Promise.resolve(null);
 // The *Sound values come from phoneSoundSession(): '' (the app's tone), 'default' or a phone sound URI.
-export function nativeSetSession({ origin, token, userId, mutedChats = [], mutedGroups = [], messageSound = '', groupSound = '', ringtoneSound = '' }) {
-  sessionSaved = invoke('setSession', { origin, token, userId, mutedChats, mutedGroups, messageSound, groupSound, ringtoneSound });
+// `names` (src/notificationNames.js) lets notifications name chats: pushes carry ids only.
+export function nativeSetSession({ origin, token, userId, mutedChats = [], mutedGroups = [], messageSound = '', groupSound = '', ringtoneSound = '', names = null }) {
+  sessionSaved = invoke('setSession', { origin, token, userId, mutedChats, mutedGroups, messageSound, groupSound, ringtoneSound, ...(names ? { names } : {}) });
   return sessionSaved;
 }
 export const nativeClearSession = () => invoke('clearSession');

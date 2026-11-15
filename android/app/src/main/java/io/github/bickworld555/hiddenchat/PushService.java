@@ -10,8 +10,9 @@ import org.json.JSONObject;
  * Firebase push listener, the counterpart of WhatsApp's GcmListenerService: the app sleeps with no socket open, and
  * a high-priority push wakes it when something arrives.
  *
- * Messages, group messages and reactions carry their (encrypted) text, so the notification shows straight from the
- * push and the delivery receipt goes back over HTTP: no connection, no foreground service. An incoming call rings
+ * Pushes are wake-ups with ids only (server/push.mjs pushBody): no text, names or photos. The notification names
+ * the chat from what the app saved on this phone (RelaySession names), shows "New message" (the content is opened
+ * by the app itself), and the delivery receipt goes back over HTTP: no connection, no foreground service. An incoming call rings
  * at once, then a short foreground "sync" (MessagingService) connects to collect the caller's offer so Accept,
  * Decline and Message work, and to notice the caller hanging up.
  */
@@ -52,10 +53,9 @@ public class PushService extends FirebaseMessagingService {
         String from = body.optString("from");
         if (!session.mutedChats.contains(from)) {
             String tag = "chat:" + from;
-            String avatar = body.isNull("avatar") ? null : body.optString("avatar", null);
             Alerts.showMessage(this, NotificationChannels.messageChannel(this, false, session.messageSound),
-                body.optString("senderName", "New message"), MessagePreview.of(body.optString("content")), tag, tag, 0, id,
-                null, avatar == null || avatar.isEmpty() ? Avatars.pathFor(from) : avatar);
+                RelaySession.userName(this, from, "Hidden Messenger"), MessagePreview.of("e2e2:"), tag, tag, 0, id,
+                null, Avatars.pathFor(from));
         }
         // The phone has it: one tick becomes two for the sender, as with an open connection.
         PushRegistration.markDelivered(this, id);
@@ -76,43 +76,39 @@ public class PushService extends FirebaseMessagingService {
             if (session.mutedGroups.contains(groupId)) return;
             String tag = "group:" + groupId;
             Alerts.showMessage(this, NotificationChannels.messageChannel(this, true, session.groupSound),
-                body.optString("groupName", "Group"), MessagePreview.of("e2e2:"), tag, tag, 0, null, body.optString("senderName"), null);
+                RelaySession.groupName(this, groupId, "Group"), MessagePreview.of("e2e2:"), tag, tag, 0, null, RelaySession.userName(this, from, ""), null);
             return;
         }
         if (!from.isEmpty() && session.mutedChats.contains(from)) return;
         String tag = from.isEmpty() ? "xmpp-wake" : "chat:" + from;
-        String avatar = body.isNull("avatar") ? null : body.optString("avatar", null);
         Alerts.showMessage(this, NotificationChannels.messageChannel(this, false, session.messageSound),
-            body.optString("senderName", "Hidden Messenger"), MessagePreview.of("e2e2:"), tag, tag, 0, null,
-            null, avatar == null || avatar.isEmpty() ? (from.isEmpty() ? null : Avatars.pathFor(from)) : avatar);
+            RelaySession.userName(this, from, "Hidden Messenger"), MessagePreview.of("e2e2:"), tag, tag, 0, null,
+            null, from.isEmpty() ? null : Avatars.pathFor(from));
         if (!running) Log.i(TAG, "xmpp wake-up while the app is closed: collected when it opens");
     }
 
     private void onGroupMessage(RelaySession session, JSONObject body) {
         String groupId = body.optString("groupId");
         if (session.mutedGroups.contains(groupId)) return;
-        String preview = MessagePreview.of(body.optString("content"));
-        String sender = body.optString("senderName");
         String tag = "group:" + groupId;
         Alerts.showMessage(this, NotificationChannels.messageChannel(this, true, session.groupSound),
-            body.optString("groupName", "Group"), preview, tag, tag, 0, body.optString("id"), sender, null);
+            RelaySession.groupName(this, groupId, "Group"), MessagePreview.of("e2e2:"), tag, tag, 0, body.optString("id"),
+            RelaySession.userName(this, body.optString("from"), ""), null);
     }
 
     private void onReaction(RelaySession session, JSONObject body) {
         String from = body.optString("from");
-        String emoji = body.optString("emoji");
-        if (emoji.isEmpty() || session.mutedChats.contains(from)) return;
-        String preview = MessagePreview.of(body.optString("content"));
-        String text = "Reacted " + emoji + (preview.isEmpty() ? " to your message" : " to: “" + preview + "”");
+        if (session.mutedChats.contains(from)) return;
+        // The emoji is end-to-end encrypted: the app shows it once opened.
         Alerts.showMessage(this, NotificationChannels.messageChannel(this, false, session.messageSound),
-            body.optString("reactorName", "Reaction"), text, "reaction:" + body.optString("id"), "chat:" + from, 0, "react:" + body.optString("id") + ":" + emoji);
+            RelaySession.userName(this, from, "Hidden Messenger"), "Reacted to your message", "reaction:" + body.optString("id"), "chat:" + from, 0, "react:" + body.optString("id"));
     }
 
     private void onCall(RelaySession session, JSONObject body) {
-        String avatar = body.isNull("avatar") ? null : body.optString("avatar", null);
+        String from = body.optString("from");
         // Ring now (full-screen call screen over the lock screen), then connect to fetch the offer.
-        Alerts.showIncomingCall(this, body.optString("callId"), body.optString("from"), body.optString("callerName", "Hidden Messenger"),
-            "video".equals(body.optString("mode")), session.ringtoneSound, avatar);
+        Alerts.showIncomingCall(this, body.optString("callId"), from, RelaySession.userName(this, from, "Hidden Messenger"),
+            "video".equals(body.optString("mode")), session.ringtoneSound, from.isEmpty() ? null : Avatars.pathFor(from));
         MessagingService.startSync(this, CALL_SYNC_MS);
     }
 }

@@ -473,7 +473,11 @@ public class HiddenNativePlugin extends Plugin {
         Set<String> mutedGroups = new HashSet<>(stringList(call.getArray("mutedGroups")));
         boolean saved = RelaySession.save(getContext(), call.getString("origin"), call.getString("token"), call.getString("userId"), mutedChats, mutedGroups,
             call.getString("messageSound", ""), call.getString("groupSound", ""), call.getString("ringtoneSound", ""));
-        if (saved) PushRegistration.ensure(getContext());
+        if (saved) {
+            JSObject names = call.getObject("names");
+            if (names != null) RelaySession.saveNames(getContext(), names.toString());
+            PushRegistration.ensure(getContext());
+        }
         JSObject result = new JSObject();
         result.put("saved", saved);
         call.resolve(result);
