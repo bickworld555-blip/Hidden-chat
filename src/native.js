@@ -56,8 +56,10 @@ export const nativeRequestStartupPermissions = async () => remember(await invoke
 let sessionSaved = Promise.resolve(null);
 // The *Sound values come from phoneSoundSession(): '' (the app's tone), 'default' or a phone sound URI.
 // `names` (src/notificationNames.js) lets notifications name chats: pushes carry ids only.
-export function nativeSetSession({ origin, token, userId, mutedChats = [], mutedGroups = [], messageSound = '', groupSound = '', ringtoneSound = '', names = null }) {
-  sessionSaved = invoke('setSession', { origin, token, userId, mutedChats, mutedGroups, messageSound, groupSound, ringtoneSound, ...(names ? { names } : {}) });
+// deviceId / lockedChats: for the background page (android BackgroundHost), which opens this device's keys and never
+// shows a locked chat's name or text.
+export function nativeSetSession({ origin, token, userId, deviceId = '', lockedChats = [], mutedChats = [], mutedGroups = [], messageSound = '', groupSound = '', ringtoneSound = '', names = null }) {
+  sessionSaved = invoke('setSession', { origin, token, userId, deviceId, lockedChats, mutedChats, mutedGroups, messageSound, groupSound, ringtoneSound, ...(names ? { names } : {}) });
   return sessionSaved;
 }
 export const nativeClearSession = () => invoke('clearSession');

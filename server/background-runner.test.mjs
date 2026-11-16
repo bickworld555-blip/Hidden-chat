@@ -93,6 +93,11 @@ test('background key opening writes nothing to the encrypted records; the page a
   assert.ok(!/sqlite|SQLite|openDatabase/.test(host), 'the bridge has no database access');
   const activity = readFileSync(new URL('../android/app/src/main/java/io/github/bickworld555/hiddenchat/AppActivity.java', import.meta.url), 'utf8');
   assert.match(activity, /public void onCreate\(Bundle savedInstanceState\) \{[\s\S]{0,400}BackgroundHost\.stopForApp\(\);/, 'the app screen stops the page first');
+  // Found on the S23: the session went to Android without the device id, so the page always read "signed out".
+  const native = readFileSync(new URL('../src/native.js', import.meta.url), 'utf8');
+  assert.match(native, /invoke\('setSession', \{[^}]*deviceId, lockedChats/, 'the device id and locked chats reach Android');
+  // Found on the S23: "dataSync" was refused (Android 15's daily cap, used up by the app's other services).
+  assert.ok(host.includes('FOREGROUND_SERVICE_TYPE_SHORT_SERVICE'), 'a short service on Android 14+');
   const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
   assert.match(app, /await e2eLockReady\(\);[\s\S]{0,200}importInbox\(/, 'the app imports the inbox only once it holds the lock');
   assert.match(app, /e2eLockReady\(\)\.then\(\(\) => \{\s*if \(live\) startE2e\(/, 'and starts its own encryption only then');

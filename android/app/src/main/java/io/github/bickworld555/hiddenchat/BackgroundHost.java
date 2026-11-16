@@ -95,7 +95,10 @@ public class BackgroundHost extends Service {
             .setOngoing(true)
             .build();
         try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) startForeground(NOTIFICATION_ID, notice, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
+            // Android 14+: a short service (made for a few seconds of work, no daily quota). "dataSync" is capped at
+            // 6 h a day for the whole app on Android 15 and was refused once the app's other services had used it.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) startForeground(NOTIFICATION_ID, notice, ServiceInfo.FOREGROUND_SERVICE_TYPE_SHORT_SERVICE);
+            else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) startForeground(NOTIFICATION_ID, notice, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC);
             else startForeground(NOTIFICATION_ID, notice);
         } catch (RuntimeException refused) {
             Log.w(TAG, "could not go to the foreground", refused);
@@ -153,6 +156,12 @@ public class BackgroundHost extends Service {
         if (instance == this) instance = null;
         try { stopForeground(STOP_FOREGROUND_REMOVE); } catch (RuntimeException ignored) { }
         stopSelf();
+    }
+
+    // A short service's time is up (about 3 minutes; the page is done long before): stop at once.
+    @Override
+    public void onTimeout(int startId) {
+        finish();
     }
 
     @Override

@@ -132,7 +132,7 @@
         <service
             android:name=".BackgroundHost"
             android:exported="false"
-            android:foregroundServiceType="dataSync" />
+            android:foregroundServiceType="shortService|dataSync" />
 
         <!-- "Sending 3 files · 45%": keeps long uploads alive in the background (like WhatsApp's MediaTranscodeService). -->
         <service
