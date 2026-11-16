@@ -98,6 +98,11 @@ test('background key opening writes nothing to the encrypted records; the page a
   assert.match(native, /invoke\('setSession', \{[^}]*deviceId, lockedChats/, 'the device id and locked chats reach Android');
   // Found on the S23: "dataSync" was refused (Android 15's daily cap, used up by the app's other services).
   assert.ok(host.includes('FOREGROUND_SERVICE_TYPE_SHORT_SERVICE'), 'a short service on Android 14+');
+  // Found on the S23: with the app alive in the background, the dataSync sync was refused and the fetch froze.
+  const push = readFileSync(new URL('../android/app/src/main/java/io/github/bickworld555/hiddenchat/PushService.java', import.meta.url), 'utf8');
+  assert.ok(push.includes('if (!WakeKeeper.keep(this, BACKGROUND_FETCH_MS)) MessagingService.startSync(this, BACKGROUND_FETCH_MS);'), 'a short service keeps a living app awake');
+  const keeper = readFileSync(new URL('../android/app/src/main/java/io/github/bickworld555/hiddenchat/WakeKeeper.java', import.meta.url), 'utf8');
+  assert.ok(keeper.includes('FOREGROUND_SERVICE_TYPE_SHORT_SERVICE'));
   const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
   assert.match(app, /await e2eLockReady\(\);[\s\S]{0,200}importInbox\(/, 'the app imports the inbox only once it holds the lock');
   assert.match(app, /e2eLockReady\(\)\.then\(\(\) => \{\s*if \(live\) startE2e\(/, 'and starts its own encryption only then');

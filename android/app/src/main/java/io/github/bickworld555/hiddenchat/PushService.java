@@ -106,7 +106,9 @@ public class PushService extends FirebaseMessagingService {
             // awake while it connects, decrypts and stores what waits, sends delivery receipts from this phone and
             // posts the notification with the real text (src/xmpp/session.js backgroundFetch). If it has not posted
             // one for this conversation in time, the sealed notice below appears instead.
-            MessagingService.startSync(this, BACKGROUND_FETCH_MS);
+            // A short service (WakeKeeper), not MessagingService's dataSync sync: Android 15 refuses dataSync once the
+            // app's daily cap is used, which froze the fetch on the S23. The old path only if the short one is refused.
+            if (!WakeKeeper.keep(this, BACKGROUND_FETCH_MS)) MessagingService.startSync(this, BACKGROUND_FETCH_MS);
             final String tag = !groupId.isEmpty() ? "group:" + groupId : from.isEmpty() ? "xmpp-wake" : "chat:" + from;
             final long pushedAt = android.os.SystemClock.elapsedRealtime();
             final android.content.Context app = getApplicationContext();

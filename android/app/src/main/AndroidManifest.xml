@@ -129,6 +129,12 @@
 
         <!-- Messages on push with no app screen (like WhatsApp's GcmFGService): the app's background page in a hidden
              WebView decrypts, keeps and notifies, then stops. -->
+        <!-- Keeps a living app awake for a few seconds while it fetches what a push announced (no daily cap). -->
+        <service
+            android:name=".WakeKeeper"
+            android:exported="false"
+            android:foregroundServiceType="shortService|dataSync" />
+
         <service
             android:name=".BackgroundHost"
             android:exported="false"
