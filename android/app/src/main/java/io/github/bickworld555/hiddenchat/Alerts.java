@@ -344,8 +344,9 @@ final class Alerts {
     }
 
     private static void postMissedCall(Context context, MissedCaller caller) {
-        // Every missed call is a call log entry and a "Missed voice call" in the chat once the app opens.
-        CallEvents.record(context, caller.callId, caller.id, caller.video, "missed");
+        // Every missed call is a call log entry and a "Missed voice call" in the chat once the app opens; one missed
+        // while the phone was in Do Not Disturb says so (L1, like WhatsApp's is_dnd_mode_on).
+        CallEvents.record(context, caller.callId, caller.id, caller.video, "missed", doNotDisturb(context) ? "dnd" : null);
         String tag = "missed:" + caller.id;
         int count;
         synchronized (Alerts.class) {
@@ -396,6 +397,16 @@ final class Alerts {
             }
         } else {
             for (String tag : tags) NotificationManagerCompat.from(context).cancel(tag, 1);
+        }
+    }
+
+    /** Whether the phone is in Do Not Disturb (any filter stricter than "all"). */
+    static boolean doNotDisturb(Context context) {
+        try {
+            android.app.NotificationManager manager = context.getSystemService(android.app.NotificationManager.class);
+            return manager != null && manager.getCurrentInterruptionFilter() > android.app.NotificationManager.INTERRUPTION_FILTER_ALL;
+        } catch (RuntimeException unknown) {
+            return false;
         }
     }
 

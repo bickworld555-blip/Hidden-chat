@@ -111,8 +111,20 @@ final class NativeRelay extends WebSocketListener {
     /** "Reject" tapped while the app was closed: tell the caller through this connection. */
     static synchronized boolean declinePendingCall(String callId) {
         if (pendingCall == null || current == null || current.socket == null) return false;
-        String pendingId = pendingCall.optString("callId");
+        boolean invite = "call:invite".equals(pendingCall.optString("type"));
+        String pendingId = invite ? pendingCall.optString("roomId") : pendingCall.optString("callId");
         if (callId != null && !callId.isEmpty() && !callId.equals(pendingId)) return false;
+        if (invite) {
+            // A group-call invite (C1): decline it, so the host's screen says so at once.
+            try {
+                current.socket.send(new JSONObject().put("type", "call:invite-reply").put("roomId", pendingId)
+                    .put("targetId", pendingCall.optString("from")).put("accepted", false).put("reason", "declined").toString());
+            } catch (Exception ignored) {
+                return false;
+            }
+            clearPending();
+            return true;
+        }
         try {
             JSONObject end = new JSONObject()
                 .put("type", "call:signal")
@@ -327,7 +339,8 @@ final class NativeRelay extends WebSocketListener {
                 pendingIce.clear();
                 pendingAt = System.currentTimeMillis();
             }
-            Alerts.showIncomingCall(context, "", event.optString("from"), callerName(event), "video".equals(event.optString("mode")), session.ringtoneSound, callerAvatar(event));
+            // Under the room's id: the push for this invite rang the same call (PushService.onCall), so it keeps ringing.
+            Alerts.showIncomingCall(context, event.optString("roomId"), event.optString("from"), callerName(event), "video".equals(event.optString("mode")), session.ringtoneSound, callerAvatar(event));
         }
     }
 

@@ -535,3 +535,24 @@ test('R1/R2/R4: per-recipient receipt times; group ticks need every member; a gr
   const store = readFileSync(join(appDir, 'src/store.js'), 'utf8');
   assert.match(store, /if \(newestOverXmpp && appSettings\(\)\.get\('privacy\.readReceipts'\) !== false\) client\.send\(\{ type: 'message:read'/);
 });
+
+test('L1/L3/L4: why a call did not ring, the Android call keeps our call id, and backups carry the call log', async () => {
+  const { callLogRows, callRowLabel } = await import('../src/callLogRows.js');
+  const row = (extra) => callLogRows([{ id: 'x', peerId: 'p', direction: 'incoming', duration: 0, mode: 'audio', timestamp: '2026-11-16T10:00:00Z', ...extra }])[0];
+  assert.equal(callRowLabel(row({ status: 'silenced', silenceReason: 'unknown-caller' })), 'Silenced voice call · Unknown caller');
+  assert.equal(callRowLabel(row({ status: 'missed', silenceReason: 'dnd', mode: 'video' })), 'Missed video call · Do Not Disturb');
+  assert.equal(callRowLabel(row({ status: 'missed' })), 'Missed voice call');
+  const { callSyncContent, parseCallSync } = await import('../src/callLogSync.js');
+  const entry = { id: 'call-1', peerId: 'ava', mode: 'audio', direction: 'incoming', status: 'missed', duration: 0, timestamp: '2026-11-16T10:00:00.000Z', silenceReason: 'dnd' };
+  assert.equal(parseCallSync(callSyncContent(entry)).silenceReason, 'dnd', 'synced to my other devices');
+  assert.equal(parseCallSync(callSyncContent({ ...entry, silenceReason: 'made-up' })).silenceReason, undefined);
+  const alerts = readFileSync(join(appDir, 'android/app/src/main/java/io/github/bickworld555/hiddenchat/Alerts.java'), 'utf8');
+  assert.ok(alerts.includes('CallEvents.record(context, caller.callId, caller.id, caller.video, "missed", doNotDisturb(context) ? "dnd" : null);'));
+  // L3: Android's call (Telecom) carries our call id, so a car or watch action maps to the same log entry (call-<id>).
+  const telecom = readFileSync(join(appDir, 'android/app/src/main/java/io/github/bickworld555/hiddenchat/TelecomCalls.java'), 'utf8');
+  assert.ok(telecom.includes('details.putString(EXTRA_CALL_ID, callId == null ? "" : callId);') && telecom.includes('connection.callId = callId'));
+  // L4: both backups carry the call log.
+  const { buildBackupData } = await import('../src/backup.js');
+  assert.deepEqual(buildBackupData({ user: { id: 'me' }, chats: [], messages: {}, callLogs: [entry], preferences: {}, groups: [] }).callLogs, [entry]);
+  assert.match(readFileSync(join(appDir, 'src/cloudBackup.js'), 'utf8'), /callLogs: state\.callLogs/);
+});

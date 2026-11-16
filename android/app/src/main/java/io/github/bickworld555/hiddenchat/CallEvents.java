@@ -20,7 +20,12 @@ final class CallEvents {
     private CallEvents() { }
 
     /** `status`: "missed" | "declined". Ignored without a caller; a second event for the same call is dropped. */
-    static synchronized void record(Context context, String callId, String peerId, boolean video, String status) {
+    static void record(Context context, String callId, String peerId, boolean video, String status) {
+        record(context, callId, peerId, video, status, null);
+    }
+
+    /** `reason`: why it did not ring through ("dnd": the phone was in Do Not Disturb), or null. */
+    static synchronized void record(Context context, String callId, String peerId, boolean video, String status, String reason) {
         if (peerId == null || peerId.isEmpty()) return;
         SharedPreferences prefs = context.getApplicationContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         try {
@@ -37,6 +42,7 @@ final class CallEvents {
                 .put("mode", video ? "video" : "audio")
                 .put("status", status)
                 .put("direction", "incoming")
+                .put("reason", reason == null ? "" : reason)
                 .put("at", System.currentTimeMillis()));
             JSONArray kept = list;
             if (list.length() > MAX_EVENTS) {

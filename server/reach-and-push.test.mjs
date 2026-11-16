@@ -216,3 +216,30 @@ test('a call to a phone that was offline the whole time leaves a missed-call pus
   assert.equal(missedFor().length, before + 2);
   caller.close();
 });
+
+test('C1: a group-call invite to a phone with no app open rings it by push, waits for its connection, and a decline reaches the host', async () => {
+  const { a, b, token } = await pair();
+  const host = await connect(a);
+  await ready(host);
+  const before = sent.length;
+  host.send(JSON.stringify({ type: 'call:invite', roomId: 'room-c1', targetId: b.user.id, mode: 'video', participants: [] }));
+  await until(() => sent.slice(before).some((item) => item.token === token && item.data?.t === 'call'), 'the invite rings the phone by push');
+  const push = sent.slice(before).find((item) => item.token === token && item.data?.t === 'call');
+  // The payload is encrypted for the phone; its collapse key and lifetime show it rings under the room id, briefly.
+  assert.deepEqual([push.options.collapseKey, push.options.ttlSeconds], ['call:room-c1', 45], 'rung under the room id');
+  await sleep(100);
+  assert.ok(!host.events.some((event) => event.type === 'call:invite-reply' && event.reason === 'offline'), 'not "offline": the phone is ringing');
+  // The connection the push opens collects the invite.
+  const phone = await connect(b);
+  await until(() => phone.events.some((event) => event.type === 'call:invite' && event.roomId === 'room-c1'), 'the held invite reaches the phone');
+  phone.close();
+  // Declined on the notification (HTTP): the host hears it, and the invite is no longer held.
+  assert.equal((await api('/api/v1/calls/room-c1/end', { session: b, method: 'POST' })).status, 204);
+  await until(() => host.events.some((event) => event.type === 'call:invite-reply' && event.roomId === 'room-c1' && event.accepted === false && event.reason === 'declined'), 'the host hears the decline');
+  const again = await connect(b);
+  await ready(again);
+  await sleep(100);
+  assert.ok(!again.events.some((event) => event.type === 'call:invite'), 'not delivered twice');
+  again.close();
+  host.close();
+});

@@ -15,6 +15,7 @@ export function callSyncContent(entry) {
     duration: entry.duration, timestamp: entry.timestamp,
     ...(entry.groupId ? { groupId: entry.groupId } : {}), ...(entry.groupName ? { groupName: entry.groupName } : {}),
     ...(Array.isArray(entry.participants) && entry.participants.length ? { participants: entry.participants } : {}),
+    ...(entry.silenceReason ? { silenceReason: entry.silenceReason } : {}),
   } });
 }
 
@@ -38,6 +39,7 @@ export function parseCallSync(content) {
     ...(typeof e.groupId === 'string' && ID.test(e.groupId) ? { groupId: e.groupId } : {}),
     ...(typeof e.groupName === 'string' && e.groupName ? { groupName: e.groupName.slice(0, 100) } : {}),
     ...(participants.length ? { participants } : {}),
+    ...(e.silenceReason === 'unknown-caller' || e.silenceReason === 'dnd' ? { silenceReason: e.silenceReason } : {}),
   };
 }
 

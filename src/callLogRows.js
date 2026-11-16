@@ -40,6 +40,7 @@ export function callLogRows(logs = []) {
         key: log.id, peerId: log.peerId, direction: log.direction, mode: log.mode === 'video' ? 'video' : 'audio',
         timestamp: log.timestamp, duration: log.duration, answered: isAnswered, declined, silenced, status: log.status,
         groupId: log.groupId ?? null, groupName: log.groupName ?? null, participants: Array.isArray(log.participants) ? log.participants : null,
+        silenceReason: log.silenceReason ?? null,
         missed: log.direction === 'incoming' && !isAnswered && !declined && !silenced && !elsewhere,
       };
     });
@@ -51,7 +52,9 @@ const OUTGOING_DETAIL = { declined: 'Declined', busy: 'Busy', unavailable: 'Unav
 /** "Missed voice call", "Outgoing video call · Busy", "Declined voice call"… for a row. */
 export function callRowLabel(row) {
   const kind = row.mode === 'video' ? 'video call' : 'voice call';
-  if (row.silenced) return `Silenced ${kind}`;
+  // Why it did not ring through (L1), as WhatsApp shows it.
+  if (row.silenced) return row.silenceReason === 'unknown-caller' ? `Silenced ${kind} · Unknown caller` : `Silenced ${kind}`;
+  if (row.missed && row.silenceReason === 'dnd') return `Missed ${kind} · Do Not Disturb`;
   if (row.status === 'answered-elsewhere') return `Incoming ${kind} · Answered on another device`;
   if (row.direction === 'incoming') {
     if (row.declined) return `Declined ${kind}`;

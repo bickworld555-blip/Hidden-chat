@@ -541,7 +541,7 @@ export default function App() {
               // Privacy › Silence unknown callers (the server decides): no ringing, a silenced call in Calls instead.
               if (event.silenced) {
                 if (event.fromUser && !useChatStore.getState().chats.some((c) => c.id === event.from)) useChatStore.getState().addContact(event.fromUser);
-                syncCallLog(useChatStore.getState().logCall(event.from, { mode: event.mode, status: 'silenced', direction: 'incoming', callId: event.callId }));
+                syncCallLog(useChatStore.getState().logCall(event.from, { mode: event.mode, status: 'silenced', direction: 'incoming', callId: event.callId, silenceReason: 'unknown-caller' }));
                 return;
               }
               if (active && !TERMINAL_STATUSES.includes(active.status)) {
@@ -933,6 +933,7 @@ export default function App() {
         syncCallLog(useChatStore.getState().logCall(event.peerId, {
           callId: event.callId || null, mode: event.mode === 'video' ? 'video' : 'audio', direction: 'incoming',
           status: event.status === 'declined' ? 'declined' : 'missed', timestamp: Number.isFinite(event.at) ? new Date(event.at).toISOString() : null,
+          silenceReason: event.reason === 'dnd' ? 'dnd' : null,
         }));
       }
     }).catch(() => {});

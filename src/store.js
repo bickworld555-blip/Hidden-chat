@@ -47,6 +47,8 @@ const withCloudStar = (message) => (cloudStars && message?.id && Boolean(cloudSt
 // ORPHAN_LIMIT of them for ORPHAN_LIFE_MS, and applied the moment that message is added or loaded. A receipt for a
 // copy from another of my devices, or one that overtook a message still loading at start-up, is no longer lost.
 export const ORPHAN_LIFE_MS = 24 * 60 * 60 * 1000;
+// Why a call did not ring through (L1): silenced as an unknown caller, or the phone in Do Not Disturb.
+export const SILENCE_REASONS = new Set(['unknown-caller', 'dnd']);
 export const ORPHAN_LIMIT = 2000;
 const orphanReceipts = new Map(); // id -> { at, items: [receipt] } (one per sender and kind; a group has many)
 const ORPHAN_ITEMS = 64;
@@ -1015,7 +1017,8 @@ export const useChatStore = create((setState, getState) => ({
   // both the app and the phone's background code (src/App.jsx, Android CallEvents) is written once.
   // Resolves the new entry (for call log sync), or null when that call is already logged.
   // `groupId` / `groupName` / `participants`: a group call (Calls tab only; no card in a one-to-one chat).
-  logCall(peerId, { duration = 0, mode = 'audio', status = 'completed', direction = 'outgoing', callId = null, timestamp: at = null, id: givenId = null, groupId = null, groupName = null, participants = null } = {}) {
+  // `silenceReason`: why it did not ring through ('unknown-caller' silenced by Privacy, 'dnd' Do Not Disturb).
+  logCall(peerId, { duration = 0, mode = 'audio', status = 'completed', direction = 'outgoing', callId = null, timestamp: at = null, id: givenId = null, groupId = null, groupName = null, participants = null, silenceReason = null } = {}) {
     const state = getState();
     if (!peerId) return null;
     const id = typeof givenId === 'string' && givenId ? givenId : typeof callId === 'string' && callId ? `call-${callId}` : crypto.randomUUID();
@@ -1024,7 +1027,7 @@ export const useChatStore = create((setState, getState) => ({
     const timestamp = parsed && !Number.isNaN(parsed.getTime()) ? parsed.toISOString() : new Date().toISOString();
     const incoming = direction === 'incoming';
     const group = groupId || (Array.isArray(participants) && participants.length > 1);
-    const entry = { id, peerId, mode, direction, status, duration, timestamp,
+    const entry = { id, peerId, mode, direction, status, duration, timestamp, ...(SILENCE_REASONS.has(silenceReason) ? { silenceReason } : {}),
       ...(group ? { groupId: groupId || null, groupName: groupName || null, participants: Array.isArray(participants) ? participants : [peerId] } : {}) };
     setState((current) => ({ callLogs: [entry, ...current.callLogs] }));
     getState().persistCallLogs(state.userId);

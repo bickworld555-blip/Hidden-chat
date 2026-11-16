@@ -85,6 +85,9 @@ export const CALL_CONFIRM_PROTOCOL = 3;
 export const CALL_UNREACHABLE_MS = 30_000;
 // How long a member's group read marks are kept (Message info shows read times within it).
 export const GROUP_READ_MARK_LIFE_MS = 30 * 24 * 60 * 60 * 1000;
+// A group-call invite to a phone with no app on screen is pushed (it rings like a call) and kept this long for the
+// phone's background connection (or the app it opens) to collect (C1, like WhatsApp's voip_call_offer_group).
+export const GROUP_INVITE_RING_MS = 45_000;
 // A message written to a connection no device of the receiver has confirmed within this long gets its push anyway:
 // a connection that died a moment ago (the phone just lost its network) still looks connected here, and the message
 // written to it reached nobody (like WhatsApp: no delivery receipt, then a push).
@@ -723,6 +726,30 @@ export function createChatServer({
     for (const [userId, peerId] of [[session.initiatorId, session.peerId], [session.peerId, session.initiatorId]]) {
       broadcastUser(userId, { type: 'location:live', action: 'stop', sessionId, from: peerId, reason }, exceptSocket);
     }
+  }
+
+  // Group-call invites held for a phone rung by push (C1): userId -> Map(roomId -> { invite, until }).
+  const heldInvites = new Map();
+  function holdInvite(userId, invite) {
+    const rooms = heldInvites.get(userId) ?? new Map();
+    rooms.set(invite.roomId, { invite, until: Date.now() + GROUP_INVITE_RING_MS });
+    heldInvites.set(userId, rooms);
+  }
+  function heldInvitesFor(userId) {
+    const rooms = heldInvites.get(userId);
+    if (!rooms) return [];
+    const now = Date.now();
+    for (const [roomId, item] of rooms) if (item.until <= now) rooms.delete(roomId);
+    if (!rooms.size) heldInvites.delete(userId);
+    return [...rooms.values()].map((item) => item.invite);
+  }
+  function takeHeldInvite(userId, roomId) {
+    const rooms = heldInvites.get(userId);
+    const item = rooms?.get(roomId);
+    if (!item) return null;
+    rooms.delete(roomId);
+    if (!rooms.size) heldInvites.delete(userId);
+    return item.until > Date.now() ? item.invite : null;
   }
 
   // `by`: who ended it (a user id), or null for the server's own timeouts.
@@ -2439,6 +2466,12 @@ export function createChatServer({
   app.post('/api/v1/calls/:callId/end', requireSession, async (request, response) => {
     const activeCall = activeCalls.get(request.params.callId);
     const userId = request.session.user_id;
+    // A group-call invite this phone was rung for by push (C1), declined on the notification or the call screen.
+    const invite = !activeCall ? takeHeldInvite(userId, request.params.callId) : null;
+    if (invite) {
+      broadcastUser(invite.from, { type: 'call:invite-reply', from: userId, roomId: invite.roomId, accepted: false, reason: 'declined' });
+      return response.status(204).end();
+    }
     if (!activeCall || (activeCall.callerId !== userId && activeCall.calleeId !== userId)) return response.status(404).json({ error: 'No such call.' });
     finishCall(request.params.callId, 'ended', null, { by: userId });
     response.status(204).end();
@@ -2919,6 +2952,8 @@ export function createChatServer({
     // The first queued task, so "ready" (with the presence the viewer may see) precedes pending messages.
     enqueue(async () => {
       json(socket, { type: 'connection:ready', user: request.session.user, presence: await presenceSnapshot(userId) });
+      // Group-call invites a push rang this phone for (C1): to the background connection, or the app it opened.
+      for (const invite of heldInvitesFor(userId)) json(socket, invite);
       await db.prepare('UPDATE sessions SET last_active_at = ? WHERE token_hash = ?').run(Date.now(), socket.sessionHash);
       await presenceChanged(userId, wasOnline);
     });
@@ -3190,10 +3225,26 @@ export function createChatServer({
             (await linkUsers(targetId, participant));
             (await linkUsers(participant, targetId));
           }
-          const delivered = broadcastUser(targetId, { type: 'call:invite', from: userId, fromUser, roomId, mode, participants: [...new Set([userId, ...participants])] });
+          const invite = { type: 'call:invite', from: userId, fromUser, roomId, mode, participants: [...new Set([userId, ...participants])] };
+          const delivered = broadcastUser(targetId, invite);
+          // No app on screen there (C1): the phone rings by push, like a one-to-one call, and the invite waits for the
+          // connection that push opens. "Offline" only when nobody could be rung at all.
+          if (needsPush(targetId)) {
+            holdInvite(targetId, invite);
+            trackSocketTask(pushToUser(targetId, pushBody.call({ callId: roomId, from: userId, mode }), { ttlSeconds: GROUP_INVITE_RING_MS / 1000, collapseKey: `call:${roomId}` })
+              .then((sent) => {
+                if (sent > 0 || delivered > 0) return;
+                takeHeldInvite(targetId, roomId);
+                if (socket.readyState === WebSocket.OPEN) json(socket, { type: 'call:invite-reply', from: targetId, roomId, accepted: false, reason: 'offline' });
+              })
+              .catch((error) => console.error('Group call push failed:', error.message)));
+            return;
+          }
           if (delivered === 0) json(socket, { type: 'call:invite-reply', from: targetId, roomId, accepted: false, reason: 'offline' });
           return;
         }
+        // Answered (accepted or declined) on any device: the held invite is done.
+        takeHeldInvite(userId, roomId);
         broadcastUser(targetId, { type: 'call:invite-reply', from: userId, fromUser, roomId, accepted: event.accepted === true, reason: typeof event.reason === 'string' ? event.reason.slice(0, 40) : undefined });
         return;
       }
