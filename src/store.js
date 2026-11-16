@@ -488,6 +488,8 @@ export const useChatStore = create((setState, getState) => ({
   favouriteChatIds: [],
   lockedChatIds: [],
   blockedChats: {},
+  // People met in group calls (rememberPerson): names only, never chats.
+  knownPeople: {},
   chatThemes: {},
   presence: {},
   // userId → when they were last online (ms), for "last seen …"; null while online or when their privacy hides it.
@@ -567,6 +569,16 @@ export const useChatStore = create((setState, getState) => ({
     });
   },
   // Opens a thread with someone: a server link (with its `saved` flag) or a peer learned from a message/call.
+  /**
+   * Someone met in a group call (a participant joining, an invite): their name and photo for the call screen and
+   * the Calls tab, without adding them to the chat list. Adding them made everyone in a group call appear in
+   * Personal chats on every phone (reported: "Alamgir" added by himself).
+   */
+  rememberPerson(user) {
+    if (!user?.id || typeof user.id !== 'string') return;
+    const { id, name, username, initials, color, avatar } = user;
+    setState((state) => ({ knownPeople: { ...state.knownPeople, [id]: { id, name, username, initials, color, avatar } } }));
+  },
   addContact(contact) {
     setState((state) => {
       const messages = state.messages[contact.id] ? state.messages : { ...state.messages, [contact.id]: EMPTY_MESSAGES };

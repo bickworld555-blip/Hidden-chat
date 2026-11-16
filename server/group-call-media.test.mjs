@@ -97,3 +97,14 @@ test('the call screen: shared capture for every engine, room size on every engin
   const engine = readFileSync(new URL('../src/callEngine.js', import.meta.url), 'utf8');
   assert.match(engine, /videoEncodingFor\(VIDEO_LEVELS\[quality\.level\] \?\? VIDEO_LEVELS\[0\], \{ roomSize, screenSharing: state\.screenSharing \}\)/);
 });
+
+test('people met in a group call are remembered for the call, never added to the chat list', () => {
+  const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
+  // Reported: "Alamgir" appeared in Personal chats by himself after a group call.
+  const roomOffer = app.slice(app.indexOf('if (isRoomOffer(event, active)'), app.indexOf('setCallSignals((current) => [...current, event]);', app.indexOf('if (isRoomOffer(event, active)')));
+  assert.ok(!/addContact/.test(roomOffer) && /rememberPerson\(event\.fromUser\)/.test(roomOffer));
+  const invite = app.slice(app.indexOf("if (event.type === 'call:invite') {"), app.indexOf('const invited = {'));
+  assert.ok(!/addContact/.test(invite) && /rememberPerson\(event\.fromUser\)/.test(invite));
+  const overlay = readFileSync(new URL('../src/components/CallOverlay.jsx', import.meta.url), 'utf8');
+  assert.match(overlay, /\?\? knownPeople\[peerId\] \?\?/, 'their name on the call screen');
+});

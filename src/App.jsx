@@ -543,7 +543,8 @@ export default function App() {
             const active = callRef.current;
             // A pair offer for the room we are in is a participant joining: hand it to the overlay, no ringing.
             if (isRoomOffer(event, active) && !TERMINAL_STATUSES.includes(active.status)) {
-              if (event.fromUser && !useChatStore.getState().chats.some((c) => c.id === event.from)) useChatStore.getState().addContact(event.fromUser);
+              // Someone joining the group call: their name for the call, not a new chat.
+              if (event.fromUser) useChatStore.getState().rememberPerson(event.fromUser);
               setCallSignals((current) => [...current, event]);
               return;
             }
@@ -584,7 +585,8 @@ export default function App() {
               return;
             }
             if (active) recordCallEnd(active);
-            if (event.fromUser && !useChatStore.getState().chats.some((c) => c.id === event.from)) useChatStore.getState().addContact(event.fromUser);
+            // Invited into a group call: the inviter's name for the call, not a new chat.
+            if (event.fromUser) useChatStore.getState().rememberPerson(event.fromUser);
             // The invitee rings like a normal incoming call; accepting places pair calls to everyone listed.
             // Its own pair id, like every other pair (crypto.randomUUID, 36 characters). The id built from the room, my id and
             // the inviter's id was 110 characters: the server refuses call ids over 80, so every invitee's pair with the person

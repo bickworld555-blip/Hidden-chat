@@ -253,6 +253,7 @@ export default function CallOverlay({
   const setNotice = (text, priority = NOTICE_PRIORITY.NORMAL) => { if (text) useCallStore.getState().notify(text, { priority }); };
   const [addOpen, setAddOpen] = useState(false);
   const chats = useChatStore((state) => state.chats);
+  const knownPeople = useChatStore((state) => state.knownPeople);
   const userId = useChatStore((state) => state.userId);
   const me = useChatStore((state) => state.user);
   const myName = me?.name || me?.username || 'You';
@@ -372,7 +373,7 @@ export default function CallOverlay({
   // Group call started from a group: once the first leg is connected, the remaining chosen members are invited one
   // at a time, so each newcomer's participant list already names everyone who accepted before them.
   const inviteQueueRef = useRef(null);
-  const nameOf = (peerId) => chats.find((chat) => chat.id === peerId)?.name ?? call.members?.find((member) => member.id === peerId)?.name ?? 'them';
+  const nameOf = (peerId) => chats.find((chat) => chat.id === peerId)?.name ?? call.members?.find((member) => member.id === peerId)?.name ?? knownPeople[peerId]?.name ?? 'them';
   function sendNextInvite() {
     const queue = inviteQueueRef.current;
     if (!queue) return;
@@ -786,7 +787,7 @@ export default function CallOverlay({
   }, [minimized]);
 
   const peerName = peer?.name ?? 'Unknown';
-  const extraPeers = Object.entries(extraSnapshots).map(([peerId, item]) => ({ peerId, snapshot: item, info: chats.find((chat) => chat.id === peerId) ?? call.members?.find((member) => member.id === peerId) ?? { id: peerId, name: `@${peerId.slice(0, 6)}`, initials: '??' } }));
+  const extraPeers = Object.entries(extraSnapshots).map(([peerId, item]) => ({ peerId, snapshot: item, info: chats.find((chat) => chat.id === peerId) ?? call.members?.find((member) => member.id === peerId) ?? knownPeople[peerId] ?? { id: peerId, name: `@${peerId.slice(0, 6)}`, initials: '??' } }));
   const groupGrid = extraPeers.length > 0;
   // Reactions from the main peer and every other participant, each shown once.
   const seenReactionsRef = useRef(new Set());

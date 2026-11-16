@@ -199,7 +199,7 @@ export default function CallsView({ onCall, onSheet, onSettings, onOpenChat }) {
         {rows.map((row) => {
           const chat = chats.find((c) => c.id === row.peerId);
           const group = Boolean(row.groupId || (row.participants?.length ?? 0) > 1);
-          const others = (row.participants ?? []).map((id) => chats.find((c) => c.id === id)).filter(Boolean).map(nameOf);
+          const others = (row.participants ?? []).map((id) => chats.find((c) => c.id === id) ?? useChatStore.getState().knownPeople?.[id]).filter(Boolean).map(nameOf);
           const name = group ? (row.groupName || others.slice(0, 3).join(', ') || 'Group call') : nameOf(chat);
           const video = row.mode === 'video';
           const Arrow = row.direction === 'incoming' ? ArrowDownLeft : ArrowUpRight;
