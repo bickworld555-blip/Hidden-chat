@@ -373,6 +373,8 @@ final class Alerts {
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
             .setNumber(count)
+            // Swiped away: the calls count as seen (C2, like WhatsApp's MissedCallNotificationDismissedReceiver).
+            .setDeleteIntent(MissedCallDismissReceiver.intent(context, caller.id, tag.hashCode() * 31 + 9))
             .addAction(new NotificationCompat.Action.Builder(R.drawable.ic_stat_hidden, "Call back", callBack).build())
             .addAction(new NotificationCompat.Action.Builder(R.drawable.ic_stat_hidden, "Message", openIntent(context, open, tag.hashCode() * 31 + 8)).build());
         if (photo != null) builder.setLargeIcon(photo);
@@ -395,6 +397,11 @@ final class Alerts {
         } else {
             for (String tag : tags) NotificationManagerCompat.from(context).cancel(tag, 1);
         }
+    }
+
+    /** The missed-call notification was swiped away: the next missed call from this person counts from 1 again. */
+    static void forgetMissedCount(String callerId) {
+        synchronized (Alerts.class) { missedCounts.remove("missed:" + callerId); }
     }
 
     /** The missed-call notification for this person is gone (opened, called back or the chat was read). */

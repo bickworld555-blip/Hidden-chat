@@ -440,3 +440,48 @@ test('call log sync: entries travel sealed to my other devices and merge by id, 
   assert.equal(useChatStore.getState().callLogs.find((item) => item.id === 'call-g').groupId, 'g1');
   assert.equal(useChatStore.getState().messages.ava.some((message) => message.id === 'call-g'), false);
 });
+
+test('R3: a receipt that overtakes its message is kept and applied when the message arrives', async () => {
+  const { useChatStore, orphanReceiptCount } = await import('../src/store.js');
+  useChatStore.setState({ userId: 'me', chats: [{ id: 'ava', name: 'Ava' }], messages: {}, callLogs: [], persistCallLogs: async () => {} });
+  const store = () => useChatStore.getState();
+  const statusOf = (id) => store().messages.ava?.find((message) => message.id === id)?.status;
+  // The receipts come first (a copy from my other device still on its way, or saved messages still loading).
+  store().applyReceipt('late-1', { status: 'delivered' });
+  store().applyReceipt('late-1', { status: 'read' });
+  store().applyReceipt('late-1', { status: 'delivered' });
+  store().applyReceipt('vn-1', { played: true });
+  assert.equal(orphanReceiptCount(), 2, 'kept, one entry per message');
+  store().addMessage({ id: 'late-1', senderId: 'me', receiverId: 'ava', timestamp: '2026-11-16T10:00:00.000Z', content: 'hi', status: 'sent' });
+  assert.equal(statusOf('late-1'), 'read', 'the furthest status wins, never moving back');
+  store().addMessage({ id: 'vn-1', senderId: 'me', receiverId: 'ava', timestamp: '2026-11-16T10:01:00.000Z', content: 'voice', status: 'sent' });
+  assert.equal(store().messages.ava.find((message) => message.id === 'vn-1').played, true);
+  assert.equal(orphanReceiptCount(), 0, 'applied and forgotten');
+  // A receipt for a message already here is applied at once, not kept.
+  store().applyReceipt('late-1', { status: 'delivered' });
+  assert.equal(orphanReceiptCount(), 0);
+  // A cumulative read marker that overtakes its message turns the earlier ones blue once it arrives.
+  store().addMessage({ id: 'e-1', senderId: 'me', receiverId: 'ava', timestamp: '2026-11-16T10:02:00.000Z', content: 'a', status: 'delivered' });
+  store().applyReceipt('e-2', { status: 'read', upTo: true });
+  store().addMessage({ id: 'e-2', senderId: 'me', receiverId: 'ava', timestamp: '2026-11-16T10:03:00.000Z', content: 'b', status: 'sent' });
+  assert.deepEqual([statusOf('e-1'), statusOf('e-2')], ['read', 'read']);
+  // Bounded: never more than ORPHAN_LIMIT waiting.
+  const { ORPHAN_LIMIT } = await import('../src/store.js');
+  for (let i = 0; i < ORPHAN_LIMIT + 50; i += 1) store().applyReceipt(`never-${i}`, { status: 'delivered' });
+  assert.ok(orphanReceiptCount() <= ORPHAN_LIMIT);
+});
+
+test('C2: swiping away a missed-call notification clears that person\'s missed-call mark', async () => {
+  const { useChatStore } = await import('../src/store.js');
+  useChatStore.setState({ userId: 'me', chats: [{ id: 'ava', name: 'Ava', missedCalls: 3 }, { id: 'ben', name: 'Ben', missedCalls: 1 }], messages: {} });
+  useChatStore.getState().clearMissedCalls('ava');
+  assert.deepEqual(useChatStore.getState().chats.map((chat) => chat.missedCalls), [0, 1], 'only that person');
+  const app = readFileSync(join(appDir, 'src/App.jsx'), 'utf8');
+  assert.match(app, /if \(event\.status === 'seen'\) \{ useChatStore\.getState\(\)\.clearMissedCalls\(event\.peerId\); continue; \}/);
+  const alerts = readFileSync(join(appDir, 'android/app/src/main/java/io/github/bickworld555/hiddenchat/Alerts.java'), 'utf8');
+  assert.ok(alerts.includes('.setDeleteIntent(MissedCallDismissReceiver.intent(context, caller.id,'), 'the notification reports its dismissal');
+  const receiver = readFileSync(join(appDir, 'android/app/src/main/java/io/github/bickworld555/hiddenchat/MissedCallDismissReceiver.java'), 'utf8');
+  assert.match(receiver, /Alerts\.forgetMissedCount\(callerId\);\s*CallEvents\.record\(context, null, callerId, false, "seen"\);/);
+  const manifest = readFileSync(join(appDir, 'android/app/src/main/AndroidManifest.xml'), 'utf8');
+  assert.match(manifest, /android:name="\.MissedCallDismissReceiver"\s*android:exported="false"/);
+});

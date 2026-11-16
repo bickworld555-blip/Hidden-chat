@@ -42,6 +42,25 @@ let cloudStars = null;
 const withCloudStar = (message) => (cloudStars && message?.id && Boolean(cloudStars[message.id]) !== Boolean(message.starred)
   ? { ...message, starred: Boolean(cloudStars[message.id]) } : message);
 
+// Receipts that arrived before their message (R3, like WhatsApp's receipt_orphaned): kept by message id, at most
+// ORPHAN_LIMIT of them for ORPHAN_LIFE_MS, and applied the moment that message is added or loaded. A receipt for a
+// copy from another of my devices, or one that overtook a message still loading at start-up, is no longer lost.
+export const ORPHAN_LIFE_MS = 24 * 60 * 60 * 1000;
+export const ORPHAN_LIMIT = 2000;
+const orphanReceipts = new Map(); // id -> { status, upTo, played, at }
+const STATUS_RANK = { sent: 1, delivered: 2, read: 3 };
+function keepOrphanReceipt(messageId, receipt, now = Date.now()) {
+  const kept = orphanReceipts.get(messageId);
+  const status = (STATUS_RANK[receipt.status] ?? 0) >= (STATUS_RANK[kept?.status] ?? 0) ? receipt.status ?? kept?.status : kept.status;
+  orphanReceipts.delete(messageId);
+  orphanReceipts.set(messageId, { status, upTo: Boolean(receipt.upTo || kept?.upTo), played: Boolean(receipt.played || kept?.played), at: now });
+  for (const [id, item] of orphanReceipts) {
+    if (orphanReceipts.size <= ORPHAN_LIMIT && now - item.at < ORPHAN_LIFE_MS) break;
+    orphanReceipts.delete(id);
+  }
+}
+export function orphanReceiptCount() { return orphanReceipts.size; }
+
 // A message's time in milliseconds, whether it was stored as an ISO string or a number.
 const timeOfMessage = (message) => {
   const value = message?.timestamp ?? message?.createdAt;
@@ -674,6 +693,11 @@ export const useChatStore = create((setState, getState) => ({
       return { groupTyping };
     });
   },
+  // The missed-call notification for this person was dismissed (C2): their chat row's missed-call mark goes.
+  clearMissedCalls(chatId) {
+    if (!chatId) return;
+    setState((state) => ({ chats: state.chats.map((chat) => chat.id === chatId && chat.missedCalls ? { ...chat, missedCalls: 0 } : chat) }));
+  },
   markRead(chatId) {
     setState((state) => ({
       chats: state.chats.map((chat) => chat.id === chatId ? { ...chat, unread: 0, missedCalls: 0 } : chat),
@@ -733,6 +757,7 @@ export const useChatStore = create((setState, getState) => ({
       };
     });
     if (addedContact) getState().persistContacts(getState().userId);
+    if (orphanReceipts.size && message?.id) getState().applyOrphanReceipts([message.id]);
   },
   async queueMessage(message) {
     const key = `relay:outbox:${getState().userId}`;
@@ -803,6 +828,7 @@ export const useChatStore = create((setState, getState) => ({
     return getState().updateGroupMessage(groupId, messageId, (message) => deletedPlaceholder(message));
   },
   mergeHistory(chatId, history) {
+    if (orphanReceipts.size) queueMicrotask(() => getState().applyOrphanReceipts((history ?? []).map((message) => message?.id).filter(Boolean)));
     setState((state) => {
       const current = state.messages[chatId] ?? [];
       // Messages that disappeared (timer) are gone; ones deleted for everyone stay as a "deleted" placeholder.
@@ -827,6 +853,32 @@ export const useChatStore = create((setState, getState) => ({
           : chat))),
       };
     });
+  },
+  /**
+   * A delivery receipt, read marker or "played" for one of my messages (R3): applied now, or kept until that message
+   * arrives (orphanReceipts). `upTo`: a cumulative read marker (markReadThrough).
+   */
+  applyReceipt(messageId, { status = null, upTo = false, played = false } = {}) {
+    if (typeof messageId !== 'string' || !messageId) return;
+    const known = Object.values(getState().messages).some((list) => (list ?? []).some((message) => message?.id === messageId));
+    if (!known) {
+      keepOrphanReceipt(messageId, { status, upTo, played });
+      return;
+    }
+    if (status === 'read' && upTo) getState().markReadThrough(messageId);
+    else if (status) getState().updateMessage(messageId, { status });
+    if (played) getState().updateMessage(messageId, { played: true });
+  },
+  // Receipts that were waiting for these messages (just added or loaded) are applied now.
+  applyOrphanReceipts(ids) {
+    const now = Date.now();
+    for (const id of ids) {
+      const kept = orphanReceipts.get(id);
+      if (!kept) continue;
+      orphanReceipts.delete(id);
+      if (now - kept.at >= ORPHAN_LIFE_MS) continue;
+      getState().applyReceipt(id, kept);
+    }
   },
   // A cumulative read marker (XEP-0333) for one of my messages: it and every earlier message of mine in that chat
   // are read (blue ticks), as one marker now stands for the whole chat.
@@ -1250,6 +1302,8 @@ export const useChatStore = create((setState, getState) => ({
         chats: orderChatsByActivity(state.chats.map((chat) => summarizeChat(chat, messages[chat.id]))),
       };
     });
+    // Receipts that arrived while the saved messages were loading are applied now that they are in.
+    if (orphanReceipts.size) getState().applyOrphanReceipts(Object.values(loaded).flat().map((message) => message?.id).filter(Boolean));
     markMessagesHydrated(userId);
   },
   // Chats keep their newest messages in memory; scrolling back reads older ones from this device's store.

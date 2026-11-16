@@ -490,9 +490,9 @@ export default function App() {
             updateAccountUser(event.user).catch(() => {});
           }
           if (event.type === 'location:live') useChatStore.getState().applyLiveEvent(event, (payload) => realtime.send(payload));
-          if (event.type === 'message:status' && event.status === 'read' && event.upTo) useChatStore.getState().markReadThrough(event.messageId);
-          else if (event.type === 'message:status') updateMessage(event.messageId, { status: event.status });
-          if (event.type === 'message:played') updateMessage(event.messageId, { played: true });
+          // Applied now, or kept until the message arrives (a receipt can overtake it: store.applyReceipt).
+          if (event.type === 'message:status') useChatStore.getState().applyReceipt(event.messageId, { status: event.status, upTo: event.upTo === true });
+          if (event.type === 'message:played') useChatStore.getState().applyReceipt(event.messageId, { played: true });
           if (event.type === 'status:changed' || event.type === 'status:viewed') useChatStore.getState().bumpStatusRevision();
           if (event.type === 'message:updated') updateMessage(event.messageId, { content: event.content });
           if (event.type === 'poll:votes') useChatStore.getState().setPollVotes(event.messageId, { votes: event.votes ?? {}, sealedVotes: event.sealedVotes ?? [] });
@@ -926,6 +926,8 @@ export default function App() {
       if (!live) return;
       for (const event of events) {
         if (!event?.peerId) continue;
+        // The missed-call notification was dismissed (C2): seen, so the chat row's missed-call mark goes.
+        if (event.status === 'seen') { useChatStore.getState().clearMissedCalls(event.peerId); continue; }
         syncCallLog(useChatStore.getState().logCall(event.peerId, {
           callId: event.callId || null, mode: event.mode === 'video' ? 'video' : 'audio', direction: 'incoming',
           status: event.status === 'declined' ? 'declined' : 'missed', timestamp: Number.isFinite(event.at) ? new Date(event.at).toISOString() : null,
