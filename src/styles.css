@@ -5746,3 +5746,11 @@ button.groups-sender { padding: 0; border: 0; background: none; font: inherit; f
 .wa-video-poster.has-frame .wa-video-caption, .wa-video-poster .wa-video-caption { position: absolute; left: 8px; bottom: 6px; z-index: 2; }
 .wa-visual:has(.wa-video-poster)::after { content: ''; position: absolute; inset: auto 0 0 0; z-index: 1; height: 44px; background: linear-gradient(to top, rgba(0, 0, 0, .5), transparent); pointer-events: none; }
 .call-log-group-avatar { flex: none; width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; background: var(--wa-green, #25d366); color: #fff; }
+/* Group message ticks and Message info (R1/R4): grey until every member has it, blue once every member read it. */
+.groups-message-meta .groups-tick { flex: none; color: #8696a0; }
+.groups-message-meta .groups-tick.is-read { color: #53bdeb; }
+.wa-msg-info-modal .groups-info-section { margin-top: 12px; }
+.wa-msg-info-modal .groups-info-section h4 { margin: 0 0 6px; font-size: 13px; font-weight: 600; color: var(--wa-sub, #667781); }
+.wa-msg-info-modal .groups-info-section ul { list-style: none; margin: 0; padding: 0; }
+.wa-msg-info-modal .groups-info-section li { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0; font-size: 14px; }
+.wa-msg-info-modal .groups-info-section time { color: var(--wa-sub, #667781); font-size: 12px; white-space: nowrap; }

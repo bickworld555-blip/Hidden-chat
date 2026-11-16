@@ -491,8 +491,10 @@ export default function App() {
           }
           if (event.type === 'location:live') useChatStore.getState().applyLiveEvent(event, (payload) => realtime.send(payload));
           // Applied now, or kept until the message arrives (a receipt can overtake it: store.applyReceipt).
-          if (event.type === 'message:status') useChatStore.getState().applyReceipt(event.messageId, { status: event.status, upTo: event.upTo === true });
-          if (event.type === 'message:played') useChatStore.getState().applyReceipt(event.messageId, { played: true });
+          if (event.type === 'message:status') useChatStore.getState().applyReceipt(event.messageId, { status: event.status, upTo: event.upTo === true, from: event.from ?? null, device: event.device ?? null, at: event.at ?? null });
+          if (event.type === 'message:played') useChatStore.getState().applyReceipt(event.messageId, { played: true, from: event.from ?? event.userId ?? null, at: event.at ?? null });
+          // A member read a group (R1/R4): my messages in it record their read time; ticks follow (GroupsView).
+          if (event.type === 'group:read-mark') useChatStore.getState().applyGroupReadMark(event.groupId, event.userId, Number(event.readAt));
           if (event.type === 'status:changed' || event.type === 'status:viewed') useChatStore.getState().bumpStatusRevision();
           if (event.type === 'message:updated') updateMessage(event.messageId, { content: event.content });
           if (event.type === 'poll:votes') useChatStore.getState().setPollVotes(event.messageId, { votes: event.votes ?? {}, sealedVotes: event.sealedVotes ?? [] });

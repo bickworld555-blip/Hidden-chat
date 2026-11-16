@@ -23,6 +23,7 @@ import { orderPreview } from './orders.js';
 import { ACTIVITY_EXPIRES_MS } from './typing.js';
 import { reportStorageFailure, reportStorageWorking } from './storageHealth.js';
 import { betterCallOutcome } from './callLogSync.js';
+import { appSettings } from './settings.js';
 
 const EMPTY_MESSAGES = Object.freeze([]);
 // Start-up reads the newest STARTUP_WINDOW messages of each chat (older ones load as a chat scrolls back, a page of
@@ -47,17 +48,52 @@ const withCloudStar = (message) => (cloudStars && message?.id && Boolean(cloudSt
 // copy from another of my devices, or one that overtook a message still loading at start-up, is no longer lost.
 export const ORPHAN_LIFE_MS = 24 * 60 * 60 * 1000;
 export const ORPHAN_LIMIT = 2000;
-const orphanReceipts = new Map(); // id -> { status, upTo, played, at }
-const STATUS_RANK = { sent: 1, delivered: 2, read: 3 };
+const orphanReceipts = new Map(); // id -> { at, items: [receipt] } (one per sender and kind; a group has many)
+const ORPHAN_ITEMS = 64;
 function keepOrphanReceipt(messageId, receipt, now = Date.now()) {
   const kept = orphanReceipts.get(messageId);
-  const status = (STATUS_RANK[receipt.status] ?? 0) >= (STATUS_RANK[kept?.status] ?? 0) ? receipt.status ?? kept?.status : kept.status;
   orphanReceipts.delete(messageId);
-  orphanReceipts.set(messageId, { status, upTo: Boolean(receipt.upTo || kept?.upTo), played: Boolean(receipt.played || kept?.played), at: now });
+  const items = [...(kept?.items ?? []), receipt].slice(-ORPHAN_ITEMS);
+  orphanReceipts.set(messageId, { at: now, items });
   for (const [id, item] of orphanReceipts) {
     if (orphanReceipts.size <= ORPHAN_LIMIT && now - item.at < ORPHAN_LIFE_MS) break;
     orphanReceipts.delete(id);
   }
+}
+
+// At most this many devices per recipient in a message's receipts (R2).
+const RECEIPT_DEVICES = 8;
+/**
+ * A message of mine with one more receipt recorded (R1/R2, like WhatsApp's receipt_user / receipt_device): per
+ * recipient, the first time it reached any of their devices (deliveredAt, and per device), was read (readAt) and,
+ * for a voice note, played (playedAt). `who`: the recipient (a direct message's other person when not given).
+ */
+export function withReceipt(message, { who, status = null, played = false, device = null, at = Date.now() } = {}) {
+  if (!message || !who) return message;
+  const current = message.receipts?.[who] ?? {};
+  const next = { ...current };
+  if ((status === 'delivered' || status === 'read' || played) && !next.deliveredAt) next.deliveredAt = at;
+  if ((status === 'read' || played) && !next.readAt) next.readAt = at;
+  if (played && !next.playedAt) next.playedAt = at;
+  if (device && status === 'delivered' && !current.devices?.[device]) {
+    const devices = { ...(current.devices ?? {}), [device]: at };
+    next.devices = Object.fromEntries(Object.entries(devices).slice(-RECEIPT_DEVICES));
+  }
+  const same = next.deliveredAt === current.deliveredAt && next.readAt === current.readAt && next.playedAt === current.playedAt && next.devices === current.devices;
+  return same ? message : { ...message, receipts: { ...(message.receipts ?? {}), [who]: next } };
+}
+
+/**
+ * A group message's ticks from its members' receipts, as on WhatsApp: read when every other member has read it,
+ * delivered when it reached every one of them, otherwise sent. `memberIds`: the group's members now.
+ */
+export function groupTickStatus(message, memberIds = [], me = null) {
+  const others = memberIds.filter((id) => id && id !== me && id !== message?.senderId);
+  if (!others.length) return message?.status ?? 'sent';
+  const receipts = message?.receipts ?? {};
+  if (others.every((id) => receipts[id]?.readAt)) return 'read';
+  if (others.every((id) => receipts[id]?.deliveredAt)) return 'delivered';
+  return 'sent';
 }
 export function orphanReceiptCount() { return orphanReceipts.size; }
 
@@ -722,7 +758,9 @@ export const useChatStore = create((setState, getState) => ({
         getState().updateMessage(message.id, { status: 'read' });
       }
     }
-    if (newestOverXmpp) client.send({ type: 'message:read', messageId: newestOverXmpp.id, origin: newestOverXmpp.origin, upTo: true });
+    // Read receipts off (Settings › Privacy): no marker over XMPP either; the server already holds back its own for
+    // messages it carries. Found while adding receipt times: the XMPP path sent them regardless.
+    if (newestOverXmpp && appSettings().get('privacy.readReceipts') !== false) client.send({ type: 'message:read', messageId: newestOverXmpp.id, origin: newestOverXmpp.origin, upTo: true });
     getState().markRead(chatId);
   },
   addMessage(message) {
@@ -858,16 +896,67 @@ export const useChatStore = create((setState, getState) => ({
    * A delivery receipt, read marker or "played" for one of my messages (R3): applied now, or kept until that message
    * arrives (orphanReceipts). `upTo`: a cumulative read marker (markReadThrough).
    */
-  applyReceipt(messageId, { status = null, upTo = false, played = false } = {}) {
+  // `from`: who sent the receipt (its user; a direct message's other person when not known), `device`: their device's
+  // address, `at`: when it arrived. A group message keeps per-member times and gets its ticks from them (GroupsView).
+  applyReceipt(messageId, { status = null, upTo = false, played = false, from = null, device = null, at = null } = {}) {
     if (typeof messageId !== 'string' || !messageId) return;
-    const known = Object.values(getState().messages).some((list) => (list ?? []).some((message) => message?.id === messageId));
-    if (!known) {
-      keepOrphanReceipt(messageId, { status, upTo, played });
+    let target = null;
+    for (const list of Object.values(getState().messages)) {
+      target = (list ?? []).find((message) => message?.id === messageId) ?? null;
+      if (target) break;
+    }
+    const receipt = { status, upTo, played, from, device, at: Number.isFinite(at) ? at : Date.now() };
+    if (!target) {
+      keepOrphanReceipt(messageId, receipt);
       return;
     }
-    if (status === 'read' && upTo) getState().markReadThrough(messageId);
+    if (target.groupId) {
+      getState().recordReceipt(messageId, receipt);
+      return;
+    }
+    if (status === 'read' && upTo) getState().markReadThrough(messageId, receipt);
     else if (status) getState().updateMessage(messageId, { status });
     if (played) getState().updateMessage(messageId, { played: true });
+    if (!(status === 'read' && upTo)) getState().recordReceipt(messageId, receipt);
+  },
+  // Records a receipt's times on one of my messages (withReceipt). Messages of others are left alone.
+  recordReceipt(messageId, receipt) {
+    const me = getState().userId;
+    setState((state) => {
+      let changed = false;
+      const messages = {};
+      for (const [chatId, list] of Object.entries(state.messages)) {
+        const index = (list ?? []).findIndex((message) => message?.id === messageId);
+        if (index < 0 || list[index].senderId !== me) { messages[chatId] = list; continue; }
+        const message = list[index];
+        const who = receipt.from || (message.groupId ? null : message.receiverId);
+        const next = who && who !== me ? withReceipt(message, { ...receipt, who }) : message;
+        if (next === message) { messages[chatId] = list; continue; }
+        changed = true;
+        messages[chatId] = list.map((item, position) => (position === index ? next : item));
+      }
+      return changed ? { messages } : {};
+    });
+  },
+  /**
+   * A group member read the group up to `readAt` (server group:read-mark, or the read marks fetched for Message
+   * info): each of my messages in it from before then records that member's read time, unless it already has one.
+   */
+  applyGroupReadMark(groupId, userId, readAt) {
+    const me = getState().userId;
+    if (!groupId || !userId || userId === me || !Number.isFinite(readAt)) return;
+    const key = groupChatKey(groupId);
+    setState((state) => {
+      const list = state.messages[key];
+      if (!list) return {};
+      let changed = false;
+      const next = list.map((message) => {
+        if (message?.senderId !== me || Number(message.createdAt) > readAt || message.receipts?.[userId]?.readAt) return message;
+        changed = true;
+        return withReceipt(message, { who: userId, status: 'read', at: readAt });
+      });
+      return changed ? { messages: { ...state.messages, [key]: next } } : {};
+    });
   },
   // Receipts that were waiting for these messages (just added or loaded) are applied now.
   applyOrphanReceipts(ids) {
@@ -877,12 +966,12 @@ export const useChatStore = create((setState, getState) => ({
       if (!kept) continue;
       orphanReceipts.delete(id);
       if (now - kept.at >= ORPHAN_LIFE_MS) continue;
-      getState().applyReceipt(id, kept);
+      for (const receipt of kept.items) getState().applyReceipt(id, receipt);
     }
   },
   // A cumulative read marker (XEP-0333) for one of my messages: it and every earlier message of mine in that chat
   // are read (blue ticks), as one marker now stands for the whole chat.
-  markReadThrough(messageId) {
+  markReadThrough(messageId, receipt = {}) {
     const { messages, userId } = getState();
     for (const [chatId, list] of Object.entries(messages)) {
       const index = (list ?? []).findIndex((message) => message?.id === messageId);
@@ -894,7 +983,10 @@ export const useChatStore = create((setState, getState) => ({
       list.forEach((message, position) => {
         if (message?.senderId !== userId || message.receiverId !== chatId || message.status === 'read') return;
         const at = timeOfMessage(message);
-        if (position <= index || (Number.isFinite(at) && Number.isFinite(until) && at <= until)) getState().updateMessage(message.id, { status: 'read' });
+        if (position <= index || (Number.isFinite(at) && Number.isFinite(until) && at <= until)) {
+          getState().updateMessage(message.id, { status: 'read' });
+          getState().recordReceipt(message.id, { ...receipt, status: 'read', from: receipt.from || chatId, at: Number.isFinite(receipt.at) ? receipt.at : Date.now() });
+        }
       });
       return;
     }

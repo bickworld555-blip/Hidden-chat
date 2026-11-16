@@ -233,3 +233,33 @@ test('the 30-day sweep works in bounded batches and never drops a route before i
   assert.equal(db.prepare('SELECT count(*) AS n FROM device_events').get().n, 0);
   assert.equal(removed.filter((id) => id.startsWith('kept-')).length, 5);
 });
+
+test('group read receipts (R1/R4): a read mark is kept, reaches the other members, and gives each member\'s first read time', async () => {
+  const alice = await register('ra');
+  const bob = await register('rb');
+  const carol = await register('rc');
+  const outsider = await register('ro');
+  const created = await api('/api/v1/groups', { session: alice, method: 'POST', body: { name: 'Receipts', memberIds: [bob.user.id, carol.user.id] } });
+  assert.equal(created.status, 201);
+  const groupId = created.data.id;
+  const aliceSocket = await connect(alice);
+  const carolSocket = await connect(carol);
+  const sentAt = Date.now() - 1000;
+  const read = await api(`/api/v1/groups/${groupId}/read`, { session: bob, method: 'PUT' });
+  assert.equal(read.status, 200);
+  const mark = await aliceSocket.wait('group:read-mark', (event) => event.groupId === groupId);
+  assert.deepEqual([mark.userId, mark.readAt], [bob.user.id, read.data.readAt], 'the other members hear who read and when');
+  await carolSocket.wait('group:read-mark', (event) => event.userId === bob.user.id);
+  // Bob reads again later: his first read after the message is what counts.
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  await api(`/api/v1/groups/${groupId}/read`, { session: bob, method: 'PUT' });
+  const marks = await api(`/api/v1/groups/${groupId}/read-marks?since=${sentAt}`, { session: alice });
+  assert.equal(marks.status, 200);
+  assert.deepEqual(marks.data.marks, [{ userId: bob.user.id, readAt: read.data.readAt }]);
+  // Nothing at or after a later time; members only; a time is required.
+  assert.deepEqual((await api(`/api/v1/groups/${groupId}/read-marks?since=${Date.now() + 60_000}`, { session: alice })).data.marks, []);
+  assert.equal((await api(`/api/v1/groups/${groupId}/read-marks?since=${sentAt}`, { session: outsider })).status, 404);
+  assert.equal((await api(`/api/v1/groups/${groupId}/read-marks`, { session: alice })).status, 400);
+  aliceSocket.close();
+  carolSocket.close();
+});

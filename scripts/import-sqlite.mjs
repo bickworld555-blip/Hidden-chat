@@ -14,6 +14,7 @@ export const IMPORT_TABLES = Object.freeze([
   // Groups precede media and uploads, whose group_id references them.
   { name: 'groups', columns: ['id', 'name', 'created_by', 'created_at', 'description', 'only_admins_send', 'only_admins_edit', 'approve_joins', 'invite_code', 'community_id', 'is_announcement', 'members_can_add'], users: ['created_by'] },
   { name: 'group_members', columns: ['group_id', 'user_id', 'role', 'auto_delete', 'joined_at', 'last_read_at', 'cleared_at', 'member_tag'], users: ['user_id'], key: ['group_id', 'user_id'] },
+  { name: 'group_read_marks', columns: ['group_id', 'user_id', 'read_at'], users: ['user_id'] },
   { name: 'messages', columns: ['id', 'sender_id', 'receiver_id', 'created_at', 'content', 'status', 'deleted_at', 'reply_to_id', 'forwarded', 'expires_at', 'played_at', 'edited_at'], users: ['sender_id', 'receiver_id'] },
   { name: 'media', columns: ['id', 'sender_id', 'receiver_id', 'group_id', 'filename', 'content_type', 'byte_size', 'disk_name', 'created_at', 'storage'], users: ['sender_id', 'receiver_id'] },
   { name: 'chat_settings', columns: ['user_a', 'user_b', 'disappear_seconds', 'updated_by', 'updated_at'], users: ['user_a', 'user_b', 'updated_by'], key: ['user_a', 'user_b'] },
@@ -102,7 +103,7 @@ function sourceQuery(table) {
     filters.push(`label_id IN (SELECT id FROM labels WHERE user_id NOT IN (${excluded}))`);
     parameters.push(...demoIds);
   }
-  if (['group_members', 'group_messages', 'group_reports', 'group_join_requests'].includes(table.name)) {
+  if (['group_members', 'group_read_marks', 'group_messages', 'group_reports', 'group_join_requests'].includes(table.name)) {
     filters.push(`group_id IN (SELECT id FROM groups WHERE created_by NOT IN (${excluded}))`);
     parameters.push(...demoIds);
   }

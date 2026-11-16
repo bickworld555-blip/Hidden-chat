@@ -83,6 +83,8 @@ const CALL_END_REASONS = new Set(['ended', 'no-answer', 'disconnected', 'busy', 
 // offline phones) proves the call reached anyone.
 export const CALL_CONFIRM_PROTOCOL = 3;
 export const CALL_UNREACHABLE_MS = 30_000;
+// How long a member's group read marks are kept (Message info shows read times within it).
+export const GROUP_READ_MARK_LIFE_MS = 30 * 24 * 60 * 60 * 1000;
 // A message written to a connection no device of the receiver has confirmed within this long gets its push anyway:
 // a connection that died a moment ago (the phone just lost its network) still looks connected here, and the message
 // written to it reached nobody (like WhatsApp: no delivery receipt, then a push).
@@ -443,6 +445,10 @@ export function createChatServer({
   )`);
   const memberColumns = new Set(db.prepare("PRAGMA table_info(group_members)").all().map((column) => column.name));
   if (!memberColumns.has('last_read_at')) db.exec('ALTER TABLE group_members ADD COLUMN last_read_at INTEGER NOT NULL DEFAULT 0');
+  // When each member read the group (R1/R4, like WhatsApp's per-recipient read receipts): a message's read time for a
+  // member is their first mark at or after it. Kept GROUP_READ_MARK_LIFE_MS; see PUT /groups/:id/read.
+  db.exec(`CREATE TABLE IF NOT EXISTS group_read_marks (group_id TEXT NOT NULL, user_id TEXT NOT NULL, read_at INTEGER NOT NULL)`);
+  db.exec('CREATE INDEX IF NOT EXISTS group_read_marks_group ON group_read_marks(group_id, read_at)');
   if (!memberColumns.has('cleared_at')) db.exec('ALTER TABLE group_members ADD COLUMN cleared_at INTEGER NOT NULL DEFAULT 0');
   const userColumns = new Set(db.prepare("PRAGMA table_info(users)").all().map((column) => column.name));
   if (!userColumns.has('dob')) db.exec('ALTER TABLE users ADD COLUMN dob TEXT');
@@ -1236,11 +1242,31 @@ export function createChatServer({
   // Marks everything currently in the group as read for this member; the chat list's unread count derives from it.
   app.put('/api/v1/groups/:groupId/read', requireSession, async (request, response) => {
     const { groupId } = request.params;
+    const userId = request.session.user_id;
     const now = Date.now();
-    const updated = await db.prepare('UPDATE group_members SET last_read_at = ? WHERE group_id = ? AND user_id = ?').run(now, groupId, request.session.user_id);
+    const updated = await db.prepare('UPDATE group_members SET last_read_at = ? WHERE group_id = ? AND user_id = ?').run(now, groupId, userId);
     if (!updated.changes) return response.status(404).json({ error: 'Group not found.' });
-    broadcastUser(request.session.user_id, { type: 'group:read', groupId, readAt: now });
+    broadcastUser(userId, { type: 'group:read', groupId, readAt: now });
+    // Read receipts in groups (R1/R4): the mark is kept, and the other members' apps turn the ticks of their own
+    // messages up to now blue for this reader (each app applies it to its own messages only). As on WhatsApp, group
+    // read receipts are sent whatever the one-to-one read-receipts setting.
+    await db.prepare('INSERT INTO group_read_marks(group_id, user_id, read_at) VALUES (?, ?, ?)').run(groupId, userId, now);
+    await db.prepare('DELETE FROM group_read_marks WHERE group_id = ? AND user_id = ? AND read_at < ?').run(groupId, userId, now - GROUP_READ_MARK_LIFE_MS);
+    for (const memberId of await groupMembersOf(groupId)) {
+      if (memberId !== userId) broadcastUser(memberId, { type: 'group:read-mark', groupId, userId, readAt: now });
+    }
     response.json({ readAt: now });
+  });
+
+  // Each member's first read mark at or after `since` (a message's time): its "Read by" list in Message info.
+  app.get('/api/v1/groups/:groupId/read-marks', requireSession, async (request, response) => {
+    const { groupId } = request.params;
+    const since = Number(request.query.since);
+    if (!Number.isFinite(since) || since < 0) return response.status(400).json({ error: 'Give the message time.' });
+    if (!(await groupMembership.get(groupId, request.session.user_id))) return response.status(404).json({ error: 'Group not found.' });
+    const rows = await db.prepare(`SELECT user_id AS "userId", MIN(read_at) AS "readAt" FROM group_read_marks
+      WHERE group_id = ? AND read_at >= ? GROUP BY user_id`).all(groupId, since);
+    response.json({ marks: rows.map((row) => ({ userId: row.userId, readAt: Number(row.readAt) })) });
   });
 
   // Clear chat: a member hides the current history from their own view; an admin may clear it for everyone,

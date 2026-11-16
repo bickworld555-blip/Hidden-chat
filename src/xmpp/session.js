@@ -150,10 +150,10 @@ export async function startXmppSession({ sessionToken, userId, deliver, legacySe
         inFlight.delete(event.id);
         // Only the receiver's own receipt counts (the sender's other devices receive copies too).
         if (nudges.get(event.id)?.peerId === userForAddress(event.from)) forgetNudge(event.id);
-        deliver({ type: 'message:status', messageId: event.id, status: 'delivered' });
+        deliver({ type: 'message:status', messageId: event.id, status: 'delivered', from: userForAddress(event.from), device: bare(event.from), at: Date.now() });
       } else if (event.type === 'displayed') {
         // Cumulative: this message and every earlier one of mine in that chat were read.
-        deliver({ type: 'message:status', messageId: event.id, status: 'read', upTo: true });
+        deliver({ type: 'message:status', messageId: event.id, status: 'read', upTo: true, from: userForAddress(event.from), device: bare(event.from), at: Date.now() });
       } else if (event.type === 'call') {
         // Only from the device this call is with (learnt from the server-relayed offer or answer).
         const peer = callPeers.get(event.callId);

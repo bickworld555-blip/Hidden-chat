@@ -361,9 +361,13 @@ test('session: incoming messages need the envelope to name the sending device; r
   assert.equal(session.route({ type: 'message:read', messageId: 'legacy-1' }), true);
   assert.deepEqual(h.legacy.at(-1), { type: 'message:read', messageId: 'legacy-1' }, 'a message that came the old way is read the old way');
 
-  onEvent({ type: 'receipt', id: 'mine-1' });
-  onEvent({ type: 'displayed', id: 'mine-1' });
-  assert.deepEqual(h.delivered.slice(-2), [{ type: 'message:status', messageId: 'mine-1', status: 'delivered' }, { type: 'message:status', messageId: 'mine-1', status: 'read', upTo: true }]);
+  onEvent({ type: 'receipt', id: 'mine-1', from: 'dpeer@h/app' });
+  onEvent({ type: 'displayed', id: 'mine-1', from: 'dpeer@h/app' });
+  // Each says who and which device it came from, and when (Message info's per-recipient times).
+  const [delivered, read] = h.delivered.slice(-2);
+  assert.deepEqual({ ...delivered, at: undefined }, { type: 'message:status', messageId: 'mine-1', status: 'delivered', from: 'user-peer', device: 'dpeer@h', at: undefined });
+  assert.deepEqual({ ...read, at: undefined }, { type: 'message:status', messageId: 'mine-1', status: 'read', upTo: true, from: 'user-peer', device: 'dpeer@h', at: undefined });
+  assert.ok(Number.isFinite(delivered.at) && Number.isFinite(read.at));
 });
 
 test("session: typing goes to the contact's devices over XMPP and comes back as presence:typing; wake-up reconnects", async () => {

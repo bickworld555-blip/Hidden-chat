@@ -2204,6 +2204,31 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
                 <span className="wa-msg-info-label">Sent at</span>
                 <span className="wa-msg-info-value">{new Date(infoMessage.timestamp).toLocaleString()}</span>
               </div>
+              {/* When it reached them, was read and (a voice note) played, as WhatsApp's Message info shows (R1/R4).
+                  Times are when this device heard of it; a status reached before times were kept shows without one. */}
+              {infoMessage.senderId === userId && (() => {
+                const times = infoMessage.receipts?.[infoMessage.receiverId] ?? {};
+                const reached = (status) => ['delivered', 'read'].includes(infoMessage.status) && (status === 'delivered' || infoMessage.status === 'read');
+                const shown = (at, status) => (at ? new Date(at).toLocaleString() : reached(status) ? 'Yes' : '—');
+                return (
+                  <>
+                    <div className="wa-msg-info-row">
+                      <span className="wa-msg-info-label">Delivered</span>
+                      <span className="wa-msg-info-value">{shown(times.deliveredAt, 'delivered')}</span>
+                    </div>
+                    <div className="wa-msg-info-row">
+                      <span className="wa-msg-info-label">Read</span>
+                      <span className="wa-msg-info-value">{shown(times.readAt, 'read')}</span>
+                    </div>
+                    {(times.playedAt || infoMessage.played) && (
+                      <div className="wa-msg-info-row">
+                        <span className="wa-msg-info-label">Played</span>
+                        <span className="wa-msg-info-value">{times.playedAt ? new Date(times.playedAt).toLocaleString() : 'Yes'}</span>
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
               <div className="wa-msg-info-row">
                 <span className="wa-msg-info-label">From</span>
                 <span className="wa-msg-info-value">{infoMessage.senderId === userId ? 'You' : (chat.name || 'Contact')}</span>

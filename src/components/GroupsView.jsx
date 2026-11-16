@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft, MessageCircle, ShieldCheck, UserMinus, Bell, BellOff, CalendarClock, Check, ChevronDown, Clock, Copy, Download, Flag, Link2, LockKeyhole, LogOut, Megaphone, MinusCircle, Paperclip,
   Camera, ListPlus, Mic, Smile, Pencil, Phone, Pin, PinOff, QrCode, Search, SendHorizontal, Share2, Star, Timer, Trash2, UserPlus, Users, Video, X,
+  CheckCheck, Info,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { inviteUrl } from '../invites.js';
@@ -13,7 +14,7 @@ import { canEditMessage } from '../selection.js';
 import { appSettings } from '../settings.js';
 import { prepareForSend } from '../mediaQuality.js';
 import { isStickerContent, stickerContent } from '../stickers.js';
-import { deletedLabel, previewFor } from '../store.js';
+import { deletedLabel, groupTickStatus, previewFor } from '../store.js';
 import { StickerMessage, StickerPalette } from './parity/Stickers.jsx';
 import { ComposerAssist, MentionText } from './parity/ComposerAssist.jsx';
 import PinnedBanner from './parity/PinnedBanner.jsx';
@@ -244,6 +245,62 @@ function GroupListsSheet({ groupKey, onClose }) {
   );
 }
 
+/**
+ * Message info for one of my group messages (R4, like WhatsApp's): "Read by" and "Delivered to" with each member's
+ * time, then those it has not reached yet. Read times come from the server's read marks (fetched on opening, then
+ * kept on the message); delivered times from the members' devices' receipts.
+ */
+function GroupMessageInfo({ message, members, userId, loadMarks, onClose }) {
+  useBackHandler(true, onClose);
+  useEffect(() => {
+    if (!message?.groupId || !Number.isFinite(Number(message.createdAt))) return;
+    let live = true;
+    loadMarks(Number(message.createdAt)).then((answer) => {
+      if (!live) return;
+      for (const mark of answer?.marks ?? []) useChatStore.getState().applyGroupReadMark(message.groupId, mark.userId, Number(mark.readAt));
+    }).catch(() => {});
+    return () => { live = false; };
+    // Once per opened message.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [message?.id]);
+  if (!message) return null;
+  const others = members.filter((member) => member.id !== userId);
+  const timeOf = (at) => new Date(at).toLocaleString();
+  const receipts = message.receipts ?? {};
+  const read = others.filter((member) => receipts[member.id]?.readAt).sort((a, b) => receipts[a.id].readAt - receipts[b.id].readAt);
+  const delivered = others.filter((member) => !receipts[member.id]?.readAt && receipts[member.id]?.deliveredAt);
+  const waiting = others.filter((member) => !receipts[member.id]?.readAt && !receipts[member.id]?.deliveredAt);
+  const section = (title, list, at) => list.length > 0 && (
+    <section className="groups-info-section">
+      <h4>{title}</h4>
+      <ul>
+        {list.map((member) => (
+          <li key={member.id}><span>{member.name || member.username || 'Member'}</span>{at && <time>{timeOf(at(member))}</time>}</li>
+        ))}
+      </ul>
+    </section>
+  );
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <div className="attach-picker wa-msg-info-modal" role="dialog" aria-label="Message info" onClick={(event) => event.stopPropagation()}>
+        <div className="modal-header">
+          <h3>Message info</h3>
+          <button type="button" className="modal-close" onClick={onClose} aria-label="Close"><X size={18} /></button>
+        </div>
+        <div className="wa-msg-info-body">
+          <div className="wa-msg-info-row">
+            <span className="wa-msg-info-label">Sent at</span>
+            <span className="wa-msg-info-value">{timeOf(Number(message.createdAt))}</span>
+          </div>
+          {section(`Read by ${read.length} of ${others.length}`, read, (member) => receipts[member.id].readAt)}
+          {section(`Delivered to ${delivered.length}`, delivered, (member) => receipts[member.id].deliveredAt)}
+          {section(`Waiting for ${waiting.length}`, waiting, null)}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // The group's QR code (its invite link, admins only), as on WhatsApp's group info header.
 // WhatsApp: tap a member (in the member list, or their name or photo on a message) → message or call them one to one,
 // even when they are not a saved contact.
@@ -401,6 +458,8 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
   const activityRef = useRef(null);
   const [caret, setCaret] = useState(0);
   const [activeMessageId, setActiveMessageId] = useState('');
+  // Message info for one of my group messages (R4): its id, or ''.
+  const [infoMessageId, setInfoMessageId] = useState('');
   const [editing, setEditing] = useState(null);
   const [stickersOpen, setStickersOpen] = useState(false);
   const [joinInput, setJoinInput] = useState(null);
@@ -1109,6 +1168,13 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
                     {starred[message.id] && <Star size={12} fill="currentColor" aria-label="Starred" />}
                     {message.editedAt && <span className="message-edited">Edited</span>}
                     <time dateTime={new Date(message.createdAt).toISOString()}>{formatTime(message.createdAt)}</time>
+                    {/* My message's ticks, as on WhatsApp: two grey once it reached every member, blue once every member read it. */}
+                    {message.senderId === userId && !message.deleted && (() => {
+                      const tick = groupTickStatus(message, group.members.map((member) => member.id), userId);
+                      return tick === 'sent'
+                        ? <Check size={14} className="groups-tick" aria-label="Sent" />
+                        : <CheckCheck size={14} className={`groups-tick${tick === 'read' ? ' is-read' : ''}`} aria-label={tick === 'read' ? 'Read by everyone' : 'Delivered to everyone'} />;
+                    })()}
                   </span>
                 );
                 return (
@@ -1153,6 +1219,7 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
                             </button>
                           )}
                           {!message.deleted && canEditMessage(message, userId) && <button type="button" aria-label="Edit" onClick={() => startEdit(message)}><Pencil size={16} /></button>}
+                          {message.senderId === userId && !message.deleted && <button type="button" aria-label="Message info" onClick={() => { setActiveMessageId(''); setInfoMessageId(message.id); }}><Info size={16} /></button>}
                           {!isMedia && !sticker && !poll && !event && !scheduled && !productId && (
                             <button type="button" aria-label="Copy" onClick={() => { setActiveMessageId(''); navigator.clipboard?.writeText(message.content).then(() => setNotice('Message copied.')).catch(() => {}); }}><Copy size={16} /></button>
                           )}
@@ -1172,6 +1239,15 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
                 </div>
               ))}
             </div>
+            {infoMessageId && (
+              <GroupMessageInfo
+                message={messages.find((item) => item.id === infoMessageId)}
+                members={group.members}
+                userId={userId}
+                loadMarks={(since) => groupRequest(token, `${groupPath}/read-marks?since=${encodeURIComponent(since)}`)}
+                onClose={() => setInfoMessageId('')}
+              />
+            )}
             {!canSend ? (
               <p className="hm-admins-only" role="status"><LockKeyhole size={16} aria-hidden="true" /> Only admins can send messages</p>
             ) : (<>

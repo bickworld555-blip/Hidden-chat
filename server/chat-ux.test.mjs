@@ -485,3 +485,53 @@ test('C2: swiping away a missed-call notification clears that person\'s missed-c
   const manifest = readFileSync(join(appDir, 'android/app/src/main/AndroidManifest.xml'), 'utf8');
   assert.match(manifest, /android:name="\.MissedCallDismissReceiver"\s*android:exported="false"/);
 });
+
+test('R1/R2/R4: per-recipient receipt times; group ticks need every member; a group read mark; read receipts off', async () => {
+  const { useChatStore, withReceipt, groupTickStatus } = await import('../src/store.js');
+  // First time wins; a device list is kept; a read implies delivered.
+  let message = { id: 'm', senderId: 'me', receiverId: 'ava', status: 'sent' };
+  message = withReceipt(message, { who: 'ava', status: 'delivered', device: 'd1@h', at: 100 });
+  message = withReceipt(message, { who: 'ava', status: 'delivered', device: 'd2@h', at: 150 });
+  message = withReceipt(message, { who: 'ava', status: 'delivered', device: 'd1@h', at: 999 });
+  message = withReceipt(message, { who: 'ava', status: 'read', at: 200 });
+  message = withReceipt(message, { who: 'ava', played: true, at: 300 });
+  assert.deepEqual(message.receipts.ava, { deliveredAt: 100, devices: { 'd1@h': 100, 'd2@h': 150 }, readAt: 200, playedAt: 300 });
+  assert.equal(withReceipt(message, { who: 'ava', status: 'read', at: 500 }), message, 'nothing new: the same object');
+
+  // A group message turns grey-double only when it reached every member, blue only when every member read it.
+  const members = ['me', 'ava', 'ben'];
+  let group = { id: 'g1m', groupId: 'g1', senderId: 'me', createdAt: 1000 };
+  assert.equal(groupTickStatus(group, members, 'me'), 'sent');
+  group = withReceipt(group, { who: 'ava', status: 'delivered', at: 1100 });
+  assert.equal(groupTickStatus(group, members, 'me'), 'sent', 'one member is not everyone');
+  group = withReceipt(group, { who: 'ben', status: 'delivered', at: 1200 });
+  assert.equal(groupTickStatus(group, members, 'me'), 'delivered');
+  group = withReceipt(group, { who: 'ava', status: 'read', at: 1300 });
+  assert.equal(groupTickStatus(group, members, 'me'), 'delivered');
+  group = withReceipt(group, { who: 'ben', status: 'read', at: 1400 });
+  assert.equal(groupTickStatus(group, members, 'me'), 'read');
+
+  // The store: an XMPP receipt for a group message records per member (never the whole message as delivered).
+  useChatStore.setState({ userId: 'me', chats: [], callLogs: [], persistCallLogs: async () => {}, messages: { 'group:g2': [
+    { id: 'x1', groupId: 'g2', senderId: 'me', createdAt: 1000, content: 'a' },
+    { id: 'x2', groupId: 'g2', senderId: 'me', createdAt: 3000, content: 'b' },
+    { id: 'x3', groupId: 'g2', senderId: 'ava', createdAt: 1500, content: 'c' },
+  ] } });
+  useChatStore.getState().applyReceipt('x1', { status: 'delivered', from: 'ava', device: 'dava@h', at: 1100 });
+  let list = useChatStore.getState().messages['group:g2'];
+  assert.equal(list[0].receipts.ava.deliveredAt, 1100);
+  assert.equal(list[0].status, undefined, 'no single status for a group message');
+  // Ava read the group at 2000: my messages from before then are read by her; later ones and others' are not.
+  useChatStore.getState().applyGroupReadMark('g2', 'ava', 2000);
+  list = useChatStore.getState().messages['group:g2'];
+  assert.equal(list[0].receipts.ava.readAt, 2000);
+  assert.equal(list[1].receipts?.ava?.readAt, undefined);
+  assert.equal(list[2].receipts, undefined);
+  useChatStore.getState().applyGroupReadMark('g2', 'ava', 2500);
+  assert.equal(useChatStore.getState().messages['group:g2'][0].receipts.ava.readAt, 2000, 'the first read time stays');
+
+  // Read receipts off (Settings › Privacy): opening a chat sends no read marker over XMPP. The setting lives in the
+  // device's storage, which Node has not, so the rule is checked where it is written.
+  const store = readFileSync(join(appDir, 'src/store.js'), 'utf8');
+  assert.match(store, /if \(newestOverXmpp && appSettings\(\)\.get\('privacy\.readReceipts'\) !== false\) client\.send\(\{ type: 'message:read'/);
+});
