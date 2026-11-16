@@ -377,7 +377,9 @@ async function acceptLinkClaims(verified, held) {
 export async function xmppTargetsFor(peerId, { peerOnly = false } = {}) {
   const session = current;
   if (!session) return { targets: [], complete: false, sender: null };
-  const [peer, mine] = await Promise.all([devicesOf(peerId), peerOnly ? [] : devicesOf(session.userId)]);
+  // To oneself: this account's other devices only (call log sync), never this device or a device twice.
+  const self = peerId === session.userId;
+  const [peer, mine] = await Promise.all([self ? [] : devicesOf(peerId), peerOnly && !self ? [] : devicesOf(session.userId)]);
   const devices = [...peer, ...mine.filter((device) => device.deviceId !== session.deviceId)];
   const targets = devices.map((device) => device.xmpp).filter(Boolean);
   return { targets, complete: devices.length > 0 && targets.length === devices.length, sender: { userId: session.userId, deviceId: session.deviceId } };
@@ -497,6 +499,18 @@ export async function sealDirect(peerId, content, extra = {}, { fresh = false } 
   const envelope = buildEnvelope(routingFor(content), { sd: session.deviceId, d });
   await remember(await sha256Hex(bodyOf(envelope)), inner);
   return envelope;
+}
+
+/** Seals `content` for this account's other devices only (call log sync). Throws when there are none. */
+export async function sealToOwnDevices(content) {
+  const session = current;
+  if (!session || typeof content !== 'string' || isEnvelope(content)) return content;
+  await session.ready.catch(() => {});
+  const others = (await devicesOf(session.userId)).filter((device) => device.deviceId !== session.deviceId);
+  if (!others.length) throw new Error('No other device to sync with.');
+  const inner = innerOf(content);
+  const d = await session.protocol.encryptForDevices({ [session.userId]: others }, JSON.stringify(inner), { claimBundles });
+  return buildEnvelope(routingFor(content), { sd: session.deviceId, d });
 }
 
 // Errors after which the sending device starts a fresh session before sealing again: the receiver's state for the

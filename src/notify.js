@@ -32,6 +32,29 @@ export async function requestNotificationPermission() {
 // Android Chrome only allows notifications from the service worker (the Notification constructor throws
 // there), so the registration is used whenever one is active; clicks then arrive via postMessage.
 // `messageId` lets Android show a message once even when a push and the app both deliver it.
+/**
+ * "Message not sent" (WhatsApp's failure notification): one of my messages to `name` failed while the app was off
+ * screen. On the phone it has its own channel ("Failed messages"); opening it goes to the chat.
+ */
+export async function showSendFailure({ chatId, name }) {
+  if (!chatId) return null;
+  if (typeof document !== 'undefined' && document.visibilityState === 'visible' && document.hasFocus?.()) return null;
+  const title = 'Message not sent';
+  const body = `Your message to ${name || 'this chat'} could not be sent. Open the chat to try again.`;
+  if (nativeShell()) {
+    const result = await nativeNotify({ failure: true, title, body, tag: `failed:${chatId}`, open: `chat:${chatId}` });
+    return result?.shown ? 'native' : null;
+  }
+  if (notificationPermission() !== 'granted') return null;
+  try {
+    const registration = await navigator.serviceWorker?.getRegistration?.();
+    await registration?.showNotification?.(title, { body, tag: `failed:${chatId}`, icon: '/icons/icon-192.png?v=3', data: { open: `chat:${chatId}` } });
+    return 'web';
+  } catch {
+    return null;
+  }
+}
+
 export async function showSystemNotification(category, { title, body: rawBody, tag, conversation, onClick, count = 0, messageId } = {}) {
   // Formatting markers (*bold* …) read as noise in a notification: show the plain words.
   const body = typeof rawBody === 'string' ? plainText(rawBody) : rawBody;

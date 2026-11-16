@@ -16,7 +16,9 @@ export function callCardView(call = {}, isOutgoing = false) {
   const video = call.mode === 'video';
   const kind = video ? 'video call' : 'voice call';
   const answered = call.status === 'completed' && Number(call.duration) > 0;
-  if (call.status === 'declined') return { title: video ? 'Video call' : 'Voice call', detail: 'Declined', missed: false, answered, video };
+  const plain = video ? 'Video call' : 'Voice call';
+  const DETAIL = { declined: 'Declined', busy: 'Busy', unavailable: 'Unavailable', cancelled: 'Cancelled', failed: 'Failed', 'answered-elsewhere': 'Answered on another device', silenced: 'Silenced' };
+  if (!answered && DETAIL[call.status] && (isOutgoing || call.status !== 'missed')) return { title: plain, detail: DETAIL[call.status], missed: false, answered, video };
   const missed = !isOutgoing && !answered;
   if (missed) return { title: `Missed ${kind}`, detail: 'Tap to call back', missed, answered, video };
   const title = video ? 'Video call' : 'Voice call';

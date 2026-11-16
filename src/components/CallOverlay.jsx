@@ -219,7 +219,7 @@ export default function CallOverlay({
 
   const primarySnapshot = (next) => {
     setSnapshot(next);
-    latest.current.onCallChange({ ...latest.current.call, mode: next.mode, status: next.status });
+    latest.current.onCallChange({ ...latest.current.call, mode: next.mode, status: next.status, endReason: next.endReason ?? null, endedByPeer: Boolean(next.endedByPeer) });
   };
 
   // Room peers beyond the primary one: engines in a registry, their snapshots in state for rendering.

@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import CallAccessNotice from './CallAccessNotice.jsx';
-import { Phone, Video, ArrowDownLeft, ArrowUpRight, CalendarClock, Grid3x3, Heart, PhoneCall, PhoneMissed, Search, VideoOff, X } from 'lucide-react';
+import { Phone, Video, ArrowDownLeft, ArrowUpRight, CalendarClock, Grid3x3, Heart, PhoneCall, PhoneMissed, Search, Users, VideoOff, X } from 'lucide-react';
 import { scheduledCallContent } from '../groupChat.js';
 import { lookupUsername } from '../contactsApi.js';
 import { useChatStore } from '../store.js';
@@ -198,7 +198,9 @@ export default function CallsView({ onCall, onSheet, onSettings, onOpenChat }) {
         )}
         {rows.map((row) => {
           const chat = chats.find((c) => c.id === row.peerId);
-          const name = nameOf(chat);
+          const group = Boolean(row.groupId || (row.participants?.length ?? 0) > 1);
+          const others = (row.participants ?? []).map((id) => chats.find((c) => c.id === id)).filter(Boolean).map(nameOf);
+          const name = group ? (row.groupName || others.slice(0, 3).join(', ') || 'Group call') : nameOf(chat);
           const video = row.mode === 'video';
           const Arrow = row.direction === 'incoming' ? ArrowDownLeft : ArrowUpRight;
           // Voice and video calls look different at a glance; a missed one has the crossed-out icon, in red.
@@ -207,10 +209,10 @@ export default function CallsView({ onCall, onSheet, onSettings, onOpenChat }) {
           const label = callRowLabel(row);
           return (
             <div key={row.key} className="call-log-item">
-              <Avatar {...avatarOf(chat, name)} online={chat?.online} size="small" />
+              {group ? <span className="call-log-group-avatar" aria-hidden="true"><Users size={20} /></span> : <Avatar {...avatarOf(chat, name)} online={chat?.online} size="small" />}
               <div className="call-log-details">
                 <div className="call-log-header">
-                  <strong className={row.missed ? 'call-log-missed' : ''}>{name}</strong>
+                  <strong className={row.missed ? 'call-log-missed' : ''}>{name}{group && row.participants?.length ? <span className="call-log-count"> ({row.participants.length})</span> : null}</strong>
                 </div>
                 <div className="call-log-meta">
                   <span className={`call-status ${row.missed ? 'call-log-missed' : ''}`} aria-label={`${label}, ${formatViewerTimestamp(row.timestamp)}`}>

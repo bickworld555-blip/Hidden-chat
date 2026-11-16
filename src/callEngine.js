@@ -70,6 +70,7 @@ export function endReasonMessage(reason, direction) {
   if (reason === 'disconnected') return 'The other device disconnected.';
   if (reason === 'failed') return 'Could not connect this call.';
   if (reason === 'answered-elsewhere') return 'Answered on another device.';
+  if (reason === 'declined') return direction === 'outgoing' ? 'Declined.' : 'Call declined.';
   return 'Call ended.';
 }
 
@@ -940,8 +941,9 @@ export function createCallEngine({
       }
     },
 
+    // The caller's log and call card say "Declined" (server/index.mjs relays the reason).
     decline() {
-      finish('ended', { reason: 'ended', message: '', notify: true });
+      finish('ended', { reason: 'declined', message: '', notify: true });
     },
 
     hangUp(reason = 'ended') {

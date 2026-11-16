@@ -75,7 +75,7 @@ const ACTIVITY_WRITE_MS = 60 * 60 * 1000;
 const MAX_STATUS_ENVELOPE = 900_000;
 // Bounds the request body of a "keep starred" clear; express.json already caps it at 16 kB.
 const MAX_CLEAR_KEEP_IDS = 500;
-const CALL_END_REASONS = new Set(['ended', 'no-answer', 'disconnected', 'busy', 'failed', 'unavailable']);
+const CALL_END_REASONS = new Set(['ended', 'no-answer', 'disconnected', 'busy', 'failed', 'unavailable', 'declined']);
 // Apps from this wire version on confirm an incoming call themselves (a "ringing" signal from the app, or
 // POST /api/v1/calls/:id/ringing from the phone's push handler). Until a callee device confirms, the caller sees
 // "Calling", not "Ringing"; with no confirmation within CALL_UNREACHABLE_MS the call ends as "unavailable" (an offline
@@ -723,6 +723,9 @@ export function createChatServer({
   function finishCall(callId, reason, exceptSocket, { by = null } = {}) {
     const activeCall = activeCalls.get(callId);
     if (!activeCall) return;
+    // The callee ended it before any device answered (Decline on the notification or the call screen): the caller's
+    // call log says Declined rather than a plain end.
+    if (reason === 'ended' && by && by === activeCall.calleeId && !activeCall.calleeSocket) reason = 'declined';
     // Unanswered, not declined by the callee, and no callee device ever confirmed it rang (the phone was offline): it
     // gets a missed-call push that waits in Firebase (4 weeks) and shows when the phone reconnects. A phone that did
     // ring shows its own missed call when the ringing stops. Old phones (no confirmation) keep the old behaviour.

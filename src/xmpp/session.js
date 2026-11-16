@@ -39,12 +39,15 @@ const RECEIPT_MEMORY = 5000;
 // for a wake-up push (POST /api/v1/xmpp/nudge). ejabberd keeps a vanished connection resumable for minutes and pushes
 // only once the message reaches offline storage, so a phone that just lost its network would hear nothing until then.
 export const NUDGE_AFTER_MS = 10_000;
+// Delivery receipts to one device are gathered this long, up to MAX_RECEIPTS_PER_STANZA ids per stanza.
+export const RECEIPT_BATCH_MS = 250;
+export const MAX_RECEIPTS_PER_STANZA = 50;
 
 /**
  * Resolves null unless this account is moved over. `deliver(event)` feeds the app's realtime event handler;
  * `legacySend(event)` is the current connection's send.
  */
-export async function startXmppSession({ sessionToken, userId, deliver, legacySend, targetsFor, groupTargetsFor = async () => ({ targets: [], complete: false, sender: null }), userForAddress = () => null, fetchImpl, createTransport = (options) => new XmppTransport(options), seal = null, groupsOverXmpp: groupsOption = null, signalingRestored = () => {}, onTransportState = () => {}, nudgeAfterMs = NUDGE_AFTER_MS }) {
+export async function startXmppSession({ sessionToken, userId, deliver, legacySend, targetsFor, groupTargetsFor = async () => ({ targets: [], complete: false, sender: null }), userForAddress = () => null, fetchImpl, createTransport = (options) => new XmppTransport(options), seal = null, groupsOverXmpp: groupsOption = null, signalingRestored = () => {}, onTransportState = () => {}, nudgeAfterMs = NUDGE_AFTER_MS, receiptBatchMs = RECEIPT_BATCH_MS }) {
   const auth = { Authorization: `Bearer ${sessionToken}` };
   let decision;
   try {
@@ -87,10 +90,24 @@ export async function startXmppSession({ sessionToken, userId, deliver, legacySe
   const originOf = (id, saved) => cameFrom.get(id) ?? (typeof saved === 'string' && ORIGIN.test(saved) ? saved : null);
   // Messages this run has already sent the delivery receipt for (on arrival; queue:ack would send it again).
   const receipted = new Map();
+  // Receipts for the same device go out together, a moment after the first (catching up on 200 messages sends a
+  // handful of stanzas, not 200: mod_hm's flood limit counts stanzas).
+  const receiptBatches = new Map();
+  const flushReceipts = (to) => {
+    const batch = receiptBatches.get(to);
+    receiptBatches.delete(to);
+    if (batch?.ids.length) transport.sendReceipts(to, batch.ids);
+  };
   const receiptOnce = (to, id) => {
     if (receipted.has(id)) return;
     remember(receipted, id, true);
-    transport.sendReceipt(to, id);
+    let batch = receiptBatches.get(to);
+    if (!batch) {
+      batch = { ids: [], timer: setTimeout(() => flushReceipts(to), receiptBatchMs) };
+      receiptBatches.set(to, batch);
+    }
+    batch.ids.push(id);
+    if (batch.ids.length >= MAX_RECEIPTS_PER_STANZA) { clearTimeout(batch.timer); flushReceipts(to); }
   };
   const bare = (address) => String(address ?? '').split('/')[0];
 
@@ -125,7 +142,8 @@ export async function startXmppSession({ sessionToken, userId, deliver, legacySe
         if (nudges.get(event.id)?.peerId === userForAddress(event.from)) forgetNudge(event.id);
         deliver({ type: 'message:status', messageId: event.id, status: 'delivered' });
       } else if (event.type === 'displayed') {
-        deliver({ type: 'message:status', messageId: event.id, status: 'read' });
+        // Cumulative: this message and every earlier one of mine in that chat were read.
+        deliver({ type: 'message:status', messageId: event.id, status: 'read', upTo: true });
       } else if (event.type === 'call') {
         // Only from the device this call is with (learnt from the server-relayed offer or answer).
         const peer = callPeers.get(event.callId);
@@ -303,6 +321,10 @@ export async function startXmppSession({ sessionToken, userId, deliver, legacySe
     /** A wake-up push arrived (Android): connect now if the connection is down. */
     // A push, a network change or the app returning: check the connection now (src/xmpp/transport.js checkNow).
     wake: () => transport.checkNow(),
-    close: () => { for (const id of [...nudges.keys()]) forgetNudge(id); transport.close(); },
+    close: () => {
+      for (const id of [...nudges.keys()]) forgetNudge(id);
+      for (const [to, batch] of [...receiptBatches]) { clearTimeout(batch.timer); flushReceipts(to); }
+      transport.close();
+    },
   };
 }

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Archive, ArchiveRestore, ArrowLeft, BellOff, Camera, Check, Heart, FileText, Image as ImageIcon, Lock, MessageSquarePlus, Mic, MoreVertical, Phone, Pin, Plus, Search, Tag, Trash2, Users, Video, Volume2, VolumeX, X } from 'lucide-react';
+import { Archive, ArchiveRestore, ArrowLeft, BellOff, Camera, Check, Heart, FileText, Image as ImageIcon, Lock, MessageSquarePlus, Mic, MoreVertical, Phone, PhoneMissed, Pin, Plus, Search, Tag, Trash2, Users, Video, Volume2, VolumeX, X } from 'lucide-react';
 import { setChatArchived, toggleChatLabel, useAccountData } from '../accountData.js';
 import { chatLockMethod, unlockLockedChats } from '../chatLock.js';
 import { useT } from '../i18n.js';
@@ -587,6 +587,11 @@ export default function ChatsList({ onOpenChat, onStartCall, onGroups, groups = 
                       {isPinned && <Pin size={15} className="wa-row-badge-icon" title="Pinned" />}
                       {favouriteChatIds.includes(chat.id) && <Heart size={15} className="wa-row-badge-icon is-favourite" fill="currentColor" title="Favourite" />}
                       {labelsFor(chat).map((label) => <Tag key={label.id} size={14} className="wa-row-badge-icon" style={{ color: labelColor(label.color) }} aria-label={`Label ${label.name}`} />)}
+                      {chat.missedCalls > 0 && (
+                        <span className="wa-row-missed" title={`${chat.missedCalls} missed call${chat.missedCalls === 1 ? '' : 's'}`} aria-label={`${chat.missedCalls} missed call${chat.missedCalls === 1 ? '' : 's'}`}>
+                          <PhoneMissed size={14} aria-hidden="true" />{chat.missedCalls > 1 ? chat.missedCalls : ''}
+                        </span>
+                      )}
                       {chat.unread > 0 && <span className="wa-badge">{chat.unread}</span>}
                     </span>
                   </span>

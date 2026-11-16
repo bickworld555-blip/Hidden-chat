@@ -388,6 +388,19 @@ export class XmppTransport {
     return this.#write(String(xml('message', { to, id: `r-${id}` }, [xml('received', { xmlns: NS_RECEIPTS, id }), xml('store', { xmlns: NS_HINTS })])));
   }
 
+  /**
+   * Several delivery receipts for one device in one stanza (one <received/> each). A single id is the plain
+   * XEP-0184 receipt.
+   */
+  sendReceipts(to, ids) {
+    const list = [...new Set(ids)].filter(Boolean);
+    if (list.length <= 1) return list.length ? this.sendReceipt(to, list[0]) : false;
+    return this.#write(String(xml('message', { to, id: `r-${list[0]}-${list.length}` }, [
+      ...list.map((id) => xml('received', { xmlns: NS_RECEIPTS, id })),
+      xml('store', { xmlns: NS_HINTS }),
+    ])));
+  }
+
   /** Read (XEP-0333 "displayed"). */
   sendDisplayed(to, id) {
     return this.#write(String(xml('message', { to, id: `d-${id}`, type: 'chat' }, [xml('displayed', { xmlns: NS_MARKERS, id }), xml('store', { xmlns: NS_HINTS })])));
@@ -416,8 +429,9 @@ export class XmppTransport {
     if (name !== 'message') return;
     const ack = child(el, 'fanout-ack', NS_FANOUT);
     if (ack) return emit({ type: 'fanout-ack', id: ack.attrs.id, delivered: Number(ack.attrs.n) || 0 });
-    const received = child(el, 'received', NS_RECEIPTS);
-    if (received) return emit({ type: 'receipt', id: received.attrs.id, from });
+    // One or several (sendReceipts) delivery receipts.
+    const receipts = el.children.filter((item) => local(item) === 'received' && item.attrs?.xmlns === NS_RECEIPTS && item.attrs.id);
+    if (receipts.length) { for (const item of receipts) emit({ type: 'receipt', id: item.attrs.id, from }); return; }
     const displayed = child(el, 'displayed', NS_MARKERS);
     if (displayed) return emit({ type: 'displayed', id: displayed.attrs.id, from });
     const hm = child(el, 'hm', NS_HM);

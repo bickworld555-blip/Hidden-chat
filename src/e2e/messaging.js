@@ -6,6 +6,7 @@ import { useChatStore } from '../store.js';
 import { forgetDeviceLists, e2eActive, isEnvelope, openContent, openDirectMessage, openDirectMessages, openGroupMessage, resealForDevice, sealDirect, sendGroupContent } from './client.js';
 import { isUserContent } from './envelope.js';
 import { controlContent, parseControl } from './lifecycle.js';
+import { isCallSyncContent, parseCallSync } from '../callLogSync.js';
 import { getXmppSession } from '../xmpp/active.js';
 
 const MAX_RESEALS = 3;
@@ -246,6 +247,11 @@ export async function openEvent(event) {
     // carry one: the server path has its own events for these changes.
     if (event.type === 'message:new' && event.message?.via === 'xmpp' && typeof message?.content === 'string' && message.content.startsWith('ctl:')) {
       return { type: 'message:control', senderId: event.message.senderId, control: parseControl(message.content) };
+    }
+    // A call log entry from another of my own devices (src/callLogSync.js): only ever from myself.
+    if (event.type === 'message:new' && event.message?.via === 'xmpp' && isCallSyncContent(message?.content)) {
+      const me = useChatStore.getState().userId;
+      return event.message.senderId === me ? { type: 'call:synced', entry: parseCallSync(message.content) } : { type: 'ignored' };
     }
     // A message that arrived without end-to-end encryption while this device has it is marked "Not encrypted".
     const plain = event.type === 'message:new' && e2eActive() && !isEnvelope(event.message?.content) && isUserContent(event.message?.content);

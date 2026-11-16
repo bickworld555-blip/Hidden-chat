@@ -21,7 +21,7 @@ import { cachedGroupDetails } from './groupCache.js';
 import { notificationNames } from './notificationNames.js';
 import { nativeClearSession, nativeRequestStartupPermissions, nativeSetSession, nativeShell, nativeStartBackground, nativeState, nativeStopBackground, nativeTakePendingCall, nativeMoveToBackground, nativeClearShare, nativeSetCallActive, nativeClearMessageNotifications, nativeClearMissedCalls, nativeTakeMessageActions, nativeTakeCallEvents, nativeSetSystemBarsTheme, onNative } from './native.js';
 import { parseShare } from './shareTarget.js';
-import { e2eDeviceId, onE2eEvent, sealDirect, startE2e, stopE2e, userForXmppAddress, xmppGroupTargetsFor, xmppTargetsFor } from './e2e/client.js';
+import { e2eDeviceId, onE2eEvent, sealDirect, sealToOwnDevices, startE2e, stopE2e, userForXmppAddress, xmppGroupTargetsFor, xmppTargetsFor } from './e2e/client.js';
 import { createControlBuffer, expiredIds, resolveControl, roleIn } from './e2e/lifecycle.js';
 import { startXmppSession } from './xmpp/session.js';
 import { setXmppSession } from './xmpp/active.js';
@@ -109,12 +109,14 @@ function inviteCodeFromLocation(location = globalThis.location) {
   return match ? match[1] : '';
 }
 import { playNotificationTone, stopAllTones } from './sounds.js';
-import { applyAppBadge, maybeRemind, showSystemNotification, vibrateFor } from './notify.js';
+import { applyAppBadge, maybeRemind, showSendFailure, showSystemNotification, vibrateFor } from './notify.js';
 import { badgeCount, unseenMissedCalls, useNotificationSettings } from './notificationSettings.js';
 import { hiddenByBlock, isBlocked } from './blocking.js';
 import { fetchBlocks } from './blocksApi.js';
 import { activityFromEvent } from './typing.js';
 import { SIGNALING_RESTORED, TERMINAL_STATUSES } from './callEngine.js';
+import { callOutcome } from './callLogRows.js';
+import { callSyncContent } from './callLogSync.js';
 import { noteCallEvent } from './callDiagnostics.js';
 
 // A signaling connection (the server's or XMPP) is back after a drop: an active call that was reconnecting restarts ICE.
@@ -371,6 +373,9 @@ export default function App() {
         };
         const handleEvent = (event) => {
           if (event.type === 'message:control') { applyControl(event); return; }
+          // A call log entry from another of my devices (src/callLogSync.js).
+          if (event.type === 'call:synced') { if (event.entry) useChatStore.getState().mergeSyncedCall(event.entry); return; }
+          if (event.type === 'ignored') return;
           if (event.type === 'group:control') { applyGroupControl(event).catch(() => {}); return; }
           // Deletes, edits, reactions and "played" on group messages: applied to this device's copy, from the server's
           // events and from group controls alike (src/groupChanges.js).
@@ -476,7 +481,8 @@ export default function App() {
             updateAccountUser(event.user).catch(() => {});
           }
           if (event.type === 'location:live') useChatStore.getState().applyLiveEvent(event, (payload) => realtime.send(payload));
-          if (event.type === 'message:status') updateMessage(event.messageId, { status: event.status });
+          if (event.type === 'message:status' && event.status === 'read' && event.upTo) useChatStore.getState().markReadThrough(event.messageId);
+          else if (event.type === 'message:status') updateMessage(event.messageId, { status: event.status });
           if (event.type === 'message:played') updateMessage(event.messageId, { played: true });
           if (event.type === 'status:changed' || event.type === 'status:viewed') useChatStore.getState().bumpStatusRevision();
           if (event.type === 'message:updated') updateMessage(event.messageId, { content: event.content });
@@ -524,7 +530,7 @@ export default function App() {
               // Privacy › Silence unknown callers (the server decides): no ringing, a silenced call in Calls instead.
               if (event.silenced) {
                 if (event.fromUser && !useChatStore.getState().chats.some((c) => c.id === event.from)) useChatStore.getState().addContact(event.fromUser);
-                useChatStore.getState().logCall(event.from, { mode: event.mode, status: 'silenced', direction: 'incoming', callId: event.callId });
+                syncCallLog(useChatStore.getState().logCall(event.from, { mode: event.mode, status: 'silenced', direction: 'incoming', callId: event.callId }));
                 return;
               }
               if (active && !TERMINAL_STATUSES.includes(active.status)) {
@@ -605,7 +611,7 @@ export default function App() {
           if (xmppStarting && forXmpp(event) && heldForXmpp.length < 2000) { heldForXmpp.push(event); return true; }
           return legacySend(event);
         };
-        startXmppSession({ sessionToken, userId, deliver: onRealtimeEvent, legacySend, targetsFor: xmppTargetsFor, groupTargetsFor: xmppGroupTargetsFor, userForAddress: userForXmppAddress, fetchImpl: apiFetch, seal: (peerId, content) => sealDirect(peerId, content), signalingRestored, onTransportState: (state) => noteCallEvent('xmpp', state) })
+        startXmppSession({ sessionToken, userId, deliver: onRealtimeEvent, legacySend, targetsFor: xmppTargetsFor, groupTargetsFor: xmppGroupTargetsFor, userForAddress: userForXmppAddress, fetchImpl: apiFetch, seal: (peerId, content) => (peerId === userId ? sealToOwnDevices(content) : sealDirect(peerId, content)), signalingRestored, onTransportState: (state) => noteCallEvent('xmpp', state) })
           .then((session) => {
             if (!session) return;
             if (cancelled) { session.close(); return; }
@@ -821,12 +827,24 @@ export default function App() {
   }, [chats, call?.peerId, call?.peerInfo]);
   const connection = useChatStore((state) => state.connection);
 
+  // A call this device logged goes to my other devices too (src/callLogSync.js), over XMPP, sealed for them only.
+  function syncCallLog(entry) {
+    if (!entry) return;
+    xmppRef.current?.sendControl?.(userId, callSyncContent(entry))?.catch?.(() => {});
+  }
+
   // Writes the call-log entry for a finished call and resets the duration clock.
   function recordCallEnd(finished) {
     const startedAt = callStartTimeRef.current;
     const duration = startedAt ? Math.floor((Date.now() - startedAt) / 1000) : 0;
-    const status = startedAt ? 'completed' : finished.direction === 'incoming' ? 'missed' : 'no-answer';
-    logCall(finished.peerId, { duration, mode: finished.mode, status, direction: finished.direction, callId: finished.callId });
+    const status = callOutcome({ answered: Boolean(startedAt), direction: finished.direction, reason: finished.endReason ?? 'ended', byPeer: Boolean(finished.endedByPeer) });
+    // The call's own id (`id`), shared with the phone's background records (CallEvents) so a call is logged once.
+    // A group call keeps its group and everyone in it (Calls tab).
+    const participants = Array.isArray(finished.members) ? finished.members.map((member) => member.id).filter(Boolean) : finished.invite?.participants;
+    syncCallLog(logCall(finished.peerId, {
+      duration, mode: finished.mode, status, direction: finished.direction, callId: finished.id,
+      ...(finished.groupId || (participants?.length ?? 0) > 1 ? { groupId: finished.groupId || null, groupName: finished.groupName || null, participants } : {}),
+    }));
     callStartTimeRef.current = null;
   }
 
@@ -840,6 +858,23 @@ export default function App() {
 
   // "Call back" on Android's missed-call notification.
   const initiateCallRef = useRef(null);
+  // "Message not sent": one of my messages turning failed while the app is off screen (src/notify.js showSendFailure).
+  useEffect(() => {
+    if (!userId) return undefined;
+    const failed = new Set();
+    for (const list of Object.values(useChatStore.getState().messages)) for (const message of list ?? []) if (message?.status === 'failed') failed.add(message.id);
+    return useChatStore.subscribe((state) => {
+      for (const [chatId, list] of Object.entries(state.messages)) {
+        for (const message of list ?? []) {
+          if (message?.status !== 'failed' || message.senderId !== userId || failed.has(message.id)) continue;
+          failed.add(message.id);
+          const chat = state.chats.find((item) => item.id === chatId);
+          showSendFailure({ chatId, name: chat?.name }).catch(() => {});
+        }
+      }
+    });
+  }, [userId]);
+
   // Calls the phone handled while the app's screen was gone (rung by push and missed or declined, or missed while
   // offline): into the call log and the chat when the app opens or returns to screen, one entry per call.
   useEffect(() => {
@@ -849,10 +884,10 @@ export default function App() {
       if (!live) return;
       for (const event of events) {
         if (!event?.peerId) continue;
-        useChatStore.getState().logCall(event.peerId, {
+        syncCallLog(useChatStore.getState().logCall(event.peerId, {
           callId: event.callId || null, mode: event.mode === 'video' ? 'video' : 'audio', direction: 'incoming',
           status: event.status === 'declined' ? 'declined' : 'missed', timestamp: Number.isFinite(event.at) ? new Date(event.at).toISOString() : null,
-        });
+        }));
       }
     }).catch(() => {});
     take();

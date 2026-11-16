@@ -22,6 +22,7 @@ import { extrasPreview } from './mediaExtras.js';
 import { orderPreview } from './orders.js';
 import { ACTIVITY_EXPIRES_MS } from './typing.js';
 import { reportStorageFailure, reportStorageWorking } from './storageHealth.js';
+import { betterCallOutcome } from './callLogSync.js';
 
 const EMPTY_MESSAGES = Object.freeze([]);
 // Start-up reads the newest STARTUP_WINDOW messages of each chat (older ones load as a chat scrolls back, a page of
@@ -669,7 +670,7 @@ export const useChatStore = create((setState, getState) => ({
   },
   markRead(chatId) {
     setState((state) => ({
-      chats: state.chats.map((chat) => chat.id === chatId ? { ...chat, unread: 0 } : chat),
+      chats: state.chats.map((chat) => chat.id === chatId ? { ...chat, unread: 0, missedCalls: 0 } : chat),
     }));
   },
   // The person has read this chat (on screen, or "Mark as read" on its notification): blue ticks for the sender's
@@ -679,13 +680,19 @@ export const useChatStore = create((setState, getState) => ({
     if (!chatId) return;
     // Not connected yet (an app just opened from a notification): the receipts go as soon as it connects.
     if (!client?.send) readsWithoutConnection.add(chatId);
+    // Over XMPP one marker covers everything up to it (XEP-0333 markers are cumulative): only the newest unread
+    // message's goes, like WhatsApp's per-chat read receipt; a chat of 200 unread messages sends one stanza, not 200.
+    // Messages that came through the server are still marked one by one (the server keeps a status per message).
+    let newestOverXmpp = null;
     for (const message of client?.send ? messages[chatId] ?? [] : []) {
       // Marking it read locally (statuses only move forward, see mergeMessageStatus) is what stops a second receipt.
       if (message?.senderId === chatId && message.status !== 'read') {
-        client.send({ type: 'message:read', messageId: message.id, ...(typeof message.origin === 'string' ? { origin: message.origin } : {}) });
+        if (typeof message.origin === 'string') newestOverXmpp = message;
+        else client.send({ type: 'message:read', messageId: message.id });
         getState().updateMessage(message.id, { status: 'read' });
       }
     }
+    if (newestOverXmpp) client.send({ type: 'message:read', messageId: newestOverXmpp.id, origin: newestOverXmpp.origin, upTo: true });
     getState().markRead(chatId);
   },
   addMessage(message) {
@@ -815,6 +822,22 @@ export const useChatStore = create((setState, getState) => ({
       };
     });
   },
+  // A cumulative read marker (XEP-0333) for one of my messages: it and every earlier message of mine in that chat
+  // are read (blue ticks), as one marker now stands for the whole chat.
+  markReadThrough(messageId) {
+    const { messages, userId } = getState();
+    for (const [chatId, list] of Object.entries(messages)) {
+      const target = (list ?? []).find((message) => message?.id === messageId);
+      if (!target) continue;
+      const until = String(target.timestamp ?? '');
+      for (const message of list) {
+        if (message?.senderId === userId && message.receiverId === chatId && message.status !== 'read' && String(message.timestamp ?? '') <= until) {
+          getState().updateMessage(message.id, { status: 'read' });
+        }
+      }
+      return;
+    }
+  },
   updateMessage(messageId, updates) {
     setState((state) => ({
       messages: Object.fromEntries(Object.entries(state.messages).map(([chatId, messages]) => [
@@ -837,18 +860,22 @@ export const useChatStore = create((setState, getState) => ({
   },
   // One entry per call (the call log and a call card in the chat). `callId`: the call's own id, so a call logged by
   // both the app and the phone's background code (src/App.jsx, Android CallEvents) is written once.
-  logCall(peerId, { duration = 0, mode = 'audio', status = 'completed', direction = 'outgoing', callId = null, timestamp: at = null } = {}) {
+  // Resolves the new entry (for call log sync), or null when that call is already logged.
+  // `groupId` / `groupName` / `participants`: a group call (Calls tab only; no card in a one-to-one chat).
+  logCall(peerId, { duration = 0, mode = 'audio', status = 'completed', direction = 'outgoing', callId = null, timestamp: at = null, id: givenId = null, groupId = null, groupName = null, participants = null } = {}) {
     const state = getState();
-    if (!peerId) return;
-    const id = typeof callId === 'string' && callId ? `call-${callId}` : crypto.randomUUID();
-    if (state.callLogs.some((entry) => entry.id === id)) return;
+    if (!peerId) return null;
+    const id = typeof givenId === 'string' && givenId ? givenId : typeof callId === 'string' && callId ? `call-${callId}` : crypto.randomUUID();
+    if (state.callLogs.some((entry) => entry.id === id)) return null;
     const parsed = at ? new Date(at) : null;
     const timestamp = parsed && !Number.isNaN(parsed.getTime()) ? parsed.toISOString() : new Date().toISOString();
     const incoming = direction === 'incoming';
-    const entry = { id, peerId, mode, direction, status, duration, timestamp };
+    const group = groupId || (Array.isArray(participants) && participants.length > 1);
+    const entry = { id, peerId, mode, direction, status, duration, timestamp,
+      ...(group ? { groupId: groupId || null, groupName: groupName || null, participants: Array.isArray(participants) ? participants : [peerId] } : {}) };
     setState((current) => ({ callLogs: [entry, ...current.callLogs] }));
     getState().persistCallLogs(state.userId);
-    if (!state.chats.some((chat) => chat.id === peerId)) return;
+    if (group || !state.chats.some((chat) => chat.id === peerId)) return entry;
     const unreadBefore = state.chats.find((chat) => chat.id === peerId)?.unread ?? 0;
     getState().addMessage({
       id: entry.id,
@@ -862,7 +889,27 @@ export const useChatStore = create((setState, getState) => ({
       setState((current) => ({
         chats: current.chats.map((chat) => chat.id === peerId ? { ...chat, unread: unreadBefore } : chat),
       }));
+    } else {
+      // The chat row's red "missed call" mark with its count, until the chat is opened.
+      setState((current) => ({
+        chats: current.chats.map((chat) => chat.id === peerId ? { ...chat, missedCalls: (chat.missedCalls ?? 0) + 1 } : chat),
+      }));
     }
+    return entry;
+  },
+  // A call log entry from another of my devices (src/callLogSync.js): added, or replacing this device's entry for the
+  // same call when it knows a better outcome (answered there, missed here). Never sent on again.
+  mergeSyncedCall(entry) {
+    if (!entry?.id) return;
+    const existing = getState().callLogs.find((item) => item.id === entry.id);
+    if (!existing) {
+      getState().logCall(entry.peerId, { ...entry, id: entry.id, timestamp: entry.timestamp });
+      return;
+    }
+    if (!betterCallOutcome(entry, existing)) return;
+    setState((current) => ({ callLogs: current.callLogs.map((item) => item.id === entry.id ? { ...item, status: entry.status, duration: entry.duration } : item) }));
+    getState().persistCallLogs(getState().userId);
+    getState().updateMessage(entry.id, { content: `call:${JSON.stringify({ duration: entry.duration, mode: entry.mode, status: entry.status, direction: entry.direction })}` });
   },
   deleteMessage(chatId, messageId) {
     setState((state) => {

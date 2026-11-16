@@ -26,6 +26,8 @@ final class NotificationChannels {
     static final String UPLOADS = "uploads";
     // "Missed voice call" / "2 missed calls" with Call back and Message.
     static final String MISSED_CALLS = "missed_calls";
+    // "Message not sent": one of my messages failed while the app was off screen (WhatsApp's failure_notifications).
+    static final String FAILURES = "failure_notifications";
     // The same three with the phone's own default sounds, for the in-app "Default" tone choice.
     static final String DIRECT_MESSAGES_PHONE = "direct_messages_phone";
     static final String GROUP_MESSAGES_PHONE = "group_messages_phone";
@@ -178,6 +180,9 @@ final class NotificationChannels {
         missed.setSound(android.provider.Settings.System.DEFAULT_NOTIFICATION_URI, message);
         missed.enableVibration(true);
 
-        manager.createNotificationChannels(Arrays.asList(direct, group, calls, connection, ongoingCall, directPhone, groupPhone, callsPhone, uploads, missed));
+        NotificationChannel failures = new NotificationChannel(FAILURES, "Failed messages", NotificationManager.IMPORTANCE_DEFAULT);
+        failures.setDescription("A message you sent could not be delivered, with a way back to the chat");
+
+        manager.createNotificationChannels(Arrays.asList(direct, group, calls, connection, ongoingCall, directPhone, groupPhone, callsPhone, uploads, missed, failures));
     }
 }

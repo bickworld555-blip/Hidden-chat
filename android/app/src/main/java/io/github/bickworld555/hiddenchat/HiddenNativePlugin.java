@@ -1053,8 +1053,10 @@ public class HiddenNativePlugin extends Plugin {
      */
     @PluginMethod
     public void notify(PluginCall call) {
-        String channel = NotificationChannels.messageChannel(getContext(), Boolean.TRUE.equals(call.getBoolean("group", false)),
-            SoundChoice.parse(call.getString("sound", "")));
+        // `failure`: "Message not sent" on its own channel; otherwise a message on the channel for its sound.
+        String channel = Boolean.TRUE.equals(call.getBoolean("failure", false)) ? NotificationChannels.FAILURES
+            : NotificationChannels.messageChannel(getContext(), Boolean.TRUE.equals(call.getBoolean("group", false)),
+                SoundChoice.parse(call.getString("sound", "")));
         String open = call.getString("open", "");
         String avatar = call.getString("avatar");
         if ((avatar == null || avatar.isEmpty()) && open.startsWith("chat:")) avatar = Avatars.pathFor(open.substring(5));

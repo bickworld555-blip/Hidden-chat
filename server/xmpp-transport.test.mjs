@@ -288,7 +288,7 @@ import { startXmppSession } from '../src/xmpp/session.js';
 function sessionHarness({ transportAnswer = 'xmpp', targets = { targets: ['d1@h', 'd2@h'], complete: true, sender: ME } } = {}) {
   const delivered = [];
   const legacy = [];
-  const fake = { state: 'online', sent: [], connects: 0, checks: 0, connect() { this.connects += 1; }, checkNow() { this.checks += 1; }, sendChatState(to, state, opts) { this.sent.push(['chatstate', to, state, opts?.kind ?? null]); }, sendSealed(args) { this.sent.push(['sealed', args]); }, sendReceipt(to, id) { this.sent.push(['receipt', to, id]); }, sendDisplayed(to, id) { this.sent.push(['displayed', to, id]); }, setActive() {}, close() {} };
+  const fake = { state: 'online', sent: [], connects: 0, checks: 0, connect() { this.connects += 1; }, checkNow() { this.checks += 1; }, sendChatState(to, state, opts) { this.sent.push(['chatstate', to, state, opts?.kind ?? null]); }, sendSealed(args) { this.sent.push(['sealed', args]); }, sendReceipt(to, id) { this.sent.push(['receipt', to, id]); }, sendReceipts(to, ids) { for (const id of ids) this.sent.push(['receipt', to, id]); }, sendDisplayed(to, id) { this.sent.push(['displayed', to, id]); }, setActive() {}, close() {} };
   let options;
   const start = () => startXmppSession({
     sessionToken: 't', userId: ME.userId, deliver: (event) => delivered.push(event), legacySend: (event) => legacy.push(event),
@@ -296,9 +296,12 @@ function sessionHarness({ transportAnswer = 'xmpp', targets = { targets: ['d1@h'
     userForAddress: (address) => (String(address).startsWith('dpeer@h') ? 'user-peer' : null),
     fetchImpl: async (path) => new Response(JSON.stringify(path.endsWith('/transport') ? { enabled: true, transport: transportAnswer } : {}), { status: 200 }),
     createTransport: (opts) => { options = opts; return fake; },
+    receiptBatchMs: 0,
   });
   return { start, delivered, legacy, fake, options: () => options };
 }
+// Delivery receipts go out in a batch a moment later (receiptBatchMs 0 in the harness).
+const batched = () => new Promise((resolve) => setTimeout(resolve, 5));
 const envelopeFrom = (deviceId) => `e2e2:text|${JSON.stringify({ v: 2, sd: deviceId, d: {} })}`;
 
 test('session: an account not moved over never starts one', async () => {
@@ -347,6 +350,7 @@ test('session: incoming messages need the envelope to name the sending device; r
 
   // Delivered on arrival, as through the server: a voice note or file does not wait for its attachment's download.
   assert.equal(session.route({ type: 'message:delivered', messageIds: ['in1', 'legacy-1'] }), true);
+  await batched();
   assert.deepEqual(h.fake.sent.filter((item) => item[0] === 'receipt'), [['receipt', 'dpeer@h/app', 'in1']], 'the receipt as soon as it arrived');
   assert.deepEqual(h.legacy.at(-1), { type: 'message:delivered', messageIds: ['legacy-1'] }, 'messages that came the old way are acknowledged the old way');
   assert.equal(session.route({ type: 'queue:ack', messageIds: ['in1', 'legacy-2'], eventIds: [] }), true);
@@ -359,7 +363,7 @@ test('session: incoming messages need the envelope to name the sending device; r
 
   onEvent({ type: 'receipt', id: 'mine-1' });
   onEvent({ type: 'displayed', id: 'mine-1' });
-  assert.deepEqual(h.delivered.slice(-2), [{ type: 'message:status', messageId: 'mine-1', status: 'delivered' }, { type: 'message:status', messageId: 'mine-1', status: 'read' }]);
+  assert.deepEqual(h.delivered.slice(-2), [{ type: 'message:status', messageId: 'mine-1', status: 'delivered' }, { type: 'message:status', messageId: 'mine-1', status: 'read', upTo: true }]);
 });
 
 test("session: typing goes to the contact's devices over XMPP and comes back as presence:typing; wake-up reconnects", async () => {
@@ -405,6 +409,7 @@ test('session: receipts and read markers reach the sending device after a restar
   const session = await h.start();
   h.fake.state = 'connecting';
   assert.equal(session.route({ type: 'queue:ack', messageIds: ['old-1', 'legacy-3'], eventIds: ['e1'], origins: { 'old-1': PEER_DEVICE } }), true);
+  await batched();
   assert.deepEqual(h.fake.sent.at(-1), ['receipt', PEER_DEVICE, 'old-1'], 'queued on the transport, not given to the server that never saw it');
   assert.deepEqual(h.legacy.at(-1), { type: 'queue:ack', messageIds: ['legacy-3'], eventIds: ['e1'] }, 'the rest the old way, without the addresses');
   assert.equal(session.route({ type: 'message:read', messageId: 'old-1', origin: PEER_DEVICE }), true);
@@ -618,5 +623,22 @@ test("the server's ping (XEP-0199) is answered at once; other requests get servi
   assert.equal(refused.attrs.type, 'error');
   assert.ok(child(child(refused, 'error'), 'service-unavailable'));
   assert.equal(t.sm.inbound, 2, 'both count for Stream Management');
+  t.close();
+});
+
+test('batched receipts: several <received/> in one stanza go out together and each comes back as a receipt', async () => {
+  const server = fakeServer();
+  const { t, events } = transport(server);
+  await t.connect();
+  await until(() => t.state === 'online', 'online');
+  const peer = `${localpartOf('peer', 'p1')}@${HOST}`;
+  t.sendReceipts(peer, ['a', 'b', 'a', 'c']);
+  const stanza = parseXml(server.sockets[0].sent.at(-1));
+  assert.deepEqual(stanza.children.filter((item) => local(item) === 'received').map((item) => item.attrs.id), ['a', 'b', 'c'], 'one stanza, each id once');
+  t.sendReceipts(peer, ['solo']);
+  assert.equal(child(parseXml(server.sockets[0].sent.at(-1)), 'received', 'urn:xmpp:receipts').attrs.id, 'solo', 'a single id is the plain receipt');
+  server.sockets[0].deliver(stanza.toString ? String(xml('message', { from: `${peer}/app` }, [xml('received', { xmlns: 'urn:xmpp:receipts', id: 'x1' }), xml('received', { xmlns: 'urn:xmpp:receipts', id: 'x2' })])) : '');
+  await until(() => events.filter((event) => event.type === 'receipt').length === 2, 'two receipts');
+  assert.deepEqual(events.filter((event) => event.type === 'receipt').map((event) => event.id), ['x1', 'x2']);
   t.close();
 });

@@ -354,3 +354,79 @@ test('every call is one log entry and one call card in the chat; the same call l
   assert.deepEqual(cards.map((card) => JSON.parse(card.content.slice(5)).mode), ['audio', 'video', 'audio', 'video', 'audio']);
   assert.ok(cards.every((card) => card.senderId === 'ava'), 'shown as incoming');
 });
+
+test('read markers: one cumulative marker per chat over XMPP; a marker turns that message and every earlier one blue', async () => {
+  const { useChatStore } = await import('../src/store.js');
+  const sent = [];
+  const origin = `d${'b'.repeat(40)}@h`;
+  useChatStore.setState({
+    userId: 'me', chats: [{ id: 'ava', name: 'Ava', unread: 3 }], callLogs: [], persistCallLogs: async () => {},
+    client: { send: (event) => { sent.push(event); return true; } },
+    messages: { ava: [
+      { id: 'x1', senderId: 'ava', receiverId: 'me', timestamp: '2026-11-16T10:00:00.000Z', content: 'a', status: 'delivered', origin },
+      { id: 'x2', senderId: 'ava', receiverId: 'me', timestamp: '2026-11-16T10:01:00.000Z', content: 'b', status: 'delivered', origin },
+      { id: 's1', senderId: 'ava', receiverId: 'me', timestamp: '2026-11-16T10:02:00.000Z', content: 'c', status: 'delivered' },
+      { id: 'm1', senderId: 'me', receiverId: 'ava', timestamp: '2026-11-16T09:59:00.000Z', content: 'mine 1', status: 'delivered' },
+      { id: 'm2', senderId: 'me', receiverId: 'ava', timestamp: '2026-11-16T10:03:00.000Z', content: 'mine 2', status: 'delivered' },
+      { id: 'm3', senderId: 'me', receiverId: 'ava', timestamp: '2026-11-16T10:04:00.000Z', content: 'mine 3', status: 'sent' },
+    ] },
+  });
+  useChatStore.getState().readChat('ava');
+  assert.deepEqual(sent, [
+    { type: 'message:read', messageId: 's1' },
+    { type: 'message:read', messageId: 'x2', origin, upTo: true },
+  ], 'the server-path message one by one; the XMPP ones as one marker for the newest');
+  useChatStore.getState().markReadThrough('m2');
+  const status = Object.fromEntries(useChatStore.getState().messages.ava.map((message) => [message.id, message.status]));
+  assert.deepEqual([status.m1, status.m2, status.m3], ['read', 'read', 'sent'], 'everything of mine up to the marked message');
+});
+
+test('call outcomes come from the end reason: declined, busy, unavailable, cancelled, missed, answered elsewhere', async () => {
+  const { callOutcome, callLogRows, callRowLabel } = await import('../src/callLogRows.js');
+  const cases = [
+    [{ answered: true, direction: 'outgoing' }, 'completed'],
+    [{ direction: 'outgoing', reason: 'declined', byPeer: true }, 'declined'],
+    [{ direction: 'outgoing', reason: 'busy', byPeer: true }, 'busy'],
+    [{ direction: 'outgoing', reason: 'unavailable', byPeer: true }, 'unavailable'],
+    [{ direction: 'outgoing', reason: 'ended', byPeer: false }, 'cancelled'],
+    [{ direction: 'outgoing', reason: 'no-answer', byPeer: true }, 'no-answer'],
+    [{ direction: 'incoming', reason: 'declined', byPeer: false }, 'declined'],
+    [{ direction: 'incoming', reason: 'ended', byPeer: true }, 'missed'],
+    [{ direction: 'incoming', reason: 'answered-elsewhere', byPeer: true }, 'answered-elsewhere'],
+    [{ direction: 'incoming', reason: 'failed' }, 'failed'],
+  ];
+  for (const [input, expected] of cases) assert.equal(callOutcome(input), expected, JSON.stringify(input));
+  const label = (status, direction = 'outgoing', mode = 'audio') => callRowLabel(callLogRows([{ id: 'x', peerId: 'p', direction, status, duration: 0, mode, timestamp: '2026-11-16T10:00:00Z' }])[0]);
+  assert.equal(label('busy'), 'Outgoing voice call · Busy');
+  assert.equal(label('unavailable', 'outgoing', 'video'), 'Outgoing video call · Unavailable');
+  assert.equal(label('cancelled'), 'Outgoing voice call · Cancelled');
+  assert.equal(label('answered-elsewhere', 'incoming'), 'Incoming voice call · Answered on another device');
+  assert.equal(callLogRows([{ id: 'y', peerId: 'p', direction: 'incoming', status: 'answered-elsewhere', duration: 0, mode: 'audio', timestamp: '2026-11-16T10:00:00Z' }])[0].missed, false);
+});
+
+test('call log sync: entries travel sealed to my other devices and merge by id, the better outcome kept', async () => {
+  const { callSyncContent, parseCallSync, betterCallOutcome } = await import('../src/callLogSync.js');
+  const entry = { id: 'call-abc', peerId: 'ava', mode: 'video', direction: 'incoming', status: 'completed', duration: 42, timestamp: '2026-11-16T10:00:00.000Z' };
+  assert.deepEqual(parseCallSync(callSyncContent(entry)), entry, 'round trip');
+  assert.equal(parseCallSync('sync:{"k":"call","e":{"id":"x","peerId":"ava","status":"hacked","direction":"incoming","timestamp":"2026-11-16"}}'), null, 'unknown status refused');
+  assert.equal(parseCallSync('sync:not json'), null);
+  assert.equal(parseCallSync(callSyncContent({ ...entry, peerId: '../../x y' })), null, 'odd ids refused');
+  const group = parseCallSync(callSyncContent({ ...entry, id: 'call-g', groupId: 'g1', groupName: 'Team', participants: ['ava', 'ben'] }));
+  assert.deepEqual([group.groupId, group.groupName, group.participants], ['g1', 'Team', ['ava', 'ben']]);
+  assert.equal(betterCallOutcome({ status: 'completed' }, { status: 'missed' }), true);
+  assert.equal(betterCallOutcome({ status: 'missed' }, { status: 'completed' }), false);
+
+  const { useChatStore } = await import('../src/store.js');
+  useChatStore.setState({ userId: 'me', chats: [{ id: 'ava', name: 'Ava' }], messages: {}, callLogs: [], persistCallLogs: async () => {} });
+  // This device saw the call ring and logged it missed; the phone that answered syncs "completed": one entry, answered.
+  useChatStore.getState().logCall('ava', { callId: 'abc', mode: 'video', status: 'missed', direction: 'incoming', timestamp: entry.timestamp });
+  useChatStore.getState().mergeSyncedCall(entry);
+  const state = useChatStore.getState();
+  assert.equal(state.callLogs.length, 1);
+  assert.deepEqual([state.callLogs[0].status, state.callLogs[0].duration], ['completed', 42]);
+  assert.match(state.messages.ava.find((message) => message.id === 'call-abc').content, /"status":"completed"/, 'the chat card follows');
+  // A group call from another device: in the Calls tab, not as a card in a one-to-one chat.
+  useChatStore.getState().mergeSyncedCall({ ...entry, id: 'call-g', status: 'missed', groupId: 'g1', participants: ['ava', 'ben'] });
+  assert.equal(useChatStore.getState().callLogs.find((item) => item.id === 'call-g').groupId, 'g1');
+  assert.equal(useChatStore.getState().messages.ava.some((message) => message.id === 'call-g'), false);
+});
