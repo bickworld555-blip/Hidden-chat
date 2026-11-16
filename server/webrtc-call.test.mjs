@@ -790,6 +790,8 @@ test('a contact invited into a call joins the mesh: every pair connects and each
   const invite = await until(() => c.ws.events.find((event) => event.type === 'call:invite'), { label: 'invite' });
   assert.equal(invite.from, alice.user.id);
   assert.deepEqual([...invite.participants].sort(), [alice.user.id, bob.user.id].sort());
+  assert.deepEqual(invite.people.map((person) => person.id).sort(), [alice.user.id, bob.user.id].sort(), 'Carol gets the names of everyone in the call (Bob is no contact of hers)');
+  assert.ok(invite.people.every((person) => person.name && !('deleted_at' in person)), 'public profiles only');
   const peers = peersToConnect([invite.from, ...invite.participants], carol.user.id);
   assert.deepEqual(peers.sort(), [alice.user.id, bob.user.id].sort());
   for (const peerId of peers) c.call(peerId);

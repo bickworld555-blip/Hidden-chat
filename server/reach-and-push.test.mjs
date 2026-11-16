@@ -286,6 +286,7 @@ test('L2: a group shows its running call to every member, a member not in it joi
   carol.send(JSON.stringify({ type: 'group:call-join', groupId }));
   const joined = await until(() => carol.events.find((event) => event.type === 'group:call-join' && event.ok === true), 'the join reply');
   assert.deepEqual([joined.roomId, joined.mode, [...joined.participants].sort()], ['room-l2', 'audio', [a.user.id, b.user.id].sort()]);
+  assert.deepEqual(joined.people.map((person) => person.id).sort(), [a.user.id, b.user.id].sort(), 'with their names, for the call screen');
   carol.send(JSON.stringify({ type: 'call:signal', targetId: b.user.id, callId: 'pair-carol-bob', roomId: 'room-l2', groupId, mode: 'audio', signalId: 's1', signal: { type: 'offer', sdp: 'v=0' } }));
   const offer = await until(() => bob.events.find((event) => event.type === 'call:signal' && event.callId === 'pair-carol-bob'), 'Bob gets Carol\'s offer');
   assert.deepEqual([offer.roomId, offer.groupId], ['room-l2', groupId], 'the pair names its room and group, so Bob takes it without ringing');

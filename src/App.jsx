@@ -587,6 +587,8 @@ export default function App() {
             if (active) recordCallEnd(active);
             // Invited into a group call: the inviter's name for the call, not a new chat.
             if (event.fromUser) useChatStore.getState().rememberPerson(event.fromUser);
+            // And everyone else already in it (the server sends their profiles), so no tile shows a bare id.
+            for (const person of Array.isArray(event.people) ? event.people : []) useChatStore.getState().rememberPerson(person);
             // The invitee rings like a normal incoming call; accepting places pair calls to everyone listed.
             // Its own pair id, like every other pair (crypto.randomUUID, 36 characters). The id built from the room, my id and
             // the inviter's id was 110 characters: the server refuses call ids over 80, so every invitee's pair with the person
@@ -1030,6 +1032,7 @@ export default function App() {
         const now = callRef.current;
         if (!reply.ok || (now && !TERMINAL_STATUSES.includes(now.status))) { resolve(reply.ok ? { ok: false, reason: 'busy' } : reply); return; }
         if (now) recordCallEnd(now);
+        for (const person of Array.isArray(reply.people) ? reply.people : []) useChatStore.getState().rememberPerson(person);
         const [first] = reply.participants;
         const joined = {
           id: crypto.randomUUID(), roomId: reply.roomId, peerId: first, mode: reply.mode, direction: 'outgoing', status: 'idle',

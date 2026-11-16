@@ -934,6 +934,15 @@ export function createChatServer({
     return { token, deviceId, deviceName, user: publicUser(user) };
   }
 
+  // Public profiles of the people in a call (at most MAX_CALL_PARTICIPANTS), in the order given; unknown ids skipped.
+  async function callPeople(ids) {
+    const people = [];
+    for (const id of ids.slice(0, MAX_CALL_PARTICIPANTS)) {
+      const row = await db.prepare(`SELECT ${USER_COLUMNS} FROM users WHERE id = ?`).get(id);
+      if (row) people.push(publicUser(row));
+    }
+    return people;
+  }
   function publicUser(row) {
     const avatar = row.avatar_disk_name ? `/api/v1/users/${encodeURIComponent(row.id)}/avatar?v=${row.avatar_updated_at ?? 0}` : null;
     if (row.deleted_at) return { id: row.id, username: row.username, name: 'Deleted account', initials: '?', color: row.color, avatar: null, deleted: true };
@@ -3315,7 +3324,9 @@ export function createChatServer({
             (await linkUsers(participant, targetId));
           }
           const groupId = typeof event.groupId === 'string' && event.groupId && event.groupId.length <= 80 ? event.groupId : null;
-          const invite = { type: 'call:invite', from: userId, fromUser, roomId, mode, participants: [...new Set([userId, ...participants])], ...(groupId ? { groupId } : {}) };
+          const everyone = [...new Set([userId, ...participants])];
+          // Everyone's name for the call screen: the newcomer may have no chat with the others (was shown as "@1e568c").
+          const invite = { type: 'call:invite', from: userId, fromUser, roomId, mode, participants: everyone, people: await callPeople(everyone.filter((id) => id !== targetId)), ...(groupId ? { groupId } : {}) };
           const delivered = broadcastUser(targetId, invite);
           // No app on screen there (C1): the phone rings by push, like a one-to-one call, and the invite waits for the
           // connection that push opens. "Offline" only when nobody could be rung at all.
@@ -3357,7 +3368,7 @@ export function createChatServer({
             await linkUsers(userId, participant);
             await linkUsers(participant, userId);
           }
-          return json(socket, { type: 'group:call-join', groupId, ok: true, roomId: room.roomId, mode: room.mode, participants: others });
+          return json(socket, { type: 'group:call-join', groupId, ok: true, roomId: room.roomId, mode: room.mode, participants: others, people: await callPeople(others) });
         }
         const roomId = typeof event.roomId === 'string' && event.roomId && event.roomId.length <= 80 ? event.roomId : '';
         const present = event.action === 'join' || event.action === 'beat';
