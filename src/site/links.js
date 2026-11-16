@@ -1,6 +1,6 @@
 // Where the public site sends people to get the app. The APK link is the latest release build (EAS); update it
 // with each release.
-export const ANDROID_APK_URL = 'https://expo.dev/artifacts/eas/TrYOSYPt00VS-emtiGVrkbOu3kuLWUAd9Hsrmy_6LOk.apk';
+export const ANDROID_APK_URL = 'https://expo.dev/artifacts/eas/5bWAOOTzyxRvi3Z0osPrUVk61UvcFLkd7pTDB5z1e2M.apk';
 
 // The Windows app (desktop/): the installer and the portable .exe, attached to the GitHub Release of the tag
 // "desktop-v<version>" by .github/workflows/desktop-release.yml. Raise the version with desktop/package.json.
