@@ -20,6 +20,7 @@ import { classifyIncoming, groupNotificationText, parseConversationOpenParam, sh
 import { companionOnly } from './companion.js';
 import { applyGroupChange, GROUP_CHANGE_EVENTS } from './groupChanges.js';
 import { cachedGroupDetails } from './groupCache.js';
+import { applyGroupCall, withRunningCall } from './groupCalls.js';
 import { notificationNames } from './notificationNames.js';
 import { nativeClearSession, nativeRequestStartupPermissions, nativeSetSession, nativeShell, nativeStartBackground, nativeState, nativeStopBackground, nativeTakePendingCall, nativeMoveToBackground, nativeClearShare, nativeSetCallActive, nativeClearMessageNotifications, nativeClearMissedCalls, nativeTakeMessageActions, nativeTakeCallEvents, nativeSetSystemBarsTheme, nativeOpenSecret, nativeBackgroundFetchDone, onNative } from './native.js';
 import { parseShare } from './shareTarget.js';
@@ -288,6 +289,9 @@ export default function App() {
     return () => document.removeEventListener('visibilitychange', sync);
   }, [call]);
   const [callSignals, setCallSignals] = useState([]);
+  // L2: the calls running in my groups (groupId -> { roomId, mode, startedAt, participants }), from "group:call".
+  const [groupCalls, setGroupCalls] = useState({});
+  const groupCallJoinRef = useRef(new Map());
   const callStartTimeRef = useState(() => ({ current: null }))[0];
   const callRef = useRef(null);
   callRef.current = call;
@@ -527,6 +531,14 @@ export default function App() {
             }
           }
           if (event.type === 'message:delete:error') setFatalError(event.message);
+          // A fresh connection lists the running calls again (server/index.mjs, after connection:ready).
+          if (event.type === 'connection:ready') setGroupCalls({});
+          if (event.type === 'group:call') setGroupCalls((current) => applyGroupCall(current, event));
+          if (event.type === 'group:call-join') {
+            const waiting = groupCallJoinRef.current.get(event.groupId);
+            groupCallJoinRef.current.delete(event.groupId);
+            waiting?.(event);
+          }
           if (event.type === 'call:signal') {
             const active = callRef.current;
             // A pair offer for the room we are in is a participant joining: hand it to the overlay, no ringing.
@@ -554,7 +566,7 @@ export default function App() {
               if (event.fromUser && !useChatStore.getState().chats.some((c) => c.id === event.from)) {
                 useChatStore.getState().addContact(event.fromUser);
               }
-              const incomingCall = { id: event.callId, roomId: event.roomId ?? event.callId, peerId: event.from, mode: event.mode, direction: 'incoming', status: 'idle', offer: event.signal, peerInfo: event.fromUser };
+              const incomingCall = { id: event.callId, roomId: event.roomId ?? event.callId, peerId: event.from, mode: event.mode, direction: 'incoming', status: 'idle', offer: event.signal, peerInfo: event.fromUser, ...(event.groupId ? { groupId: event.groupId } : {}) };
               callRef.current = incomingCall;
               setCall(incomingCall);
               setCallSignals([]);
@@ -574,7 +586,7 @@ export default function App() {
             if (active) recordCallEnd(active);
             if (event.fromUser && !useChatStore.getState().chats.some((c) => c.id === event.from)) useChatStore.getState().addContact(event.fromUser);
             // The invitee rings like a normal incoming call; accepting places pair calls to everyone listed.
-            const invited = { id: `${event.roomId}:${userId}:${event.from}`, roomId: event.roomId, peerId: event.from, mode: event.mode, direction: 'incoming', status: 'idle', invite: { participants: event.participants ?? [event.from] }, peerInfo: event.fromUser };
+            const invited = { id: `${event.roomId}:${userId}:${event.from}`, roomId: event.roomId, peerId: event.from, mode: event.mode, direction: 'incoming', status: 'idle', invite: { participants: event.participants ?? [event.from] }, peerInfo: event.fromUser, ...(event.groupId ? { groupId: event.groupId } : {}) };
             callRef.current = invited;
             setCall(invited);
             setCallSignals([]);
@@ -987,6 +999,34 @@ export default function App() {
     setGroupsOpen(false);
   }
 
+  // L2: joins the call running in a group (after a missed or declined invite, or never rung): the server lists who is
+  // in it, and this phone places a pair call to each of them, as an accepted invite does. Their apps take the offers
+  // (same room) without ringing.
+  function joinGroupCall({ groupId, groupName = '', members = [] }) {
+    const active = callRef.current;
+    if (active && !TERMINAL_STATUSES.includes(active.status)) return Promise.resolve({ ok: false, reason: 'busy' });
+    if (!client || client.send({ type: 'group:call-join', groupId }) === false) return Promise.resolve({ ok: false, reason: 'offline' });
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => { groupCallJoinRef.current.delete(groupId); resolve({ ok: false, reason: 'offline' }); }, 10_000);
+      groupCallJoinRef.current.set(groupId, (reply) => {
+        clearTimeout(timer);
+        const now = callRef.current;
+        if (!reply.ok || (now && !TERMINAL_STATUSES.includes(now.status))) { resolve(reply.ok ? { ok: false, reason: 'busy' } : reply); return; }
+        if (now) recordCallEnd(now);
+        const [first] = reply.participants;
+        const joined = {
+          id: crypto.randomUUID(), roomId: reply.roomId, peerId: first, mode: reply.mode, direction: 'outgoing', status: 'idle',
+          invite: { participants: reply.participants }, join: true, groupId, groupName, members,
+          peerInfo: members.find((member) => member.id === first) ?? null,
+        };
+        callRef.current = joined;
+        setCall(joined);
+        setCallSignals([]);
+        resolve({ ok: true });
+      });
+    });
+  }
+
   // The phone's status and navigation bar icons follow the theme (white icons vanish on the light theme).
   useEffect(() => { nativeSetSystemBarsTheme(darkMode ? 'dark' : 'light'); }, [darkMode]);
 
@@ -1179,7 +1219,7 @@ export default function App() {
     return () => controller.abort();
   }, [sessionToken, userId, groupRevision]);
   const mutedGroupIds = useMutedGroups(userId);
-  const groupRows = useMemo(() => groupSummaries.map((group) => groupRow(group, userId, mutedGroupIds)), [groupSummaries, userId, mutedGroupIds]);
+  const groupRows = useMemo(() => groupSummaries.map((group) => withRunningCall(groupRow(group, userId, mutedGroupIds), groupCalls, userId)), [groupSummaries, userId, mutedGroupIds, groupCalls]);
   const unreadChats = countUnreadConversations(chats, groupRows);
   const callLogs = useChatStore((state) => state.callLogs);
   const notificationSettings = useNotificationSettings();
@@ -1465,7 +1505,7 @@ export default function App() {
       {sessionToken && inviteCode && <JoinGroupSheet code={inviteCode} token={sessionToken} onClose={() => setInviteCode('')} onJoined={(groupId) => { setInviteCode(''); openGroups(false, groupId); }} />}
       {sessionToken && <TwoStepReminder token={sessionToken} />}
       <AppLockGate />
-      {groupsOpen && sessionToken && <GroupsView key={userId} token={sessionToken} userId={userId} client={client} revision={groupRevision} initialCreate={groupsCreate} initialGroupId={groupsInitialId} onStartGroupCall={initiateGroupCall} onMessagePerson={openPerson} onCallPerson={(person, mode) => { setGroupsOpen(false); initiateCall(person.id, mode); }} onClose={() => setGroupsOpen(false)} />}
+      {groupsOpen && sessionToken && <GroupsView key={userId} token={sessionToken} userId={userId} client={client} revision={groupRevision} initialCreate={groupsCreate} initialGroupId={groupsInitialId} onStartGroupCall={initiateGroupCall} groupCalls={groupCalls} onJoinGroupCall={joinGroupCall} onMessagePerson={openPerson} onCallPerson={(person, mode) => { setGroupsOpen(false); initiateCall(person.id, mode); }} onClose={() => setGroupsOpen(false)} />}
       {statusViewerFor && sessionToken && <StatusQuickView key={statusViewerFor} token={sessionToken} userId={userId} ownerId={statusViewerFor} onClose={closeStatusViewer} />}
       {incomingShare && userId && sessionToken && (
         <ShareSheet

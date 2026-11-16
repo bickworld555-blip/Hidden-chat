@@ -88,6 +88,10 @@ export const GROUP_READ_MARK_LIFE_MS = 30 * 24 * 60 * 60 * 1000;
 // A group-call invite to a phone with no app on screen is pushed (it rings like a call) and kept this long for the
 // phone's background connection (or the app it opens) to collect (C1, like WhatsApp's voip_call_offer_group).
 export const GROUP_INVITE_RING_MS = 45_000;
+// L2, joinable group calls: each participant's app repeats "I am in this group's call" every GROUP_CALL_BEAT_MS
+// (src/components/CallOverlay.jsx); one silent for GROUP_CALL_PRESENCE_MS has left (crashed, lost its network).
+export const GROUP_CALL_BEAT_MS = 30_000;
+export const GROUP_CALL_PRESENCE_MS = 90_000;
 // A message written to a connection no device of the receiver has confirmed within this long gets its push anyway:
 // a connection that died a moment ago (the phone just lost its network) still looks connected here, and the message
 // written to it reached nobody (like WhatsApp: no delivery receipt, then a push).
@@ -165,6 +169,7 @@ export function createChatServer({
   reconnectGraceMs = process.env.RECONNECT_GRACE_MS === undefined ? 10_000 : Number(process.env.RECONNECT_GRACE_MS) || 0,
   callReconnectGraceMs = process.env.CALL_RECONNECT_GRACE_MS === undefined ? 20_000 : Number(process.env.CALL_RECONNECT_GRACE_MS) || 0,
   callUnreachableMs = CALL_UNREACHABLE_MS,
+  groupCallPresenceMs = GROUP_CALL_PRESENCE_MS,
   deliveryPushMs = DELIVERY_PUSH_MS,
   allowedOrigins = process.env.RELAY_ALLOWED_ORIGINS ?? '',
   webDirectory = join(directory, '..', 'dist'),
@@ -750,6 +755,64 @@ export function createChatServer({
     rooms.delete(roomId);
     if (!rooms.size) heldInvites.delete(userId);
     return item.until > Date.now() ? item.invite : null;
+  }
+
+  // L2, joinable group calls (like WhatsApp's "Join" on a group's ongoing call): who is in each group's call now.
+  // groupId -> { roomId, mode, startedAt, participants: Map(userId -> last heard), timer }. Every member is told of
+  // each change ("group:call"), so the group shows the call and anyone not in it may join; joining places pair calls
+  // to everyone listed, as an accepted invite does (no media passes the server).
+  const groupCalls = new Map();
+  function groupCallEvent(groupId) {
+    const room = groupCalls.get(groupId);
+    return room
+      ? { type: 'group:call', groupId, roomId: room.roomId, mode: room.mode, startedAt: room.startedAt, participants: [...room.participants.keys()] }
+      : { type: 'group:call', groupId, roomId: null, mode: null, startedAt: null, participants: [] };
+  }
+  // Drops participants not heard from for GROUP_CALL_PRESENCE_MS (and the room once empty); true when it changed.
+  function pruneGroupCall(groupId) {
+    const room = groupCalls.get(groupId);
+    if (!room) return false;
+    const now = Date.now();
+    let changed = false;
+    for (const [participant, heard] of room.participants) {
+      if (heard + groupCallPresenceMs <= now) { room.participants.delete(participant); changed = true; }
+    }
+    if (!room.participants.size) { clearTimeout(room.timer); groupCalls.delete(groupId); return true; }
+    if (changed) scheduleGroupCallSweep(groupId);
+    return changed;
+  }
+  // One timer per room, at its earliest expiry: a participant that went silent leaves without anyone else acting.
+  function scheduleGroupCallSweep(groupId) {
+    const room = groupCalls.get(groupId);
+    if (!room) return;
+    clearTimeout(room.timer);
+    const earliest = Math.min(...room.participants.values()) + groupCallPresenceMs;
+    room.timer = setTimeout(() => {
+      if (pruneGroupCall(groupId)) notifyGroup(groupId, groupCallEvent(groupId)).catch(() => {});
+      else scheduleGroupCallSweep(groupId);
+    }, Math.max(0, earliest - Date.now()) + 50);
+    room.timer.unref?.();
+  }
+  // A participant is in the group's call (present) or has left; true when the participant list changed. A second
+  // call in the same group while one runs is not listed (its people see the running one and may join it instead).
+  function setGroupCallPresence(groupId, userId, { roomId, mode, present }) {
+    let room = groupCalls.get(groupId);
+    if (!present) {
+      if (!room || room.roomId !== roomId || !room.participants.delete(userId)) return false;
+      if (!room.participants.size) { clearTimeout(room.timer); groupCalls.delete(groupId); }
+      else scheduleGroupCallSweep(groupId);
+      return true;
+    }
+    if (room && room.roomId !== roomId) return false;
+    if (!room) {
+      room = { roomId, mode, startedAt: new Date().toISOString(), participants: new Map(), timer: null };
+      groupCalls.set(groupId, room);
+    }
+    const newcomer = !room.participants.has(userId);
+    if (newcomer && room.participants.size >= MAX_CALL_PARTICIPANTS) return false;
+    room.participants.set(userId, Date.now());
+    scheduleGroupCallSweep(groupId);
+    return newcomer;
   }
 
   // `by`: who ended it (a user id), or null for the server's own timeouts.
@@ -2954,6 +3017,13 @@ export function createChatServer({
       json(socket, { type: 'connection:ready', user: request.session.user, presence: await presenceSnapshot(userId) });
       // Group-call invites a push rang this phone for (C1): to the background connection, or the app it opened.
       for (const invite of heldInvitesFor(userId)) json(socket, invite);
+      // The calls running in this person's groups (L2), so a group shows "Join" as soon as the app connects.
+      if (groupCalls.size) {
+        const memberships = await db.prepare('SELECT group_id AS "groupId" FROM group_members WHERE user_id = ?').all(userId);
+        for (const { groupId } of memberships) {
+          if (groupCalls.has(groupId) && !pruneGroupCall(groupId)) json(socket, groupCallEvent(groupId));
+        }
+      }
       await db.prepare('UPDATE sessions SET last_active_at = ? WHERE token_hash = ?').run(Date.now(), socket.sessionHash);
       await presenceChanged(userId, wasOnline);
     });
@@ -3179,7 +3249,9 @@ export function createChatServer({
           }
         }
         const silenced = Boolean(activeCalls.get(callId)?.silenced);
-        const signalEvent = { type: 'call:signal', from: userId, fromUser, callId, mode, signal, signalId, ...(roomId ? { roomId } : {}), ...(silenced ? { silenced: true } : {}) };
+        // A group call's pairs name their group (L2): the person rung directly then counts as in that group's call.
+        const groupId = roomId && typeof event.groupId === 'string' && event.groupId && event.groupId.length <= 80 ? event.groupId : null;
+        const signalEvent = { type: 'call:signal', from: userId, fromUser, callId, mode, signal, signalId, ...(roomId ? { roomId } : {}), ...(groupId ? { groupId } : {}), ...(silenced ? { silenced: true } : {}) };
         const current = activeCalls.get(callId);
         const delivered = deliverCallSignal(current, targetId, signalEvent);
         // Until a callee device answers, the caller's offer and candidates are kept (bounded) for a phone that
@@ -3225,7 +3297,8 @@ export function createChatServer({
             (await linkUsers(targetId, participant));
             (await linkUsers(participant, targetId));
           }
-          const invite = { type: 'call:invite', from: userId, fromUser, roomId, mode, participants: [...new Set([userId, ...participants])] };
+          const groupId = typeof event.groupId === 'string' && event.groupId && event.groupId.length <= 80 ? event.groupId : null;
+          const invite = { type: 'call:invite', from: userId, fromUser, roomId, mode, participants: [...new Set([userId, ...participants])], ...(groupId ? { groupId } : {}) };
           const delivered = broadcastUser(targetId, invite);
           // No app on screen there (C1): the phone rings by push, like a one-to-one call, and the invite waits for the
           // connection that push opens. "Offline" only when nobody could be rung at all.
@@ -3246,6 +3319,36 @@ export function createChatServer({
         // Answered (accepted or declined) on any device: the held invite is done.
         takeHeldInvite(userId, roomId);
         broadcastUser(targetId, { type: 'call:invite-reply', from: userId, fromUser, roomId, accepted: event.accepted === true, reason: typeof event.reason === 'string' ? event.reason.slice(0, 40) : undefined });
+        return;
+      }
+
+      // L2: a participant says it is in (or has left) its group's call; or a member asks to join the running one.
+      if (event.type === 'group:call' || event.type === 'group:call-join') {
+        const groupId = typeof event.groupId === 'string' && event.groupId.length <= 80 ? event.groupId : '';
+        if (!groupId || !(await groupMembership.get(groupId, userId))) {
+          return json(socket, { type: 'error', message: 'Group call: you are not a member of this group.' });
+        }
+        if (pruneGroupCall(groupId)) await notifyGroup(groupId, groupCallEvent(groupId));
+        if (event.type === 'group:call-join') {
+          const room = groupCalls.get(groupId);
+          const others = room ? [...room.participants.keys()].filter((id) => id !== userId) : [];
+          if (!room || !others.length) return json(socket, { type: 'group:call-join', groupId, ok: false, reason: 'ended' });
+          if (others.length >= MAX_CALL_PARTICIPANTS) return json(socket, { type: 'group:call-join', groupId, ok: false, reason: 'full' });
+          // The newcomer places pair calls to everyone in the call, so each pair must count as linked (as an invite does).
+          for (const participant of others) {
+            if (await blocks.between(userId, participant)) continue;
+            await linkUsers(userId, participant);
+            await linkUsers(participant, userId);
+          }
+          return json(socket, { type: 'group:call-join', groupId, ok: true, roomId: room.roomId, mode: room.mode, participants: others });
+        }
+        const roomId = typeof event.roomId === 'string' && event.roomId && event.roomId.length <= 80 ? event.roomId : '';
+        const present = event.action === 'join' || event.action === 'beat';
+        if (!roomId || (!present && event.action !== 'leave') || (present && !['audio', 'video'].includes(event.mode))) {
+          return json(socket, { type: 'error', message: 'Group call presence is invalid.' });
+        }
+        if (setGroupCallPresence(groupId, userId, { roomId, mode: event.mode, present })) await notifyGroup(groupId, groupCallEvent(groupId));
+        else if (present && groupCalls.get(groupId)?.roomId !== roomId) json(socket, groupCallEvent(groupId));
         return;
       }
 
@@ -3733,6 +3836,7 @@ export function createChatServer({
         }
         await Promise.all(socketsClosed);
         for (const activeCall of activeCalls.values()) { clearTimeout(activeCall.timer); clearTimeout(activeCall.reconnectTimer); }
+        for (const room of groupCalls.values()) clearTimeout(room.timer);
         for (const session of liveSessions.values()) clearTimeout(session.timer);
         for (const timer of pendingOffline.values()) clearTimeout(timer);
         pendingOffline.clear();

@@ -47,6 +47,7 @@ import { phoneSoundFor } from '../phoneSounds.js';
 import { useCallStore } from '../callStore.js';
 import { appSettings, useSetting } from '../settings.js';
 import { NOTICE_PRIORITY } from '../noticeQueue.js';
+import { GROUP_CALL_BEAT_MS } from '../groupCalls.js';
 import CallHeader from './call/CallHeader.jsx';
 import ControlCard from './call/ControlCard.jsx';
 import IncomingCallSheet from './call/IncomingCallSheet.jsx';
@@ -205,7 +206,8 @@ export default function CallOverlay({
       enumerateDevices: () => navigator.mediaDevices?.enumerateDevices?.() ?? Promise.resolve([]),
       getDisplayMedia: navigator.mediaDevices?.getDisplayMedia ? sharedDisplayMedia : null,
       fetchIceServers: () => loadIceServers(latest.current.sessionToken),
-      send: (payload) => latest.current.client?.send({ ...payload, targetId: peerId, roomId: latest.current.call.roomId ?? latest.current.call.id, signalId: crypto.randomUUID() }),
+      // A group call's pairs name the group (L2), so the person rung directly also counts as in the group's call.
+      send: (payload) => latest.current.client?.send({ ...payload, targetId: peerId, roomId: latest.current.call.roomId ?? latest.current.call.id, ...(latest.current.call.groupId ? { groupId: latest.current.call.groupId } : {}), signalId: crypto.randomUUID() }),
       onSnapshot,
       log: (...args) => {
         noteCallEvent(peerId, ...args);
@@ -348,7 +350,7 @@ export default function CallOverlay({
     if (!next) { queue.current = null; return; }
     queue.current = next;
     const participants = [...new Set([userId, call.peerId, ...extrasRef.current.peerIds, ...queue.accepted])];
-    const sent = latest.current.client?.send({ type: 'call:invite', roomId: call.roomId ?? call.id, targetId: next, mode: callMode, participants });
+    const sent = latest.current.client?.send({ type: 'call:invite', roomId: call.roomId ?? call.id, targetId: next, mode: callMode, participants, ...(call.groupId ? { groupId: call.groupId } : {}) });
     setNotice(sent === false ? 'You are offline.' : `Inviting ${nameOf(next)}…`, sent === false ? NOTICE_PRIORITY.HIGH : NOTICE_PRIORITY.NORMAL);
   }
   useEffect(() => {
@@ -391,6 +393,24 @@ export default function CallOverlay({
       else done();
     }
   }, [signals, call.id]);
+
+  // L2: while connected to anyone in a group's call, the server hears so (now, then every GROUP_CALL_BEAT_MS) and the
+  // group shows the call with "Join" to members not in it; leaving (hang-up, the call ending, this screen closing)
+  // says so at once. A phone that vanishes stops repeating and the server drops it.
+  const inGroupRoom = Boolean(call.groupId) && (status === 'connected' || status === 'reconnecting'
+    || Object.values(extraSnapshots).some((item) => item.status === 'connected' || item.status === 'reconnecting'));
+  useEffect(() => {
+    if (!inGroupRoom) return undefined;
+    const say = (action) => latest.current.client?.send({ type: 'group:call', action, groupId: call.groupId, roomId: call.roomId ?? call.id, mode: call.mode });
+    say('join');
+    const beat = setInterval(() => say('beat'), GROUP_CALL_BEAT_MS);
+    return () => { clearInterval(beat); say('leave'); };
+  }, [inGroupRoom, call.groupId, call.roomId]);
+
+  // Joining a running group call (L2): the person chose to, so it connects at once (no ringing on either side).
+  useEffect(() => {
+    if (call.join && !engineRef.current) acceptCall();
+  }, [call.id]);
 
   // Peers whose pair ended leave the grid after their end state has been shown briefly.
   useEffect(() => {
@@ -549,7 +569,7 @@ export default function CallOverlay({
   function inviteParticipant(contact) {
     setAddOpen(false);
     const participants = [userId, call.peerId, ...extrasRef.current.peerIds];
-    const sent = latest.current.client?.send({ type: 'call:invite', roomId: call.roomId ?? call.id, targetId: contact.id, mode: callMode, participants });
+    const sent = latest.current.client?.send({ type: 'call:invite', roomId: call.roomId ?? call.id, targetId: contact.id, mode: callMode, participants, ...(call.groupId ? { groupId: call.groupId } : {}) });
     setNotice(sent === false ? 'You are offline.' : `Inviting ${contact.name}…`, sent === false ? NOTICE_PRIORITY.HIGH : NOTICE_PRIORITY.NORMAL);
   }
 

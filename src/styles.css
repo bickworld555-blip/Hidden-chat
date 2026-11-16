@@ -5754,3 +5754,11 @@ button.groups-sender { padding: 0; border: 0; background: none; font: inherit; f
 .wa-msg-info-modal .groups-info-section ul { list-style: none; margin: 0; padding: 0; }
 .wa-msg-info-modal .groups-info-section li { display: flex; justify-content: space-between; gap: 12px; padding: 6px 0; font-size: 14px; }
 .wa-msg-info-modal .groups-info-section time { color: var(--wa-sub, #667781); font-size: 12px; white-space: nowrap; }
+
+/* L2: a group's running call, with Join (GroupsView), like WhatsApp's ongoing-call bar. */
+.groups-call-banner { display: flex; align-items: center; gap: 12px; margin: 6px 10px; padding: 10px 12px; border-radius: 12px; background: color-mix(in srgb, var(--wa-green, #25d366) 16%, var(--wa-panel, #1f2c34)); color: var(--wa-text, #e9edef); }
+.groups-call-banner-icon { display: grid; place-items: center; width: 34px; height: 34px; flex: none; border-radius: 50%; background: var(--wa-green, #25d366); color: #fff; }
+.groups-call-banner-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.groups-call-banner-text strong { font-size: 14px; font-weight: 600; }
+.groups-call-banner-text small { overflow: hidden; color: var(--wa-sub, #8696a0); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.groups-call-banner-join { flex: none; padding: 7px 18px; border: 0; border-radius: 18px; background: var(--wa-green, #25d366); color: #fff; font-weight: 600; cursor: pointer; }

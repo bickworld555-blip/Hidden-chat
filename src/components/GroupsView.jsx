@@ -12,6 +12,7 @@ import { editGroupMessage, removeMember as removeMemberApi, resetInvite, setMemb
 import { groupChatKey, loadPins, setMessagePinned, toggleStar, useAccountData } from '../accountData.js';
 import { canEditMessage } from '../selection.js';
 import { appSettings } from '../settings.js';
+import { joinableGroupCall } from '../groupCalls.js';
 import { prepareForSend } from '../mediaQuality.js';
 import { isStickerContent, stickerContent } from '../stickers.js';
 import { deletedLabel, groupTickStatus, previewFor } from '../store.js';
@@ -416,7 +417,7 @@ function PendingGroupBody({ content, token, self }) {
   return <p className="groups-message-text"><FormattedText text={content} /></p>;
 }
 
-export default function GroupsView({ token, userId, client, revision, onClose, onStartGroupCall, onMessagePerson, onCallPerson, initialCreate = false, initialGroupId = '' }) {
+export default function GroupsView({ token, userId, client, revision, onClose, onStartGroupCall, onMessagePerson, onCallPerson, groupCalls = {}, onJoinGroupCall, initialCreate = false, initialGroupId = '' }) {
   // The member whose Message / Voice call / Video call sheet is open.
   const [personSheet, setPersonSheet] = useState(null);
   const openPerson = (member) => { if (member && member.id !== userId && (onMessagePerson || group?.role === 'admin')) setPersonSheet(member); };
@@ -728,6 +729,15 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
         throw caught;
       }
     });
+  };
+
+  // L2: the group's running call, shown with "Join" when I am not in it (after a missed or declined invite too).
+  const runningCall = group ? joinableGroupCall(groupCalls, group.id, userId) : null;
+  const JOIN_FAILED = { ended: 'The call has ended.', full: 'The call is full.', busy: 'You are already on a call.', offline: 'You are offline. Try again when connected.' };
+  const joinRunningCall = () => {
+    setError('');
+    onJoinGroupCall?.({ groupId: group.id, groupName: group.name, members: group.members })
+      .then((result) => { if (result?.ok) onClose(); else setError(JOIN_FAILED[result?.reason] ?? 'Could not join the call.'); });
   };
 
   const startCall = (mode, memberIds) => {
@@ -1137,6 +1147,16 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
         {inConversation && (
           <>
             {group.isAnnouncement && <p className="hm-announcement-note"><Megaphone size={14} aria-hidden="true" /> Community announcements: only admins send messages.</p>}
+            {runningCall && onJoinGroupCall && (
+              <div className="groups-call-banner" role="status">
+                <span className="groups-call-banner-icon" aria-hidden="true">{runningCall.mode === 'video' ? <Video size={18} /> : <Phone size={18} />}</span>
+                <span className="groups-call-banner-text">
+                  <strong>{runningCall.mode === 'video' ? 'Video call' : 'Voice call'} in progress</strong>
+                  <small>{runningCall.participants.map((id) => group.members.find((member) => member.id === id)?.name ?? 'Someone').join(', ')}</small>
+                </span>
+                <button type="button" className="groups-call-banner-join" onClick={joinRunningCall}>Join</button>
+              </div>
+            )}
             <PinnedBanner pins={pins} describe={describePinned} onJump={showMessage} canUnpin={canPin}
               onUnpin={(messageId) => setMessagePinned(chatKey, messageId, false).catch((caught) => setError(caught.message))} />
             <div className="groups-messages" aria-label="Group messages" ref={listRef}>

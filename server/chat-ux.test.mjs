@@ -564,3 +564,27 @@ test('a long message can be scrolled: the feed re-pins to the bottom only for a 
   assert.match(source, /const grew = Math\.abs\(height - stackHeight\) >= 1;/);
   assert.match(source, /if \(!resized && !grew\) return;\s*if \(!stickToBottomRef\.current\) return;/);
 });
+
+test('L2: the running group call is kept per group, shown with Join only to members not in it, and gone when it ends', async () => {
+  const { applyGroupCall, joinableGroupCall, withRunningCall } = await import('../src/groupCalls.js');
+  let calls = applyGroupCall({}, { type: 'group:call', groupId: 'g1', roomId: 'r1', mode: 'video', participants: ['ann', 'bob'] });
+  assert.deepEqual(calls.g1, { roomId: 'r1', mode: 'video', startedAt: null, participants: ['ann', 'bob'] });
+  assert.equal(joinableGroupCall(calls, 'g1', 'ann'), null, 'nothing to join for someone already in it');
+  assert.equal(joinableGroupCall(calls, 'g1', 'cat').roomId, 'r1');
+  assert.match(withRunningCall({ id: 'g1', preview: 'hi' }, calls, 'cat').preview, /Video call in progress · tap to join/);
+  assert.equal(withRunningCall({ id: 'g1', preview: 'hi' }, calls, 'ann').preview, 'hi');
+  calls = applyGroupCall(calls, { type: 'group:call', groupId: 'g1', roomId: null, participants: [] });
+  assert.deepEqual(calls, {});
+  assert.equal(applyGroupCall(calls, { type: 'group:call' }), calls, 'malformed events change nothing');
+
+  const overlay = readFileSync(new URL('../src/components/CallOverlay.jsx', import.meta.url), 'utf8');
+  // In the room: the server hears so now and on every beat, and "leave" when it ends; a join connects at once.
+  assert.match(overlay, /say\('join'\);\s*const beat = setInterval\(\(\) => say\('beat'\), GROUP_CALL_BEAT_MS\);\s*return \(\) => \{ clearInterval\(beat\); say\('leave'\); \};/);
+  assert.match(overlay, /if \(call\.join && !engineRef\.current\) acceptCall\(\);/);
+  // The group travels with every pair signal and invite, so whoever is rung also reports being in the group's call.
+  assert.match(overlay, /latest\.current\.call\.groupId \? \{ groupId: latest\.current\.call\.groupId \}/);
+  assert.equal((overlay.match(/\.\.\.\(call\.groupId \? \{ groupId: call\.groupId \} : \{\}\)/g) ?? []).length, 2);
+  const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
+  assert.match(app, /if \(event\.type === 'connection:ready'\) setGroupCalls\(\{\}\);/, 'a fresh connection starts the list over');
+  assert.match(app, /invite: \{ participants: reply\.participants \}, join: true, groupId/);
+});

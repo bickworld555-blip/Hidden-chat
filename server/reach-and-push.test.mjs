@@ -243,3 +243,95 @@ test('C1: a group-call invite to a phone with no app open rings it by push, wait
   again.close();
   host.close();
 });
+
+test('L2: a group shows its running call to every member, a member not in it joins (linked to everyone in it), leaving and silence end it', async () => {
+  const { a, b } = await pair();
+  counter += 1;
+  const c = (await api('/api/v1/auth/register', { method: 'POST', body: { username: `reachc${counter}`, dob: '1990-04-12', password: PASSWORD } })).body;
+  const outsider = (await api('/api/v1/auth/register', { method: 'POST', body: { username: `reacho${counter}`, dob: '1990-04-12', password: PASSWORD } })).body;
+  await api('/api/v1/contacts', { session: a, method: 'POST', body: { userId: c.user.id } });
+  await api('/api/v1/contacts', { session: c, method: 'POST', body: { userId: a.user.id } });
+  const created = await api('/api/v1/groups', { session: a, method: 'POST', body: { name: 'Join call', memberIds: [b.user.id, c.user.id] } });
+  assert.equal(created.status, 201);
+  const groupId = created.body.id;
+  const [host, bob, carol, stranger] = await Promise.all([connect(a), connect(b), connect(c), connect(outsider)]);
+  await Promise.all([host, bob, carol, stranger].map(ready));
+  const callEvents = (socket) => socket.events.filter((event) => event.type === 'group:call' && event.groupId === groupId);
+
+  // Nothing to join yet.
+  carol.send(JSON.stringify({ type: 'group:call-join', groupId }));
+  await until(() => carol.events.find((event) => event.type === 'group:call-join' && event.ok === false && event.reason === 'ended'), 'no call to join');
+
+  // The host and Bob are connected in the group's call: every member hears who is in it.
+  host.send(JSON.stringify({ type: 'group:call', action: 'join', groupId, roomId: 'room-l2', mode: 'audio' }));
+  bob.send(JSON.stringify({ type: 'group:call', action: 'join', groupId, roomId: 'room-l2', mode: 'audio' }));
+  await until(() => callEvents(carol).some((event) => event.participants.length === 2), 'Carol sees both in the call');
+  const shown = callEvents(carol).at(-1);
+  assert.deepEqual([shown.roomId, shown.mode, [...shown.participants].sort()], ['room-l2', 'audio', [a.user.id, b.user.id].sort()]);
+  // A repeat ("beat") changes nothing, so nobody is told again.
+  const told = callEvents(carol).length;
+  host.send(JSON.stringify({ type: 'group:call', action: 'beat', groupId, roomId: 'room-l2', mode: 'audio' }));
+  await sleep(150);
+  assert.equal(callEvents(carol).length, told, 'a beat is quiet');
+  // Someone outside the group neither sees it nor may join it.
+  assert.equal(callEvents(stranger).length, 0);
+  stranger.send(JSON.stringify({ type: 'group:call-join', groupId }));
+  await until(() => stranger.events.some((event) => event.type === 'error'), 'a non-member is refused');
+  // A second call in the same group is not listed over the running one.
+  carol.send(JSON.stringify({ type: 'group:call', action: 'join', groupId, roomId: 'room-other', mode: 'video' }));
+  await sleep(150);
+  assert.equal(callEvents(host).at(-1).roomId, 'room-l2');
+
+  // Carol joins: she gets the room and everyone in it, and may now place pair calls to Bob (no contact of hers).
+  carol.send(JSON.stringify({ type: 'group:call-join', groupId }));
+  const joined = await until(() => carol.events.find((event) => event.type === 'group:call-join' && event.ok === true), 'the join reply');
+  assert.deepEqual([joined.roomId, joined.mode, [...joined.participants].sort()], ['room-l2', 'audio', [a.user.id, b.user.id].sort()]);
+  carol.send(JSON.stringify({ type: 'call:signal', targetId: b.user.id, callId: 'pair-carol-bob', roomId: 'room-l2', groupId, mode: 'audio', signalId: 's1', signal: { type: 'offer', sdp: 'v=0' } }));
+  const offer = await until(() => bob.events.find((event) => event.type === 'call:signal' && event.callId === 'pair-carol-bob'), 'Bob gets Carol\'s offer');
+  assert.deepEqual([offer.roomId, offer.groupId], ['room-l2', groupId], 'the pair names its room and group, so Bob takes it without ringing');
+  carol.send(JSON.stringify({ type: 'group:call', action: 'join', groupId, roomId: 'room-l2', mode: 'audio' }));
+  await until(() => callEvents(host).at(-1)?.participants.length === 3, 'three in the call');
+
+  // Leaving: the list shrinks; the last one out ends it for everyone.
+  for (const [socket] of [[host], [bob], [carol]]) socket.send(JSON.stringify({ type: 'group:call', action: 'leave', groupId, roomId: 'room-l2' }));
+  await until(() => callEvents(bob).at(-1)?.roomId === null && callEvents(bob).at(-1)?.participants.length === 0, 'the call ended');
+
+  // A reconnecting member is told of a running call at once.
+  host.send(JSON.stringify({ type: 'group:call', action: 'join', groupId, roomId: 'room-l2b', mode: 'video' }));
+  await until(() => callEvents(bob).at(-1)?.roomId === 'room-l2b', 'a new call');
+  const later = await connect(c);
+  await until(() => callEvents(later).some((event) => event.roomId === 'room-l2b'), 'a fresh connection hears of the running call');
+  host.send(JSON.stringify({ type: 'group:call', action: 'leave', groupId, roomId: 'room-l2b' }));
+  await until(() => callEvents(later).at(-1)?.participants.length === 0, 'and of its end');
+  for (const socket of [host, bob, carol, stranger, later]) socket.close();
+});
+
+test('L2: a participant that goes silent (crash, lost network) leaves the group call by itself', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'relay-l2-'));
+  const quick = createChatServer({ port: 0, host: '127.0.0.1', databasePath: join(dir, 'db.sqlite'), pushSender: fakePush, groupCallPresenceMs: 300 });
+  const url = `http://127.0.0.1:${(await quick.listen()).port}`;
+  try {
+    const call = async (path, session, body) => (await (await fetch(url + path, { method: body ? 'POST' : 'GET', headers: { 'X-HM-Client': '3', ...(session ? { Authorization: `Bearer ${session.token}` } : {}), ...(body ? { 'Content-Type': 'application/json' } : {}) }, body: body ? JSON.stringify(body) : undefined })).json());
+    const [x, y] = await Promise.all(['silentx', 'silenty'].map((name) => call('/api/v1/auth/register', null, { username: name, dob: '1990-04-12', password: PASSWORD })));
+    await call('/api/v1/contacts', x, { userId: y.user.id });
+    await call('/api/v1/contacts', y, { userId: x.user.id });
+    const group = await call('/api/v1/groups', x, { name: 'Silent', memberIds: [y.user.id] });
+    const open = (session) => {
+      const socket = new WebSocket(url.replace('http:', 'ws:') + '/ws', [`relay.auth.${session.token}`, 'relay.v1', 'relay.client.3']);
+      socket.events = [];
+      socket.on('message', (raw) => socket.events.push(JSON.parse(raw.toString())));
+      return new Promise((resolve) => socket.once('open', () => resolve(socket)));
+    };
+    const [sx, sy] = await Promise.all([open(x), open(y)]);
+    await until(() => sx.events.some((event) => event.type === 'connection:ready') && sy.events.some((event) => event.type === 'connection:ready'), 'ready');
+    sx.send(JSON.stringify({ type: 'group:call', action: 'join', groupId: group.id, roomId: 'room-silent', mode: 'audio' }));
+    await until(() => sy.events.some((event) => event.type === 'group:call' && event.participants.length === 1), 'in the call');
+    // No beat follows: after the presence time the server drops it and tells the group.
+    await until(() => sy.events.some((event) => event.type === 'group:call' && event.roomId === null), 'dropped after silence', 3000);
+    sx.close();
+    sy.close();
+  } finally {
+    await quick.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
