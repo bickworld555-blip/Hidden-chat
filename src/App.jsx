@@ -215,6 +215,8 @@ export default function App() {
   const revokedRef = useRef(null);
   // The XMPP session for accounts moved over (src/xmpp/session.js); null for everyone else.
   const xmppRef = useRef(null);
+  // The latest link of the chain that opens and handles incoming events in order (a background fetch waits for it).
+  const pendingEventsRef = useRef(Promise.resolve());
   const removingRef = useRef(new Set());
   const [authOpen, setAuthOpen] = useState(false);
   // Light unless this device chose dark (src/appearance.js).
@@ -598,6 +600,7 @@ export default function App() {
           // read as "not encrypted").
           if (event?.opened) {
             openChain = openChain.then(() => handleEvent(event)).catch((error) => console.error('Could not handle a message:', error));
+            pendingEventsRef.current = openChain;
             return;
           }
           if (!needsOpening(event)) {
@@ -605,6 +608,7 @@ export default function App() {
             return;
           }
           openChain = openChain.then(() => openEvent(event)).then(handleEvent).catch((error) => console.error('Could not handle a message:', error));
+          pendingEventsRef.current = openChain;
         };
         realtime = new RealtimeClient(sessionToken, onRealtimeEvent, (state) => { noteCallEvent('relay', state); setConnection(state); });
         realtime.onRevoked = () => revokedRef.current?.();
@@ -817,7 +821,8 @@ export default function App() {
     // receipts from this phone, notification with the real text), then go quiet again. On screen: the usual check.
     const stopWake = onNative('xmppWake', () => {
       if (nativeShell() && document.visibilityState !== 'visible') {
-        xmppRef.current?.backgroundFetch?.({ stayOffline: () => document.visibilityState !== 'visible' && !inCall() });
+        // settle: the opening and handling of what arrived (decrypted, stored, notified) finishes before it goes quiet.
+        xmppRef.current?.backgroundFetch?.({ stayOffline: () => document.visibilityState !== 'visible' && !inCall(), settle: () => pendingEventsRef.current });
       } else {
         wake();
       }

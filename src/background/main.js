@@ -77,7 +77,6 @@ async function run() {
     const finish = async (reason) => {
       if (finished) return;
       finished = true;
-      clearInterval(watch);
       session.suspend();
       // Whatever is still being opened finishes (or is left unacknowledged for the app).
       await session.transport.dispatching.catch(() => {});
@@ -85,12 +84,10 @@ async function run() {
       resolve();
     };
     stopNow = () => finish('stop-for-app');
-    // Start from a clean, suspended state so the fetch window connects, waits for quiet and ends cleanly.
+    // Start from a clean, suspended state so the fetch connects and ends on the server's "that was everything" (its
+    // ping reply comes after the last waiting message; this page's handlers store each one before it counts).
     session.suspend();
-    session.backgroundFetch({ stayOffline: () => true });
-    const watch = setInterval(() => {
-      if (session.transport.suspended && session.transport.state !== 'connecting') finish('quiet');
-    }, 250);
+    session.backgroundFetch({ stayOffline: () => true }).then((reason) => finish(reason));
   });
   return stopping ? 'stopped-for-app' : 'done';
 }

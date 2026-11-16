@@ -708,3 +708,67 @@ test('ackAfterHandled (background page): a stanza counts as handled only once st
   assert.match(s2.sent.at(-1), /h="1"/);
   plain.t.close();
 });
+
+test('pingServer ("offline queue done"): the reply counts only once everything before it has been handled', async () => {
+  const server = fakeServer();
+  const handlers = [];
+  const t = new XmppTransport({
+    fetchToken: async () => ({ transport: 'xmpp', jid: MY_JID, token: 'good-token', websocket: `wss://${HOST}/xmpp-websocket` }),
+    onEvent: (event) => (event.type === 'receipt' ? new Promise((resolve) => handlers.push(resolve)) : undefined),
+    createSocket: server.createSocket, setTimer: (fn, ms) => setTimeout(fn, ms), clearTimer: (id) => clearTimeout(id), subtle: webcrypto.subtle, random: () => 0.5,
+    ackAfterHandled: true,
+  });
+  await t.connect();
+  await until(() => t.state === 'online', 'online');
+  const socket = server.sockets[0];
+  let replied = null;
+  t.pingServer({ timeoutMs: 2000 }).then((ok) => { replied = ok; });
+  const ping = parseXml(socket.sent.at(-1));
+  assert.equal(local(ping), 'iq');
+  assert.equal(ping.attrs.to, HOST, 'to the server itself');
+  assert.ok(child(ping, 'ping', 'urn:xmpp:ping'));
+  // What waited comes first (as ejabberd sends it), then the reply.
+  const peer = `${localpartOf('peer', 'p1')}@${HOST}/app`;
+  socket.deliver(xml('message', { from: peer }, xml('received', { xmlns: 'urn:xmpp:receipts', id: 'w1' })));
+  socket.deliver(xml('iq', { type: 'result', id: ping.attrs.id, from: HOST }));
+  await until(() => handlers.length === 1, 'handler running');
+  for (let i = 0; i < 5; i += 1) await flush();
+  assert.equal(replied, null, 'not "all here" while the message before it is still being handled');
+  handlers[0]();
+  await until(() => replied !== null, 'reply reported');
+  assert.equal(replied, true);
+  t.close();
+
+  // Not online, or no reply in time: false.
+  const offline = new XmppTransport({ fetchToken: async () => ({}), setTimer: (fn, ms) => setTimeout(fn, ms), clearTimer: (id) => clearTimeout(id) });
+  assert.equal(await offline.pingServer(), false);
+});
+
+test('session: a background fetch ends on the server\'s "that was everything" and the app\'s handling, else falls back', async () => {
+  const h = sessionHarness();
+  const session = await h.start();
+  const calls = [];
+  let answer;
+  h.fake.resume = () => { calls.push('resume'); h.fake.state = 'online'; };
+  h.fake.suspend = () => { calls.push('suspend'); h.fake.state = 'offline'; };
+  h.fake.pingServer = () => { calls.push('ping'); return new Promise((resolve) => { answer = resolve; }); };
+  h.fake.state = 'offline';
+  let settled;
+  const ended = session.backgroundFetch({ idleMs: 50, maxMs: 5000, settle: () => new Promise((resolve) => { settled = resolve; }) });
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  assert.deepEqual(calls, ['resume', 'ping'], 'no quiet-timer ending while the ping is out, however quiet');
+  answer(true);
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.ok(!calls.includes('suspend'), 'waits for the app to finish handling what came');
+  settled();
+  assert.equal(await ended, 'offline-done');
+  assert.deepEqual(calls, ['resume', 'ping', 'suspend']);
+
+  // The ping fails (old server, timeout): the quiet spell ends it, as before.
+  calls.length = 0;
+  h.fake.pingServer = async () => false;
+  assert.equal(await session.backgroundFetch({ idleMs: 50, maxMs: 5000 }), 'quiet');
+  // The limit whatever happens.
+  h.fake.pingServer = () => new Promise(() => {});
+  assert.equal(await session.backgroundFetch({ idleMs: 50, maxMs: 300 }), 'limit');
+});

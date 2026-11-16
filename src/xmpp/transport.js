@@ -64,6 +64,7 @@ export class XmppTransport {
     // A handler that fails stops the count there (h is a running total, so nothing after it may be counted either).
     this.handled = 0;
     this.handledStuck = false;
+    this.pendingPings = new Map();   // our own pings (pingServer): id -> { resolve, timer }
     this.state = 'offline';
     this.closed = false;
     this.suspended = false;   // off screen on the phone (suspend): no connection until resume()
@@ -182,6 +183,13 @@ export class XmppTransport {
         // The server's ping (XEP-0199; mod_ping ends a session that does not answer) and any other request get a
         // reply at once, ahead of the message queue.
         if (name === 'iq' && (el.attrs.type === 'get' || el.attrs.type === 'set')) { this.#countHandled(true); return this.#answerIq(el); }
+        // The reply to our own ping (pingServer): reported only once every stanza that came before it is handled.
+        const ping = name === 'iq' ? this.pendingPings.get(el.attrs.id) : null;
+        if (ping) {
+          this.pendingPings.delete(el.attrs.id);
+          this.dispatching = this.dispatching.then(() => { this.clearTimer(ping.timer); this.#countHandled(true); ping.resolve(el.attrs.type === 'result'); });
+          return;
+        }
         this.dispatching = this.dispatching.then(() => this.#dispatch(el)).then(() => this.#countHandled(true), () => this.#countHandled(false));
       }
     };
@@ -195,6 +203,23 @@ export class XmppTransport {
   // What may be acknowledged to the server: everything received, or (ackAfterHandled) only what was handled.
   #acknowledgeable() {
     return this.ackAfterHandled ? this.handled : this.sm.inbound;
+  }
+
+  /**
+   * Pings the server (XEP-0199) and resolves true once its reply has arrived AND every stanza received before the
+   * reply has been handled; false when not online or after `timeoutMs`. ejabberd replays a device's offline messages
+   * when it takes the initial presence, before answering anything sent after it, so a ping sent once online is
+   * answered after the last of them: "everything that waited is here" (src/xmpp/session.js backgroundFetch).
+   */
+  pingServer({ timeoutMs = 8000 } = {}) {
+    if (this.state !== 'online' || !this.socket || !this.jid) return Promise.resolve(false);
+    this.pingCounter = (this.pingCounter ?? 0) + 1;
+    const id = `hm-ping-${this.pingCounter}`;
+    return new Promise((resolve) => {
+      const timer = this.setTimer(() => { if (this.pendingPings.delete(id)) resolve(false); }, timeoutMs);
+      this.pendingPings.set(id, { resolve, timer });
+      this.#write(String(xml('iq', { type: 'get', id, to: this.jid.split('@')[1] }, xml('ping', { xmlns: NS_PING }))));
+    });
   }
 
   #answerIq(el) {

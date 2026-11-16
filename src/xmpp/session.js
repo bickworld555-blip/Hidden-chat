@@ -329,26 +329,51 @@ export async function startXmppSession({ sessionToken, userId, deliver, legacySe
     suspend: () => { clearInterval(fetchTimer); fetchTimer = null; transport.suspend(); },
     resume: () => { clearInterval(fetchTimer); fetchTimer = null; transport.resume(); },
     /**
-     * Woken by push while off screen (src/App.jsx): connect, take what waited (each message is opened, stored and
-     * acknowledged by the usual handlers, which also post its notification with the real text), then end the session
-     * cleanly once it has gone quiet. `stayOffline()` is asked before suspending again (false: the app came back to
-     * screen, or a call started).
+     * Woken by push while off screen (src/App.jsx, src/background/main.js): connect, take what waited (each message is
+     * opened, stored and acknowledged by the usual handlers, which also post its notification with the real text),
+     * then end the session cleanly. It ends on the server's word, like WhatsApp's "offline resume completed": once
+     * online it pings the server, whose reply comes after every message that was waiting (checked on ejabberd 24.12),
+     * then waits for `settle()` (the app's own handling of them). Only if the ping fails does it fall back to a quiet
+     * spell (`idleMs`); `maxMs` is the limit whatever happens. `stayOffline()` is asked before suspending (false: the
+     * app came back to screen, or a call started). Resolves how it ended: 'offline-done' | 'quiet' | 'limit' | 'kept'.
      */
-    backgroundFetch({ stayOffline = () => true, idleMs = FETCH_IDLE_MS, maxMs = FETCH_MAX_MS } = {}) {
+    backgroundFetch({ stayOffline = () => true, idleMs = FETCH_IDLE_MS, maxMs = FETCH_MAX_MS, settle = async () => {} } = {}) {
       const started = Date.now();
       lastActivity = started;
       clearInterval(fetchTimer);
       transport.resume();
-      fetchTimer = setInterval(() => {
-        const now = Date.now();
-        const quiet = transport.state === 'online' && now - lastActivity >= idleMs;
-        if (!quiet && now - started < maxMs) return;
-        clearInterval(fetchTimer);
-        fetchTimer = null;
-        if (!stayOffline()) return;
-        for (const [to, batch] of [...receiptBatches]) { clearTimeout(batch.timer); flushReceipts(to); }
-        transport.suspend();
-      }, 250);
+      let pinged = false;
+      let pingFailed = false;
+      let ending = false;
+      return new Promise((resolve) => {
+        const end = (reason) => {
+          if (ending) return;
+          ending = true;
+          clearInterval(fetchTimer);
+          fetchTimer = null;
+          if (!stayOffline()) { resolve('kept'); return; }
+          for (const [to, batch] of [...receiptBatches]) { clearTimeout(batch.timer); flushReceipts(to); }
+          transport.suspend();
+          resolve(reason);
+        };
+        fetchTimer = setInterval(() => {
+          const now = Date.now();
+          if (now - started >= maxMs) { end('limit'); return; }
+          if (transport.state !== 'online') return;
+          if (!pinged) {
+            pinged = true;
+            Promise.resolve(transport.pingServer?.({ timeoutMs: Math.max(1000, maxMs - (now - started)) }))
+              .then(async (ok) => {
+                if (!ok) { pingFailed = true; return; }
+                await Promise.resolve(settle()).catch(() => {});
+                end('offline-done');
+              })
+              .catch(() => { pingFailed = true; });
+            return;
+          }
+          if (pingFailed && now - lastActivity >= idleMs) end('quiet');
+        }, 100);
+      });
     },
     /** A wake-up push arrived (Android): connect now if the connection is down. */
     // A push, a network change or the app returning: check the connection now (src/xmpp/transport.js checkNow).
