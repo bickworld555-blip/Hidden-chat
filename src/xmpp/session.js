@@ -41,6 +41,10 @@ const RECEIPT_MEMORY = 5000;
 export const NUDGE_AFTER_MS = 10_000;
 // Delivery receipts to one device are gathered this long, up to MAX_RECEIPTS_PER_STANZA ids per stanza.
 export const RECEIPT_BATCH_MS = 250;
+// A background fetch (the phone app off screen, woken by push) ends once nothing has arrived for FETCH_IDLE_MS
+// after coming online, or after FETCH_MAX_MS whatever happens.
+export const FETCH_IDLE_MS = 2500;
+export const FETCH_MAX_MS = 15_000;
 export const MAX_RECEIPTS_PER_STANZA = 50;
 
 /**
@@ -66,6 +70,9 @@ export async function startXmppSession({ sessionToken, userId, deliver, legacySe
   const inFlight = new Map();
   // Messages waiting for the receiver's delivery receipt: id -> { peerId, timer }.
   const nudges = new Map();
+  // Last time anything arrived or the connection came online (a background fetch ends when it goes quiet).
+  let lastActivity = 0;
+  let fetchTimer = null;
   const forgetNudge = (id) => { const pending = nudges.get(id); if (pending) { clearTimeout(pending.timer); nudges.delete(id); } };
   const nudgeLater = (id, peerId) => {
     forgetNudge(id);
@@ -118,6 +125,8 @@ export async function startXmppSession({ sessionToken, userId, deliver, legacySe
       throw new Error(`XMPP sign-in token: HTTP ${response.status}`);
     },
     onEvent: (event) => {
+      // Anything arriving keeps a background fetch open (backgroundFetch ends once it goes quiet).
+      lastActivity = Date.now();
       if (event.type === 'message') {
         const parsed = parseEnvelope(event.envelope);
         // The envelope must come from the device that sent the stanza (its ratchet is that device's).
@@ -170,7 +179,7 @@ export async function startXmppSession({ sessionToken, userId, deliver, legacySe
     },
     // Back online after a drop: a call that was reconnecting restarts ICE now (callEngine onSignalingRestored), since
     // signals sent into the dead connection were lost.
-    onState: (state) => { onTransportState(state); if (state === 'online') signalingRestored(); },
+    onState: (state) => { onTransportState(state); if (state === 'online') { lastActivity = Date.now(); signalingRestored(); } },
   });
 
   async function sendMessage(event) {
@@ -316,8 +325,30 @@ export async function startXmppSession({ sessionToken, userId, deliver, legacySe
     },
     setActive: (active) => transport.setActive(active),
     // The phone app off screen / back (src/App.jsx): see transport.js suspend.
-    suspend: () => transport.suspend(),
-    resume: () => transport.resume(),
+    suspend: () => { clearInterval(fetchTimer); fetchTimer = null; transport.suspend(); },
+    resume: () => { clearInterval(fetchTimer); fetchTimer = null; transport.resume(); },
+    /**
+     * Woken by push while off screen (src/App.jsx): connect, take what waited (each message is opened, stored and
+     * acknowledged by the usual handlers, which also post its notification with the real text), then end the session
+     * cleanly once it has gone quiet. `stayOffline()` is asked before suspending again (false: the app came back to
+     * screen, or a call started).
+     */
+    backgroundFetch({ stayOffline = () => true, idleMs = FETCH_IDLE_MS, maxMs = FETCH_MAX_MS } = {}) {
+      const started = Date.now();
+      lastActivity = started;
+      clearInterval(fetchTimer);
+      transport.resume();
+      fetchTimer = setInterval(() => {
+        const now = Date.now();
+        const quiet = transport.state === 'online' && now - lastActivity >= idleMs;
+        if (!quiet && now - started < maxMs) return;
+        clearInterval(fetchTimer);
+        fetchTimer = null;
+        if (!stayOffline()) return;
+        for (const [to, batch] of [...receiptBatches]) { clearTimeout(batch.timer); flushReceipts(to); }
+        transport.suspend();
+      }, 250);
+    },
     /** A wake-up push arrived (Android): connect now if the connection is down. */
     // A push, a network change or the app returning: check the connection now (src/xmpp/transport.js checkNow).
     wake: () => transport.checkNow(),

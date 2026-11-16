@@ -84,11 +84,26 @@ final class Alerts {
      * on the notification and, on most launchers, the app icon badge. `sender` names the person in a group (null
      * for one-to-one chats); `avatar` is the server path of the photo to show (null: none).
      */
+    // When each conversation's notification was last posted (tag -> elapsed ms): PushService's fallback.
+    private static final java.util.Map<String, Long> postedAt = new java.util.HashMap<>();
+
+    /** Whether a notification for this conversation (tag) was posted at or after `since` (elapsedRealtime). */
+    static boolean postedSince(String tag, long since) {
+        synchronized (Alerts.class) {
+            Long at = postedAt.get(tag);
+            return at != null && at >= since;
+        }
+    }
+
     static boolean showMessage(Context context, String channel, String title, String body, String tag, String open, int count,
                                String messageId, String sender, String avatar) {
         if (!firstNotice(messageId)) return true;
         String channelId = NotificationChannels.isMessageChannel(channel) ? channel : NotificationChannels.DIRECT_MESSAGES;
         String key = tag == null || tag.isEmpty() ? channelId : tag;
+        synchronized (Alerts.class) {
+            postedAt.put(key, android.os.SystemClock.elapsedRealtime());
+            if (postedAt.size() > 500) postedAt.clear();
+        }
         String name = title == null || title.isEmpty() ? "Hidden Messenger" : title;
         boolean group = channelId.startsWith(NotificationChannels.GROUP_MESSAGES);
         java.util.ArrayList<Line> lines;

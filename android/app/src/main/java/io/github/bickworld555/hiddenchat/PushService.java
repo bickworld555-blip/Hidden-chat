@@ -101,20 +101,45 @@ public class PushService extends FirebaseMessagingService {
         boolean running = HiddenNativePlugin.emitXmppWake();
         String groupId = body.optString("groupId");
         if (groupId.isEmpty()) PushRegistration.confirmXmppWake(this);
+        if (running) {
+            // The app's code is alive (its screen is in the background): like WhatsApp's push service, keep the process
+            // awake while it connects, decrypts and stores what waits, sends delivery receipts from this phone and
+            // posts the notification with the real text (src/xmpp/session.js backgroundFetch). If it has not posted
+            // one for this conversation in time, the sealed notice below appears instead.
+            MessagingService.startSync(this, BACKGROUND_FETCH_MS);
+            final String tag = !groupId.isEmpty() ? "group:" + groupId : from.isEmpty() ? "xmpp-wake" : "chat:" + from;
+            final long pushedAt = android.os.SystemClock.elapsedRealtime();
+            final android.content.Context app = getApplicationContext();
+            new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
+                if (Alerts.postedSince(tag, pushedAt)) return;
+                RelaySession current = RelaySession.read(app);
+                if (current != null) showSealedWake(app, current, from, groupId);
+            }, FALLBACK_NOTICE_MS);
+            return;
+        }
+        showSealedWake(this, session, from, groupId);
+        Log.i(TAG, "xmpp wake-up while the app is closed: collected when it opens");
+    }
+
+    // How long a living app gets to fetch in the background, and when the sealed notice stands in for it.
+    private static final long BACKGROUND_FETCH_MS = 20_000;
+    private static final long FALLBACK_NOTICE_MS = 8_000;
+
+    /** The sealed notice (sender's name, "🔒 Message"): the app is closed, or did not post the real one in time. */
+    private static void showSealedWake(android.content.Context context, RelaySession session, String from, String groupId) {
         if (!groupId.isEmpty()) {
             // A group message: the group's notification, as for "gmsg" pushes.
             if (session.mutedGroups.contains(groupId)) return;
             String tag = "group:" + groupId;
-            Alerts.showMessage(this, NotificationChannels.messageChannel(this, true, session.groupSound),
-                RelaySession.groupName(this, groupId, "Group"), MessagePreview.of("e2e2:"), tag, tag, 0, null, RelaySession.userName(this, from, ""), null);
+            Alerts.showMessage(context, NotificationChannels.messageChannel(context, true, session.groupSound),
+                RelaySession.groupName(context, groupId, "Group"), MessagePreview.of("e2e2:"), tag, tag, 0, null, RelaySession.userName(context, from, ""), null);
             return;
         }
         if (!from.isEmpty() && session.mutedChats.contains(from)) return;
         String tag = from.isEmpty() ? "xmpp-wake" : "chat:" + from;
-        Alerts.showMessage(this, NotificationChannels.messageChannel(this, false, session.messageSound),
-            RelaySession.userName(this, from, "Hidden Messenger"), MessagePreview.of("e2e2:"), tag, tag, 0, null,
+        Alerts.showMessage(context, NotificationChannels.messageChannel(context, false, session.messageSound),
+            RelaySession.userName(context, from, "Hidden Messenger"), MessagePreview.of("e2e2:"), tag, tag, 0, null,
             null, from.isEmpty() ? null : Avatars.pathFor(from));
-        if (!running) Log.i(TAG, "xmpp wake-up while the app is closed: collected when it opens");
     }
 
     private void onGroupMessage(RelaySession session, JSONObject body) {

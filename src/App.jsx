@@ -785,7 +785,15 @@ export default function App() {
     document.addEventListener('visibilitychange', sync);
     window.addEventListener('online', wake);
     navigator.connection?.addEventListener?.('change', wake);
-    const stopWake = onNative('xmppWake', wake);
+    // A push while off screen in the phone app: fetch now, in the background, like WhatsApp (decrypted, stored,
+    // receipts from this phone, notification with the real text), then go quiet again. On screen: the usual check.
+    const stopWake = onNative('xmppWake', () => {
+      if (nativeShell() && document.visibilityState !== 'visible') {
+        xmppRef.current?.backgroundFetch?.({ stayOffline: () => document.visibilityState !== 'visible' && !inCall() });
+      } else {
+        wake();
+      }
+    });
     return () => {
       clearTimeout(suspendTimer);
       document.removeEventListener('visibilitychange', sync);

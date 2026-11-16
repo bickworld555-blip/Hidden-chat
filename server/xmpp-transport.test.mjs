@@ -642,3 +642,28 @@ test('batched receipts: several <received/> in one stanza go out together and ea
   assert.deepEqual(events.filter((event) => event.type === 'receipt').map((event) => event.id), ['x1', 'x2']);
   t.close();
 });
+
+test('session: a background fetch (woken by push off screen) connects, stays while things arrive, then suspends cleanly', async () => {
+  const h = sessionHarness();
+  const session = await h.start();
+  const calls = [];
+  h.fake.resume = () => { calls.push('resume'); h.fake.state = 'online'; h.options().onState?.('online'); };
+  h.fake.suspend = () => { calls.push('suspend'); h.fake.state = 'offline'; };
+  h.fake.state = 'offline';
+  session.backgroundFetch({ idleMs: 60, maxMs: 2000 });
+  assert.deepEqual(calls, ['resume']);
+  // Messages keep arriving: it stays connected.
+  for (let i = 0; i < 3; i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    h.options().onEvent({ type: 'receipt', id: `r${i}`, from: 'dpeer@h/app' });
+  }
+  assert.deepEqual(calls, ['resume'], 'not while things still arrive');
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  assert.deepEqual(calls, ['resume', 'suspend'], 'quiet: the session ends cleanly');
+
+  // Back on screen before it went quiet: it stays connected.
+  calls.length = 0;
+  session.backgroundFetch({ idleMs: 60, maxMs: 2000, stayOffline: () => false });
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  assert.deepEqual(calls, ['resume']);
+});
