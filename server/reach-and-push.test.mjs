@@ -59,7 +59,9 @@ async function until(check, label, timeout = 4000) {
 }
 const ready = (socket) => until(() => socket.events.some((event) => event.type === 'connection:ready'), 'ready');
 const signalsOf = (socket, callId, type) => socket.events.filter((event) => event.type === 'call:signal' && event.callId === callId && event.signal?.type === type);
-const offer = (socket, targetId, callId) => socket.send(JSON.stringify({ type: 'call:signal', targetId, callId, mode: 'audio', signalId: `${callId}-o`, signal: { type: 'offer', sdp: 'v=0 x' } }));
+// As the app sends it: every call carries its own id as its room id (src/components/CallOverlay.jsx). Without it
+// these tests passed while every real call skipped the missed-call push and the "unavailable" timer.
+const offer = (socket, targetId, callId) => socket.send(JSON.stringify({ type: 'call:signal', targetId, callId, roomId: callId, mode: 'audio', signalId: `${callId}-o`, signal: { type: 'offer', sdp: 'v=0 x' } }));
 
 test('a call to an offline phone never shows "Ringing", and ends as "unavailable" when no device confirms', async () => {
   const { a, b, token } = await pair();

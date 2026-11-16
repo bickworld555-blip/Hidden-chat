@@ -3052,7 +3052,12 @@ export function createChatServer({
         }
         const initialOffer = signal.type === 'offer' && !activeCall;
         // A pair inside a group call carries the room id, so devices already in that room join without ringing.
-        const roomId = typeof event.roomId === 'string' && event.roomId.length <= 80 ? event.roomId : (activeCall?.roomId ?? null);
+        // The app sends every call's own id as its room id (src/components/CallOverlay.jsx); only a different id names
+        // a group room. Taking the call's own id for a room made every one-to-one call look like a group pair, which
+        // turned off the missed-call push to an offline phone, the 30 s "unavailable" timer and the silencing of
+        // unknown callers for every real call.
+        const requestedRoom = typeof event.roomId === 'string' && event.roomId.length <= 80 && event.roomId !== callId ? event.roomId : null;
+        const roomId = requestedRoom ?? activeCall?.roomId ?? null;
         if (initialOffer) {
           // A callee device on an app too old to confirm keeps the old rule (ringing once the offer reaches a socket).
           // A phone rung by push (no socket) confirms only if the app that registered it can (client_protocol).
