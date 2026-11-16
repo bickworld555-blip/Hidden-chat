@@ -41,7 +41,17 @@ final class FetchWake {
         } catch (RuntimeException ignored) { }
     }
 
+    // When the last fetch completed (elapsedRealtime), for PushService's sealed fallback.
+    private static volatile long completedAt;
+
+    /** Whether a fetch completed at or after `since` (elapsedRealtime): everything waiting was opened and notified. */
+    static boolean completedSince(long since) {
+        long at = completedAt;
+        return at > 0 && at >= since;
+    }
+
     static void markFetched(Context context) {
+        completedAt = android.os.SystemClock.elapsedRealtime();
         context.getApplicationContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
             .putLong("lastFetch", System.currentTimeMillis()).apply();
     }

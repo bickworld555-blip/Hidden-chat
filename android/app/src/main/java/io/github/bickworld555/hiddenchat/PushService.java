@@ -112,28 +112,14 @@ public class PushService extends FirebaseMessagingService {
             // A short service (WakeKeeper), not MessagingService's dataSync sync: Android 15 refuses dataSync once the
             // app's daily cap is used, which froze the fetch on the S23. The old path only if the short one is refused.
             if (!WakeKeeper.keep(this, BACKGROUND_FETCH_MS)) MessagingService.startSync(this, BACKGROUND_FETCH_MS);
-            final String tag = !groupId.isEmpty() ? "group:" + groupId : from.isEmpty() ? "xmpp-wake" : "chat:" + from;
-            final long pushedAt = android.os.SystemClock.elapsedRealtime();
-            final android.content.Context app = getApplicationContext();
-            new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
-                if (Alerts.postedSince(tag, pushedAt)) return;
-                RelaySession current = RelaySession.read(app);
-                if (current != null) showSealedWake(app, current, from, groupId);
-            }, FALLBACK_NOTICE_MS);
+            sealedUnlessHandled(getApplicationContext(), from, groupId, FALLBACK_NOTICE_MS);
             return;
         }
         // No app screen: the background page does the same work in a hidden WebView (BackgroundHost). The sealed
         // notice still appears if it has not posted the real one in time (or could not start).
         BackgroundHost.start(this);
         if (BackgroundHost.isRunning()) {
-            final String tag = !groupId.isEmpty() ? "group:" + groupId : from.isEmpty() ? "xmpp-wake" : "chat:" + from;
-            final long pushedAt = android.os.SystemClock.elapsedRealtime();
-            final android.content.Context app = getApplicationContext();
-            new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
-                if (Alerts.postedSince(tag, pushedAt)) return;
-                RelaySession current = RelaySession.read(app);
-                if (current != null) showSealedWake(app, current, from, groupId);
-            }, HEADLESS_FALLBACK_MS);
+            sealedUnlessHandled(getApplicationContext(), from, groupId, HEADLESS_FALLBACK_MS);
             Log.i(TAG, "xmpp wake-up while the app is closed: background page started");
             return;
         }
@@ -147,6 +133,22 @@ public class PushService extends FirebaseMessagingService {
     // How long a living app gets to fetch in the background, and when the sealed notice stands in for it.
     private static final long BACKGROUND_FETCH_MS = 20_000;
     private static final long FALLBACK_NOTICE_MS = 8_000;
+
+    /**
+     * After `delayMs`, the sealed notice, only if the push's message was not handled meanwhile: no notification for the
+     * conversation since the push (a message shown before its push counts, Alerts.showMessage), no fetch completed
+     * since (it opened and notified everything waiting; nothing new means it was already shown, or is in a muted or
+     * hidden chat), and the app not on screen (the person sees it arrive). One message, one notification.
+     */
+    private static void sealedUnlessHandled(android.content.Context app, String from, String groupId, long delayMs) {
+        final String tag = !groupId.isEmpty() ? "group:" + groupId : from.isEmpty() ? "xmpp-wake" : "chat:" + from;
+        final long pushedAt = android.os.SystemClock.elapsedRealtime();
+        new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
+            if (Alerts.postedSince(tag, pushedAt) || FetchWake.completedSince(pushedAt) || AppActivity.isVisible()) return;
+            RelaySession current = RelaySession.read(app);
+            if (current != null) showSealedWake(app, current, from, groupId);
+        }, delayMs);
+    }
 
     /** The sealed notice (sender's name, "🔒 Message"): the app is closed, or did not post the real one in time. */
     private static void showSealedWake(android.content.Context context, RelaySession session, String from, String groupId) {

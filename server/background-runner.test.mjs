@@ -127,3 +127,19 @@ test('background key opening writes nothing to the encrypted records; the page a
   assert.match(app, /await e2eLockReady\(\);[\s\S]{0,200}importInbox\(/, 'the app imports the inbox only once it holds the lock');
   assert.match(app, /e2eLockReady\(\)\.then\(\(\) => \{\s*if \(live\) startE2e\(/, 'and starts its own encryption only then');
 });
+
+test('one message, one notification: the sealed "🔒 Message" fallback never stacks under the real one', () => {
+  const dir = '../android/app/src/main/java/io/github/bickworld555/hiddenchat/';
+  const push = readFileSync(new URL(dir + 'PushService.java', import.meta.url), 'utf8');
+  const alerts = readFileSync(new URL(dir + 'Alerts.java', import.meta.url), 'utf8');
+  const fetch = readFileSync(new URL(dir + 'FetchWake.java', import.meta.url), 'utf8');
+  // Skipped when the conversation was notified since the push, a fetch completed since, or the app is on screen.
+  assert.match(push, /Alerts\.postedSince\(tag, pushedAt\) \|\| FetchWake\.completedSince\(pushedAt\) \|\| AppActivity\.isVisible\(\)/);
+  assert.equal(push.match(/postDelayed\(/g).length, 1, 'both fallbacks (app alive, background page) share that check');
+  // A message already shown (over the connection, before its push) still counts as this conversation's notification.
+  assert.ok(alerts.indexOf('postedAt.put(key') < alerts.indexOf('if (!firstNotice(messageId)) return true;'));
+  assert.match(fetch, /static void markFetched\(Context context\) \{\s*completedAt = /);
+  // The background page says "done" (a completed fetch) only when it reached the server's end, not at a time limit.
+  const page = readFileSync(new URL('../src/background/main.js', import.meta.url), 'utf8');
+  assert.match(page, /fetchReason === 'offline-done' \|\| fetchReason === 'quiet' \? 'done' : `incomplete/);
+});

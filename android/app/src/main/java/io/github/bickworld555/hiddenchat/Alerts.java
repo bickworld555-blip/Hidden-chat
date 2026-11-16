@@ -97,13 +97,15 @@ final class Alerts {
 
     static boolean showMessage(Context context, String channel, String title, String body, String tag, String open, int count,
                                String messageId, String sender, String avatar) {
-        if (!firstNotice(messageId)) return true;
         String channelId = NotificationChannels.isMessageChannel(channel) ? channel : NotificationChannels.DIRECT_MESSAGES;
         String key = tag == null || tag.isEmpty() ? channelId : tag;
+        // Noted even for a message already shown (it came over the connection before its push): the conversation's
+        // real notification stands, so PushService's sealed fallback must not add a "🔒 Message" line under it.
         synchronized (Alerts.class) {
             postedAt.put(key, android.os.SystemClock.elapsedRealtime());
             if (postedAt.size() > 500) postedAt.clear();
         }
+        if (!firstNotice(messageId)) return true;
         String name = title == null || title.isEmpty() ? "Hidden Messenger" : title;
         boolean group = channelId.startsWith(NotificationChannels.GROUP_MESSAGES);
         java.util.ArrayList<Line> lines;

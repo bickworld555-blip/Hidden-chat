@@ -47,6 +47,11 @@ public class AppActivity extends BridgeActivity {
     }
     private static final android.os.Handler handler = new android.os.Handler(android.os.Looper.getMainLooper());
 
+    /** Whether the app's screen is on show (the person sees new messages arrive in it). */
+    static boolean isVisible() {
+        return visible;
+    }
+
     /** Whether the app's screen (and so its WebView connection) currently exists. */
     static boolean isAlive() {
         return alive;

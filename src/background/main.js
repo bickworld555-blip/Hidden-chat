@@ -72,11 +72,13 @@ async function run() {
   });
   if (!session) return 'not-on-xmpp';
 
+  let fetchReason = '';
   await new Promise((resolve) => {
     let finished = false;
     const finish = async (reason) => {
       if (finished) return;
       finished = true;
+      fetchReason = reason;
       session.suspend();
       // Whatever is still being opened finishes (or is left unacknowledged for the app).
       await session.transport.dispatching.catch(() => {});
@@ -89,7 +91,10 @@ async function run() {
     session.suspend();
     session.backgroundFetch({ stayOffline: () => true }).then((reason) => finish(reason));
   });
-  return stopping ? 'stopped-for-app' : 'done';
+  // "done" only when it reached the server's end of what waits (Android then counts the fetch as complete and skips
+  // the sealed notice); a time limit says so, and the sealed notice still covers a message it may not have reached.
+  if (stopping) return 'stopped-for-app';
+  return fetchReason === 'offline-done' || fetchReason === 'quiet' ? 'done' : `incomplete: ${fetchReason || 'unknown'}`;
 }
 
 async function main() {
