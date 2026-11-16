@@ -967,11 +967,19 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
     const stack = messageStackRef.current;
     if (!chatId || !container || !stack || typeof ResizeObserver === 'undefined') return undefined;
     let containerHeight = container.clientHeight;
+    let stackHeight = stack.getBoundingClientRect().height;
     const observer = new ResizeObserver(() => {
       // The feed area itself got shorter or taller (keyboard opening or closing): stay on the newest message at
       // once, like WhatsApp, rather than gliding after it while the keyboard slides.
       const resized = container.clientHeight !== containerHeight;
       containerHeight = container.clientHeight;
+      // Only a real change of the feed's height counts. Rows laid out lazily (content-visibility) make it wobble by
+      // a fraction of a pixel as the person scrolls; answering that with a scroll to the bottom pulled every
+      // scroll back, so a long message could not be read (seen on the S23: 9216.83 ↔ 9216.84 on each frame).
+      const height = stack.getBoundingClientRect().height;
+      const grew = Math.abs(height - stackHeight) >= 1;
+      if (grew) stackHeight = height;
+      if (!resized && !grew) return;
       if (!stickToBottomRef.current) return;
       const justOpened = performance.now() - openedAtRef.current < OPEN_SETTLE_MS;
       if (justOpened || resized) pinToBottom();

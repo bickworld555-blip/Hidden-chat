@@ -556,3 +556,11 @@ test('L1/L3/L4: why a call did not ring, the Android call keeps our call id, and
   assert.deepEqual(buildBackupData({ user: { id: 'me' }, chats: [], messages: {}, callLogs: [entry], preferences: {}, groups: [] }).callLogs, [entry]);
   assert.match(readFileSync(join(appDir, 'src/cloudBackup.js'), 'utf8'), /callLogs: state\.callLogs/);
 });
+
+test('a long message can be scrolled: the feed re-pins to the bottom only for a real change of height', () => {
+  const source = readFileSync(new URL('../src/components/ChatWindow.jsx', import.meta.url), 'utf8');
+  // Lazily laid-out rows (content-visibility) make the feed's height wobble by a fraction of a pixel while scrolling;
+  // each wobble used to scroll back to the newest message, so the view could not leave the bottom.
+  assert.match(source, /const grew = Math\.abs\(height - stackHeight\) >= 1;/);
+  assert.match(source, /if \(!resized && !grew\) return;\s*if \(!stickToBottomRef\.current\) return;/);
+});
