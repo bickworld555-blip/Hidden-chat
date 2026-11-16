@@ -137,3 +137,11 @@ test('a call audio player that stops with an error (or pauses) is re-attached an
   assert.match(hook, /if \(element\.paused\) \{ element\.play\?\.\(\)\.catch\(\(\) => bind\(\)\); still = 0; return; \}/);
   assert.ok(hook.indexOf('if (element.paused)') < hook.indexOf("if (!isVideo) return;"), 'audio elements are watched too');
 });
+
+test('my own picture stays on when the first person leaves a group call', () => {
+  const overlay = readFileSync(new URL('../src/components/CallOverlay.jsx', import.meta.url), 'utf8');
+  // Seen live on the S23: the first pair ended, its engine dropped its stream, and the self view went blank (no source)
+  // although the camera kept sending to the people still in the call.
+  assert.match(overlay, /const previewStream = localStream\s+\?\? Object\.values\(extraSnapshots\)\.find\(\(item\) => !TERMINAL_STATUSES\.includes\(item\.status\) && item\.localStream\)\?\.localStream/);
+  assert.match(overlay, /useMediaElement\(localVideoRef, previewStream, isVideo\);/);
+});

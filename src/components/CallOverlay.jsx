@@ -467,7 +467,13 @@ export default function CallOverlay({
     return () => { cancelled = true; };
   }, [isVideo]);
 
-  useMediaElement(localVideoRef, localStream, isVideo);
+  // My own picture: from the first pair, or, once that pair has ended while others are still in the group call, from a
+  // pair still going (the ended engine drops its stream: on the S23 the self view went blank while the camera kept
+  // sending, each time the first person left a group call).
+  const previewStream = localStream
+    ?? Object.values(extraSnapshots).find((item) => !TERMINAL_STATUSES.includes(item.status) && item.localStream)?.localStream
+    ?? null;
+  useMediaElement(localVideoRef, previewStream, isVideo);
   useMediaElement(remoteVideoRef, remoteStream, isVideo);
   useMediaElement(remoteAudioRef, remoteStream);
 
