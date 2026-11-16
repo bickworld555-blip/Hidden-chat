@@ -12,6 +12,23 @@ export const videoShouldPlay = (stream, visible = true) => visible
 /** Whether a bound element should be playing at all: any live track in its stream. */
 export const mediaShouldPlay = (stream) => Boolean(stream?.getTracks().some((track) => track.readyState === 'live'));
 
+// Restarting the phone's call audio output: every call media element lets go of its stream at the same moment and takes
+// it back RESTART_GAP_MS later. WebView plays all of a call's incoming voice through one shared output; once Android
+// has cut that output (Telecom set the audio mode back to normal as the previous call ended), re-attaching one
+// <audio> element is not enough: the output is only recreated when no element holds the voice any more. Measured live
+// on the S23: nothing played for over a minute; after this, both people were heard at once (4 s of voice in 4 s).
+export const RESTART_GAP_MS = 600;
+export const RESTART_MIN_INTERVAL_MS = 5000;
+const RESTART_EVENT = 'hm:call-media-restart';
+let lastRestart = -Infinity;
+/** Restarts the call audio output (see above), at most once per RESTART_MIN_INTERVAL_MS; true when it did. */
+export function restartCallMediaOutput(now = Date.now()) {
+  if (typeof window === 'undefined' || now - lastRestart < RESTART_MIN_INTERVAL_MS) return false;
+  lastRestart = now;
+  window.dispatchEvent(new Event(RESTART_EVENT));
+  return true;
+}
+
 // Binds a MediaStream to a <video>/<audio> element and keeps it bound as tracks come and go, and keeps it playing.
 //
 // Both faults below were measured live on the S23 (Android WebView, DevTools):
@@ -40,6 +57,15 @@ export function useMediaElement(ref, stream, enabled = true) {
     let retry = null;
     const onError = () => { clearTimeout(retry); retry = setTimeout(() => { if (mediaShouldPlay(boundStream)) bind(); }, 250); };
     element.addEventListener('error', onError);
+    let restart = null;
+    const onRestart = () => {
+      if (!boundStream) return;
+      clearTimeout(restart);
+      boundStream = null;
+      element.srcObject = null;
+      restart = setTimeout(bind, RESTART_GAP_MS);
+    };
+    window.addEventListener(RESTART_EVENT, onRestart);
     let watchdog = null;
     if (stream) {
       const isVideo = element.tagName === 'VIDEO';
@@ -64,6 +90,8 @@ export function useMediaElement(ref, stream, enabled = true) {
     return () => {
       clearInterval(watchdog);
       clearTimeout(retry);
+      clearTimeout(restart);
+      window.removeEventListener(RESTART_EVENT, onRestart);
       element.removeEventListener('error', onError);
       stream?.removeEventListener('addtrack', bind);
       stream?.removeEventListener('removetrack', bind);

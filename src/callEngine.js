@@ -2,7 +2,7 @@
 // the inbound signal queue, perfect negotiation, ICE restart and all call timers.
 // The UI only subscribes to snapshots; Node tests drive it with @roamhq/wrtc.
 import { recordUsage, transportBytes } from './networkUsage.js';
-import { QUALITY_SAMPLE_MS, VIDEO_LEVELS, createQualityTracker, hasTurnRelay, readQualitySample, updateQuality, videoEncodingFor } from './callQuality.js';
+import { QUALITY_SAMPLE_MS, VIDEO_LEVELS, createQualityTracker, hasTurnRelay, readQualitySample, updateQuality, videoEncodingFor, updatePlayout } from './callQuality.js';
 import {
   AUDIO_MAX_BITRATE,
   candidateToJson,
@@ -110,6 +110,8 @@ export function createCallEngine({
   // Calls the handler when a signaling connection (the server's or XMPP) is back after a drop; returns unsubscribe.
   onSignalingRestored = browserSignalingRestored,
   log = () => {},
+  // The other person's voice arrives but is not played (see updatePlayout): the app restarts its audio output.
+  onPlayoutStall = () => {},
 } = {}) {
   if (!rtc?.RTCPeerConnection) throw new Error('A WebRTC implementation is required.');
   if (typeof send !== 'function') throw new Error('A signal sender is required.');
@@ -203,6 +205,7 @@ export function createCallEngine({
   // Network health (src/callQuality.js): the sampler, our video level, stall handling and the relay-only fallback.
   let qualityTimer = null;
   const quality = createQualityTracker();
+  const playout = { last: null, still: 0 };
   let stallActive = false;
   let stallRestarts = 0;
   let relayForced = false;
@@ -425,7 +428,12 @@ export function createCallEngine({
   function sampleQuality(pc) {
     Promise.resolve().then(() => pc.getStats()).then((report) => {
       if (closed || pc !== connection) return;
-      const result = updateQuality(quality, readQualitySample(report));
+      const sample = readQualitySample(report);
+      if (updatePlayout(playout, sample)) {
+        log('playout-stall');
+        onPlayoutStall();
+      }
+      const result = updateQuality(quality, sample);
       if (result.changed) {
         log('video-level', VIDEO_LEVELS[result.level].name);
         if (videoSender) tuneSender(videoSender);

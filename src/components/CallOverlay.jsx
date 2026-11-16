@@ -57,7 +57,7 @@ import CallGrid from './call/CallGrid.jsx';
 import ParticipantTile from './call/ParticipantTile.jsx';
 import SpeakingIndicator from './call/SpeakingIndicator.jsx';
 import { CallStatusLabel } from './call/CallTimer.jsx';
-import { useMediaElement } from './call/useMediaElement.js';
+import { restartCallMediaOutput, useMediaElement } from './call/useMediaElement.js';
 const AvatarStudio = lazyComponent(() => import('./AvatarStudio.jsx'));
 // Rare panels load on first use, so the call screen opens without them (WhatsApp's ViewStub pattern).
 const AddParticipantPicker = lazyComponent(() => import('./call/AddParticipantPicker.jsx'));
@@ -227,6 +227,8 @@ export default function CallOverlay({
       // A group call's pairs name the group (L2), so the person rung directly also counts as in the group's call.
       send: (payload) => latest.current.client?.send({ ...payload, targetId: peerId, roomId: latest.current.call.roomId ?? latest.current.call.id, ...(latest.current.call.groupId ? { groupId: latest.current.call.groupId } : {}), signalId: crypto.randomUUID() }),
       onSnapshot,
+      // Voice arriving but not played (Android cut the output): every call media element lets go and re-attaches.
+      onPlayoutStall: () => { if (restartCallMediaOutput()) noteCallEvent(peerId, 'audio-output restarted'); },
       log: (...args) => {
         noteCallEvent(peerId, ...args);
         if (import.meta.env?.DEV) console.debug('[call]', peerId.slice(0, 6), ...args);

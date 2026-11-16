@@ -48,10 +48,38 @@ const BANDWIDTH_LIMITS = [900_000, 400_000]; // the browser's own estimate of wh
 const finite = (value) => (typeof value === 'number' && Number.isFinite(value) ? value : null);
 
 /** Collapses one getStats() report into the few numbers the engine acts on (unknowns stay null). */
+// Incoming audio arriving but not played: at least this many packets in a sample (one second of voice is 50) while
+// under PLAYOUT_MIN_SECONDS was played, for PLAYOUT_STALL_SAMPLES samples in a row (≈4 s).
+export const PLAYOUT_MIN_PACKETS = 25;
+export const PLAYOUT_MIN_SECONDS = 0.2;
+export const PLAYOUT_STALL_SAMPLES = 2;
+
+/**
+ * Tracks whether the phone has stopped playing the other person's voice although it keeps arriving. Seen live on
+ * the S23: when one call ended, Telecom set the audio mode back to normal and Android cut the app's audio output
+ * streams; the next call, a few seconds later, received every packet and played none (nobody was heard). Returns
+ * true once, when the stall is confirmed; the counter then starts again.
+ */
+export function updatePlayout(state, sample) {
+  const { audioPackets: packets, audioPlayed: played } = sample;
+  if (packets == null || played == null) return false;
+  const previous = state.last;
+  state.last = { packets, played };
+  if (!previous || packets < previous.packets || played < previous.played) { state.still = 0; return false; }
+  const stalled = packets - previous.packets >= PLAYOUT_MIN_PACKETS && played - previous.played < PLAYOUT_MIN_SECONDS;
+  state.still = stalled ? (state.still ?? 0) + 1 : 0;
+  if (state.still < PLAYOUT_STALL_SAMPLES) return false;
+  state.still = 0;
+  return true;
+}
+
 export function readQualitySample(report) {
   const sample = {
     inboundPackets: 0,
     inboundLost: 0,
+    // Incoming audio: packets that arrived, and seconds of it the phone has played (null: not reported).
+    audioPackets: null,
+    audioPlayed: null,
     sentVideoLoss: null,
     rtt: null,
     availableOutgoingBitrate: null,
@@ -65,6 +93,10 @@ export function readQualitySample(report) {
     if (stat.type === 'inbound-rtp') {
       sample.inboundPackets += finite(stat.packetsReceived) ?? 0;
       sample.inboundLost += Math.max(0, finite(stat.packetsLost) ?? 0);
+      if (stat.kind === 'audio') {
+        sample.audioPackets = finite(stat.packetsReceived);
+        sample.audioPlayed = finite(stat.totalSamplesDuration);
+      }
     } else if (stat.type === 'remote-inbound-rtp' && stat.kind === 'video') {
       const lost = finite(stat.fractionLost);
       if (lost != null) sample.sentVideoLoss = Math.max(sample.sentVideoLoss ?? 0, lost);

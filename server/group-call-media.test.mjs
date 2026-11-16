@@ -145,3 +145,27 @@ test('my own picture stays on when the first person leaves a group call', () => 
   assert.match(overlay, /const previewStream = localStream\s+\?\? Object\.values\(extraSnapshots\)\.find\(\(item\) => !TERMINAL_STATUSES\.includes\(item\.status\) && item\.localStream\)\?\.localStream/);
   assert.match(overlay, /useMediaElement\(localVideoRef, previewStream, isVideo\);/);
 });
+
+test('voice that arrives but is not played restarts the call audio output', async () => {
+  const { updatePlayout, readQualitySample, PLAYOUT_STALL_SAMPLES } = await import('../src/callQuality.js');
+  const report = (packets, played) => new Map([['a', { type: 'inbound-rtp', kind: 'audio', packetsReceived: packets, totalSamplesDuration: played }]]);
+  const sample = readQualitySample(report(100, 2));
+  assert.deepEqual([sample.audioPackets, sample.audioPlayed], [100, 2]);
+  // Seen live on the S23: packets kept arriving (+100 every 2 s) while the seconds played stayed at 2.2.
+  const stuck = { last: null, still: 0 };
+  const results = [[100, 2.2], [200, 2.2], [300, 2.2], [400, 2.2], [500, 2.2]].map(([p, s]) => updatePlayout(stuck, readQualitySample(report(p, s))));
+  assert.equal(PLAYOUT_STALL_SAMPLES, 2);
+  assert.deepEqual(results, [false, false, true, false, true], 'reported once per confirmed stall, then counted again');
+  // Playing normally, or quiet (no packets: the other side sends almost nothing in silence), is not a stall.
+  const playing = { last: null, still: 0 };
+  assert.deepEqual([[100, 2], [200, 4], [300, 6], [301, 6], [302, 6], [303, 6]].map(([p, s]) => updatePlayout(playing, readQualitySample(report(p, s)))), [false, false, false, false, false, false]);
+  assert.equal(updatePlayout({ last: null, still: 0 }, readQualitySample(new Map())), false, 'no audio stats: nothing decided');
+
+  const hook = readFileSync(new URL('../src/components/call/useMediaElement.js', import.meta.url), 'utf8');
+  assert.match(hook, /window\.addEventListener\(RESTART_EVENT, onRestart\);/, 'every call media element (audio and video) takes part');
+  assert.match(hook, /element\.srcObject = null;\s+restart = setTimeout\(bind, RESTART_GAP_MS\);/);
+  const engine = readFileSync(new URL('../src/callEngine.js', import.meta.url), 'utf8');
+  assert.match(engine, /if \(updatePlayout\(playout, sample\)\) \{\s+log\('playout-stall'\);\s+onPlayoutStall\(\);/);
+  const overlay = readFileSync(new URL('../src/components/CallOverlay.jsx', import.meta.url), 'utf8');
+  assert.match(overlay, /onPlayoutStall: \(\) => \{ if \(restartCallMediaOutput\(\)\)/);
+});
