@@ -18,6 +18,22 @@ export const DOWNGRADE_SAMPLES = 2;
 export const UPGRADE_SAMPLES = 5;
 
 // Highest first. `scale` divides the 1280×720 capture (1.5 → 853×480, 2.5 → 512×288).
+// A group call (three people or more) sends one video per other person from the same phone (a mesh): each is
+// capped near what WhatsApp's group calls send (about 360p, 20 fps). 720p at 1.5 Mbps to every participant made a
+// phone encode several full-size videos at once over a mobile uplink: frames froze and voices dropped.
+export const GROUP_VIDEO_CAP = Object.freeze({ maxBitrate: 450_000, maxFramerate: 20, scale: 2 });
+
+/** The encoding for one video sender: the network level, capped in a group call (never for a shared screen). */
+export function videoEncodingFor(level, { roomSize = 2, screenSharing = false } = {}) {
+  if (screenSharing) return { maxBitrate: level.maxBitrate, maxFramerate: level.maxFramerate, scale: 1 };
+  if (roomSize <= 2) return { maxBitrate: level.maxBitrate, maxFramerate: level.maxFramerate, scale: level.scale };
+  return {
+    maxBitrate: Math.min(level.maxBitrate, GROUP_VIDEO_CAP.maxBitrate),
+    maxFramerate: Math.min(level.maxFramerate, GROUP_VIDEO_CAP.maxFramerate),
+    scale: Math.max(level.scale, GROUP_VIDEO_CAP.scale),
+  };
+}
+
 export const VIDEO_LEVELS = Object.freeze([
   Object.freeze({ name: 'high', maxBitrate: VIDEO_MAX_BITRATE, scale: 1, maxFramerate: VIDEO_MAX_FRAMERATE }),
   Object.freeze({ name: 'medium', maxBitrate: 700_000, scale: 1.5, maxFramerate: 24 }),

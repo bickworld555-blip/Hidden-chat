@@ -9,11 +9,11 @@ const NO_POSTER = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAA
 
 // The video stage (like WhatsApp's CallGrid): the other person full screen, your own floating tile, and one tile
 // per extra participant in a group call. Memoized: it redraws only when what it shows changes, never for the timer.
-export default memo(function CallGrid({ stageRef, groupGrid, swapped, remoteVideoLive, canSwapTile, remoteStream, tileProps, remoteVideoRef, remoteScreen, filter, peerName, remoteAvatar, peer, status, remoteVideoOff, remoteMuted, extraPeers, audioMuted, self }) {
+export default memo(function CallGrid({ stageRef, groupGrid, swapped, remoteVideoLive, canSwapTile, remoteStream, tileProps, remoteVideoRef, remoteScreen, filter, peerName, remoteAvatar, peer, status, remoteVideoOff, remoteMuted, extraPeers, audioMuted, self, primaryGone = false }) {
   return (
     <div className={`wa-video-stage ${groupGrid ? 'is-group' : ''}`} ref={stageRef}>
-      {/* Remote video tile (Full by default, or PiP when swapped) */}
-      <div
+      {/* Remote video tile (Full by default, or PiP when swapped); gone once that person left a group call others are still in */}
+      {!primaryGone && <div
         className={`wa-video-tile ${swapped ? 'is-pip' : 'is-full'} ${!remoteVideoLive ? 'waiting-remote' : ''}`}
         {...(canSwapTile && swapped && remoteStream ? tileProps : {})}
         aria-label={canSwapTile && swapped ? 'Swap remote video to full screen' : undefined}
@@ -46,7 +46,7 @@ export default memo(function CallGrid({ stageRef, groupGrid, swapped, remoteVide
           <div className="wa-pip-label-overlay">Tap to swap</div>
         )}
         {groupGrid && <span className="wa-grid-participant-name">{peerName}</span>}
-      </div>
+      </div>}
 
       <FloatingSelfView {...self} filter={filter} canSwapTile={canSwapTile} tileProps={tileProps} groupGrid={groupGrid} />
       {extraPeers.map(({ peerId, info, snapshot: item }) => (

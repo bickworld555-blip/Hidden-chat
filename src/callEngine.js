@@ -2,7 +2,7 @@
 // the inbound signal queue, perfect negotiation, ICE restart and all call timers.
 // The UI only subscribes to snapshots; Node tests drive it with @roamhq/wrtc.
 import { recordUsage, transportBytes } from './networkUsage.js';
-import { QUALITY_SAMPLE_MS, VIDEO_LEVELS, createQualityTracker, hasTurnRelay, readQualitySample, updateQuality } from './callQuality.js';
+import { QUALITY_SAMPLE_MS, VIDEO_LEVELS, createQualityTracker, hasTurnRelay, readQualitySample, updateQuality, videoEncodingFor } from './callQuality.js';
 import {
   AUDIO_MAX_BITRATE,
   candidateToJson,
@@ -572,6 +572,9 @@ export function createCallEngine({
     }
   }
 
+  // How many people are in the call, this phone included (setRoomSize): three or more cap the video (mesh).
+  let roomSize = 2;
+
   function tuneSender(sender) {
     const kind = sender.track?.kind;
     if (!kind || typeof sender.getParameters !== 'function' || typeof sender.setParameters !== 'function') return;
@@ -583,11 +586,12 @@ export function createCallEngine({
         params.encodings[0].priority = 'high';
         params.encodings[0].networkPriority = 'high';
       } else {
-        // The current network level (src/callQuality.js); a shared screen keeps full resolution for legible text.
-        const level = VIDEO_LEVELS[quality.level] ?? VIDEO_LEVELS[0];
-        params.encodings[0].maxBitrate = level.maxBitrate;
-        params.encodings[0].maxFramerate = level.maxFramerate;
-        params.encodings[0].scaleResolutionDownBy = state.screenSharing ? 1 : level.scale;
+        // The current network level (src/callQuality.js), capped in a group call (one video per other person);
+        // a shared screen keeps full resolution for legible text.
+        const encoding = videoEncodingFor(VIDEO_LEVELS[quality.level] ?? VIDEO_LEVELS[0], { roomSize, screenSharing: state.screenSharing });
+        params.encodings[0].maxBitrate = encoding.maxBitrate;
+        params.encodings[0].maxFramerate = encoding.maxFramerate;
+        params.encodings[0].scaleResolutionDownBy = encoding.scale;
       }
       // Under congestion or a busy processor keep the motion smooth and lower the resolution instead (a softer
       // picture reads as fine; a stuttering or frozen one reads as a broken call).
@@ -961,6 +965,15 @@ export function createCallEngine({
       if (signal?.type !== 'ice') log('signal-in', signal?.type);
       queue.push({ signal, done });
       drain();
+    },
+
+    /** People in the call, this phone included: a group call (3+) sends lighter video on this connection. */
+    setRoomSize(size) {
+      const next = Math.max(2, Number(size) || 2);
+      if (next === roomSize) return;
+      roomSize = next;
+      log('room-size', roomSize);
+      if (videoSender) tuneSender(videoSender);
     },
 
     setMuted(muted) {

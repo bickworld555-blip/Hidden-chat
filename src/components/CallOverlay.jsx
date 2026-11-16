@@ -48,6 +48,7 @@ import { useCallStore } from '../callStore.js';
 import { appSettings, useSetting } from '../settings.js';
 import { NOTICE_PRIORITY } from '../noticeQueue.js';
 import { GROUP_CALL_BEAT_MS } from '../groupCalls.js';
+import { createCallMediaSource } from '../callMedia.js';
 import CallHeader from './call/CallHeader.jsx';
 import ControlCard from './call/ControlCard.jsx';
 import IncomingCallSheet from './call/IncomingCallSheet.jsx';
@@ -151,9 +152,16 @@ export default function CallOverlay({
   const latest = useRef({ client, sessionToken, onCallChange, onClose, onSignalHandled, call });
   latest.current = { client, sessionToken, onCallChange, onClose, onSignalHandled, call };
 
+  // Room peers beyond the primary one (their snapshots, for rendering); declared before the call state reads them.
+  const [extraSnapshots, setExtraSnapshots] = useState({});
   const { status, mode: callMode, error, localStream, remoteStream, muted, cameraOff, facing, answered, remoteVideoOff, remoteMuted, remoteHasVideo, videoRequest, remoteScreen, screenSharing, videoFilter, remoteAvatar } = snapshot;
   const isVideo = callMode === 'video';
-  const terminal = TERMINAL_STATUSES.includes(status);
+  // The first pair (the person rung directly) ending does not end a group call while anyone else is still in it,
+  // like WhatsApp: the call is over only when every pair is. Before, the screen closed (and Android released the
+  // microphone) when that one person left, cutting off the others who were still talking.
+  const primaryEnded = TERMINAL_STATUSES.includes(status);
+  const othersInCall = Object.values(extraSnapshots).some((item) => !TERMINAL_STATUSES.includes(item.status));
+  const terminal = primaryEnded && !othersInCall;
   // Android: from the moment we place or answer a call until it ends, the background service holds the microphone
   // (and camera for video) so switching apps or locking the screen does not freeze or silence the call.
   const callLive = !terminal && !(call.direction === 'incoming' && status === 'idle');
@@ -189,6 +197,21 @@ export default function CallOverlay({
     return displayShareRef.current.then((stream) => new MediaStream(stream.getVideoTracks().map((track) => track.clone())));
   }
 
+  // One microphone and one camera for the whole call (src/callMedia.js): every pair engine of a group call takes
+  // clones of the same capture instead of opening the camera and microphone again (which froze one person's video
+  // and silenced another's on Android).
+  const mediaSourceRef = useRef(null);
+  // People in the call (this phone included), for each new pair engine as it is built.
+  const roomSizeRef = useRef(2);
+  const mediaSource = () => (mediaSourceRef.current ??= createCallMediaSource({
+    capture: (constraints) => {
+      if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+        return Promise.reject(new Error('Microphone and camera access requires HTTPS or localhost.'));
+      }
+      return navigator.mediaDevices.getUserMedia(constraints);
+    },
+  }));
+
   // Builds one pair engine. The primary peer uses the call's own id; room peers get their own pair ids.
   function buildEngine({ peerId, callId, direction, mode, offer, onSnapshot }) {
     const engine = createCallEngine({
@@ -197,12 +220,7 @@ export default function CallOverlay({
       mode,
       offer: offer ?? null,
       rtc: { RTCPeerConnection, RTCIceCandidate, RTCRtpSender: globalThis.RTCRtpSender, MediaStream },
-      getUserMedia: (constraints) => {
-        if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
-          return Promise.reject(new Error('Microphone and camera access requires HTTPS or localhost.'));
-        }
-        return navigator.mediaDevices.getUserMedia(constraints);
-      },
+      getUserMedia: (constraints) => mediaSource().get(constraints),
       enumerateDevices: () => navigator.mediaDevices?.enumerateDevices?.() ?? Promise.resolve([]),
       getDisplayMedia: navigator.mediaDevices?.getDisplayMedia ? sharedDisplayMedia : null,
       fetchIceServers: () => loadIceServers(latest.current.sessionToken),
@@ -216,17 +234,21 @@ export default function CallOverlay({
     });
     engine.callId = callId;
     engine.peerId = peerId;
+    engine.setRoomSize?.(roomSizeRef.current);
     return engine;
   }
 
+  // While others are still in a group call, the app keeps seeing the call as going on (so a newcomer's offer for
+  // this room is taken, and nothing logs the call as ended); the real end is reported when the room empties.
+  const roomStillGoing = () => extrasRef.current.entries().some((entry) => !TERMINAL_STATUSES.includes(entry.engine.state?.status));
   const primarySnapshot = (next) => {
     setSnapshot(next);
-    latest.current.onCallChange({ ...latest.current.call, mode: next.mode, status: next.status, endReason: next.endReason ?? null, endedByPeer: Boolean(next.endedByPeer) });
+    const going = TERMINAL_STATUSES.includes(next.status) && roomStillGoing();
+    latest.current.onCallChange({ ...latest.current.call, mode: next.mode, status: going ? 'connected' : next.status, endReason: going ? null : next.endReason ?? null, endedByPeer: going ? false : Boolean(next.endedByPeer) });
   };
 
   // Room peers beyond the primary one: engines in a registry, their snapshots in state for rendering.
   const extrasRef = useRef(new PeerRegistry());
-  const [extraSnapshots, setExtraSnapshots] = useState({});
   // In-call notices are queued by priority and shown one at a time (CallNotices).
   const setNotice = (text, priority = NOTICE_PRIORITY.NORMAL) => { if (text) useCallStore.getState().notify(text, { priority }); };
   const [addOpen, setAddOpen] = useState(false);
@@ -309,6 +331,11 @@ export default function CallOverlay({
     setExtraSnapshots((current) => { const next = { ...current }; delete next[peerId]; return next; });
   }
 
+  // Who is still in the call: an invitee places a pair call to each of them, so nobody who already left is rung.
+  const peopleInCall = () => [
+    ...(engineRef.current && !TERMINAL_STATUSES.includes(engineRef.current.state?.status) ? [call.peerId] : []),
+    ...extrasRef.current.entries().filter((entry) => !TERMINAL_STATUSES.includes(entry.engine.state?.status)).map((entry) => entry.peerId),
+  ];
   const allEngines = () => [engineRef.current, ...extrasRef.current.entries().map((entry) => entry.engine)].filter(Boolean);
 
   // One engine per call id. StrictMode's simulated unmount defers disposal by a tick so the
@@ -335,6 +362,9 @@ export default function CallOverlay({
           engineRef.current = null;
         }
         for (const entry of registry.entries()) { entry.engine.dispose(); registry.remove(entry.peerId); }
+        // The call's screen is gone: the shared microphone and camera close with it.
+        mediaSourceRef.current?.stop();
+        mediaSourceRef.current = null;
       }, 0);
     };
   }, [call.id]);
@@ -349,7 +379,7 @@ export default function CallOverlay({
     const next = queue.pending.shift();
     if (!next) { queue.current = null; return; }
     queue.current = next;
-    const participants = [...new Set([userId, call.peerId, ...extrasRef.current.peerIds, ...queue.accepted])];
+    const participants = [...new Set([userId, ...peopleInCall(), ...queue.accepted])];
     const sent = latest.current.client?.send({ type: 'call:invite', roomId: call.roomId ?? call.id, targetId: next, mode: callMode, participants, ...(call.groupId ? { groupId: call.groupId } : {}) });
     setNotice(sent === false ? 'You are offline.' : `Inviting ${nameOf(next)}…`, sent === false ? NOTICE_PRIORITY.HIGH : NOTICE_PRIORITY.NORMAL);
   }
@@ -411,6 +441,13 @@ export default function CallOverlay({
   useEffect(() => {
     if (call.join && !engineRef.current) acceptCall();
   }, [call.id]);
+
+  // A group call (three people or more) sends lighter video on every connection; back to full quality one-to-one.
+  const roomSize = 2 + extrasCount;
+  roomSizeRef.current = roomSize;
+  useEffect(() => {
+    allEngines().forEach((engine) => engine.setRoomSize?.(roomSize));
+  }, [roomSize]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Peers whose pair ended leave the grid after their end state has been shown briefly.
   useEffect(() => {
@@ -509,9 +546,11 @@ export default function CallOverlay({
 
   useEffect(() => {
     if (!terminal) return undefined;
+    // The last of a group call left after the first pair had ended: the app hears of the end now.
+    if (extrasCount > 0 || Object.keys(extraSnapshots).length > 0) latest.current.onCallChange({ ...latest.current.call, mode: snapshot.mode, status, endReason: snapshot.endReason ?? null, endedByPeer: Boolean(snapshot.endedByPeer) });
     const timer = setTimeout(() => latest.current.onClose(), CLOSE_DELAY_MS[status] ?? CLOSE_DELAY_MS.default);
     return () => clearTimeout(timer);
-  }, [terminal, status]);
+  }, [terminal, status]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Mid-call notices (declined video, camera switch failed) fade; end-of-call reasons stay until close.
   useEffect(() => {
@@ -568,7 +607,7 @@ export default function CallOverlay({
 
   function inviteParticipant(contact) {
     setAddOpen(false);
-    const participants = [userId, call.peerId, ...extrasRef.current.peerIds];
+    const participants = [userId, ...peopleInCall()];
     const sent = latest.current.client?.send({ type: 'call:invite', roomId: call.roomId ?? call.id, targetId: contact.id, mode: callMode, participants, ...(call.groupId ? { groupId: call.groupId } : {}) });
     setNotice(sent === false ? 'You are offline.' : `Inviting ${contact.name}…`, sent === false ? NOTICE_PRIORITY.HIGH : NOTICE_PRIORITY.NORMAL);
   }
@@ -784,7 +823,8 @@ export default function CallOverlay({
       connectedAt: snapshot.connectedAt || 0,
       networkQuality: snapshot.networkQuality || 'good',
       terminal, incomingRinging,
-      canAdd: canAddPeople && status === 'connected',
+      // Anyone connected in the call may add a person, also after the first pair has left a group call.
+      canAdd: canAddPeople && (status === 'connected' || Object.values(extraSnapshots).some((item) => item.status === 'connected')),
       addTitle: canAddPeople ? 'Add participant' : `Up to ${MAX_CALL_PARTICIPANTS} people`,
     });
     store.publish('controls', {
@@ -826,6 +866,7 @@ export default function CallOverlay({
         {/* VIDEO CALL VIEWPORT (CallGrid: the remote tile, your own floating tile, other participants) */}
         {isVideo && (
           <CallGrid
+            primaryGone={primaryEnded && othersInCall}
             stageRef={stageRef} groupGrid={groupGrid} swapped={swapped} remoteVideoLive={remoteVideoLive} canSwapTile={canSwapTile}
             remoteStream={remoteStream} tileProps={tileProps} remoteVideoRef={remoteVideoRef} remoteScreen={remoteScreen}
             filter={filterStyles[filterEffect]} peerName={peerName} remoteAvatar={remoteAvatar} peer={peer} status={status}
