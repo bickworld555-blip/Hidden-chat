@@ -19,14 +19,16 @@ import org.json.JSONObject;
 
 /**
  * Runs the app's background page (background.html, src/background/main.js) in a hidden WebView at the app's origin,
- * so it shares the app's IndexedDB (the end-to-end keys). That page connects, decrypts, keeps each message in a
- * Keystore-sealed inbox the app imports when it opens, sends delivery receipts from this phone and posts the
- * notification with the real text, then says it is done. Hosted by BackgroundHost (a push) or HeartbeatJob (the
+ * so it shares the app's IndexedDB (the end-to-end keys). That page connects, decrypts, writes each message into the
+ * app's encrypted database (BackgroundSql) and keeps it in a Keystore-sealed inbox the app imports when it opens,
+ * sends delivery receipts from this phone, posts the notification with the real text and sends what the app could
+ * not (the outbox, P6), then says it is done. Hosted by BackgroundHost (a push) or HeartbeatJob (the
  * hourly check), never both: one runner at a time, main thread only.
  *
  * One writer at a time on the keys: it starts only when no app screen exists; the app's screen stops it the moment
  * it is created (stopForApp, before the app's own code runs), and the app's code also waits for the "hm-e2e" lock the
- * page holds. The bridge is deliberately small: the session, Keystore sealing and posting a notification. No database.
+ * page holds. The bridge is deliberately small: the session, Keystore sealing and opening, the app's database (the
+ * same statements the app runs, src/sqliteMessageDb.js) and posting a notification.
  */
 final class HeadlessRunner {
     private static final String TAG = "BackgroundHost";
@@ -110,6 +112,7 @@ final class HeadlessRunner {
         try { done.stopLoading(); } catch (RuntimeException ignored) { }
         try { done.removeJavascriptInterface("HMBackground"); } catch (RuntimeException ignored) { }
         try { done.destroy(); } catch (RuntimeException ignored) { }
+        BackgroundSql.close();
         if (appContext != null && "done".equals(reason)) FetchWake.markFetched(appContext);
         FetchWake.release();
         Done callback = onDone;
@@ -145,6 +148,18 @@ final class HeadlessRunner {
         @JavascriptInterface
         public String seal(String plain) {
             try { return SecureStore.seal(plain); } catch (Exception broken) { return ""; }
+        }
+
+        /** Opens what seal (or the app's sealSecret) produced, or "" (the app's records' data key, P6). */
+        @JavascriptInterface
+        public String open(String sealed) {
+            try { return SecureStore.open(sealed); } catch (Exception broken) { return ""; }
+        }
+
+        /** One statement on the app's encrypted database (BackgroundSql.call), as JSON. */
+        @JavascriptInterface
+        public String sql(String json) {
+            return BackgroundSql.call(context, json);
         }
 
         /**

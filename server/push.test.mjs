@@ -249,7 +249,9 @@ test('Android: idle with push (no always-on service), woken by Firebase like Wha
   assert.match(registration, /boolean push = new JSONObject\(response\.body\(\)\.string\(\)\)\.optBoolean\("push", false\);/, 'push mode only when the server sends pushes');
 
   const service = await java('MessagingService.java');
-  assert.match(service, /static boolean isLegacy\(Context context\) \{\s*return RelaySession\.read\(context\) != null && !PushRegistration\.isActive\(context\);/);
+  // Always-on only without push, or when chosen (P5: Settings, Notifications, Always connected; off unless chosen).
+  assert.match(service, /static boolean isLegacy\(Context context\) \{\s*return RelaySession\.read\(context\) != null && \(!PushRegistration\.isActive\(context\) \|\| AlwaysConnected\.enabled\(context\)\);/);
+  assert.match(await java('AlwaysConnected.java'), /getBoolean\("on", false\)/, 'off unless chosen');
   assert.match(service, /private static boolean needed\(Context context\) \{\s*return callActive \|\| syncing\(\) \|\| isLegacy\(context\);/, 'no work, no service');
   assert.ok(service.includes('? ServiceInfo.FOREGROUND_SERVICE_TYPE_SHORT_SERVICE : ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC;'), 'a push sync is a short service on Android 14+ (no daily cap), dataSync before');
   assert.match(service, /void settle\(\) \{[\s\S]*?ServiceCompat\.stopForeground\(this, ServiceCompat\.STOP_FOREGROUND_REMOVE\);\s*stopSelf\(\);/);

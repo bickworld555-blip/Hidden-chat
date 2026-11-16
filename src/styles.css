@@ -5762,3 +5762,8 @@ button.groups-sender { padding: 0; border: 0; background: none; font: inherit; f
 .groups-call-banner-text strong { font-size: 14px; font-weight: 600; }
 .groups-call-banner-text small { overflow: hidden; color: var(--wa-sub, #8696a0); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .groups-call-banner-join { flex: none; padding: 7px 18px; border: 0; border-radius: 18px; background: var(--wa-green, #25d366); color: #fff; font-weight: 600; cursor: pointer; }
+
+/* P7: Settings › Notifications › Delivery (src/pushDiagnostics.js). */
+.notif-delivery { margin: 4px 16px 8px; color: var(--wa-text, #e9edef); font-size: 14px; }
+.notif-delivery.is-late { color: #f6b44b; }
+.notif-delivery-advice { margin: 0 16px 12px; color: var(--wa-sub, #8696a0); font-size: 13px; line-height: 1.4; }

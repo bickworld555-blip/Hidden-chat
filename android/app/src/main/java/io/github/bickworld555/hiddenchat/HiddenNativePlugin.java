@@ -172,6 +172,41 @@ public class HiddenNativePlugin extends Plugin {
         call.resolve();
     }
 
+    /**
+     * P6: the app leaves the screen with messages in its outbox: they go out once there is a network, with the app
+     * closed (UnsentMessagesJob). `pending: false`: the outbox is empty again, nothing to send.
+     */
+    @PluginMethod
+    public void scheduleUnsent(PluginCall call) {
+        if (Boolean.FALSE.equals(call.getBoolean("pending", true))) UnsentMessagesJob.cancel(getContext());
+        else UnsentMessagesJob.schedule(getContext());
+        call.resolve();
+    }
+
+    /** P5: Settings › Notifications › Always connected: { enabled } sets it (when given); returns { enabled }. */
+    @PluginMethod
+    public void alwaysConnected(PluginCall call) {
+        Boolean enabled = call.getBoolean("enabled");
+        if (enabled != null) {
+            AlwaysConnected.set(getContext(), enabled);
+            MessagingService.applyMode(getContext());
+            if (!enabled && !MessagingService.isLegacy(getContext()) && !AppActivity.isAlive()) NativeRelay.stopUnlessLegacy();
+        }
+        JSObject result = new JSObject();
+        result.put("enabled", AlwaysConnected.enabled(getContext()));
+        call.resolve(result);
+    }
+
+    /** P7: how Android delivered this phone's pushes this week (PushStats). */
+    @PluginMethod
+    public void pushDiagnostics(PluginCall call) {
+        try {
+            call.resolve(JSObject.fromJSONObject(PushStats.snapshot(getContext())));
+        } catch (JSONException broken) {
+            call.resolve(new JSObject());
+        }
+    }
+
     /** Calls handled without the app's screen (CallEvents): { events: [{ callId, peerId, mode, status, direction, at }] }. */
     @PluginMethod
     public void takeCallEvents(PluginCall call) {
@@ -1033,6 +1068,8 @@ public class HiddenNativePlugin extends Plugin {
         PushRegistration.unregister(getContext());
         RelaySession.clear(getContext());
         HeartbeatJob.cancel(getContext());
+        UnsentMessagesJob.cancel(getContext());
+        AlwaysConnected.set(getContext(), false);
         // Signed out: this account's chats must not stay in the share sheet or on the app icon.
         ShareShortcuts.clear(getContext());
         NativeRelay.stop();

@@ -124,6 +124,13 @@ export const nativeTakeCallEvents = async () => (await invoke('takeCallEvents'))
 // The app's own background fetch has ended (how: offline-done | quiet | limit | kept): Android lets the CPU sleep
 // again and, for a completed fetch, the hourly check knows nothing is waiting.
 export const nativeBackgroundFetchDone = (reason) => invoke('backgroundFetchDone', { reason: String(reason ?? '') });
+// P6: messages are left in the outbox as the app leaves the screen: Android sends them once there is a network
+// (UnsentMessagesJob), app closed. `pending: false` cancels it (the outbox is empty).
+export const nativeScheduleUnsent = (pending = true) => invoke('scheduleUnsent', { pending: Boolean(pending) });
+// P5: Settings › Notifications › Always connected; `enabled` sets it. Resolves { enabled }.
+export const nativeAlwaysConnected = async (enabled) => (await invoke('alwaysConnected', typeof enabled === 'boolean' ? { enabled } : {})) ?? null;
+// P7: { since, received, demoted, lastDemotedAt, lastDemotedType }: pushes Android delivered at lower priority.
+export const nativePushDiagnostics = async () => (await invoke('pushDiagnostics')) ?? null;
 // Stops the ringing notification; `missed`: the caller hung up first, so a "Missed call" notification takes its place.
 export const nativeCancelIncomingCall = ({ missed = false } = {}) => invoke('cancelIncomingCall', { missed: Boolean(missed) });
 export const nativeEndCallWindow = () => invoke('endCallWindow');

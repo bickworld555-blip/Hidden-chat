@@ -4,7 +4,7 @@
 import test, { after, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import WebSocket from 'ws';
@@ -334,4 +334,30 @@ test('L2: a participant that goes silent (crash, lost network) leaves the group 
     await quick.close();
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test('P5: a phone that keeps its own connection (Always connected) gets the message wake-up over it too, besides Firebase', async () => {
+  const { a, b, token } = await pair();
+  // The Android service's own connection: relay.background (never shows the person online).
+  const service = await connect(b, 'relay.background');
+  await ready(service);
+  const before = sent.length;
+  const result = await api('/api/v1/xmpp/nudge', { session: a, method: 'POST', body: { userId: b.user.id, messageId: 'm-p5' } });
+  assert.deepEqual([result.status, result.body.sent], [202, 2], 'the push and the connection');
+  const wake = await until(() => service.events.find((event) => event.type === 'xmpp:wake'), 'the wake-up over the connection');
+  assert.deepEqual(wake, { type: 'xmpp:wake', from: a.user.id }, 'content-free, like the push');
+  assert.ok(sent.slice(before).some((item) => item.token === token && item.data?.t === 'xwake'), 'Firebase still gets it');
+  // An app on screen is not sent it (it is connected to XMPP itself).
+  const app = await connect(b);
+  await ready(app);
+  await api('/api/v1/xmpp/nudge', { session: a, method: 'POST', body: { userId: b.user.id, messageId: 'm-p5b' } });
+  await sleep(100);
+  assert.ok(!app.events.some((event) => event.type === 'xmpp:wake'));
+  service.close();
+  app.close();
+
+  const relay = readFileSync(new URL('../android/app/src/main/java/io/github/bickworld555/hiddenchat/NativeRelay.java', import.meta.url), 'utf8');
+  assert.match(relay, /"xmpp:wake"\.equals\(type\)\) \{[\s\S]{0,200}PushService\.handleXmppWake\(context, session, event\);/);
+  const service2 = readFileSync(new URL('../android/app/src/main/java/io/github/bickworld555/hiddenchat/MessagingService.java', import.meta.url), 'utf8');
+  assert.match(service2, /!PushRegistration\.isActive\(context\) \|\| AlwaysConnected\.enabled\(context\)/, 'the always-on mode when chosen');
 });

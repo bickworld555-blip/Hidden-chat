@@ -73,6 +73,9 @@ export async function migrate(db, migrations = MIGRATIONS) {
   return { from, to: Math.max(from, pending.at(-1)?.version ?? from) };
 }
 
+// A status the sender's copy reaches after "sent", which an outbox update must never take back.
+const LATER_STATUSES = new Set(['sent', 'delivered', 'read', 'played']);
+
 const timeOf = (message) => {
   const value = Date.parse(message?.timestamp ?? '');
   return Number.isFinite(value) ? value : Number(message?.createdAt) || 0;
@@ -128,17 +131,30 @@ export async function alignSearchIndex(db, { batch = 1000 } = {}) {
   return true;
 }
 
+// The background page has no Capacitor bridge: Android opens the same database for it (BackgroundSql.java) and this
+// returns a connection with the same four calls (query, run, execute, executeSet). Set before first use.
+let connector = null;
+export function useLocalDatabaseConnector(open) {
+  connector = open;
+  connectionPromise = null;
+}
+
+async function openWithPlugin() {
+  const sqlite = new SQLiteConnection(CapacitorSQLite);
+  if (!(await sqlite.isSecretStored()).result) await sqlite.setEncryptionSecret(await randomSecret());
+  const consistent = (await sqlite.checkConnectionsConsistency()).result;
+  const existing = (await sqlite.isConnection(DB_NAME, false)).result;
+  const db = consistent && existing
+    ? await sqlite.retrieveConnection(DB_NAME, false)
+    : await sqlite.createConnection(DB_NAME, true, 'secret', DB_VERSION, false);
+  await db.open();
+  return db;
+}
+
 /** Opens (once) the encrypted database and brings its schema up to date; a failed attempt can be retried. */
 export function openLocalDatabase() {
   connectionPromise ??= (async () => {
-    const sqlite = new SQLiteConnection(CapacitorSQLite);
-    if (!(await sqlite.isSecretStored()).result) await sqlite.setEncryptionSecret(await randomSecret());
-    const consistent = (await sqlite.checkConnectionsConsistency()).result;
-    const existing = (await sqlite.isConnection(DB_NAME, false)).result;
-    const db = consistent && existing
-      ? await sqlite.retrieveConnection(DB_NAME, false)
-      : await sqlite.createConnection(DB_NAME, true, 'secret', DB_VERSION, false);
-    await db.open();
+    const db = connector ? await connector() : await openWithPlugin();
     schemaState = await migrate(db);
     try {
       await db.execute('CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(text, owner UNINDEXED, id UNINDEXED)');
@@ -194,6 +210,49 @@ export function createSqliteMessageDb({ connect = openLocalDatabase, fts = () =>
         }
       }
       await db.executeSet(set, true);
+    },
+
+    /**
+     * Messages written where no copy exists yet, never over one (the background page, from a push: the app's own
+     * copy, and its later changes, always win). The search index row is added with it.
+     */
+    async addIfMissing(owner, puts = []) {
+      const fresh = puts.filter((put) => put?.chat && put.message?.id);
+      if (!fresh.length) return;
+      const db = await connect();
+      const set = [];
+      for (const { chat, message } of fresh) {
+        set.push({
+          statement: `INSERT INTO messages(owner, chat, id, ts, status, body) VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(owner, id) DO NOTHING`,
+          values: [owner, chat, message.id, timeOf(message), message.status ?? null, JSON.stringify(message)],
+        });
+        const text = fts() ? searchableText(message) : '';
+        if (text) {
+          set.push({
+            statement: `INSERT INTO messages_fts(rowid, text, owner, id) SELECT rowid, ?, owner, id FROM messages m WHERE owner = ? AND id = ?
+              AND NOT EXISTS (SELECT 1 FROM messages_fts WHERE rowid = m.rowid)`,
+            values: [text, owner, message.id],
+          });
+        }
+      }
+      await db.executeSet(set, true);
+    },
+
+    /** Saved messages of mine move to `status` ('sent': the outbox sent them, P6); a later status is never undone. */
+    async setStatus(owner, ids = [], status) {
+      if (!ids.length) return 0;
+      const db = await connect();
+      const set = [];
+      for (const id of ids) {
+        const row = (await db.query('SELECT body FROM messages WHERE owner = ? AND id = ?', [owner, id])).values?.[0];
+        let message = null;
+        try { message = row ? JSON.parse(row.body) : null; } catch { message = null; }
+        if (!message || LATER_STATUSES.has(message.status)) continue;
+        set.push({ statement: 'UPDATE messages SET status = ?, body = ? WHERE owner = ? AND id = ?', values: [status, JSON.stringify({ ...message, status }), owner, id] });
+      }
+      if (set.length) await db.executeSet(set, true);
+      return set.length;
     },
 
     async loadRecent(owner, limit) {

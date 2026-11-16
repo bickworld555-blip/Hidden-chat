@@ -77,14 +77,17 @@ test('the app takes the end-to-end lock and keeps it; a page holding it makes th
   assert.equal(page, 'skipped');
 });
 
-test('background key opening writes nothing to the encrypted records; the page and bridge never touch the app database', () => {
+test('background key opening publishes nothing; the page writes the app database only as the database module does, and the records only through the outbox rule', () => {
   const client = readFileSync(new URL('../src/e2e/client.js', import.meta.url), 'utf8');
   const opener = client.slice(client.indexOf('export function openE2eForBackground'), client.indexOf('export function replayE2eEvent'));
-  assert.ok(opener.includes('records: { get: async (key) => memory.get(key)'), 'records stay in the page memory');
+  // Without the app's records the page keeps its own in memory; with them they come from backgroundSecureStorage (read only but the outbox).
+  assert.ok(opener.includes('records: records ?? { get: async (key) => memory.get(key)'), 'records stay in the page memory unless given');
   assert.ok(!/publishKeys|syncDeviceList|setInterval/.test(opener), 'no key publishing, no device-list sync, no timers');
   const page = readFileSync(new URL('../src/background/main.js', import.meta.url), 'utf8');
   assert.ok(page.includes('useSecureStorageOverride('), 'secure records replaced by memory before anything runs');
-  assert.ok(!/sqliteMessageDb|recordStore|persistMessages|messageDb/.test(page), 'no access to the app database');
+  // The database only through src/sqliteMessageDb.js (one owner of the schema and statements), never the app store's saving.
+  assert.ok(!/persistMessages|flushPersistedMessages|persistContacts/.test(page), 'never the app store saving');
+  assert.ok(page.includes('useSecureStorageOverride(backgroundSecureStorage({ platform, tables: createRecordTables(openLocalDatabase), writable: (name) => name === outboxName }))'), 'records: read as written, only the outbox written');
   assert.match(page, /await keep\(\{ \.\.\.opened, opened: true \}\);[\s\S]*bridge\.notify[\s\S]*message:delivered/, 'kept before the notification and the receipt');
   assert.ok(page.includes('transportOptions: { ackAfterHandled: true }'), 'the server is told only about stored messages');
   assert.match(page, /navigator\.locks\.request\(E2E_LOCK, \{ ifAvailable: true \}/, 'runs only when the lock is free at once');
@@ -93,10 +96,14 @@ test('background key opening writes nothing to the encrypted records; the page a
   // The page itself runs in HeadlessRunner (hosted by BackgroundHost for a push, HeartbeatJob for the hourly check).
   const runner = readFileSync(new URL('../android/app/src/main/java/io/github/bickworld555/hiddenchat/HeadlessRunner.java', import.meta.url), 'utf8');
   assert.match(runner, /static boolean start\(Context context, Done done\) \{\s*if \(web != null \|\| AppActivity\.isAlive\(\)\) return false;/, 'one page at a time, never while the app has a screen');
-  assert.ok(!/sqlite|SQLite|openDatabase/.test(runner + host), 'the bridge has no database access');
+  // The bridge runs only the statements the page sends (src/sqliteMessageDb.js), on a database the app created.
+  const sql = readFileSync(new URL('../android/app/src/main/java/io/github/bickworld555/hiddenchat/BackgroundSql.java', import.meta.url), 'utf8');
+  assert.ok(sql.includes('if (!sqlite.isDatabase(DB_NAME) || !sqlite.isSecretStored()) throw new Exception("no-database");'), 'only a database the app created');
+  assert.ok(runner.includes('BackgroundSql.close();'), 'the connection goes with the page');
   // P3: the wake lock never blocks the next push; P4: the hourly check skips when a fetch was recent.
   const pushHandler = readFileSync(new URL('../android/app/src/main/java/io/github/bickworld555/hiddenchat/PushService.java', import.meta.url), 'utf8');
-  assert.match(pushHandler, /private void onXmppWake\(RelaySession session, JSONObject body\) \{[\s\S]{0,400}FetchWake\.hold\(this, FetchWake\.FETCH_WAKE_MS\);/);
+  // The wake-up (from Firebase, or P5's own connection) holds the CPU awake from its first line.
+  assert.match(pushHandler, /static void handleXmppWake\(android\.content\.Context context, RelaySession session, JSONObject body\) \{[\s\S]{0,400}FetchWake\.hold\(context, FetchWake\.FETCH_WAKE_MS\);/);
   assert.ok(!/CountDownLatch|\.await\(/.test(pushHandler), 'the push handler never waits (a call push behind it would ring late)');
   assert.match(runner, /FetchWake\.release\(\);/, 'the page lets the CPU sleep once done');
   const job = readFileSync(new URL('../android/app/src/main/java/io/github/bickworld555/hiddenchat/HeartbeatJob.java', import.meta.url), 'utf8');
@@ -120,7 +127,7 @@ test('background key opening writes nothing to the encrypted records; the page a
   assert.ok(host.includes('FOREGROUND_SERVICE_TYPE_SHORT_SERVICE'), 'a short service on Android 14+');
   // Found on the S23: with the app alive in the background, the dataSync sync was refused and the fetch froze.
   const push = readFileSync(new URL('../android/app/src/main/java/io/github/bickworld555/hiddenchat/PushService.java', import.meta.url), 'utf8');
-  assert.ok(push.includes('if (!WakeKeeper.keep(this, BACKGROUND_FETCH_MS)) MessagingService.startSync(this, BACKGROUND_FETCH_MS);'), 'a short service keeps a living app awake');
+  assert.ok(push.includes('if (!WakeKeeper.keep(context, BACKGROUND_FETCH_MS)) MessagingService.startSync(context, BACKGROUND_FETCH_MS);'), 'a short service keeps a living app awake');
   const keeper = readFileSync(new URL('../android/app/src/main/java/io/github/bickworld555/hiddenchat/WakeKeeper.java', import.meta.url), 'utf8');
   assert.ok(keeper.includes('FOREGROUND_SERVICE_TYPE_SHORT_SERVICE'));
   const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
@@ -142,4 +149,59 @@ test('one message, one notification: the sealed "🔒 Message" fallback never st
   // The background page says "done" (a completed fetch) only when it reached the server's end, not at a time limit.
   const page = readFileSync(new URL('../src/background/main.js', import.meta.url), 'utf8');
   assert.match(page, /fetchReason === 'offline-done' \|\| fetchReason === 'quiet' \? 'done' : `incomplete/);
+});
+
+test('P6 and the local database: the background page reads the app records as written and writes only the outbox', async () => {
+  const { backgroundSecureStorage, createSecureStorage } = await import('../src/secureStorage.js');
+  const { createRecordTables, migrate } = await import('../src/sqliteMessageDb.js');
+  const { pluginLikeConnection } = await import('./sqliteTestDb.mjs');
+  const connection = pluginLikeConnection();
+  await migrate(connection);
+  const tables = createRecordTables(async () => connection);
+  // A Keystore stand-in: what the app sealed, the page opens with the same key.
+  const platform = { seal: async (text) => `sealed:${text}`, open: async (sealed) => sealed.slice('sealed:'.length) };
+  // The app's records, written as the app writes them (already moved into the database).
+  await tables.kvSet('meta:records-moved', true);
+  const app = createSecureStorage({ platform, storage: { get: tables.kvGet, set: tables.kvSet, del: tables.kvDelete } });
+  await app.set('relay:contacts:me', [{ id: 'ann', disappearSeconds: 86400 }]);
+  await app.set('relay:outbox:me', [{ id: 'o1', receiverId: 'ann', content: 'hi' }]);
+
+  const page = backgroundSecureStorage({ platform, tables, writable: (name) => name === 'relay:outbox:me' });
+  assert.deepEqual(await page.get('relay:contacts:me'), [{ id: 'ann', disappearSeconds: 86400 }], 'reads the record the app wrote');
+  // Anything else it writes stays in its memory: the app's contacts are untouched.
+  await page.set('relay:contacts:me', []);
+  assert.deepEqual(await page.get('relay:contacts:me'), []);
+  assert.deepEqual(await app.get('relay:contacts:me'), [{ id: 'ann', disappearSeconds: 86400 }]);
+  // The outbox it sent is written for real, so the app does not send it again.
+  await page.set('relay:outbox:me', []);
+  assert.deepEqual(await app.get('relay:outbox:me'), []);
+
+  const source = readFileSync(new URL('../src/background/main.js', import.meta.url), 'utf8');
+  // Sent only after the server has given everything that waited, and taken out of the outbox once the server has it.
+  assert.match(source, /settle: \(\) => sendOutbox\(\)/);
+  assert.match(source, /if \(!\(await session\.transport\.pingServer\(\{ timeoutMs: 5000 \}\)\)\) return;\s*const now = /);
+  // Opened messages go into the app's database too, never over a copy, never from a blocked person.
+  assert.match(source, /await keep\(\{ \.\.\.opened, opened: true \}\);\s*await saveToDatabase\(opened\)/);
+  assert.match(source, /hiddenByBlock\(message, useChatStore\.getState\(\)\.blockedChats\?\.\[chat\], userId\)\) return;\s*await local\.addIfMissing/);
+  const job = readFileSync(new URL('../android/app/src/main/java/io/github/bickworld555/hiddenchat/UnsentMessagesJob.java', import.meta.url), 'utf8');
+  assert.match(job, /setRequiredNetworkType\(JobInfo\.NETWORK_TYPE_ANY\)/);
+  const manifest = readFileSync(new URL('../android/app/src/main/AndroidManifest.xml', import.meta.url), 'utf8');
+  assert.match(manifest, /android:name="\.UnsentMessagesJob"[\s\S]{0,120}BIND_JOB_SERVICE/);
+  const appSource = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
+  assert.match(appSource, /nativeScheduleUnsent\(outbox\.some\(\(message\) => !message\?\.awaitingKeys\)\)/);
+});
+
+test('P7: Settings, Notifications says whether Android delivered pushes on time this week', async () => {
+  const { pushDeliverySummary } = await import('../src/pushDiagnostics.js');
+  assert.equal(pushDeliverySummary(null), null);
+  assert.equal(pushDeliverySummary({ received: 0 }), null);
+  assert.equal(pushDeliverySummary({ received: 12, demoted: 0 }).late, false);
+  const late = pushDeliverySummary({ received: 12, demoted: 3, lastDemotedAt: Date.UTC(2026, 10, 16) });
+  assert.equal(late.late, true);
+  assert.match(late.text, /delayed 3 of 12 notifications/);
+  assert.match(late.advice, /Unrestricted/);
+  const stats = readFileSync(new URL('../android/app/src/main/java/io/github/bickworld555/hiddenchat/PushStats.java', import.meta.url), 'utf8');
+  assert.match(stats, /original == RemoteMessage\.PRIORITY_HIGH && delivered != RemoteMessage\.PRIORITY_HIGH/);
+  const push = readFileSync(new URL('../android/app/src/main/java/io/github/bickworld555/hiddenchat/PushService.java', import.meta.url), 'utf8');
+  assert.match(push, /PushStats\.record\(this, message, type\);/);
 });

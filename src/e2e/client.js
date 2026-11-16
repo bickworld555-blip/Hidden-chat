@@ -189,15 +189,17 @@ export function startE2e({ token, userId, deviceId, storage, fetchImpl = apiFetc
  * The background page (src/background/main.js): this device's keys opened for reading incoming messages only. No key
  * publishing, no device-list sync, no timers, no writes to the encrypted records (`records` is the page's memory),
  * so nothing but the ratchet state (IndexedDB, under the "hm-e2e" lock) changes. Identity changes it meets are
- * handed to `onIdentityChange` so the app can show them later.
+ * handed to `onIdentityChange` so the app can show them later. With `token` and `records` (the app's records, read
+ * only: src/secureStorage.js backgroundSecureStorage) it can also send what the app left in its outbox (P6), to the
+ * devices the account's pinned signed lists allow, exactly as the app would.
  */
-export function openE2eForBackground({ userId, deviceId, onIdentityChange = () => {} } = {}) {
+export function openE2eForBackground({ userId, deviceId, token = null, records = null, onIdentityChange = () => {} } = {}) {
   if (!userId || !deviceId) return false;
   stopE2e();
   const memory = new Map();
   current = {
-    token: null, userId, deviceId, fetchImpl: apiFetch, api: undefined,
-    records: { get: async (key) => memory.get(key), set: async (key, value) => { memory.set(key, value); } },
+    token, userId, deviceId, fetchImpl: apiFetch, api: undefined,
+    records: records ?? { get: async (key) => memory.get(key), set: async (key, value) => { memory.set(key, value); } },
     linkStore: { get: async () => undefined, del: async () => {} },
     canHoldAccountKey: false,
     protocol: createProtocol({ storage: browserKeyStorage(deviceId), onIdentityChange: (changedUser, changedDevice) => onIdentityChange({ userId: changedUser, deviceId: changedDevice }) }),

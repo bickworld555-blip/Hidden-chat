@@ -53,9 +53,13 @@ public class MessagingService extends Service {
         ContextCompat.startForegroundService(context, new Intent(context, MessagingService.class));
     }
 
-    /** Push mode is off for the signed-in account: the always-on connection keeps the phone reachable. */
+    /**
+     * The always-on connection keeps the phone reachable: push is off for the signed-in account, or the person chose
+     * Settings › Notifications › Always connected (P5, a second route besides Firebase, like WhatsApp's own push
+     * channel next to FCM).
+     */
     static boolean isLegacy(Context context) {
-        return RelaySession.read(context) != null && !PushRegistration.isActive(context);
+        return RelaySession.read(context) != null && (!PushRegistration.isActive(context) || AlwaysConnected.enabled(context));
     }
 
     private static boolean syncing() {

@@ -976,6 +976,18 @@ export function createChatServer({
     return delivered;
   }
 
+  // P5: the wake-up for a message waiting on XMPP, over this device's always-connected socket (relay.background, the
+  // Android service's own connection), besides the push. Content-free, like the push: who it is from, nothing more.
+  function wakeOverBackgroundSockets(userId, deviceId, { from = null, groupId = null } = {}) {
+    let sent = 0;
+    for (const socket of userSockets(userId)) {
+      if (!socket.relayBackground || (deviceId && socket.deviceId && socket.deviceId !== deviceId)) continue;
+      json(socket, { type: 'xmpp:wake', ...(from ? { from } : {}), ...(groupId ? { groupId } : {}) });
+      sent += 1;
+    }
+    return sent;
+  }
+
   // --- The server as a short-lived queue (server/deliveryQueue.mjs): messages leave once every device stored them. ---
   const deliveryQueue = createDeliveryQueue({
     db,
@@ -1483,6 +1495,9 @@ export function createChatServer({
     // sender is unknown; the phone then shows a plain "New message" and connects to collect it.
     wake: async (userId, deviceId, { fromUserId = null, groupId = null } = {}) => {
       const sender = fromUserId ? await db.prepare(`SELECT ${USER_COLUMNS} FROM users WHERE id = ? AND deleted_at IS NULL`).get(fromUserId) : null;
+      // P5: a phone that keeps its own connection (Settings › Notifications › Always connected) is told over it too,
+      // so a late Firebase push does not hold the message up; whichever arrives first wakes it.
+      wakeOverBackgroundSockets(userId, deviceId, { from: sender?.id ?? null, groupId });
       // A group message: the group notification (group name, "sender: 🔒 Message"), collapsed per group.
       const group = groupId && await db.prepare('SELECT g.name AS "name" FROM groups g JOIN group_members m ON m.group_id = g.id WHERE g.id = ? AND m.user_id = ?').get(groupId, userId);
       if (group) {
@@ -2548,9 +2563,11 @@ export function createChatServer({
     const targetId = typeof request.body?.userId === 'string' ? request.body.userId : '';
     if (!targetId || targetId === userId) return response.status(400).json({ error: 'Name the person to wake.' });
     if (await nudgeLimiter.hit(`nudge:${userId}`, [{ limit: 30, windowMs: 60_000 }])) return response.status(429).json({ error: 'Too many wake-ups.' });
-    if (!push || !(await areLinked(userId, targetId)) || await blocks.between(userId, targetId)) return response.status(202).json({ sent: 0 });
-    const sent = await pushToUser(targetId, pushBody.wake({ from: userId }), {}).catch(() => 0);
-    response.status(202).json({ sent });
+    if (!(await areLinked(userId, targetId)) || await blocks.between(userId, targetId)) return response.status(202).json({ sent: 0 });
+    // P5: an always-connected phone hears it over its own connection too.
+    const direct = wakeOverBackgroundSockets(targetId, null, { from: userId });
+    const sent = push ? await pushToUser(targetId, pushBody.wake({ from: userId }), {}).catch(() => 0) : 0;
+    response.status(202).json({ sent: sent + direct });
   });
 
   // The phone's push handler confirms a call rang there (Android PushService), before any app connection exists.

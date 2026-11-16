@@ -140,6 +140,12 @@
             android:exported="false"
             android:permission="android.permission.BIND_JOB_SERVICE" />
 
+        <!-- P6: sends messages left unsent once there is a network, app closed (like UnsentMessagesNetworkAvailableJob). -->
+        <service
+            android:name=".UnsentMessagesJob"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
+
         <!-- Keeps a living app awake for a few seconds while it fetches what a push announced (no daily cap). -->
         <service
             android:name=".WakeKeeper"

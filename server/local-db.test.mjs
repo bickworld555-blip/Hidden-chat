@@ -129,3 +129,33 @@ test('100,000 messages: opening, scrolling back, searching and saving stay fast'
   assert.ok(opened.ms < 3000, `start-up window took ${opened.ms} ms`);
   assert.ok(older.ms < 200 && found.ms < 500 && saved.ms < 3000 && cleared.ms < 3000 && rebuilt.ms < 60000);
 });
+
+test('the background page writes a message only where no copy exists, indexed for search; the outbox moves to sent, never back', async () => {
+  const connection = pluginLikeConnection();
+  await migrate(connection);
+  connection.raw.exec('CREATE VIRTUAL TABLE messages_fts USING fts5(text, owner UNINDEXED, id UNINDEXED)');
+  const store = createSqliteMessageDb({ connect: async () => connection, fts: () => true });
+  // The app's own copy (edited since) must survive a push that brings the original again.
+  await store.apply('me', { puts: [{ chat: 'ann', message: { id: 'm1', senderId: 'ann', receiverId: 'me', content: 'edited copy', timestamp: '2026-11-16T10:00:00.000Z', status: 'read' } }] });
+  await store.addIfMissing('me', [
+    { chat: 'ann', message: { id: 'm1', senderId: 'ann', receiverId: 'me', content: 'original', timestamp: '2026-11-16T10:00:00.000Z', status: 'sent' } },
+    { chat: 'ann', message: { id: 'm2', senderId: 'ann', receiverId: 'me', content: 'pushed while closed', timestamp: '2026-11-16T10:01:00.000Z', status: 'sent' } },
+    { chat: 'group:g1', message: { id: 'g1m', groupId: 'g1', senderId: 'bob', content: 'group news', createdAt: 1, timestamp: '1970-01-01T00:00:00.001Z' } },
+  ]);
+  // A second push for the same message adds nothing twice (row or search entry).
+  await store.addIfMissing('me', [{ chat: 'ann', message: { id: 'm2', senderId: 'ann', receiverId: 'me', content: 'pushed while closed', timestamp: '2026-11-16T10:01:00.000Z', status: 'sent' } }]);
+  const { messages } = await store.loadRecent('me', 10);
+  assert.deepEqual(messages.ann.map((message) => message.content), ['edited copy', 'pushed while closed']);
+  assert.equal(messages['group:g1'][0].content, 'group news');
+  assert.deepEqual((await store.search('me', 'pushed', 10)).map((row) => row.id), ['m2']);
+  assert.equal((await connection.query('SELECT count(*) AS n FROM messages_fts WHERE id = ?', ['m2'])).values[0].n, 1);
+
+  // P6: what the outbox sent is "sent"; a message already delivered (or read) keeps its later status.
+  await store.apply('me', { puts: [
+    { chat: 'ann', message: { id: 'o1', senderId: 'me', receiverId: 'ann', content: 'queued', timestamp: '2026-11-16T10:02:00.000Z', status: 'pending' } },
+    { chat: 'ann', message: { id: 'o2', senderId: 'me', receiverId: 'ann', content: 'already there', timestamp: '2026-11-16T10:03:00.000Z', status: 'delivered' } },
+  ] });
+  assert.equal(await store.setStatus('me', ['o1', 'o2', 'missing'], 'sent'), 1);
+  const after = (await store.loadRecent('me', 10)).messages.ann;
+  assert.deepEqual(after.filter((message) => message.id.startsWith('o')).map((message) => message.status), ['sent', 'delivered']);
+});

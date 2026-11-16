@@ -33,6 +33,8 @@ public class PushService extends FirebaseMessagingService {
         if (body == null || session == null) return;
         NotificationChannels.ensure(this);
         String type = body.optString("t");
+        // P7: was it delivered at the priority it was sent with?
+        PushStats.record(this, message, type);
         try {
             switch (type) {
                 case "msg": onDirectMessage(session, body); break;
@@ -97,13 +99,21 @@ public class PushService extends FirebaseMessagingService {
      * senders their delivery receipts (two grey ticks), as markDelivered does for messages through the server.
      */
     private void onXmppWake(RelaySession session, JSONObject body) {
+        handleXmppWake(this, session, body);
+    }
+
+    /**
+     * The wake-up itself, from Firebase (onXmppWake) or from the always-connected service's own connection (P5,
+     * NativeRelay "xmpp:wake"): whichever comes first does the work; the other finds the fetch already running or done.
+     */
+    static void handleXmppWake(android.content.Context context, RelaySession session, JSONObject body) {
         // P3: the CPU stays awake until the fetch says it is done (at most FetchWake.FETCH_WAKE_MS), without holding up
         // the next push (a call arriving meanwhile still rings at once).
-        FetchWake.hold(this, FetchWake.FETCH_WAKE_MS);
+        FetchWake.hold(context, FetchWake.FETCH_WAKE_MS);
         String from = body.optString("from");
         boolean running = HiddenNativePlugin.emitXmppWake();
         String groupId = body.optString("groupId");
-        if (groupId.isEmpty()) PushRegistration.confirmXmppWake(this);
+        if (groupId.isEmpty()) PushRegistration.confirmXmppWake(context);
         if (running) {
             // The app's code is alive (its screen is in the background): like WhatsApp's push service, keep the process
             // awake while it connects, decrypts and stores what waits, sends delivery receipts from this phone and
@@ -111,19 +121,19 @@ public class PushService extends FirebaseMessagingService {
             // one for this conversation in time, the sealed notice below appears instead.
             // A short service (WakeKeeper), not MessagingService's dataSync sync: Android 15 refuses dataSync once the
             // app's daily cap is used, which froze the fetch on the S23. The old path only if the short one is refused.
-            if (!WakeKeeper.keep(this, BACKGROUND_FETCH_MS)) MessagingService.startSync(this, BACKGROUND_FETCH_MS);
-            sealedUnlessHandled(getApplicationContext(), from, groupId, FALLBACK_NOTICE_MS);
+            if (!WakeKeeper.keep(context, BACKGROUND_FETCH_MS)) MessagingService.startSync(context, BACKGROUND_FETCH_MS);
+            sealedUnlessHandled(context.getApplicationContext(), from, groupId, FALLBACK_NOTICE_MS);
             return;
         }
         // No app screen: the background page does the same work in a hidden WebView (BackgroundHost). The sealed
         // notice still appears if it has not posted the real one in time (or could not start).
-        BackgroundHost.start(this);
-        if (BackgroundHost.isRunning()) {
-            sealedUnlessHandled(getApplicationContext(), from, groupId, HEADLESS_FALLBACK_MS);
+        BackgroundHost.start(context);
+        if (BackgroundHost.isRunning() || HeadlessRunner.isRunning()) {
+            sealedUnlessHandled(context.getApplicationContext(), from, groupId, HEADLESS_FALLBACK_MS);
             Log.i(TAG, "xmpp wake-up while the app is closed: background page started");
             return;
         }
-        showSealedWake(this, session, from, groupId);
+        showSealedWake(context, session, from, groupId);
         Log.i(TAG, "xmpp wake-up while the app is closed: collected when it opens");
     }
 

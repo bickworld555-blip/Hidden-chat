@@ -50,6 +50,16 @@ export const ORPHAN_LIFE_MS = 24 * 60 * 60 * 1000;
 // Why a call did not ring through (L1): silenced as an unknown caller, or the phone in Do Not Disturb.
 export const SILENCE_REASONS = new Set(['unknown-caller', 'dnd']);
 export const ORPHAN_LIMIT = 2000;
+
+/**
+ * A group message as this device saves it (key groupChatKey(groupId)): its creation time as a number and an ISO
+ * timestamp, over the copy already saved (`known`). The app's store and the background page (src/background/main.js)
+ * both save group messages this way.
+ */
+export function groupMessageForStore(row, known = null) {
+  const createdAt = Number(row.createdAt ?? known?.createdAt ?? Date.now());
+  return { ...known, ...row, createdAt, timestamp: new Date(createdAt).toISOString() };
+}
 const orphanReceipts = new Map(); // id -> { at, items: [receipt] } (one per sender and kind; a group has many)
 const ORPHAN_ITEMS = 64;
 function keepOrphanReceipt(messageId, receipt, now = Date.now()) {
@@ -826,8 +836,7 @@ export const useChatStore = create((setState, getState) => ({
         if (!row?.id || row.pending) continue;
         const known = byId.get(row.id);
         if (known && !known.e2eError && row.e2eError) continue;
-        const createdAt = Number(row.createdAt ?? known?.createdAt ?? Date.now());
-        byId.set(row.id, { ...known, ...row, createdAt, timestamp: new Date(createdAt).toISOString() });
+        byId.set(row.id, groupMessageForStore(row, known));
       }
       merged = [...byId.values()].sort((left, right) => Number(left.createdAt) - Number(right.createdAt));
       return { messages: { ...state.messages, [key]: merged } };

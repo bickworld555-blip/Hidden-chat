@@ -122,9 +122,9 @@ const nativePlatform = () => (nativeShell()
 
 // The Android app keeps these records in its encrypted SQLite database (src/recordStore.js), moved there once from
 // IndexedDB; the browser keeps IndexedDB.
-function nativeRecordStorage() {
+function nativeRecordStorage(source = () => import('./sqliteMessageDb.js').then((module) => module.records)) {
   let tables = null;
-  const sqlite = () => (tables ??= import('./sqliteMessageDb.js').then((module) => module.records));
+  const sqlite = () => (tables ??= Promise.resolve(source()));
   const via = (name) => async (...args) => (await sqlite())[name](...args);
   const ownedHere = (name, value) => isSecureRecord(value) || name === DATA_KEY_SEALED;
   return import('./recordStore.js').then(({ createRecordStorage }) => createRecordStorage({
@@ -145,12 +145,51 @@ export async function secureRecordsLocation() {
 let shared = null;
 
 /**
- * The background page has no Capacitor bridge and must never write the app's encrypted records: it gives its own
- * store (memory only) before anything uses secureStorage().
+ * The background page has no Capacitor bridge: it gives its own store before anything uses secureStorage(), either
+ * memory only, or backgroundSecureStorage below.
  */
 export function useSecureStorageOverride(store) {
   shared = store;
 }
+
+/**
+ * The app's own records for the background page (src/background/main.js), through the same storage and data key:
+ * `platform` is Android's Keystore over the page's bridge, `tables` the database's record tables over the same
+ * bridge. Every record reads as the app wrote it; only names `writable(name)` allows are written (the outbox it
+ * sends, P6). Anything else it would write stays in memory, so the page never changes the app's other records.
+ */
+export function backgroundSecureStorage({ platform, tables, writable = () => false }) {
+  const real = createSecureStorage({ platform, storage: recordStorageOver(nativeRecordStorage(() => tables)) });
+  const memory = new Map();
+  const removed = new Set();
+  return {
+    ready: real.ready,
+    seal: real.seal,
+    open: real.open,
+    async get(name) {
+      if (memory.has(name)) return memory.get(name);
+      if (removed.has(name)) return undefined;
+      return real.get(name);
+    },
+    async set(name, value) {
+      if (writable(name)) return real.set(name, value);
+      memory.set(name, value);
+      removed.delete(name);
+    },
+    async del(name) {
+      if (writable(name)) return real.del(name);
+      memory.delete(name);
+      removed.add(name);
+    },
+  };
+}
+
+const recordStorageOver = (records) => ({
+  get: async (name) => (await records).get(name),
+  // A record that cannot be written (phone full) is reported; the caller still sees the error.
+  set: async (name, value) => { try { return await (await records).set(name, value); } catch (error) { reportStorageFailure(error); throw error; } },
+  del: async (name) => (await records).del(name),
+});
 
 /** The app's encrypted store (created on first use, so tests and server code never touch the platform). */
 export function secureStorage() {
@@ -159,13 +198,7 @@ export function secureStorage() {
     if (platform) {
       const records = nativeRecordStorage();
       nativeRecords = records;
-      const storage = {
-        get: async (name) => (await records).get(name),
-        // A record that cannot be written (phone full) is reported; the caller still sees the error.
-        set: async (name, value) => { try { return await (await records).set(name, value); } catch (error) { reportStorageFailure(error); throw error; } },
-        del: async (name) => (await records).del(name),
-      };
-      shared = createSecureStorage({ platform, storage });
+      shared = createSecureStorage({ platform, storage: recordStorageOver(records) });
     } else {
       shared = createSecureStorage({ platform });
     }

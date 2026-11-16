@@ -22,7 +22,7 @@ import { applyGroupChange, GROUP_CHANGE_EVENTS } from './groupChanges.js';
 import { cachedGroupDetails } from './groupCache.js';
 import { applyGroupCall, withRunningCall } from './groupCalls.js';
 import { notificationNames } from './notificationNames.js';
-import { nativeClearSession, nativeRequestStartupPermissions, nativeSetSession, nativeShell, nativeStartBackground, nativeState, nativeStopBackground, nativeTakePendingCall, nativeMoveToBackground, nativeClearShare, nativeSetCallActive, nativeClearMessageNotifications, nativeClearMissedCalls, nativeTakeMessageActions, nativeTakeCallEvents, nativeSetSystemBarsTheme, nativeOpenSecret, nativeBackgroundFetchDone, onNative } from './native.js';
+import { nativeClearSession, nativeRequestStartupPermissions, nativeSetSession, nativeShell, nativeStartBackground, nativeState, nativeStopBackground, nativeTakePendingCall, nativeMoveToBackground, nativeClearShare, nativeSetCallActive, nativeClearMessageNotifications, nativeClearMissedCalls, nativeTakeMessageActions, nativeTakeCallEvents, nativeSetSystemBarsTheme, nativeOpenSecret, nativeBackgroundFetchDone, nativeScheduleUnsent, onNative } from './native.js';
 import { parseShare } from './shareTarget.js';
 import { e2eDeviceId, onE2eEvent, replayE2eEvent, sealDirect, sealToOwnDevices, startE2e, stopE2e, userForXmppAddress, xmppGroupTargetsFor, xmppTargetsFor } from './e2e/client.js';
 import { createControlBuffer, expiredIds, resolveControl, roleIn } from './e2e/lifecycle.js';
@@ -953,6 +953,18 @@ export default function App() {
     const onVisible = () => { if (document.visibilityState === 'visible') take(); };
     document.addEventListener('visibilitychange', onVisible);
     return () => { live = false; document.removeEventListener('visibilitychange', onVisible); };
+  }, [userId]);
+
+  // P6: leaving the screen with messages still unsent (no network, or swiped away mid-send): Android sends them as
+  // soon as there is a network, with the app closed (UnsentMessagesJob → the background page). Nothing left: cancelled.
+  useEffect(() => {
+    if (!userId || !nativeShell()) return undefined;
+    const onHide = () => {
+      if (document.visibilityState !== 'hidden') return;
+      getOutbox(userId).then((outbox) => nativeScheduleUnsent(outbox.some((message) => !message?.awaitingKeys))).catch(() => {});
+    };
+    document.addEventListener('visibilitychange', onHide);
+    return () => document.removeEventListener('visibilitychange', onHide);
   }, [userId]);
 
   useEffect(() => onNative('callBack', ({ peerId, mode } = {}) => {

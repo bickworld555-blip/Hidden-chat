@@ -10,7 +10,8 @@ import {
 } from '../notificationSettings.js';
 import { defaultToneForCategory, defaultToneId, isCustomChoice, libraryTone, parsePhoneToneChoice, phoneToneChoice, toneChoiceLabel, toneLibrary } from '../tones.js';
 import { addCustomTone, getCustomTones, playPhoneSound, playToneChoice, removeCustomTone, stopTone } from '../sounds.js';
-import { nativeListSystemSounds, nativeShell } from '../native.js';
+import { nativeAlwaysConnected, nativeListSystemSounds, nativePushDiagnostics, nativeShell } from '../native.js';
+import { pushDeliverySummary } from '../pushDiagnostics.js';
 import { notificationPermission, requestNotificationPermission, vibrateFor } from '../notify.js';
 
 const RINGTONE_PREVIEW_MS = 4500;
@@ -179,6 +180,46 @@ function TonePicker({ title, kind, defaultId = defaultToneId(kind), value, volum
   );
 }
 
+// P5: a second route besides Firebase (off unless chosen): the phone keeps its own connection to the server.
+function AlwaysConnectedRow() {
+  const [enabled, setEnabled] = useState(null);
+  useEffect(() => {
+    if (!nativeShell()) return undefined;
+    let live = true;
+    nativeAlwaysConnected().then((value) => { if (live && value) setEnabled(Boolean(value.enabled)); }).catch(() => {});
+    return () => { live = false; };
+  }, []);
+  if (enabled === null) return null;
+  const change = (next) => {
+    setEnabled(next);
+    nativeAlwaysConnected(next).then((value) => { if (value) setEnabled(Boolean(value.enabled)); }).catch(() => setEnabled(!next));
+  };
+  return (
+    <ToggleRow title="Always connected" subtitle="Keep a direct connection to Hidden Messenger, so messages and calls arrive even when Google's notifications are late. Uses more battery and shows a “Connected” notification." checked={enabled} onChange={change} />
+  );
+}
+
+// P7: whether Android delivered this phone's notifications on time this week (lowered priority makes them late).
+function PushDelivery() {
+  const [stats, setStats] = useState(null);
+  useEffect(() => {
+    if (!nativeShell()) return undefined;
+    let live = true;
+    nativePushDiagnostics().then((value) => { if (live) setStats(value); }).catch(() => {});
+    return () => { live = false; };
+  }, []);
+  const summary = pushDeliverySummary(stats);
+  if (!summary) return nativeShell() ? <section className="wa-info-section"><h3>Delivery</h3><AlwaysConnectedRow /></section> : null;
+  return (
+    <section className="wa-info-section">
+      <h3>Delivery</h3>
+      <p className={`notif-delivery ${summary.late ? 'is-late' : ''}`} role="status">{summary.text}</p>
+      {summary.advice && <p className="notif-delivery-advice">{summary.advice}</p>}
+      <AlwaysConnectedRow />
+    </section>
+  );
+}
+
 export default function NotificationSettings({ onClose }) {
   const settings = useNotificationSettings();
   const [view, setView] = useState(null);
@@ -288,6 +329,7 @@ export default function NotificationSettings({ onClose }) {
           <section className="wa-info-section">
             <ToggleRow title="App icon badge" subtitle="Clears when you view all messages and calls" checked={settings.appBadge} onChange={(enabled) => updateNotificationSettings({ appBadge: enabled })} />
           </section>
+          <PushDelivery />
         </div>
       </div>
     );

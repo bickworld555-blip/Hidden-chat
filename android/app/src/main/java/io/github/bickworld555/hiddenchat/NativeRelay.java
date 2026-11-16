@@ -331,6 +331,9 @@ final class NativeRelay extends WebSocketListener {
             Alerts.showMessage(context, NotificationChannels.messageChannel(context, false, session.messageSound),
                 event.optString("reactorName", "Reaction"), body, "reaction:" + event.optString("messageId"), "chat:" + reactor, 0,
                 "react:" + event.optString("messageId") + ":" + emoji);
+        } else if ("xmpp:wake".equals(type)) {
+            // P5: a message waits on XMPP; the server says so here as well as by Firebase (Always connected).
+            PushService.handleXmppWake(context, session, event);
         } else if ("call:signal".equals(type)) {
             handleCallSignal(event);
         } else if ("call:invite".equals(type)) {
