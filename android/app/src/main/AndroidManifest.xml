@@ -129,6 +129,12 @@
 
         <!-- Messages on push with no app screen (like WhatsApp's GcmFGService): the app's background page in a hidden
              WebView decrypts, keeps and notifies, then stops. -->
+        <!-- P4: the hourly check that fetches when no push has for a while (like WhatsApp's HEARTBEAT_WAKEUP). -->
+        <service
+            android:name=".HeartbeatJob"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
+
         <!-- Keeps a living app awake for a few seconds while it fetches what a push announced (no daily cap). -->
         <service
             android:name=".WakeKeeper"
@@ -205,6 +211,8 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <!-- Voice calls on the earpiece: the proximity sensor turns the screen off against the ear. -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- The hourly message check (HeartbeatJob) is kept across restarts. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- Saving received files on Android 9 and older (newer versions need no permission). -->
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />

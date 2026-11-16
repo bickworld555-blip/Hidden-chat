@@ -89,8 +89,21 @@ test('background key opening writes nothing to the encrypted records; the page a
   assert.ok(page.includes('transportOptions: { ackAfterHandled: true }'), 'the server is told only about stored messages');
   assert.match(page, /navigator\.locks\.request\(E2E_LOCK, \{ ifAvailable: true \}/, 'runs only when the lock is free at once');
   const host = readFileSync(new URL('../android/app/src/main/java/io/github/bickworld555/hiddenchat/BackgroundHost.java', import.meta.url), 'utf8');
-  assert.match(host, /static void start\(Context context\) \{\s*if \(AppActivity\.isAlive\(\) \|\| running\) return;/, 'never while the app has a screen');
-  assert.ok(!/sqlite|SQLite|openDatabase/.test(host), 'the bridge has no database access');
+  assert.match(host, /static void start\(Context context\) \{\s*if \(AppActivity\.isAlive\(\) \|\| running \|\| HeadlessRunner\.isRunning\(\)\) return;/, 'never while the app has a screen');
+  // The page itself runs in HeadlessRunner (hosted by BackgroundHost for a push, HeartbeatJob for the hourly check).
+  const runner = readFileSync(new URL('../android/app/src/main/java/io/github/bickworld555/hiddenchat/HeadlessRunner.java', import.meta.url), 'utf8');
+  assert.match(runner, /static boolean start\(Context context, Done done\) \{\s*if \(web != null \|\| AppActivity\.isAlive\(\)\) return false;/, 'one page at a time, never while the app has a screen');
+  assert.ok(!/sqlite|SQLite|openDatabase/.test(runner + host), 'the bridge has no database access');
+  // P3: the wake lock never blocks the next push; P4: the hourly check skips when a fetch was recent.
+  const pushHandler = readFileSync(new URL('../android/app/src/main/java/io/github/bickworld555/hiddenchat/PushService.java', import.meta.url), 'utf8');
+  assert.match(pushHandler, /private void onXmppWake\(RelaySession session, JSONObject body\) \{[\s\S]{0,400}FetchWake\.hold\(this, FetchWake\.FETCH_WAKE_MS\);/);
+  assert.ok(!/CountDownLatch|\.await\(/.test(pushHandler), 'the push handler never waits (a call push behind it would ring late)');
+  assert.match(runner, /FetchWake\.release\(\);/, 'the page lets the CPU sleep once done');
+  const job = readFileSync(new URL('../android/app/src/main/java/io/github/bickworld555/hiddenchat/HeartbeatJob.java', import.meta.url), 'utf8');
+  assert.match(job, /if \(FetchWake\.fetchedWithin\(this, RECENT_MS\)\)/, 'no fetch when one completed recently');
+  assert.match(job, /\.setRequiredNetworkType\(JobInfo\.NETWORK_TYPE_ANY\)[\s\S]*\.setPersisted\(true\)/, 'with a network, kept across restarts');
+  const manifest = readFileSync(new URL('../android/app/src/main/AndroidManifest.xml', import.meta.url), 'utf8');
+  assert.ok(manifest.includes('android.permission.RECEIVE_BOOT_COMPLETED') && manifest.includes('android:name=".HeartbeatJob"'));
   const activity = readFileSync(new URL('../android/app/src/main/java/io/github/bickworld555/hiddenchat/AppActivity.java', import.meta.url), 'utf8');
   assert.match(activity, /public void onCreate\(Bundle savedInstanceState\) \{[\s\S]{0,400}BackgroundHost\.stopForApp\(\);/, 'the app screen stops the page first');
   // Found on the S23: the session went to Android without the device id, so the page always read "signed out".

@@ -21,7 +21,7 @@ import { companionOnly } from './companion.js';
 import { applyGroupChange, GROUP_CHANGE_EVENTS } from './groupChanges.js';
 import { cachedGroupDetails } from './groupCache.js';
 import { notificationNames } from './notificationNames.js';
-import { nativeClearSession, nativeRequestStartupPermissions, nativeSetSession, nativeShell, nativeStartBackground, nativeState, nativeStopBackground, nativeTakePendingCall, nativeMoveToBackground, nativeClearShare, nativeSetCallActive, nativeClearMessageNotifications, nativeClearMissedCalls, nativeTakeMessageActions, nativeTakeCallEvents, nativeSetSystemBarsTheme, nativeOpenSecret, onNative } from './native.js';
+import { nativeClearSession, nativeRequestStartupPermissions, nativeSetSession, nativeShell, nativeStartBackground, nativeState, nativeStopBackground, nativeTakePendingCall, nativeMoveToBackground, nativeClearShare, nativeSetCallActive, nativeClearMessageNotifications, nativeClearMissedCalls, nativeTakeMessageActions, nativeTakeCallEvents, nativeSetSystemBarsTheme, nativeOpenSecret, nativeBackgroundFetchDone, onNative } from './native.js';
 import { parseShare } from './shareTarget.js';
 import { e2eDeviceId, onE2eEvent, replayE2eEvent, sealDirect, sealToOwnDevices, startE2e, stopE2e, userForXmppAddress, xmppGroupTargetsFor, xmppTargetsFor } from './e2e/client.js';
 import { createControlBuffer, expiredIds, resolveControl, roleIn } from './e2e/lifecycle.js';
@@ -822,7 +822,8 @@ export default function App() {
     const stopWake = onNative('xmppWake', () => {
       if (nativeShell() && document.visibilityState !== 'visible') {
         // settle: the opening and handling of what arrived (decrypted, stored, notified) finishes before it goes quiet.
-        xmppRef.current?.backgroundFetch?.({ stayOffline: () => document.visibilityState !== 'visible' && !inCall(), settle: () => pendingEventsRef.current });
+        Promise.resolve(xmppRef.current?.backgroundFetch?.({ stayOffline: () => document.visibilityState !== 'visible' && !inCall(), settle: () => pendingEventsRef.current }))
+          .then((reason) => nativeBackgroundFetchDone(reason ?? 'none')).catch(() => {});
       } else {
         wake();
       }

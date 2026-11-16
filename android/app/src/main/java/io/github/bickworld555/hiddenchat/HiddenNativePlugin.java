@@ -160,6 +160,18 @@ public class HiddenNativePlugin extends Plugin {
         call.resolve(result);
     }
 
+    /**
+     * The app's own background fetch has ended (src/App.jsx): the CPU may sleep again (FetchWake, P3); "offline-done"
+     * or "quiet" also counts as a completed fetch for the hourly check (HeartbeatJob, P4).
+     */
+    @PluginMethod
+    public void backgroundFetchDone(PluginCall call) {
+        String reason = call.getString("reason", "");
+        if ("offline-done".equals(reason) || "quiet".equals(reason)) FetchWake.markFetched(getContext());
+        FetchWake.release();
+        call.resolve();
+    }
+
     /** Calls handled without the app's screen (CallEvents): { events: [{ callId, peerId, mode, status, direction, at }] }. */
     @PluginMethod
     public void takeCallEvents(PluginCall call) {
@@ -490,6 +502,8 @@ public class HiddenNativePlugin extends Plugin {
             if (names != null) RelaySession.saveNames(getContext(), names.toString());
             JSArray locked = call.getArray("lockedChats");
             RelaySession.saveBackground(getContext(), call.getString("deviceId"), locked == null ? null : new HashSet<>(stringList(locked)));
+            // P4: the hourly check (HeartbeatJob) while signed in.
+            HeartbeatJob.schedule(getContext());
             PushRegistration.ensure(getContext());
         }
         JSObject result = new JSObject();
@@ -1018,6 +1032,7 @@ public class HiddenNativePlugin extends Plugin {
         // The server forgets this phone's push token (needs the session, so before it is cleared).
         PushRegistration.unregister(getContext());
         RelaySession.clear(getContext());
+        HeartbeatJob.cancel(getContext());
         // Signed out: this account's chats must not stay in the share sheet or on the app icon.
         ShareShortcuts.clear(getContext());
         NativeRelay.stop();

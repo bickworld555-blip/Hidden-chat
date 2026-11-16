@@ -97,6 +97,9 @@ public class PushService extends FirebaseMessagingService {
      * senders their delivery receipts (two grey ticks), as markDelivered does for messages through the server.
      */
     private void onXmppWake(RelaySession session, JSONObject body) {
+        // P3: the CPU stays awake until the fetch says it is done (at most FetchWake.FETCH_WAKE_MS), without holding up
+        // the next push (a call arriving meanwhile still rings at once).
+        FetchWake.hold(this, FetchWake.FETCH_WAKE_MS);
         String from = body.optString("from");
         boolean running = HiddenNativePlugin.emitXmppWake();
         String groupId = body.optString("groupId");

@@ -121,6 +121,9 @@ export const nativeClearMissedCalls = (peerId) => invoke('clearMissedCalls', pee
 export const nativeTakeMessageActions = async () => (await invoke('takeMessageActions'))?.actions ?? [];
 // Calls the phone handled while the app's screen was gone (missed, declined, missed while offline): emptied on read.
 export const nativeTakeCallEvents = async () => (await invoke('takeCallEvents'))?.events ?? [];
+// The app's own background fetch has ended (how: offline-done | quiet | limit | kept): Android lets the CPU sleep
+// again and, for a completed fetch, the hourly check knows nothing is waiting.
+export const nativeBackgroundFetchDone = (reason) => invoke('backgroundFetchDone', { reason: String(reason ?? '') });
 // Stops the ringing notification; `missed`: the caller hung up first, so a "Missed call" notification takes its place.
 export const nativeCancelIncomingCall = ({ missed = false } = {}) => invoke('cancelIncomingCall', { missed: Boolean(missed) });
 export const nativeEndCallWindow = () => invoke('endCallWindow');
