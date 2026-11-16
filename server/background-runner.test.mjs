@@ -102,7 +102,14 @@ test('background key opening writes nothing to the encrypted records; the page a
   const job = readFileSync(new URL('../android/app/src/main/java/io/github/bickworld555/hiddenchat/HeartbeatJob.java', import.meta.url), 'utf8');
   assert.match(job, /if \(FetchWake\.fetchedWithin\(this, RECENT_MS\)\)/, 'no fetch when one completed recently');
   assert.match(job, /\.setRequiredNetworkType\(JobInfo\.NETWORK_TYPE_ANY\)[\s\S]*\.setPersisted\(true\)/, 'with a network, kept across restarts');
+  // The incoming-call sync (MessagingService.startSync) was dataSync too, refused once Android 15's daily cap was
+  // used; a refusal of every type crashed the service. Now a short service on Android 14+, and a refusal stops it.
+  const messaging = readFileSync(new URL('../android/app/src/main/java/io/github/bickworld555/hiddenchat/MessagingService.java', import.meta.url), 'utf8');
+  assert.match(messaging, /private int baseType\(\) \{[\s\S]*?UPSIDE_DOWN_CAKE \? ServiceInfo\.FOREGROUND_SERVICE_TYPE_SHORT_SERVICE : ServiceInfo\.FOREGROUND_SERVICE_TYPE_DATA_SYNC;/);
+  assert.ok(!/if \(attempt == fallback\) throw/.test(messaging), 'never crashes when Android refuses every type');
+  assert.match(messaging, /public void onTimeout\(int startId\)/, 'stops (or keeps a call going) when the short time is up');
   const manifest = readFileSync(new URL('../android/app/src/main/AndroidManifest.xml', import.meta.url), 'utf8');
+  assert.match(manifest, /android:name="\.MessagingService"[\s\S]{0,300}?shortService/, 'declared as a possible short service');
   assert.ok(manifest.includes('android.permission.RECEIVE_BOOT_COMPLETED') && manifest.includes('android:name=".HeartbeatJob"'));
   const activity = readFileSync(new URL('../android/app/src/main/java/io/github/bickworld555/hiddenchat/AppActivity.java', import.meta.url), 'utf8');
   assert.match(activity, /public void onCreate\(Bundle savedInstanceState\) \{[\s\S]{0,400}BackgroundHost\.stopForApp\(\);/, 'the app screen stops the page first');

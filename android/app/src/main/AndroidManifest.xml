@@ -110,7 +110,7 @@
         <service
             android:name=".MessagingService"
             android:exported="false"
-            android:foregroundServiceType="specialUse|microphone|camera|phoneCall|dataSync">
+            android:foregroundServiceType="specialUse|microphone|camera|phoneCall|dataSync|shortService">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
                 android:value="Keeps the Hidden Messenger connection open so messages and calls arrive while the app is in the background." />

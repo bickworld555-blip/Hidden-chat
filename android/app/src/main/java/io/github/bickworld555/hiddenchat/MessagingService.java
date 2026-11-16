@@ -70,8 +70,9 @@ public class MessagingService extends Service {
     }
 
     /**
-     * A push asked the phone to connect for a while (an incoming call): a short dataSync foreground service, the way
-     * WhatsApp's GcmFGService does it. High-priority pushes may start one from the background.
+     * A push asked the phone to connect for a while (an incoming call): a short foreground service (shortService on
+     * Android 14+, dataSync before: see baseType), the way WhatsApp's GcmFGService does it. High-priority pushes may
+     * start one from the background.
      */
     static void startSync(Context context, long durationMs) {
         Context app = context.getApplicationContext();
@@ -213,11 +214,16 @@ public class MessagingService extends Service {
         return ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED;
     }
 
-    /** The type for the service's own work: the always-on connection (specialUse) or a push sync (dataSync). */
+    /**
+     * The type for the service's own work: the always-on connection (specialUse) or a push sync (an incoming call
+     * fetching its offer while the phone rings): a short service on Android 14+, dataSync before. Android 15 caps
+     * dataSync at 6 h a day for the whole app, and once that was used up the sync for an incoming call was refused
+     * (seen on the S23); a short service has no daily cap, and ringing lasts about a minute at most.
+     */
     private int baseType() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return 0;
         if (isLegacy(this)) return Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE ? ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE : 0;
-        return ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC;
+        return Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE ? ServiceInfo.FOREGROUND_SERVICE_TYPE_SHORT_SERVICE : ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC;
     }
 
     private int serviceTypes() {
@@ -262,9 +268,35 @@ public class MessagingService extends Service {
                 else androidx.core.app.NotificationManagerCompat.from(this).cancel(NOTIFICATION_ID);
                 return;
             } catch (RuntimeException notAllowedNow) {
-                if (attempt == fallback) throw notAllowedNow;
+                if (attempt != fallback) continue;
+                // Android refused every type (a daily cap, or a type not allowed from the background right now). The
+                // service stops instead of crashing the app; the connection still goes ahead while the push keeps the
+                // process awake, as startSync does when the service itself is refused.
+                android.util.Log.w("MessagingService", "no foreground type allowed: stopping the service", notAllowedNow);
+                refused = true;
+                stopSelf();
+                return;
             }
         }
+    }
+
+    // Set when Android refused every foreground type in promote(): the service is stopping.
+    private boolean refused;
+
+    /**
+     * A short service's time is up (Android 14+, about 3 minutes; the push sync it carries is long over by then).
+     * A call that is still on keeps going under the call types; otherwise the service stops, as Android requires.
+     */
+    @Override
+    public void onTimeout(int startId) {
+        syncUntil = 0;
+        if (callActive || isLegacy(this)) {
+            try { promote(); } catch (RuntimeException ignored) { }
+            if (!refused) return;
+        }
+        if (!isLegacy(this) && !AppActivity.isAlive()) NativeRelay.stop();
+        ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE);
+        stopSelf();
     }
 
     /**
