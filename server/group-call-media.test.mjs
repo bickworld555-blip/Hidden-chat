@@ -59,7 +59,7 @@ test('switching camera closes the open one first (phones cannot open two), then 
   const back = { facingMode: 'environment' };
   const [a, b] = await Promise.all([media.get({ audio: true, video: front }), media.get({ audio: true, video: front })]);
   // Every connection flips (CallOverlay flipCamera on all engines), one after another through the source.
-  const [a2, b2] = await Promise.all([media.get({ video: back, audio: false }), media.get({ video: back, audio: false })]);
+  const [a2, b2] = await Promise.all([media.get({ video: back, audio: false, switchCamera: true }), media.get({ video: back, audio: false, switchCamera: true })]);
   assert.equal(devices.captures.length, 2, 'the back camera is opened once');
   assert.deepEqual(devices.captures[1].constraints, { audio: false, video: back });
   assert.equal(a.getVideoTracks()[0].readyState, 'ended', 'the front camera copies were closed first');
@@ -67,6 +67,12 @@ test('switching camera closes the open one first (phones cannot open two), then 
   assert.equal(a.getAudioTracks()[0].readyState, 'live', 'the microphone is untouched');
   assert.equal(devices.openSources().filter((source) => source.kind === 'video').length, 1, 'never two cameras open');
   assert.notEqual(a2.getVideoTracks()[0].id, b2.getVideoTracks()[0].id);
+  // Someone joins: their new connection asks for the default (front) camera, but takes a copy of the back camera
+  // already open. Seen live: it used to close the back camera, and every connection's camera went off.
+  const c = await media.get({ audio: true, video: front });
+  assert.equal(devices.captures.length, 2, 'no new capture for the newcomer');
+  assert.equal(a2.getVideoTracks()[0].readyState, 'live', 'the others keep their camera');
+  assert.equal(c.getVideoTracks()[0].readyState, 'live');
   // The call ends: everything closes.
   media.stop();
   assert.equal(devices.openSources().length, 0);
@@ -168,4 +174,16 @@ test('voice that arrives but is not played restarts the call audio output', asyn
   assert.match(engine, /if \(updatePlayout\(playout, sample\)\) \{\s+log\('playout-stall'\);\s+onPlayoutStall\(\);/);
   const overlay = readFileSync(new URL('../src/components/CallOverlay.jsx', import.meta.url), 'utf8');
   assert.match(overlay, /onPlayoutStall: \(\) => \{ if \(restartCallMediaOutput\(\)\)/);
+});
+
+test('someone who left the group call can join again; a newcomer keeps my mute and camera-off', () => {
+  const overlay = readFileSync(new URL('../src/components/CallOverlay.jsx', import.meta.url), 'utf8');
+  // The first person rung left and pressed Join again: their offer was refused (peerId === call.peerId) and dropped.
+  assert.match(overlay, /if \(peerId === call\.peerId && primaryLive\) return null;/);
+  assert.match(overlay, /if \(!TERMINAL_STATUSES\.includes\(previous\.engine\.state\?\.status\)\) return null;\s+dropRoomPeer\(peerId\);/);
+  assert.match(overlay, /if \(current\?\.muted\) engine\.setMuted\(true\);\s+if \(current\?\.cameraOff\) engine\.setCameraOff\(true\);/);
+  assert.match(overlay, /initialFacing: allEngines\(\)\.find/);
+  const engine = readFileSync(new URL('../src/callEngine.js', import.meta.url), 'utf8');
+  assert.match(engine, /getUserMedia\(\{ video: attempt\.video, audio: false, switchCamera: true \}\)/, 'only the camera switch replaces the camera');
+  assert.match(engine, /stream\.getVideoTracks\(\)\.forEach\(\(track\) => \{ track\.enabled = !state\.cameraOff; \}\);/);
 });

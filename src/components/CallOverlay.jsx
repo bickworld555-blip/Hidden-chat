@@ -227,6 +227,7 @@ export default function CallOverlay({
       // A group call's pairs name the group (L2), so the person rung directly also counts as in the group's call.
       send: (payload) => latest.current.client?.send({ ...payload, targetId: peerId, roomId: latest.current.call.roomId ?? latest.current.call.id, ...(latest.current.call.groupId ? { groupId: latest.current.call.groupId } : {}), signalId: crypto.randomUUID() }),
       onSnapshot,
+      initialFacing: allEngines().find((item) => !TERMINAL_STATUSES.includes(item.state?.status))?.state?.facing ?? 'user',
       // Voice arriving but not played (Android cut the output): every call media element lets go and re-attaches.
       onPlayoutStall: () => { if (restartCallMediaOutput()) noteCallEvent(peerId, 'audio-output restarted'); },
       log: (...args) => {
@@ -319,12 +320,25 @@ export default function CallOverlay({
   };
 
   function addRoomPeer({ peerId, callId, direction, offer }) {
-    if (peerId === call.peerId || extrasRef.current.forPeer(peerId)) return null;
+    // Someone who left the group call and joins again ("Join" in the group): their old connection has ended, so the
+    // new one is taken. Refusing anyone who had been in the call (the first person rung, above all) dropped their offer:
+    // the rejoin never connected.
+    const primaryLive = engineRef.current && !TERMINAL_STATUSES.includes(engineRef.current.state?.status);
+    if (peerId === call.peerId && primaryLive) return null;
+    const previous = extrasRef.current.forPeer(peerId);
+    if (previous) {
+      if (!TERMINAL_STATUSES.includes(previous.engine.state?.status)) return null;
+      dropRoomPeer(peerId);
+    }
     const engine = buildEngine({
       peerId, callId, direction, mode: call.mode, offer,
       onSnapshot: (next) => setExtraSnapshots((current) => ({ ...current, [peerId]: next })),
     });
     extrasRef.current.add(peerId, callId, engine);
+    // A newcomer's connection keeps my microphone muted, or my camera off, if I had switched them off.
+    const current = allEngines().find((item) => item !== engine && !TERMINAL_STATUSES.includes(item.state?.status))?.state;
+    if (current?.muted) engine.setMuted(true);
+    if (current?.cameraOff) engine.setCameraOff(true);
     setExtraSnapshots((current) => ({ ...current, [peerId]: engine.state }));
     return engine;
   }

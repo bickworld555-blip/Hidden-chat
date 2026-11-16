@@ -110,6 +110,8 @@ export function createCallEngine({
   // Calls the handler when a signaling connection (the server's or XMPP) is back after a drop; returns unsubscribe.
   onSignalingRestored = browserSignalingRestored,
   log = () => {},
+  // The camera the call is already using (a group call's later connections follow the others).
+  initialFacing = 'user',
   // The other person's voice arrives but is not played (see updatePlayout): the app restarts its audio output.
   onPlayoutStall = () => {},
 } = {}) {
@@ -130,7 +132,7 @@ export function createCallEngine({
     remoteStream: null,
     muted: false,
     cameraOff: false,
-    facing: 'user',
+    facing: initialFacing === 'environment' ? 'environment' : 'user',
     answered: false,
     connectedAt: 0,
     iceRestarts: 0,
@@ -476,6 +478,8 @@ export function createCallEngine({
 
   // Tells the peer which of our tracks are live so their UI reflects it without guessing from frames.
   function announceMedia() {
+    // Before the connection is up there is nobody to tell (and no call yet for the server); markConnected announces it.
+    if (!['connected', 'reconnecting'].includes(state.status)) return;
     sendSignal({ type: 'media', video: state.mode === 'video' && !state.cameraOff, audio: !state.muted, screen: state.screenSharing, avatar: Boolean(filter) });
   }
 
@@ -742,6 +746,9 @@ export function createCallEngine({
       stopStream(stream);
       throw new Error('Call closed.');
     }
+    // Muted or camera off before this connection existed (a group call: someone joined after it was switched off).
+    stream.getAudioTracks().forEach((track) => { track.enabled = !state.muted; });
+    stream.getVideoTracks().forEach((track) => { track.enabled = !state.cameraOff; });
     set({ localStream: stream });
     return stream;
   }
@@ -1191,7 +1198,7 @@ export function createCallEngine({
         for (const attempt of attempts) {
           let track = null;
           try {
-            const stream = await getUserMedia({ video: attempt.video, audio: false });
+            const stream = await getUserMedia({ video: attempt.video, audio: false, switchCamera: true });
             [track] = stream.getVideoTracks();
             if (!track) continue;
           } catch (error) {

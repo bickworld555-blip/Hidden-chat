@@ -7,9 +7,11 @@
 // participant, the call now captures once; each connection gets clones of those tracks (clones share the capture,
 // open nothing, and can each be muted, switched off or stopped on their own).
 //
-// Captures run one at a time. A connection asking for another camera (switching to the back camera, a camera plan
-// with a device id) closes the current camera first, since phones cannot open two, and every connection then takes
-// a clone of the new one as it switches.
+// Captures run one at a time. Only a deliberate camera switch (constraints with switchCamera: true: the back camera,
+// a camera plan with a device id) closes the current camera first, since phones cannot open two, and every connection
+// then takes a clone of the new one as it switches. Any other request for video takes a clone of the camera already
+// open, whatever it asks: a connection opened for someone joining asked for the front camera by default, and on a phone
+// that had switched to the back camera that closed it, so every connection's camera went off.
 
 const live = (track) => Boolean(track) && track.readyState === 'live';
 
@@ -38,7 +40,7 @@ export function createCallMediaSource({ capture, createStream = (tracks) => new 
     const wantVideo = Boolean(constraints?.video);
     const key = wantVideo ? JSON.stringify(constraints.video) : null;
     const needAudio = wantAudio && !live(audio);
-    const needVideo = wantVideo && (!live(video) || videoKey !== key);
+    const needVideo = wantVideo && (!live(video) || (constraints.switchCamera === true && videoKey !== key));
     if (needVideo && video) {
       // Another camera: the open one (and every connection's copy of it) closes first.
       for (const track of issued) if (track.kind === 'video') try { track.stop(); } catch {}
