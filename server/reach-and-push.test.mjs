@@ -361,3 +361,26 @@ test('P5: a phone that keeps its own connection (Always connected) gets the mess
   const service2 = readFileSync(new URL('../android/app/src/main/java/io/github/bickworld555/hiddenchat/MessagingService.java', import.meta.url), 'utf8');
   assert.match(service2, /!PushRegistration\.isActive\(context\) \|\| AlwaysConnected\.enabled\(context\)/, 'the always-on mode when chosen');
 });
+
+test('group call: an invitee\'s pair with the person who invited them connects (its pair id fits the server\'s limit)', async () => {
+  const { a, b } = await pair();
+  const host = await connect(a);
+  const invitee = await connect(b);
+  await Promise.all([ready(host), ready(invitee)]);
+  // The app's invited pair id: a random UUID like every pair (src/App.jsx). The old one was 110 characters.
+  const room = crypto.randomUUID();
+  const pairId = crypto.randomUUID();
+  invitee.send(JSON.stringify({ type: 'call:signal', targetId: a.user.id, callId: pairId, roomId: room, mode: 'audio', signalId: 's-ok', signal: { type: 'offer', sdp: 'v=0' } }));
+  const offer = await until(() => host.events.find((event) => event.type === 'call:signal' && event.callId === pairId), 'the offer reaches the inviter');
+  assert.equal(offer.roomId, room);
+  // What the old id looked like: refused, so that pair never connected.
+  const oldId = `${room}:${b.user.id}:${a.user.id}`;
+  assert.ok(oldId.length > 80);
+  invitee.send(JSON.stringify({ type: 'call:signal', targetId: a.user.id, callId: oldId, roomId: room, mode: 'audio', signalId: 's-old', signal: { type: 'offer', sdp: 'v=0' } }));
+  await until(() => invitee.events.some((event) => event.type === 'error' && /Call signaling is invalid/.test(event.message)), 'the old id is refused');
+  assert.ok(!host.events.some((event) => event.callId === oldId));
+  const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
+  assert.match(app, /const invited = \{ id: crypto\.randomUUID\(\), roomId: event\.roomId/);
+  host.close();
+  invitee.close();
+});

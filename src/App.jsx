@@ -586,7 +586,10 @@ export default function App() {
             if (active) recordCallEnd(active);
             if (event.fromUser && !useChatStore.getState().chats.some((c) => c.id === event.from)) useChatStore.getState().addContact(event.fromUser);
             // The invitee rings like a normal incoming call; accepting places pair calls to everyone listed.
-            const invited = { id: `${event.roomId}:${userId}:${event.from}`, roomId: event.roomId, peerId: event.from, mode: event.mode, direction: 'incoming', status: 'idle', invite: { participants: event.participants ?? [event.from] }, peerInfo: event.fromUser, ...(event.groupId ? { groupId: event.groupId } : {}) };
+            // Its own pair id, like every other pair (crypto.randomUUID, 36 characters). The id built from the room, my id and
+            // the inviter's id was 110 characters: the server refuses call ids over 80, so every invitee's pair with the person
+            // who invited them never connected (in a group call of three, two of the people could not hear each other).
+            const invited = { id: crypto.randomUUID(), roomId: event.roomId, peerId: event.from, mode: event.mode, direction: 'incoming', status: 'idle', invite: { participants: event.participants ?? [event.from] }, peerInfo: event.fromUser, ...(event.groupId ? { groupId: event.groupId } : {}) };
             callRef.current = invited;
             setCall(invited);
             setCallSignals([]);
