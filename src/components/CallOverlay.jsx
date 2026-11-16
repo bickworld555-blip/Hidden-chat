@@ -49,7 +49,6 @@ import { appSettings, useSetting } from '../settings.js';
 import { NOTICE_PRIORITY } from '../noticeQueue.js';
 import { GROUP_CALL_BEAT_MS } from '../groupCalls.js';
 import { createCallMediaSource } from '../callMedia.js';
-import { meterStream } from '../audioLevel.js';
 import CallHeader from './call/CallHeader.jsx';
 import ControlCard from './call/ControlCard.jsx';
 import IncomingCallSheet from './call/IncomingCallSheet.jsx';
@@ -68,9 +67,6 @@ const CallMoreSheet = lazyComponent(() => import('./call/CallMoreSheet.jsx'));
 const NO_POSTER = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
 
 const ICE_CONFIG_TIMEOUT_MS = 3000;
-// Microphone silence warning: below this level (0..1) for this long while not muted.
-const MIC_SILENT_LEVEL = 0.01;
-const MIC_SILENT_MS = 8000;
 const CLOSE_DELAY_MS = { failed: 5000, busy: 4000, default: 2500 };
 
 // Fetches the server's ICE policy with a short deadline so a slow API never delays the call.
@@ -453,25 +449,6 @@ export default function CallOverlay({
   useEffect(() => {
     allEngines().forEach((engine) => engine.setRoomSize?.(roomSize));
   }, [roomSize]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // The microphone gives no sound while not muted (seen live: the other phone sent silence the whole call, with no
-  // mute on): Android's Microphone access switched off, or another app (a phone or WhatsApp call) holding the
-  // microphone, both hand an app silence. Said once, after MIC_SILENT_MS of nothing, so the person can fix it.
-  const micWarnedRef = useRef(false);
-  useEffect(() => {
-    if (status !== 'connected' || muted || micWarnedRef.current || !localStream?.getAudioTracks().length) return undefined;
-    const meter = meterStream(new MediaStream(localStream.getAudioTracks()));
-    if (!meter) return undefined;
-    let silentSince = Date.now();
-    const timer = setInterval(() => {
-      if (meter.level() > MIC_SILENT_LEVEL) { silentSince = Date.now(); return; }
-      if (Date.now() - silentSince < MIC_SILENT_MS) return;
-      micWarnedRef.current = true;
-      clearInterval(timer);
-      setNotice('Your microphone is not picking up any sound. Check that Microphone access is on (Android quick settings) and that no other call is using the microphone.', NOTICE_PRIORITY.HIGH);
-    }, 500);
-    return () => { clearInterval(timer); meter.stop(); };
-  }, [status, muted, localStream]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Peers whose pair ended leave the grid after their end state has been shown briefly.
   useEffect(() => {

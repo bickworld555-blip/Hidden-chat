@@ -109,7 +109,7 @@ test('people met in a group call are remembered for the call, never added to the
   assert.match(overlay, /\?\? knownPeople\[peerId\] \?\?/, 'their name on the call screen');
 });
 
-test('a frozen call video is re-attached; a silent microphone is reported', async () => {
+test('a frozen call video is re-attached', async () => {
   const { videoShouldPlay, VIDEO_STALL_CHECKS, VIDEO_STALL_CHECK_MS } = await import('../src/components/call/useMediaElement.js');
   const stream = (tracks) => ({ getVideoTracks: () => tracks });
   // Seen live on the S23: the picture stopped at each resolution change while frames kept arriving.
@@ -121,5 +121,19 @@ test('a frozen call video is re-attached; a silent microphone is reported', asyn
   const hook = readFileSync(new URL('../src/components/call/useMediaElement.js', import.meta.url), 'utf8');
   assert.match(hook, /if \(still >= VIDEO_STALL_CHECKS\) \{ still = 0; bind\(\); \}/);
   const overlay = readFileSync(new URL('../src/components/CallOverlay.jsx', import.meta.url), 'utf8');
-  assert.match(overlay, /Your microphone is not picking up any sound/);
+  // The in-call microphone warning was removed: its long-lived meter read silence during calls (false alarms seen live).
+  assert.ok(!/Your microphone is not picking up any sound/.test(overlay));
+});
+
+test('a call audio player that stops with an error (or pauses) is re-attached and played again', async () => {
+  const { mediaShouldPlay } = await import('../src/components/call/useMediaElement.js');
+  assert.equal(mediaShouldPlay({ getTracks: () => [{ readyState: 'live' }] }), true);
+  assert.equal(mediaShouldPlay({ getTracks: () => [{ readyState: 'ended' }] }), false);
+  assert.equal(mediaShouldPlay(null), false);
+  const hook = readFileSync(new URL('../src/components/call/useMediaElement.js', import.meta.url), 'utf8');
+  // Seen live on the S23: <audio> stopped with MEDIA_ERR_DECODE two seconds into the call; the other voice was lost.
+  assert.match(hook, /element\.addEventListener\('error', onError\);/);
+  assert.match(hook, /if \(element\.error\) \{ bind\(\); still = 0; return; \}/);
+  assert.match(hook, /if \(element\.paused\) \{ element\.play\?\.\(\)\.catch\(\(\) => bind\(\)\); still = 0; return; \}/);
+  assert.ok(hook.indexOf('if (element.paused)') < hook.indexOf("if (!isVideo) return;"), 'audio elements are watched too');
 });
