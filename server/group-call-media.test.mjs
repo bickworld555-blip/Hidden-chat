@@ -108,3 +108,18 @@ test('people met in a group call are remembered for the call, never added to the
   const overlay = readFileSync(new URL('../src/components/CallOverlay.jsx', import.meta.url), 'utf8');
   assert.match(overlay, /\?\? knownPeople\[peerId\] \?\?/, 'their name on the call screen');
 });
+
+test('a frozen call video is re-attached; a silent microphone is reported', async () => {
+  const { videoShouldPlay, VIDEO_STALL_CHECKS, VIDEO_STALL_CHECK_MS } = await import('../src/components/call/useMediaElement.js');
+  const stream = (tracks) => ({ getVideoTracks: () => tracks });
+  // Seen live on the S23: the picture stopped at each resolution change while frames kept arriving.
+  assert.equal(videoShouldPlay(stream([{ readyState: 'live', enabled: true, muted: false }])), true);
+  assert.equal(videoShouldPlay(stream([{ readyState: 'live', enabled: false, muted: false }])), false, 'camera off: nothing to wait for');
+  assert.equal(videoShouldPlay(stream([{ readyState: 'live', enabled: true, muted: true }])), false, 'no frames sent: not frozen');
+  assert.equal(videoShouldPlay(stream([{ readyState: 'live', enabled: true, muted: false }]), false), false, 'page hidden');
+  assert.ok(VIDEO_STALL_CHECKS * VIDEO_STALL_CHECK_MS <= 3000, 'a freeze lasts at most about two seconds');
+  const hook = readFileSync(new URL('../src/components/call/useMediaElement.js', import.meta.url), 'utf8');
+  assert.match(hook, /if \(still >= VIDEO_STALL_CHECKS\) \{ still = 0; bind\(\); \}/);
+  const overlay = readFileSync(new URL('../src/components/CallOverlay.jsx', import.meta.url), 'utf8');
+  assert.match(overlay, /Your microphone is not picking up any sound/);
+});
