@@ -88,6 +88,11 @@ final class TelecomCalls {
         return registered;
     }
 
+    /** Routes the call's audio through Telecom (it owns the route of a self-managed call); false with no call there. */
+    static synchronized boolean route(boolean speaker) {
+        return connection != null && connection.routeTo(speaker);
+    }
+
     static synchronized boolean hasCall() {
         return connection != null;
     }
@@ -142,6 +147,7 @@ final class TelecomCalls {
                 if (connection != null) {
                     if (connection.getState() != Connection.STATE_ACTIVE) connection.setActive();
                     connection.setVideoState(video ? VideoProfile.STATE_BIDIRECTIONAL : VideoProfile.STATE_AUDIO_ONLY);
+                    CallAudio.telecomReady();
                     return;
                 }
                 if (placing) return;
@@ -271,6 +277,8 @@ final class TelecomCalls {
         }
         connection = created;
         Log.i(TAG, "call " + created.callId + (created.incoming ? " ringing" : " placed") + " through Telecom");
+        // Telecom now owns the route: the call's speaker or earpiece is asked of it.
+        CallAudio.telecomReady();
         // An outgoing call may have ended before Android created it.
         if (!created.incoming && !MessagingService.isCallActive()) end(DisconnectCause.LOCAL);
         else MessagingService.refresh();

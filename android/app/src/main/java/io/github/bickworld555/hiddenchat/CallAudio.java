@@ -15,6 +15,11 @@ import java.util.List;
  * on the loudspeaker; the speaker button switches. While a voice call is on the earpiece, the proximity sensor turns
  * the screen off against the user's ear. The WebView's WebRTC stack may route audio itself when the microphone
  * starts, so the chosen route is re-applied shortly after and whenever Android reports a change.
+ *
+ * While the call is registered with Telecom (a self-managed call, TelecomCalls), Telecom owns the route: the choice
+ * is asked of it (Connection.requestCallEndpointChange / setAudioRoute). Setting the device behind its back made
+ * the two fight (seen on the S23: a video call kept going back to the earpiece, so the other person could not be
+ * heard, and every switch cut the sound for a moment).
  */
 final class CallAudio {
     private static boolean active;
@@ -24,6 +29,7 @@ final class CallAudio {
     private static ToneGenerator ringback;
     private static AudioManager.OnCommunicationDeviceChangedListener listener;
     private static final Handler handler = new Handler(Looper.getMainLooper());
+    private static Context appContext;
 
     private CallAudio() {}
 
@@ -33,6 +39,7 @@ final class CallAudio {
 
     /** A call started (or its mode changed): default route for that kind of call. */
     static synchronized void start(Context context, boolean isVideo) {
+        appContext = context.getApplicationContext();
         boolean wasActive = active;
         active = true;
         if (!wasActive || isVideo != video) speaker = isVideo;
@@ -114,10 +121,24 @@ final class CallAudio {
         if (active) apply(context);
     }
 
+    /** Telecom has the call (created, active, or its audio endpoints known): the chosen route goes through it now. */
+    static void telecomReady() {
+        handler.post(() -> {
+            synchronized (CallAudio.class) {
+                if (active && appContext != null) apply(appContext);
+            }
+        });
+    }
+
     private static void apply(Context context) {
         AudioManager audio = context.getSystemService(AudioManager.class);
         if (audio == null) return;
         audio.setMode(AudioManager.MODE_IN_COMMUNICATION);
+        if (TelecomCalls.route(speaker)) {
+            android.util.Log.i("CallAudio", "route " + (speaker ? "speaker" : "earpiece/headset") + " via Telecom");
+            updateProximity(context);
+            return;
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             AudioDeviceInfo target = pick(audio.getAvailableCommunicationDevices(), speaker);
             if (target != null && !target.equals(audio.getCommunicationDevice())) audio.setCommunicationDevice(target);
@@ -159,7 +180,8 @@ final class CallAudio {
         if (audio == null) return;
         listener = (device) -> {
             synchronized (CallAudio.class) {
-                if (!active || device == null) return;
+                // Telecom owns the route of its calls; answering its changes here is what made the two fight.
+                if (!active || device == null || TelecomCalls.hasCall()) return;
                 AudioDeviceInfo wanted = pick(audio.getAvailableCommunicationDevices(), speaker);
                 if (wanted != null && wanted.getType() != device.getType()) handler.postDelayed(() -> reapply(context), 150);
             }

@@ -3,6 +3,7 @@
 import { callUiSource } from './callUiSource.mjs';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 
 const root = new URL('../', import.meta.url);
@@ -41,4 +42,18 @@ test('what Android does reaches the call: answer, decline, hang up, mute', async
   assert.ok(calls.includes('HiddenNativePlugin.emitCallAction("mute", muted.callId, extra);'));
   const overlay = await callUiSource();
   assert.ok(overlay.includes("else if (action === 'mute' && typeof mutedBySystem === 'boolean') callActionsRef.current?.setMuted(mutedBySystem);"));
+});
+
+test('call audio route goes through Telecom while it holds the call (no fight over speaker and earpiece)', () => {
+  const dir = new URL('../android/app/src/main/java/io/github/bickworld555/hiddenchat/', import.meta.url);
+  const audio = readFileSync(new URL('CallAudio.java', dir), 'utf8');
+  const connection = readFileSync(new URL('CallConnectionService.java', dir), 'utf8');
+  const telecom = readFileSync(new URL('TelecomCalls.java', dir), 'utf8');
+  // Found on the S23: a video call kept going back to the earpiece (Telecom's route), so the other person could not be heard.
+  assert.match(audio, /if \(TelecomCalls\.route\(speaker\)\) \{[\s\S]{0,200}return;\s*\}/, 'asked of Telecom first');
+  assert.match(audio, /if \(!active \|\| device == null \|\| TelecomCalls\.hasCall\(\)\) return;/, 'never answers Telecom\'s own changes');
+  assert.match(connection, /requestCallEndpointChange\(target,/, 'Android 14+: the call endpoint');
+  assert.match(connection, /setAudioRoute\(route\)/, 'older Android: the audio route');
+  assert.match(connection, /if \(speaker\) return loud != null \? loud : earpiece;/);
+  assert.equal((telecom.match(/CallAudio\.telecomReady\(\);/g) ?? []).length, 2, 'routed again once Telecom has the call and when it goes active');
 });

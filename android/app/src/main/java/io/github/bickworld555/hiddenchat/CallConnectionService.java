@@ -57,6 +57,9 @@ public class CallConnectionService extends ConnectionService {
         volatile String callId;
         final boolean incoming;
         private boolean systemMuted;
+        // Android 14+: where this call's audio can go and where it goes now (Telecom reports both).
+        private volatile java.util.List<android.telecom.CallEndpoint> endpoints = java.util.Collections.emptyList();
+        private volatile int endpointType = -1;
 
         CallConnection(Bundle details, boolean incoming) {
             this.incoming = incoming;
@@ -102,6 +105,64 @@ public class CallConnectionService extends ConnectionService {
         @Override
         public void onAbort() {
             onDisconnect();
+        }
+
+        @Override
+        @androidx.annotation.RequiresApi(34)
+        public void onAvailableCallEndpointsChanged(@androidx.annotation.NonNull java.util.List<android.telecom.CallEndpoint> available) {
+            endpoints = new java.util.ArrayList<>(available);
+            CallAudio.telecomReady();
+        }
+
+        @Override
+        @androidx.annotation.RequiresApi(34)
+        public void onCallEndpointChanged(@androidx.annotation.NonNull android.telecom.CallEndpoint endpoint) {
+            endpointType = endpoint.getEndpointType();
+            android.util.Log.i("CallAudio", "Telecom route now " + endpoint.getEndpointName());
+        }
+
+        /**
+         * Puts the call's audio on the loudspeaker, or else on a headset (Bluetooth, wired) or the earpiece, through
+         * Telecom: for a self-managed call Telecom owns the route and puts back any route set behind its back.
+         */
+        @SuppressWarnings("deprecation")
+        boolean routeTo(boolean speaker) {
+            if (android.os.Build.VERSION.SDK_INT >= 34 && !endpoints.isEmpty()) {
+                android.telecom.CallEndpoint target = pickEndpoint(endpoints, speaker);
+                if (target != null) {
+                    if (target.getEndpointType() == endpointType) return true;
+                    requestCallEndpointChange(target, Runnable::run, new android.os.OutcomeReceiver<Void, android.telecom.CallEndpointException>() {
+                        @Override public void onResult(Void result) { android.util.Log.i("CallAudio", "Telecom route set to " + target.getEndpointName()); }
+                        @Override public void onError(@androidx.annotation.NonNull android.telecom.CallEndpointException error) { android.util.Log.w("CallAudio", "Telecom route refused: " + error.getCode()); }
+                    });
+                    return true;
+                }
+            }
+            CallAudioState state = getCallAudioState();
+            int mask = state == null ? 0 : state.getSupportedRouteMask();
+            int route = speaker ? CallAudioState.ROUTE_SPEAKER
+                : (mask & CallAudioState.ROUTE_BLUETOOTH) != 0 ? CallAudioState.ROUTE_BLUETOOTH : CallAudioState.ROUTE_WIRED_OR_EARPIECE;
+            if (state == null || state.getRoute() != route) setAudioRoute(route);
+            return true;
+        }
+
+        @androidx.annotation.RequiresApi(34)
+        private static android.telecom.CallEndpoint pickEndpoint(java.util.List<android.telecom.CallEndpoint> available, boolean speaker) {
+            android.telecom.CallEndpoint earpiece = null, loud = null, headset = null;
+            for (android.telecom.CallEndpoint endpoint : available) {
+                switch (endpoint.getEndpointType()) {
+                    case android.telecom.CallEndpoint.TYPE_EARPIECE: earpiece = endpoint; break;
+                    case android.telecom.CallEndpoint.TYPE_SPEAKER: loud = endpoint; break;
+                    case android.telecom.CallEndpoint.TYPE_BLUETOOTH:
+                    case android.telecom.CallEndpoint.TYPE_WIRED_HEADSET:
+                        if (headset == null) headset = endpoint;
+                        break;
+                    default: break;
+                }
+            }
+            if (speaker) return loud != null ? loud : earpiece;
+            if (headset != null) return headset;
+            return earpiece != null ? earpiece : loud;
         }
 
         @Override
