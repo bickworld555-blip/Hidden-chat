@@ -379,6 +379,16 @@ test('read markers: one cumulative marker per chat over XMPP; a marker turns tha
   useChatStore.getState().markReadThrough('m2');
   const status = Object.fromEntries(useChatStore.getState().messages.ava.map((message) => [message.id, message.status]));
   assert.deepEqual([status.m1, status.m2, status.m3], ['read', 'read', 'sent'], 'everything of mine up to the marked message');
+
+  // Seen on the desktop: text messages with ISO times, then a file whose time was a number; the marker named the
+  // file and only the file turned blue. Every earlier message of mine turns blue too.
+  useChatStore.setState({ messages: { ava: [
+    { id: 't1', senderId: 'me', receiverId: 'ava', timestamp: '2026-11-16T09:32:00.000Z', content: 'HI', status: 'delivered' },
+    { id: 't2', senderId: 'me', receiverId: 'ava', timestamp: '2026-11-16T09:40:00.000Z', content: 'HIIII', status: 'delivered' },
+    { id: 'f1', senderId: 'me', receiverId: 'ava', timestamp: Date.parse('2026-11-16T09:43:00.000Z'), content: 'media:x', status: 'delivered' },
+  ] } });
+  useChatStore.getState().markReadThrough('f1');
+  assert.deepEqual(useChatStore.getState().messages.ava.map((message) => message.status), ['read', 'read', 'read']);
 });
 
 test('call outcomes come from the end reason: declined, busy, unavailable, cancelled, missed, answered elsewhere', async () => {

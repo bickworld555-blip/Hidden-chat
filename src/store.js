@@ -42,6 +42,12 @@ let cloudStars = null;
 const withCloudStar = (message) => (cloudStars && message?.id && Boolean(cloudStars[message.id]) !== Boolean(message.starred)
   ? { ...message, starred: Boolean(cloudStars[message.id]) } : message);
 
+// A message's time in milliseconds, whether it was stored as an ISO string or a number.
+const timeOfMessage = (message) => {
+  const value = message?.timestamp ?? message?.createdAt;
+  return typeof value === 'number' ? value : Date.parse(value ?? '');
+};
+
 function mergeMessage(current, incoming) {
   if (!current) return withCloudStar(incoming);
   const merged = { ...current, ...incoming, status: mergeMessageStatus(current.status, incoming.status) };
@@ -827,14 +833,17 @@ export const useChatStore = create((setState, getState) => ({
   markReadThrough(messageId) {
     const { messages, userId } = getState();
     for (const [chatId, list] of Object.entries(messages)) {
-      const target = (list ?? []).find((message) => message?.id === messageId);
-      if (!target) continue;
-      const until = String(target.timestamp ?? '');
-      for (const message of list) {
-        if (message?.senderId === userId && message.receiverId === chatId && message.status !== 'read' && String(message.timestamp ?? '') <= until) {
-          getState().updateMessage(message.id, { status: 'read' });
-        }
-      }
+      const index = (list ?? []).findIndex((message) => message?.id === messageId);
+      if (index < 0) continue;
+      // Everything up to it in the chat's own order (the store keeps it chronological). Comparing timestamps as
+      // text failed when they were written differently (an ISO string and a number): only the marked message
+      // turned blue, as seen on the desktop with a file sent after text messages.
+      const until = timeOfMessage(list[index]);
+      list.forEach((message, position) => {
+        if (message?.senderId !== userId || message.receiverId !== chatId || message.status === 'read') return;
+        const at = timeOfMessage(message);
+        if (position <= index || (Number.isFinite(at) && Number.isFinite(until) && at <= until)) getState().updateMessage(message.id, { status: 'read' });
+      });
       return;
     }
   },
