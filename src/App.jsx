@@ -5,6 +5,8 @@ import { cachedGroups, prefetchGroupDetails, saveGroups } from './groupCache.js'
 import { activateAccount, addOrActivateAccount, getAccountsState, loadAccounts, removeAccount, sessionFromAccount, updateAccountUser } from './accounts.js';
 import { Bell, ChevronRight, MessageSquarePlus, Moon, Sun } from 'lucide-react';
 import { flushPersistedMessages, notificationPreview, savedMessageCount, useChatStore } from './store.js';
+import { e2eLockReady } from './e2eLock.js';
+import { importInbox } from './backgroundInbox.js';
 import { runScheduledBackup, shouldOfferRestore } from './cloudBackup.js';
 import RestoreBackupSheet from './components/RestoreBackupSheet.jsx';
 import { fetchStatuses } from './statusApi.js';
@@ -19,9 +21,9 @@ import { companionOnly } from './companion.js';
 import { applyGroupChange, GROUP_CHANGE_EVENTS } from './groupChanges.js';
 import { cachedGroupDetails } from './groupCache.js';
 import { notificationNames } from './notificationNames.js';
-import { nativeClearSession, nativeRequestStartupPermissions, nativeSetSession, nativeShell, nativeStartBackground, nativeState, nativeStopBackground, nativeTakePendingCall, nativeMoveToBackground, nativeClearShare, nativeSetCallActive, nativeClearMessageNotifications, nativeClearMissedCalls, nativeTakeMessageActions, nativeTakeCallEvents, nativeSetSystemBarsTheme, onNative } from './native.js';
+import { nativeClearSession, nativeRequestStartupPermissions, nativeSetSession, nativeShell, nativeStartBackground, nativeState, nativeStopBackground, nativeTakePendingCall, nativeMoveToBackground, nativeClearShare, nativeSetCallActive, nativeClearMessageNotifications, nativeClearMissedCalls, nativeTakeMessageActions, nativeTakeCallEvents, nativeSetSystemBarsTheme, nativeOpenSecret, onNative } from './native.js';
 import { parseShare } from './shareTarget.js';
-import { e2eDeviceId, onE2eEvent, sealDirect, sealToOwnDevices, startE2e, stopE2e, userForXmppAddress, xmppGroupTargetsFor, xmppTargetsFor } from './e2e/client.js';
+import { e2eDeviceId, onE2eEvent, replayE2eEvent, sealDirect, sealToOwnDevices, startE2e, stopE2e, userForXmppAddress, xmppGroupTargetsFor, xmppTargetsFor } from './e2e/client.js';
 import { createControlBuffer, expiredIds, resolveControl, roleIn } from './e2e/lifecycle.js';
 import { startXmppSession } from './xmpp/session.js';
 import { setXmppSession } from './xmpp/active.js';
@@ -234,7 +236,12 @@ export default function App() {
       stopE2e();
       return;
     }
-    startE2e({ token: sessionToken, userId, deviceId }).catch(() => { /* retried on the next refresh */ });
+    // In the phone app, only once this app holds the end-to-end lock (a background page may be finishing a message).
+    let live = true;
+    e2eLockReady().then(() => {
+      if (live) startE2e({ token: sessionToken, userId, deviceId }).catch(() => { /* retried on the next refresh */ });
+    });
+    return () => { live = false; };
   }, [sessionToken, userId, deviceId]);
   // Another phone set up this account (signed device lists, option B): this device no longer receives new messages.
   const [deviceExcluded, setDeviceExcluded] = useState(false);
@@ -587,6 +594,12 @@ export default function App() {
             handleRejected(event, realtime).catch(() => {});
             return;
           }
+          // Opened already (the background page's inbox): in order with the rest, never opened twice (it would
+          // read as "not encrypted").
+          if (event?.opened) {
+            openChain = openChain.then(() => handleEvent(event)).catch((error) => console.error('Could not handle a message:', error));
+            return;
+          }
           if (!needsOpening(event)) {
             handleEvent(event);
             return;
@@ -611,6 +624,21 @@ export default function App() {
           if (xmppStarting && forXmpp(event) && heldForXmpp.length < 2000) { heldForXmpp.push(event); return true; }
           return legacySend(event);
         };
+        // What the background page opened while the app was closed (src/background/main.js), under the end-to-end
+        // lock and before XMPP connects: through the usual handler, saved, then removed from its inbox.
+        await e2eLockReady();
+        if (nativeShell() && !cancelled) {
+          await importInbox({
+            open: async (sealed) => (await nativeOpenSecret(sealed))?.value,
+            handle: async (event) => {
+              if (event?.type === 'identity-changed') { replayE2eEvent(event); return; }
+              onRealtimeEvent(event);
+              await openChain;
+            },
+            commit: () => flushPersistedMessages(),
+          }).catch((error) => console.error('Background inbox import failed:', error));
+        }
+        if (cancelled) return;
         startXmppSession({ sessionToken, userId, deliver: onRealtimeEvent, legacySend, targetsFor: xmppTargetsFor, groupTargetsFor: xmppGroupTargetsFor, userForAddress: userForXmppAddress, fetchImpl: apiFetch, seal: (peerId, content) => (peerId === userId ? sealToOwnDevices(content) : sealDirect(peerId, content)), signalingRestored, onTransportState: (state) => noteCallEvent('xmpp', state) })
           .then((session) => {
             if (!session) return;
@@ -1299,7 +1327,9 @@ export default function App() {
   useEffect(() => {
     if (!nativeShell() || !userId || !sessionToken) return undefined;
     const origin = new URL(apiUrl('/api/v1/health'), window.location.href).origin;
-    const sync = () => nativeSetSession({ origin, token: sessionToken, userId, mutedChats: useChatStore.getState().mutedChatIds ?? [], mutedGroups: readMutedGroups(userId), ...phoneSoundSession(),
+    // deviceId and lockedChats: for the background page (BackgroundHost), which opens this device's keys and never
+    // shows a locked chat's name or text.
+    const sync = () => nativeSetSession({ origin, token: sessionToken, userId, deviceId: useChatStore.getState().device?.id ?? '', lockedChats: useChatStore.getState().lockedChatIds ?? [], mutedChats: useChatStore.getState().mutedChatIds ?? [], mutedGroups: readMutedGroups(userId), ...phoneSoundSession(),
       names: notificationNames(useChatStore.getState().chats, groupSummariesRef.current) });
     sync();
     const onHide = () => { if (document.visibilityState === 'hidden') sync(); };

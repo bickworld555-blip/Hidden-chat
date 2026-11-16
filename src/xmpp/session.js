@@ -51,7 +51,7 @@ export const MAX_RECEIPTS_PER_STANZA = 50;
  * Resolves null unless this account is moved over. `deliver(event)` feeds the app's realtime event handler;
  * `legacySend(event)` is the current connection's send.
  */
-export async function startXmppSession({ sessionToken, userId, deliver, legacySend, targetsFor, groupTargetsFor = async () => ({ targets: [], complete: false, sender: null }), userForAddress = () => null, fetchImpl, createTransport = (options) => new XmppTransport(options), seal = null, groupsOverXmpp: groupsOption = null, signalingRestored = () => {}, onTransportState = () => {}, nudgeAfterMs = NUDGE_AFTER_MS, receiptBatchMs = RECEIPT_BATCH_MS }) {
+export async function startXmppSession({ sessionToken, userId, deliver, legacySend, targetsFor, groupTargetsFor = async () => ({ targets: [], complete: false, sender: null }), userForAddress = () => null, fetchImpl, createTransport = (options) => new XmppTransport(options), seal = null, groupsOverXmpp: groupsOption = null, signalingRestored = () => {}, onTransportState = () => {}, nudgeAfterMs = NUDGE_AFTER_MS, receiptBatchMs = RECEIPT_BATCH_MS, transportOptions = {} }) {
   const auth = { Authorization: `Bearer ${sessionToken}` };
   let decision;
   try {
@@ -119,6 +119,7 @@ export async function startXmppSession({ sessionToken, userId, deliver, legacySe
   const bare = (address) => String(address ?? '').split('/')[0];
 
   const transport = createTransport({
+    ...transportOptions,
     fetchToken: async () => {
       const response = await fetchImpl('/api/v1/xmpp/token', { method: 'POST', headers: auth });
       if (response.ok || response.status === 409) return response.json();
@@ -138,10 +139,10 @@ export async function startXmppSession({ sessionToken, userId, deliver, legacySe
           if (!event.groupId) return;
           const createdAt = Date.parse(event.sentAt ?? '') || Date.now();
           // Marked like direct ones: later changes to it go as group controls (src/e2e/messaging.js sendGroupControlFor).
-          deliver({ type: 'group:message', message: { id: event.id, groupId: event.groupId, senderId: event.userId, createdAt, content: event.envelope, via: 'xmpp' } });
-          return;
+          // The handler's promise goes back to the transport (the background page acknowledges only stored messages).
+          return deliver({ type: 'group:message', message: { id: event.id, groupId: event.groupId, senderId: event.userId, createdAt, content: event.envelope, via: 'xmpp' } });
         }
-        deliver({
+        return deliver({
           type: 'message:new',
           message: { id: event.id, senderId: event.userId, receiverId: userId, content: event.envelope, timestamp: event.sentAt || new Date().toISOString(), status: 'sent', via: 'xmpp', origin: bare(event.from) },
         });

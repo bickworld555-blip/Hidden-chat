@@ -488,6 +488,8 @@ public class HiddenNativePlugin extends Plugin {
         if (saved) {
             JSObject names = call.getObject("names");
             if (names != null) RelaySession.saveNames(getContext(), names.toString());
+            JSArray locked = call.getArray("lockedChats");
+            RelaySession.saveBackground(getContext(), call.getString("deviceId"), locked == null ? null : new HashSet<>(stringList(locked)));
             PushRegistration.ensure(getContext());
         }
         JSObject result = new JSObject();

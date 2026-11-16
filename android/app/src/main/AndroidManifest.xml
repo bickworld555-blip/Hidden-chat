@@ -127,6 +127,13 @@
             </intent-filter>
         </service>
 
+        <!-- Messages on push with no app screen (like WhatsApp's GcmFGService): the app's background page in a hidden
+             WebView decrypts, keeps and notifies, then stops. -->
+        <service
+            android:name=".BackgroundHost"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
+
         <!-- "Sending 3 files · 45%": keeps long uploads alive in the background (like WhatsApp's MediaTranscodeService). -->
         <service
             android:name=".UploadService"

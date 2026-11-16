@@ -64,6 +64,26 @@ final class RelaySession {
         return true;
     }
 
+    /**
+     * What the background page (BackgroundHost) needs beyond the session: this device's id (its end-to-end keys are
+     * stored under it) and the locked chats, whose notifications never show a name or text.
+     */
+    static void saveBackground(Context context, String deviceId, Set<String> lockedChats) {
+        SharedPreferences.Editor editor = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit();
+        if (deviceId != null && !deviceId.isEmpty()) editor.putString("deviceId", deviceId);
+        if (lockedChats != null) editor.putStringSet("lockedChats", new HashSet<>(lockedChats));
+        editor.apply();
+    }
+
+    static String deviceId(Context context) {
+        String id = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString("deviceId", null);
+        return id == null || id.isEmpty() ? null : id;
+    }
+
+    static Set<String> lockedChats(Context context) {
+        return new HashSet<>(context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getStringSet("lockedChats", Collections.emptySet()));
+    }
+
     static RelaySession read(Context context) {
         SharedPreferences prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
         String origin = prefs.getString("origin", null);

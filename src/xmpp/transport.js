@@ -57,8 +57,13 @@ export class XmppTransport {
    */
   constructor({ fetchToken, onEvent = () => {}, onState = () => {}, createSocket = (url) => new WebSocket(url, 'xmpp'),
     setTimer = (fn, ms) => setTimeout(fn, ms), clearTimer = (id) => clearTimeout(id), subtle = globalThis.crypto?.subtle,
-    random = Math.random, resource = 'app' } = {}) {
-    Object.assign(this, { fetchToken, onEvent, onState, createSocket, setTimer, clearTimer, subtle, random, resource });
+    random = Math.random, resource = 'app', ackAfterHandled = false } = {}) {
+    Object.assign(this, { fetchToken, onEvent, onState, createSocket, setTimer, clearTimer, subtle, random, resource, ackAfterHandled });
+    // ackAfterHandled (the background page): Stream Management acknowledges a stanza only once its handler has
+    // finished (the message is stored), so a page stopped half-way leaves it with the server for the next session.
+    // A handler that fails stops the count there (h is a running total, so nothing after it may be counted either).
+    this.handled = 0;
+    this.handledStuck = false;
     this.state = 'offline';
     this.closed = false;
     this.suspended = false;   // off screen on the phone (suspend): no connection until resume()
@@ -165,21 +170,31 @@ export class XmppTransport {
       }
       if (phase === 'enable') {
         // A new session counts from zero; stanzas the old one never acknowledged stay listed and are sent again.
-        if (name === 'enabled') this.sm = { ...this.sm, id: el.attrs.resume === 'true' || el.attrs.resume === '1' ? el.attrs.id : null, inbound: 0, acknowledged: 0, enabled: true };
+        if (name === 'enabled') { this.sm = { ...this.sm, id: el.attrs.resume === 'true' || el.attrs.resume === '1' ? el.attrs.id : null, inbound: 0, acknowledged: 0, enabled: true }; this.handled = 0; this.handledStuck = false; }
         phase = 'live';
         return this.#online(false);
       }
       if (phase !== 'live') return;
-      if (name === 'r' && el.attrs.xmlns === NS_SM) return write(xml('a', { xmlns: NS_SM, h: this.sm.inbound }));
+      if (name === 'r' && el.attrs.xmlns === NS_SM) return write(xml('a', { xmlns: NS_SM, h: this.#acknowledgeable() }));
       if (name === 'a' && el.attrs.xmlns === NS_SM) return this.#acked(Number(el.attrs.h));
       if (name === 'message' || name === 'iq' || name === 'presence') {
         this.sm.inbound += 1;
         // The server's ping (XEP-0199; mod_ping ends a session that does not answer) and any other request get a
         // reply at once, ahead of the message queue.
-        if (name === 'iq' && (el.attrs.type === 'get' || el.attrs.type === 'set')) return this.#answerIq(el);
-        this.dispatching = this.dispatching.then(() => this.#dispatch(el)).catch(() => {});
+        if (name === 'iq' && (el.attrs.type === 'get' || el.attrs.type === 'set')) { this.#countHandled(true); return this.#answerIq(el); }
+        this.dispatching = this.dispatching.then(() => this.#dispatch(el)).then(() => this.#countHandled(true), () => this.#countHandled(false));
       }
     };
+  }
+
+  #countHandled(ok) {
+    if (!ok) this.handledStuck = true;
+    if (!this.handledStuck) this.handled += 1;
+  }
+
+  // What may be acknowledged to the server: everything received, or (ackAfterHandled) only what was handled.
+  #acknowledgeable() {
+    return this.ackAfterHandled ? this.handled : this.sm.inbound;
   }
 
   #answerIq(el) {
@@ -318,7 +333,7 @@ export class XmppTransport {
     const socket = this.socket;
     this.socket = null;
     if (socket) {
-      try { if (this.sm.enabled) socket.send(String(xml('a', { xmlns: NS_SM, h: this.sm.inbound }))); } catch { /* already gone */ }
+      try { if (this.sm.enabled) socket.send(String(xml('a', { xmlns: NS_SM, h: this.#acknowledgeable() }))); } catch { /* already gone */ }
       try { socket.send(String(xml('close', { xmlns: NS_FRAMING }))); } catch { /* already gone */ }
       try { socket.close(); } catch { /* already gone */ }
     }
@@ -421,7 +436,13 @@ export class XmppTransport {
   async #dispatch(el) {
     const name = local(el);
     const from = el.attrs.from ?? '';
-    const emit = (event) => { try { this.onEvent(event); } catch { /* handler's own failure */ } };
+    // The handler may return a promise (the background page stores the message): the stanza counts as handled once
+    // it settles, and not at all if it rejects (ackAfterHandled).
+    const emit = (event) => {
+      let result;
+      try { result = this.onEvent(event); } catch { return undefined; }
+      return this.ackAfterHandled && result && typeof result.then === 'function' ? result : undefined;
+    };
     if (name === 'message' && el.attrs.type === 'error') {
       const error = child(el, 'error');
       return emit({ type: 'error', id: el.attrs.id ?? null, from, condition: error?.children?.[0] ? local(error.children[0]) : 'unknown' });
@@ -431,7 +452,8 @@ export class XmppTransport {
     if (ack) return emit({ type: 'fanout-ack', id: ack.attrs.id, delivered: Number(ack.attrs.n) || 0 });
     // One or several (sendReceipts) delivery receipts.
     const receipts = el.children.filter((item) => local(item) === 'received' && item.attrs?.xmlns === NS_RECEIPTS && item.attrs.id);
-    if (receipts.length) { for (const item of receipts) emit({ type: 'receipt', id: item.attrs.id, from }); return; }
+    // Handled once every receipt's handler has settled (ackAfterHandled).
+    if (receipts.length) return Promise.all(receipts.map((item) => emit({ type: 'receipt', id: item.attrs.id, from })));
     const displayed = child(el, 'displayed', NS_MARKERS);
     if (displayed) return emit({ type: 'displayed', id: displayed.attrs.id, from });
     const hm = child(el, 'hm', NS_HM);

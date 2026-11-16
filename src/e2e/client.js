@@ -185,6 +185,32 @@ export function startE2e({ token, userId, deviceId, storage, fetchImpl = apiFetc
   return session.ready;
 }
 
+/**
+ * The background page (src/background/main.js): this device's keys opened for reading incoming messages only. No key
+ * publishing, no device-list sync, no timers, no writes to the encrypted records (`records` is the page's memory),
+ * so nothing but the ratchet state (IndexedDB, under the "hm-e2e" lock) changes. Identity changes it meets are
+ * handed to `onIdentityChange` so the app can show them later.
+ */
+export function openE2eForBackground({ userId, deviceId, onIdentityChange = () => {} } = {}) {
+  if (!userId || !deviceId) return false;
+  stopE2e();
+  const memory = new Map();
+  current = {
+    token: null, userId, deviceId, fetchImpl: apiFetch, api: undefined,
+    records: { get: async (key) => memory.get(key), set: async (key, value) => { memory.set(key, value); } },
+    linkStore: { get: async () => undefined, del: async () => {} },
+    canHoldAccountKey: false,
+    protocol: createProtocol({ storage: browserKeyStorage(deviceId), onIdentityChange: (changedUser, changedDevice) => onIdentityChange({ userId: changedUser, deviceId: changedDevice }) }),
+    ready: Promise.resolve(true),
+  };
+  return true;
+}
+
+/** An end-to-end event that happened while the app was closed (kept by the background page): to the usual listeners. */
+export function replayE2eEvent(event) {
+  if (event?.type === 'identity-changed' && typeof event.userId === 'string') notify({ type: 'identity-changed', userId: event.userId, deviceId: event.deviceId ?? null });
+}
+
 export function stopE2e() {
   if (current?.timer) clearInterval(current.timer);
   if (current?.listTimer) clearInterval(current.listTimer);

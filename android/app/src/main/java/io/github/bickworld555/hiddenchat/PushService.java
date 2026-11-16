@@ -117,9 +117,27 @@ public class PushService extends FirebaseMessagingService {
             }, FALLBACK_NOTICE_MS);
             return;
         }
+        // No app screen: the background page does the same work in a hidden WebView (BackgroundHost). The sealed
+        // notice still appears if it has not posted the real one in time (or could not start).
+        BackgroundHost.start(this);
+        if (BackgroundHost.isRunning()) {
+            final String tag = !groupId.isEmpty() ? "group:" + groupId : from.isEmpty() ? "xmpp-wake" : "chat:" + from;
+            final long pushedAt = android.os.SystemClock.elapsedRealtime();
+            final android.content.Context app = getApplicationContext();
+            new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
+                if (Alerts.postedSince(tag, pushedAt)) return;
+                RelaySession current = RelaySession.read(app);
+                if (current != null) showSealedWake(app, current, from, groupId);
+            }, HEADLESS_FALLBACK_MS);
+            Log.i(TAG, "xmpp wake-up while the app is closed: background page started");
+            return;
+        }
         showSealedWake(this, session, from, groupId);
         Log.i(TAG, "xmpp wake-up while the app is closed: collected when it opens");
     }
+
+    // A cold start of the background page (process, WebView, connection) takes longer than a living app.
+    private static final long HEADLESS_FALLBACK_MS = 12_000;
 
     // How long a living app gets to fetch in the background, and when the sealed notice stands in for it.
     private static final long BACKGROUND_FETCH_MS = 20_000;

@@ -54,6 +54,9 @@ public class AppActivity extends BridgeActivity {
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
+        // One writer at a time: a background page still running (BackgroundHost) finishes the message in hand and
+        // stops before this screen's own code starts using the keys (which also waits for the page's lock).
+        BackgroundHost.stopForApp();
         // Settings › Storage and data › Proxy: in effect before the web view makes its first request.
         AppProxy.apply(this);
         // Local plugins must be registered before the bridge starts.

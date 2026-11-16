@@ -38,8 +38,11 @@ const allowedHosts = [...new Set(['localhost', '127.0.0.1', '.ngrok-free.app', .
 
 export default defineConfig(({ mode }) => ({
   plugins: [react(), tailwindcss(), androidCsp(mode), adminPage()],
-  // The web build has two pages: the app and the standalone admin page. The APK bundle has only the app.
-  build: mode === 'android' ? undefined : { rollupOptions: { input: { main: 'index.html', admin: 'admin.html' } } },
+  // The web build has two pages: the app and the standalone admin page. The APK bundle has the app and its
+  // background page (run on push with no app screen: android BackgroundHost.java, src/background/main.js).
+  build: mode === 'android'
+    ? { rollupOptions: { input: { main: 'index.html', background: 'background.html' } } }
+    : { rollupOptions: { input: { main: 'index.html', admin: 'admin.html' } } },
   server: {
     host: true,
     strictPort: true,

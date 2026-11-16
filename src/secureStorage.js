@@ -143,6 +143,15 @@ export async function secureRecordsLocation() {
 }
 
 let shared = null;
+
+/**
+ * The background page has no Capacitor bridge and must never write the app's encrypted records: it gives its own
+ * store (memory only) before anything uses secureStorage().
+ */
+export function useSecureStorageOverride(store) {
+  shared = store;
+}
+
 /** The app's encrypted store (created on first use, so tests and server code never touch the platform). */
 export function secureStorage() {
   if (!shared) {

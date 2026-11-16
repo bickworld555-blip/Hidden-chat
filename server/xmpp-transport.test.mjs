@@ -667,3 +667,44 @@ test('session: a background fetch (woken by push off screen) connects, stays whi
   await new Promise((resolve) => setTimeout(resolve, 500));
   assert.deepEqual(calls, ['resume']);
 });
+
+test('ackAfterHandled (background page): a stanza counts as handled only once stored, never past a failure', async () => {
+  const server = fakeServer();
+  const handlers = [];
+  const t = new XmppTransport({
+    fetchToken: async () => ({ transport: 'xmpp', jid: MY_JID, token: 'good-token', websocket: `wss://${HOST}/xmpp-websocket` }),
+    onEvent: (event) => (event.type === 'receipt' ? new Promise((resolve, reject) => handlers.push({ resolve, reject })) : undefined),
+    createSocket: server.createSocket, setTimer: () => 0, clearTimer: () => {}, subtle: webcrypto.subtle, random: () => 0.5,
+    ackAfterHandled: true,
+  });
+  await t.connect();
+  await until(() => t.state === 'online', 'online');
+  const socket = server.sockets[0];
+  const peer = `${localpartOf('peer', 'p1')}@${HOST}/app`;
+  for (const id of ['a', 'b', 'c']) socket.deliver(xml('message', { from: peer }, xml('received', { xmlns: 'urn:xmpp:receipts', id })));
+  await until(() => handlers.length === 1, 'first handler running');
+  socket.deliver(xml('r', { xmlns: 'urn:xmpp:sm:3' }));
+  assert.match(socket.sent.at(-1), /h="0"/, 'nothing stored yet: nothing acknowledged');
+  handlers[0].resolve();
+  await until(() => handlers.length === 2, 'second handler running');
+  socket.deliver(xml('r', { xmlns: 'urn:xmpp:sm:3' }));
+  assert.match(socket.sent.at(-1), /h="1"/, 'only the stored one');
+  handlers[1].reject(new Error('could not store'));
+  await until(() => handlers.length === 3, 'third handler running');
+  handlers[2].resolve();
+  await flush(); await flush();
+  socket.deliver(xml('r', { xmlns: 'urn:xmpp:sm:3' }));
+  assert.match(socket.sent.at(-1), /h="1"/, 'a failure stops the count: the server keeps it and everything after it');
+  t.suspend();
+  assert.match(socket.sent.at(-2), /<a xmlns="urn:xmpp:sm:3" h="1"\/>/, 'the clean close acknowledges only what was stored');
+
+  // Without the option (the app), everything received is acknowledged as before.
+  const plain = transport(fakeServer());
+  await plain.t.connect();
+  await until(() => plain.t.state === 'online', 'online');
+  const s2 = plain.t.socket;
+  s2.deliver(xml('message', { from: peer }, xml('received', { xmlns: 'urn:xmpp:receipts', id: 'x' })));
+  s2.deliver(xml('r', { xmlns: 'urn:xmpp:sm:3' }));
+  assert.match(s2.sent.at(-1), /h="1"/);
+  plain.t.close();
+});
