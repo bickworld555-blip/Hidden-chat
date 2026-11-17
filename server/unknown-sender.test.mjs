@@ -23,7 +23,7 @@ test('the card shows only for an unsaved person who wrote to me', () => {
 test('the chat wires Add (name sheet), Block (the block dialog) and Safety tools (block and report)', () => {
   const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
   const chat = read('src/components/ChatWindow.jsx');
-  assert.match(chat, /isUnknownSender\(\{ chat, messages, blocked, userId \}\) && !unknownHidden\.has\(chatId\)/);
+  assert.match(chat, /isUnknownSender\(\{ chat, messages, blocked, userId \}\) && \(isMessageRequest\(chat\) \|\| !unknownHidden\.has\(chatId\)\)/, 'a message request cannot be hidden, only handled');
   assert.match(chat, /onAdd=\{\(\) => setNamingUnknown\(true\)\}/);
   assert.match(chat, /onBlock=\{\(\) => openInfo\('main', 'block'\)\}/);
   assert.match(chat, /onReport=\{\(\) => \{ setSafetyOpen\(false\); openInfo\('main', 'report'\); \}\}/);

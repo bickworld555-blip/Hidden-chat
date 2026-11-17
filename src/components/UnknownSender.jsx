@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { Ban, Flag, ShieldAlert, UserPlus, X } from 'lucide-react';
+import { Ban, Check, Flag, ShieldAlert, UserPlus, X } from 'lucide-react';
 import { formatAccountNumber } from '../accountNumber.js';
 import Avatar from './Avatar.jsx';
 export { dismissUnknown, isUnknownSender, readDismissed } from '../unknownSender.js';
@@ -8,7 +8,7 @@ export { dismissUnknown, isUnknownSender, readDismissed } from '../unknownSender
 // knows (their own name, @username and ID), with Add and Block at hand, and Safety tools. Shown at the top of a chat
 // with someone who wrote to you and is not saved (ChatWindow decides); Add or Block makes it go away.
 
-export function UnknownSenderCard({ chat, onAdd, onBlock, onSafety, onDismiss }) {
+export function UnknownSenderCard({ chat, request = false, onAccept, onAdd, onBlock, onSafety, onDismiss }) {
   const own = chat.profileName || chat.name || (chat.username ? `@${chat.username}` : '');
   return (
     <section className="unknown-sender" aria-label="Not in your contacts">
@@ -19,12 +19,13 @@ export function UnknownSenderCard({ chat, onAdd, onBlock, onSafety, onDismiss })
         {chat.username && <span>@{chat.username}</span>}
         {chat.number && <span>ID {formatAccountNumber(chat.number)}</span>}
       </span>
-      <span className="unknown-sender-note">Not in your contacts</span>
+      <span className="unknown-sender-note">{request ? 'Message request · they won’t know you’ve seen their messages until you accept, add them or reply' : 'Not in your contacts'}</span>
       <button type="button" className="unknown-sender-safety" onClick={onSafety}><ShieldAlert size={15} aria-hidden="true" /> Safety tools</button>
       <div className="unknown-sender-actions">
         <button type="button" className="unknown-sender-block" onClick={onBlock}><Ban size={18} aria-hidden="true" /> Block</button>
         <button type="button" className="unknown-sender-add" onClick={onAdd}><UserPlus size={18} aria-hidden="true" /> Add</button>
       </div>
+      {request && onAccept && <button type="button" className="unknown-sender-accept" onClick={onAccept}><Check size={18} aria-hidden="true" /> Accept</button>}
     </section>
   );
 }

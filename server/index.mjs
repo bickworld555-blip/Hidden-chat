@@ -232,6 +232,8 @@ export function createChatServer({
   const devicesCache = createTtlCache();
   const chatSettingCache = createTtlCache();
   const linkCache = createTtlCache({ max: 50_000 });
+  // Whether an owner has accepted a peer's chat (message requests), per owner|peer: one query per pair, then none.
+  const acceptCache = createTtlCache({ max: 50_000 });
   const groupMemberCache = createTtlCache();
   const businessCache = createTtlCache();
   // ejabberd's own cache of who may reach whom (mod_hm, 30 s): emptied the moment blocks or group memberships change,
@@ -244,7 +246,7 @@ export function createChatServer({
     blocks: { caches: [blockCache, xmppVerdictCache] },
     e2e_devices: { caches: [devicesCache] },
     chat_settings: { caches: [chatSettingCache] },
-    contacts: { caches: [linkCache] },
+    contacts: { caches: [linkCache, acceptCache] },
     group_members: { caches: [groupMemberCache, xmppVerdictCache], ignore: [/UPDATEs+(?:relay.)?group_memberss+SETs+(?:last_read_at|cleared_at|auto_delete)/i] },
     business_profiles: { caches: [businessCache] },
   });
@@ -517,6 +519,9 @@ export function createChatServer({
   const contactColumns = new Set(db.prepare("PRAGMA table_info(contacts)").all().map((column) => column.name));
   if (!contactColumns.has('saved')) db.exec('ALTER TABLE contacts ADD COLUMN saved INTEGER NOT NULL DEFAULT 1');
   if (!contactColumns.has('hidden')) db.exec('ALTER TABLE contacts ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0');
+  // Message requests (src/messageRequests.js; Postgres: migration 039): 0 while the owner has not accepted a chat that
+  // the other person started. Every link from before message requests counts as accepted.
+  if (!contactColumns.has('accepted')) db.exec('ALTER TABLE contacts ADD COLUMN accepted INTEGER NOT NULL DEFAULT 1');
   // Saved contact names (src/contactNames.js; Postgres: migration 038): the name this owner gave the contact.
   if (!contactColumns.has('alias')) db.exec("ALTER TABLE contacts ADD COLUMN alias TEXT NOT NULL DEFAULT ''");
   ensureParitySchema(db);
@@ -537,19 +542,39 @@ export function createChatServer({
   // Who blocked whom (server/blocks.mjs), checked wherever two people reach each other.
   const blocks = createBlocks(db, { cache: blockCache });
   const verifiedChannels = createVerifiedChannels(db);
-  const upsertLink = db.prepare(`INSERT INTO contacts(owner_id, contact_id, created_at, saved, hidden) VALUES (?, ?, ?, ?, 0)
-    ON CONFLICT(owner_id, contact_id) DO UPDATE SET saved = CASE WHEN contacts.saved > excluded.saved THEN contacts.saved ELSE excluded.saved END, hidden = 0`);
+  // `accepted` applies to a new link only: an existing one keeps its own (saving someone accepts them, below).
+  const upsertLink = db.prepare(`INSERT INTO contacts(owner_id, contact_id, created_at, saved, hidden, accepted) VALUES (?, ?, ?, ?, 0, ?)
+    ON CONFLICT(owner_id, contact_id) DO UPDATE SET saved = CASE WHEN contacts.saved > excluded.saved THEN contacts.saved ELSE excluded.saved END, hidden = 0,
+      accepted = CASE WHEN excluded.saved = 1 THEN 1 ELSE contacts.accepted END`);
   // Links `peerId` into `ownerId`'s chat list (un-hiding a deleted thread); `save` also puts them in the contact book.
   // Done on every message for both people: once linked (and not hidden or removed since — any contacts write clears
   // linkCache), a plain link changes nothing and is skipped. Saving someone always writes.
-  async function linkUsers(ownerId, peerId, { save = false } = {}) {
+  // `request`: the link is made because `peerId` wrote to `ownerId` first, so a new one starts as a message request.
+  async function linkUsers(ownerId, peerId, { save = false, request = false } = {}) {
     if (!ownerId || !peerId || ownerId === peerId) return;
     const key = `${ownerId}|${peerId}`;
     if (!save && linkCache.get(key)) return;
-    (await upsertLink.run(ownerId, peerId, Date.now(), save ? 1 : 0));
+    (await upsertLink.run(ownerId, peerId, Date.now(), save ? 1 : 0, request && !save ? 0 : 1));
     linkCache.set(key, true);
   }
-  const linkRow = db.prepare("SELECT saved, hidden, alias FROM contacts WHERE owner_id = ? AND contact_id = ?");
+
+  // Message requests (Signal's model, src/messageRequests.js): until the receiver accepts a chat someone else started
+  // (Accept, Add to contacts, or replying), the sender is not told the message was delivered or read.
+  const acceptedRow = db.prepare('SELECT accepted FROM contacts WHERE owner_id = ? AND contact_id = ?');
+  async function hasAccepted(ownerId, peerId) {
+    return acceptCache.remember(`${ownerId}|${peerId}`, async () => {
+      const row = await acceptedRow.get(ownerId, peerId);
+      return !row || Number(row.accepted) === 1;
+    });
+  }
+  async function acceptChat(ownerId, peerId) {
+    if (await hasAccepted(ownerId, peerId)) return false;
+    await db.prepare('UPDATE contacts SET accepted = 1 WHERE owner_id = ? AND contact_id = ?').run(ownerId, peerId);
+    linkCache.delete(`${ownerId}|${peerId}`);
+    broadcastUser(ownerId, { type: 'contact:accepted', userId: peerId });
+    return true;
+  }
+  const linkRow = db.prepare("SELECT saved, hidden, alias, accepted FROM contacts WHERE owner_id = ? AND contact_id = ?");
   const insertUser = db.prepare(`INSERT INTO users(id, username, name, initials, color, created_at)
     VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`);
   const seedContact = db.prepare("INSERT INTO contacts(owner_id, contact_id, created_at) VALUES (?, ?, ?) ON CONFLICT DO NOTHING");
@@ -667,7 +692,9 @@ export function createChatServer({
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(message.id, senderId, receiverId, message.timestamp, content, 'sent', null, 0, message.expiresAt);
     await deliveryQueue.trackDirect({ messageId: message.id, senderId, receiverId });
     await linkUsers(senderId, receiverId);
-    await linkUsers(receiverId, senderId);
+    await linkUsers(receiverId, senderId, { request: true });
+    // Writing to someone accepts their chat (as replying does in Signal).
+    await acceptChat(senderId, receiverId);
     const delivered = await presentMessage(message);
     broadcastUser(receiverId, { type: 'message:new', message: delivered });
     broadcastUser(senderId, { type: 'message:new', message: delivered });
@@ -881,6 +908,13 @@ export function createChatServer({
   }
 
   // A callee device confirmed the call (or answered it): it is not "unavailable" any more.
+  // Ring time, split (call telemetry): via the open app ("socket") or a push that woke the phone ("push"); the time from
+  // the offer to Firebase accepting the push (pushMs) and to the phone confirming it rang (serverMs).
+  function ringDetail(activeCall, via) {
+    const now = Date.now();
+    return { via, serverMs: activeCall.offerAt ? now - activeCall.offerAt : null, pushMs: activeCall.pushAt && activeCall.offerAt ? activeCall.pushAt - activeCall.offerAt : null };
+  }
+
   function markCallReached(activeCall) {
     activeCall.reached = true;
     clearTimeout(activeCall.reachTimer);
@@ -1171,7 +1205,7 @@ export function createChatServer({
       if (!updated) continue;
       changed += 1;
       const statusEvent = { type: 'message:status', messageId, status: 'delivered' };
-      await notifyUser(updated.senderId, statusEvent);
+      if (await hasAccepted(userId, updated.senderId)) await notifyUser(updated.senderId, statusEvent);
       broadcastUser(userId, statusEvent, exceptSocket);
     }
     return changed;
@@ -2621,7 +2655,7 @@ export function createChatServer({
     if (!activeCall || activeCall.calleeId !== request.session.user_id) return response.status(404).json({ error: 'No call is ringing.' });
     if (!activeCall.reached) {
       markCallReached(activeCall);
-      deliverCallSignal(activeCall, activeCall.callerId, { type: 'call:signal', from: activeCall.calleeId, callId: request.params.callId, mode: activeCall.mode, signal: { type: 'ringing' }, signalId: randomUUID() });
+      deliverCallSignal(activeCall, activeCall.callerId, { type: 'call:signal', from: activeCall.calleeId, callId: request.params.callId, mode: activeCall.mode, signal: { type: 'ringing', ring: ringDetail(activeCall, 'push') }, signalId: randomUUID() });
     }
     response.status(204).end();
   });
@@ -2789,7 +2823,7 @@ export function createChatServer({
   });
 
   app.get('/api/v1/contacts', requireSession, async (request, response) => {
-    const rows = (await db.prepare(`SELECT ${USER_COLUMNS.replace(/(^|, )/g, '$1users.')}, contacts.saved AS "saved", contacts.hidden AS "hidden", contacts.alias AS "alias"
+    const rows = (await db.prepare(`SELECT ${USER_COLUMNS.replace(/(^|, )/g, '$1users.')}, contacts.saved AS "saved", contacts.hidden AS "hidden", contacts.alias AS "alias", contacts.accepted AS "accepted"
       FROM contacts JOIN users ON users.id = contacts.contact_id
       WHERE contacts.owner_id = ? ORDER BY lower(users.username)`)
       .all(request.session.user_id));
@@ -2798,6 +2832,7 @@ export function createChatServer({
       saved: Boolean(row.saved),
       hidden: Boolean(row.hidden),
       alias: row.alias ?? '',
+      accepted: row.accepted == null ? true : Number(row.accepted) === 1,
       disappearSeconds: (await disappearSecondsFor(request.session.user_id, row.id)),
     }))));
   });
@@ -2959,6 +2994,18 @@ export function createChatServer({
         AND NOT EXISTS (SELECT 1 FROM blocks b WHERE (b.blocker_id = u.id AND b.blocked_id = ?) OR (b.blocker_id = ? AND b.blocked_id = u.id))`)
       .all(...numbers, viewerId, viewerId, viewerId, viewerId, viewerId);
     response.json({ matches: rows.map((row) => ({ number: row.number, user: publicUser(row) })) });
+  });
+
+  // Accept a message request: the person who wrote first now hears "delivered" and "read" like anyone else.
+  app.post('/api/v1/contacts/:userId/accept', requireSession, async (request, response) => {
+    const ownerId = request.session.user_id;
+    const peerId = request.params.userId;
+    if (!peerId || peerId === ownerId) return response.status(400).json({ error: 'Choose a different Hidden Messenger user.' });
+    if (!(await db.prepare('SELECT 1 FROM users WHERE id = ? AND deleted_at IS NULL').get(peerId))) return response.status(404).json({ error: 'That Hidden Messenger account was not found.' });
+    // A first message that came only over XMPP left no link here: accepting makes one (accepted).
+    await linkUsers(ownerId, peerId);
+    await acceptChat(ownerId, peerId);
+    response.json({ accepted: true });
   });
 
   // Add to contacts / Edit contact (WhatsApp): the name this account shows for someone, everywhere (src/contactNames.js).
@@ -3299,7 +3346,7 @@ export function createChatServer({
           const calleeSockets = [...userSockets(targetId)].filter((candidate) => candidate.readyState === WebSocket.OPEN);
           const oldPhones = push ? Number((await db.prepare('SELECT COUNT(*) AS "count" FROM push_devices WHERE user_id = ? AND client_protocol < ?').get(targetId, CALL_CONFIRM_PROTOCOL))?.count ?? 0) : 0;
           const confirms = oldPhones === 0 && !calleeSockets.some((candidate) => (candidate.clientProtocol ?? 0) < CALL_CONFIRM_PROTOCOL);
-          const call = { callerId: userId, calleeId: targetId, callerSocket: socket, calleeSocket: null, mode, timer: null, roomId, held: [], pushed: false, confirms, reached: false, reachTimer: null };
+          const call = { callerId: userId, calleeId: targetId, callerSocket: socket, calleeSocket: null, mode, timer: null, roomId, held: [], pushed: false, confirms, reached: false, reachTimer: null, offerAt: Date.now(), pushAt: null };
           if (confirms && callUnreachableMs > 0 && !roomId) {
             call.reachTimer = setTimeout(() => { if (!call.reached && !call.calleeSocket && activeCalls.get(callId) === call) finishCall(callId, 'unavailable'); }, callUnreachableMs);
             call.reachTimer.unref?.();
@@ -3315,6 +3362,8 @@ export function createChatServer({
           if (activeCall.reached && activeCall.confirms) return;     // one "Ringing" per call, however many devices
           markCallReached(activeCall);
         }
+        // The caller's telemetry learns how the call reached the phone and how long the server's part took.
+        const ring = signal.type === 'ringing' && activeCall && userId === activeCall.calleeId ? ringDetail(activeCall, 'socket') : null;
         if (signal.type === 'answer' && activeCall && !activeCall.calleeSocket && userId === activeCall.calleeId) {
           markCallReached(activeCall);
           clearTimeout(activeCall.timer);
@@ -3355,7 +3404,7 @@ export function createChatServer({
         const silenced = Boolean(activeCalls.get(callId)?.silenced);
         // A group call's pairs name their group (L2): the person rung directly then counts as in that group's call.
         const groupId = roomId && typeof event.groupId === 'string' && event.groupId && event.groupId.length <= 80 ? event.groupId : null;
-        const signalEvent = { type: 'call:signal', from: userId, fromUser, callId, mode, signal, signalId, ...(roomId ? { roomId } : {}), ...(groupId ? { groupId } : {}), ...(silenced ? { silenced: true } : {}) };
+        const signalEvent = { type: 'call:signal', from: userId, fromUser, callId, mode, signal: ring ? { ...signal, ring } : signal, signalId, ...(roomId ? { roomId } : {}), ...(groupId ? { groupId } : {}), ...(silenced ? { silenced: true } : {}) };
         const current = activeCalls.get(callId);
         const delivered = deliverCallSignal(current, targetId, signalEvent);
         // Until a callee device answers, the caller's offer and candidates are kept (bounded) for a phone that
@@ -3372,6 +3421,7 @@ export function createChatServer({
           current.pushed = true;
           trackSocketTask(pushToUser(targetId, pushBody.call({ callId, from: userId, mode }), { ttlSeconds: 45, collapseKey: `call:${callId}` })
             .then((sent) => {
+              if (sent > 0 && !current.pushAt) current.pushAt = Date.now();
               if (sent === 0) current.pushed = false;
               else if (!current.confirms && delivered === 0 && activeCalls.get(callId) === current && socket.readyState === WebSocket.OPEN) ringing();
             })
@@ -3635,7 +3685,7 @@ export function createChatServer({
         if (senderId) {
           const statusEvent = { type: 'message:status', messageId, status: 'read' };
           // The reader's own devices always learn it (their unread counts); the sender only with receipts on both sides.
-          if (await receiptsBetween(senderId, userId)) await notifyUser(senderId, statusEvent);
+          if (await receiptsBetween(senderId, userId) && await hasAccepted(userId, senderId)) await notifyUser(senderId, statusEvent);
           await notifyUser(userId, statusEvent, socket);
         }
         return;
@@ -3784,7 +3834,8 @@ export function createChatServer({
       await deliveryQueue.trackDirect({ messageId: message.id, senderId: userId, senderDeviceId: socket.deviceId, receiverId });
       // A message keeps the thread in both chat lists (and brings a deleted thread back) without saving a contact.
       (await linkUsers(userId, receiverId));
-      (await linkUsers(receiverId, userId));
+      (await linkUsers(receiverId, userId, { request: true }));
+      await acceptChat(userId, receiverId);
       const delivered = (await presentMessage(message));
       broadcastUser(receiverId, { type: 'message:new', message: delivered });
       pushUnlessDelivered(receiverId, pushBody.message({ id: message.id, from: userId }), {}, directDelivered(message.id));

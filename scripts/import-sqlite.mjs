@@ -10,7 +10,7 @@ import { DEMO_USERS } from '../server/demo.mjs';
 export const IMPORT_TABLES = Object.freeze([
   { name: 'users', columns: ['id', 'username', 'name', 'initials', 'color', 'dob', 'password_hash', 'created_at', 'avatar_disk_name', 'avatar_type', 'avatar_updated_at', 'last_seen_at', 'last_seen_privacy', 'online_privacy', 'photo_privacy', 'read_receipts', 'two_step_hash', 'two_step_set_at', 'status_audience', 'is_admin', 'suspended_at', 'deleted_at', 'country', 'country_updated_at', 'about', 'about_privacy', 'silence_unknown_callers', 'default_message_timer', 'discoverable_by_username', 'number'], users: ['id'] },
   { name: 'sessions', columns: ['token_hash', 'user_id', 'device_id', 'device_name', 'expires_at', 'created_at', 'last_active_at'], users: ['user_id'] },
-  { name: 'contacts', columns: ['owner_id', 'contact_id', 'created_at', 'saved', 'hidden', 'alias'], users: ['owner_id', 'contact_id'], key: ['owner_id', 'contact_id'] },
+  { name: 'contacts', columns: ['owner_id', 'contact_id', 'created_at', 'saved', 'hidden', 'alias', 'accepted'], users: ['owner_id', 'contact_id'], key: ['owner_id', 'contact_id'] },
   // Groups precede media and uploads, whose group_id references them.
   { name: 'groups', columns: ['id', 'name', 'created_by', 'created_at', 'description', 'only_admins_send', 'only_admins_edit', 'approve_joins', 'invite_code', 'community_id', 'is_announcement', 'members_can_add'], users: ['created_by'] },
   { name: 'group_members', columns: ['group_id', 'user_id', 'role', 'auto_delete', 'joined_at', 'last_read_at', 'cleared_at', 'member_tag'], users: ['user_id'], key: ['group_id', 'user_id'] },

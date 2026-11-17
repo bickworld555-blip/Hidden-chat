@@ -71,8 +71,22 @@ const NO_POSTER = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAA
 const ICE_CONFIG_TIMEOUT_MS = 3000;
 const CLOSE_DELAY_MS = { failed: 5000, busy: 4000, default: 2500 };
 
-// Fetches the server's ICE policy with a short deadline so a slow API never delays the call.
+// Fetches the server's ICE policy with a short deadline so a slow API never delays the call. Kept ICE_CACHE_MS per
+// session (TURN credentials last 24 h), and fetched ahead (prefetchIceServers at start), so a call does not wait for it.
+const ICE_CACHE_MS = 10 * 60 * 1000;
+// How long a video call may sit hidden (no floating window) before its camera is turned off (see autoPausedRef).
+export const BACKGROUND_CAMERA_PAUSE_MS = 1500;
+let iceCache = null; // { token, at, servers }
+export function prefetchIceServers(sessionToken) {
+  if (sessionToken) loadIceServers(sessionToken).catch(() => {});
+}
 async function loadIceServers(sessionToken) {
+  if (iceCache && iceCache.token === sessionToken && Date.now() - iceCache.at < ICE_CACHE_MS) return iceCache.servers;
+  const servers = await fetchIceServers(sessionToken);
+  if (servers.fromServer) iceCache = { token: sessionToken, at: Date.now(), servers: servers.list };
+  return servers.list;
+}
+async function fetchIceServers(sessionToken) {
   try {
     const response = await apiFetch('/api/v1/rtc-config', {
       headers: { Authorization: 'Bearer ' + sessionToken },
@@ -80,12 +94,12 @@ async function loadIceServers(sessionToken) {
     });
     if (response.ok) {
       const servers = normalizeIceServers((await response.json()).iceServers);
-      if (servers.length > 0) return servers;
+      if (servers.length > 0) return { list: servers, fromServer: true };
     }
   } catch {
     /* fall through to defaults */
   }
-  return normalizeIceServers(DEFAULT_ICE_SERVERS);
+  return { list: normalizeIceServers(DEFAULT_ICE_SERVERS), fromServer: false };
 }
 
 
@@ -559,6 +573,31 @@ export default function CallOverlay({
     const timer = setInterval(resume, 2000);
     return () => { stopPip(); document.removeEventListener('visibilitychange', onVisible); clearInterval(timer); };
   }, []);
+  // Video call left for another app without the floating window (picture-in-picture off, or switched away from the
+  // recents screen): Android stops the camera, so the other person would see a frozen frame. Like WhatsApp, the camera
+  // is turned off on purpose instead (they see "camera off"), audio carries on (the call's foreground service keeps the
+  // microphone), and it comes back on return. Only a camera this screen turned off is turned back on.
+  const [pipActive, setPipActive] = useState(false);
+  useEffect(() => onNative('pictureInPicture', ({ active }) => setPipActive(Boolean(active))), []);
+  const autoPausedRef = useRef(false);
+  useEffect(() => {
+    if (!isVideo || !callLive) return undefined;
+    if (pageHidden && !pipActive) {
+      if (cameraOff || autoPausedRef.current) return undefined;
+      // A moment's grace: going to picture-in-picture also hides the page before the window appears.
+      const timer = setTimeout(() => {
+        autoPausedRef.current = true;
+        allEngines().forEach((engine) => engine.setCameraOff(true));
+      }, BACKGROUND_CAMERA_PAUSE_MS);
+      return () => clearTimeout(timer);
+    }
+    if (autoPausedRef.current) {
+      autoPausedRef.current = false;
+      allEngines().forEach((engine) => engine.setCameraOff(false));
+    }
+    return undefined;
+  }, [pageHidden, pipActive, isVideo, callLive]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const callActionsRef = useRef(null);
   useEffect(() => onNative('callAction', ({ action, callId, cameraOff: answerWithCameraOff, text, muted: mutedBySystem }) => {
     if (callId && callId !== latest.current.call.id) return;

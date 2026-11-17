@@ -15,6 +15,7 @@ import { formatChatListTime } from './time.js';
 import { splitLinks } from './contactBook.js';
 import { bindContactNameSource, normalizeContactName, withContactAlias, withProfileUpdate } from './contactNames.js';
 import { apiFetch } from './api.js';
+import { isMessageRequest } from './messageRequests.js';
 import { scheduledCallPreview } from './groupChat.js';
 import { stickerPreview } from './stickers.js';
 import { onCloudStars, toggleStar as toggleCloudStar, uploadLocalStars } from './accountData.js';
@@ -595,6 +596,27 @@ export const useChatStore = create((setState, getState) => ({
     getState().applyContactAlias(id, body?.alias ?? '', body);
     return body;
   },
+  /**
+   * Accept a message request (server/index.mjs POST /contacts/:id/accept): they now get "delivered" and "read" like
+   * anyone, starting with the read marker for what is already read here.
+   */
+  async acceptChat(id) {
+    const token = getState().sessionToken;
+    if (!id || !token) throw new Error('Sign in to accept this chat.');
+    const response = await apiFetch(`/api/v1/contacts/${encodeURIComponent(id)}/accept`, { method: 'POST', headers: { Authorization: `Bearer ${token}` } });
+    if (!response.ok) throw new Error((await response.json().catch(() => null))?.error || 'Could not accept this chat. Try again.');
+    getState().applyContactAccepted(id);
+  },
+  // Accepted here or on another device of this account ("contact:accepted"): held receipts go out now.
+  applyContactAccepted(id) {
+    setState((state) => ({
+      chats: state.chats.map((chat) => (chat.id === id ? { ...chat, accepted: true } : chat)),
+      hiddenContacts: state.hiddenContacts.map((chat) => (chat.id === id ? { ...chat, accepted: true } : chat)),
+    }));
+    acceptedListeners.forEach((listener) => { try { listener(id); } catch {} });
+    if (getState().activeChatId === id) getState().readChat(id);
+    if (getState().userId) getState().persistContacts(getState().userId);
+  },
   // A saved name changed (here, or on another device of this account: the "contact:alias" event).
   applyContactAlias(id, alias, user = null) {
     const rename = (row) => withContactAlias({ ...row, alias, aliasSource: alias ? 'manual' : '', saved: true });
@@ -610,6 +632,8 @@ export const useChatStore = create((setState, getState) => ({
       };
     });
     if (getState().userId) getState().persistContacts(getState().userId);
+    // Saving someone accepts their message request too (server: saving sets accepted): held receipts go out.
+    if (alias) acceptedListeners.forEach((listener) => { try { listener(id); } catch {} });
   },
   rememberPerson(user) {
     if (!user?.id || typeof user.id !== 'string') return;
@@ -811,6 +835,8 @@ export const useChatStore = create((setState, getState) => ({
   readChat(chatId) {
     const { client, messages } = getState();
     if (!chatId) return;
+    // A message request: read here (the unread count clears) but the sender is not told until it is accepted.
+    if (isMessageRequest(getState().chats.find((chat) => chat.id === chatId))) { getState().markRead(chatId); return; }
     // Not connected yet (an app just opened from a notification): the receipts go as soon as it connects.
     if (!client?.send) readsWithoutConnection.add(chatId);
     // Over XMPP one marker covers everything up to it (XEP-0333 markers are cumulative): only the newest unread
@@ -853,8 +879,9 @@ export const useChatStore = create((setState, getState) => ({
           ...chat,
           // An open chat only stays at 0 while it is actually on screen; in the background it counts like any other.
           unread: message.senderId === state.userId || (state.activeChatId === chatId && pageVisible()) ? chat.unread : chat.unread + 1,
+          ...(message.senderId === state.userId && chat.accepted === false ? { accepted: true } : {}),
         }, nextMessages) : chat)
-        : [summarizeChat({ ...peer, ...restored, unread: 1, online: true }, nextMessages), ...state.chats];
+        : [summarizeChat({ ...peer, ...restored, ...(restored ? {} : { accepted: message.senderId === state.userId }), unread: 1, online: true }, nextMessages), ...state.chats];
       return {
         messages: { ...state.messages, [chatId]: nextMessages },
         chats: orderChatsByActivity(chats),
@@ -1503,6 +1530,13 @@ export const useChatStore = create((setState, getState) => ({
   async persistSession(session) { await set('relay:session', session); },
   async clearSession() { await del('relay:session'); },
 }));
+
+// Who hears when a message request is accepted (App releases the XMPP receipts it held for that person).
+const acceptedListeners = new Set();
+export function onContactAccepted(listener) {
+  acceptedListeners.add(listener);
+  return () => acceptedListeners.delete(listener);
+}
 
 // getContactDisplayName(id) (src/contactNames.js) reads saved names from this store.
 bindContactNameSource(() => useChatStore.getState());

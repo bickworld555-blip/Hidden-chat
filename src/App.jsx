@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { cachedGroups, prefetchGroupDetails, saveGroups } from './groupCache.js';
 import { activateAccount, addOrActivateAccount, getAccountsState, loadAccounts, removeAccount, sessionFromAccount, updateAccountUser } from './accounts.js';
 import { Bell, ChevronRight, MessageSquarePlus, Moon, Sun } from 'lucide-react';
-import { flushPersistedMessages, notificationPreview, savedMessageCount, useChatStore } from './store.js';
+import { flushPersistedMessages, notificationPreview, onContactAccepted, savedMessageCount, useChatStore } from './store.js';
 import { e2eLockReady } from './e2eLock.js';
 import { importInbox } from './backgroundInbox.js';
 import { runScheduledBackup, shouldOfferRestore } from './cloudBackup.js';
@@ -41,7 +41,7 @@ import { permissionsAskedKey } from './permissionsKey.js';
 import Sidebar from './components/Sidebar.jsx';
 import ChatWindow from './components/ChatWindow.jsx';
 import UsernameGate from './components/UsernameGate.jsx';
-import CallOverlay from './components/CallOverlay.jsx';
+import CallOverlay, { prefetchIceServers } from './components/CallOverlay.jsx';
 import { syncMissedMessages } from './messageSync.js';
 import { HISTORY_CONCURRENCY, forEachLimited } from './concurrency.js';
 import MobileBottomNav from './components/MobileBottomNav.jsx';
@@ -132,6 +132,7 @@ import { inviteTokenFrom, linkContact, lookupUsername, redeemInviteLink } from '
 import { deviceStorage } from './deviceStorage.js';
 import { storageProblemText, useStorageProblem } from './storageHealth.js';
 import { startOtaUpdates } from './otaUpdates.js';
+import { holdsReceipts } from './messageRequests.js';
 
 function useIsMobile() {
   const query = '(max-width: 768px)';
@@ -218,6 +219,10 @@ export default function App() {
   const revokedRef = useRef(null);
   // The XMPP session for accounts moved over (src/xmpp/session.js); null for everyone else.
   const xmppRef = useRef(null);
+  // The relay settings a call needs, fetched ahead so placing or answering a call does not wait for them.
+  useEffect(() => { prefetchIceServers(sessionToken); }, [sessionToken]);
+  // A message request accepted (here or on another device): the XMPP receipts held for that person go out.
+  useEffect(() => onContactAccepted((peerId) => xmppRef.current?.releaseReceipts?.(peerId)), []);
   // The latest link of the chain that opens and handles incoming events in order (a background fetch waits for it).
   const pendingEventsRef = useRef(Promise.resolve());
   const removingRef = useRef(new Set());
@@ -494,6 +499,8 @@ export default function App() {
           if (event.type === 'chat:disappearing') useChatStore.getState().setDisappearing(event.peerId, event.seconds);
           if (event.type === 'chat:cleared') useChatStore.getState().clearChat(event.peerId, event.keepIds);
           if (event.type === 'chat:deleted') useChatStore.getState().deleteChat(event.peerId, { kept: event.kept });
+          // A message request was accepted on another device of this account.
+          if (event.type === 'contact:accepted' && typeof event.userId === 'string') useChatStore.getState().applyContactAccepted(event.userId);
           // A contact's saved name changed on another device of this account (Edit contact): shown here at once.
           if (event.type === 'contact:alias' && typeof event.userId === 'string') useChatStore.getState().applyContactAlias(event.userId, typeof event.alias === 'string' ? event.alias : '', event.user ?? null);
           if (event.type === 'user:updated') {
@@ -671,7 +678,7 @@ export default function App() {
           }).catch((error) => console.error('Background inbox import failed:', error));
         }
         if (cancelled) return;
-        startXmppSession({ sessionToken, userId, deliver: onRealtimeEvent, legacySend, targetsFor: xmppTargetsFor, groupTargetsFor: xmppGroupTargetsFor, userForAddress: userForXmppAddress, fetchImpl: apiFetch, seal: (peerId, content) => (peerId === userId ? sealToOwnDevices(content) : sealDirect(peerId, content)), signalingRestored, onTransportState: (state) => noteCallEvent('xmpp', state) })
+        startXmppSession({ sessionToken, userId, deliver: onRealtimeEvent, legacySend, targetsFor: xmppTargetsFor, holdReceiptsFor: (peerId) => holdsReceipts(peerId, useChatStore.getState().chats), groupTargetsFor: xmppGroupTargetsFor, userForAddress: userForXmppAddress, fetchImpl: apiFetch, seal: (peerId, content) => (peerId === userId ? sealToOwnDevices(content) : sealDirect(peerId, content)), signalingRestored, onTransportState: (state) => noteCallEvent('xmpp', state) })
           .then((session) => {
             if (!session) return;
             if (cancelled) { session.close(); return; }

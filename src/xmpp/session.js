@@ -51,7 +51,7 @@ export const MAX_RECEIPTS_PER_STANZA = 50;
  * Resolves null unless this account is moved over. `deliver(event)` feeds the app's realtime event handler;
  * `legacySend(event)` is the current connection's send.
  */
-export async function startXmppSession({ sessionToken, userId, deliver, legacySend, targetsFor, groupTargetsFor = async () => ({ targets: [], complete: false, sender: null }), userForAddress = () => null, fetchImpl, createTransport = (options) => new XmppTransport(options), seal = null, groupsOverXmpp: groupsOption = null, signalingRestored = () => {}, onTransportState = () => {}, nudgeAfterMs = NUDGE_AFTER_MS, receiptBatchMs = RECEIPT_BATCH_MS, transportOptions = {} }) {
+export async function startXmppSession({ sessionToken, userId, deliver, legacySend, targetsFor, holdReceiptsFor = () => false, groupTargetsFor = async () => ({ targets: [], complete: false, sender: null }), userForAddress = () => null, fetchImpl, createTransport = (options) => new XmppTransport(options), seal = null, groupsOverXmpp: groupsOption = null, signalingRestored = () => {}, onTransportState = () => {}, nudgeAfterMs = NUDGE_AFTER_MS, receiptBatchMs = RECEIPT_BATCH_MS, transportOptions = {} }) {
   const auth = { Authorization: `Bearer ${sessionToken}` };
   let decision;
   try {
@@ -105,8 +105,19 @@ export async function startXmppSession({ sessionToken, userId, deliver, legacySe
     receiptBatches.delete(to);
     if (batch?.ids.length) transport.sendReceipts(to, batch.ids);
   };
+  // Message requests (src/messageRequests.js): receipts to someone whose chat is not accepted wait here, per person,
+  // until releaseReceipts(their id). A held read marker keeps only the newest (markers are cumulative).
+  const heldReceipts = new Map();
+  const heldFor = (to) => {
+    const peer = userForAddress(to);
+    if (!peer || !holdReceiptsFor(peer)) return null;
+    if (!heldReceipts.has(peer)) heldReceipts.set(peer, { receipts: [], displayed: null });
+    return heldReceipts.get(peer);
+  };
   const receiptOnce = (to, id) => {
     if (receipted.has(id)) return;
+    const held = heldFor(to);
+    if (held) { if (!held.receipts.some((item) => item.id === id)) held.receipts.push({ to, id }); return; }
     remember(receipted, id, true);
     let batch = receiptBatches.get(to);
     if (!batch) {
@@ -236,6 +247,14 @@ export async function startXmppSession({ sessionToken, userId, deliver, legacySe
 
   return {
     transport,
+    /** A message request was accepted: the delivery receipts and read marker held for that person go out now. */
+    releaseReceipts(peerId) {
+      const held = heldReceipts.get(peerId);
+      heldReceipts.delete(peerId);
+      if (!held) return;
+      for (const { to, id } of held.receipts) receiptOnce(to, id);
+      if (held.displayed) transport.sendDisplayed(held.displayed.to, held.displayed.id);
+    },
     /** A server-relayed call signal arrived: learn the other device's XMPP address (or forget the call when it ends). */
     observe(event) {
       if (event?.type !== 'call:signal' || typeof event.callId !== 'string') return;
@@ -294,6 +313,8 @@ export async function startXmppSession({ sessionToken, userId, deliver, legacySe
       }
       if (event.type === 'message:read') {
         const to = originOf(event.messageId, event.origin);
+        const held = to ? heldFor(to) : null;
+        if (held) { held.displayed = { to, id: event.messageId }; return true; }
         if (to) { transport.sendDisplayed(to, event.messageId); return true; }
         const { origin: _origin, ...plain } = event;
         legacySend(plain);

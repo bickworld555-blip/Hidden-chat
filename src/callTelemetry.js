@@ -39,6 +39,9 @@ export function pairTelemetry(peerId, raw = {}) {
     playoutRestarts: number(raw.playoutRestarts, { max: 1000 }),
     red: Boolean(raw.red),
     ringMs: number(raw.ringMs, { max: 120_000 }),
+    ringVia: raw.ringVia === 'push' || raw.ringVia === 'socket' ? raw.ringVia : null,
+    pushMs: number(raw.pushMs, { max: 120_000 }),
+    ringServerMs: number(raw.ringServerMs, { max: 120_000 }),
     connectedMs: number(raw.connectedMs, { max: 24 * 3600_000 }),
   };
 }

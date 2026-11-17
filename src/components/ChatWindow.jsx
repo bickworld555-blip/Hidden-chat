@@ -27,6 +27,7 @@ import { formatMessageDate, formatMessageTime, localDateKey } from '../time.js';
 import Avatar from './Avatar.jsx';
 import ContactNameSheet from './ContactNameSheet.jsx';
 import { SafetyToolsSheet, UnknownSenderCard, dismissUnknown, isUnknownSender, readDismissed } from './UnknownSender.jsx';
+import { isMessageRequest } from '../messageRequests.js';
 import AttachmentMenu from './AttachmentMenu.jsx';
 import SelectContactModal from './SelectContactModal.jsx';
 import { ContactBubble, LiveLocationBubble, LocationBubble } from './LocationMessages.jsx';
@@ -1953,9 +1954,11 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
       )}
       {headerNotice && <div className="header-notice" role="status">{headerNotice}</div>}
 
-      {isUnknownSender({ chat, messages, blocked, userId }) && !unknownHidden.has(chatId) && (
+      {isUnknownSender({ chat, messages, blocked, userId }) && (isMessageRequest(chat) || !unknownHidden.has(chatId)) && (
         <UnknownSenderCard
           chat={chat}
+          request={isMessageRequest(chat)}
+          onAccept={() => useChatStore.getState().acceptChat(chatId).catch((failure) => setError(failure.message))}
           onAdd={() => setNamingUnknown(true)}
           onBlock={() => openInfo('main', 'block')}
           onSafety={() => setSafetyOpen(true)}

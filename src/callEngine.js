@@ -220,6 +220,7 @@ export function createCallEngine({
   let playoutRestarts = 0;
   let offerSentAt = 0;
   let ringMs = 0;
+  let ringDetail = null; // the server's split of the ring time (server/index.mjs ringDetail)
   const audioRed = { on: false, high: 0, low: 0 };
   let stallActive = false;
   let stallRestarts = 0;
@@ -854,6 +855,7 @@ export function createCallEngine({
     switch (signal.type) {
       case 'ringing':
         if (offerSentAt && !ringMs) ringMs = Date.now() - offerSentAt;
+        if (signal.ring && !ringDetail) ringDetail = signal.ring;
         if (state.status === 'connecting' && direction === 'outgoing' && !state.answered) set({ status: 'ringing' });
         return;
       case 'connected':
@@ -966,8 +968,9 @@ export function createCallEngine({
       set({ status: 'connecting' });
       armRingTimeout();
       try {
-        const stream = await captureLocal(state.mode);
-        await ensureConnection();
+        // The camera opening (0.5-1.5 s on phones) and the relay settings arriving overlap instead of adding up: the
+        // offer, which is what rings the other phone, leaves as soon as both are ready.
+        const [stream] = await Promise.all([captureLocal(state.mode), ensureConnection()]);
         addLocalTracks(stream);
         await negotiate();
       } catch (error) {
@@ -981,8 +984,7 @@ export function createCallEngine({
       stopRinging();
       set({ status: 'connecting' });
       try {
-        const stream = await captureLocal(state.mode);
-        await ensureConnection();
+        const [stream] = await Promise.all([captureLocal(state.mode), ensureConnection()]);
         addLocalTracks(stream);
         if (!remoteDescriptionSet) {
           const description = readDescription(offer);
@@ -1040,6 +1042,9 @@ export function createCallEngine({
         playoutRestarts,
         red: audioRed.on,
         ringMs: ringMs || null,
+        ringVia: ringDetail?.via ?? null,
+        pushMs: ringDetail?.pushMs ?? null,
+        ringServerMs: ringDetail?.serverMs ?? null,
         connectedMs: state.connectedAt ? Date.now() - state.connectedAt : 0,
       };
     },

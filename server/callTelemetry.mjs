@@ -57,6 +57,9 @@ export function cleanCallTelemetry(body) {
       playoutRestarts: num(pair.playoutRestarts, 1000),
       red: Boolean(pair.red),
       ringMs: num(pair.ringMs, 120_000),
+      ringVia: pair.ringVia === 'push' || pair.ringVia === 'socket' ? pair.ringVia : null,
+      pushMs: num(pair.pushMs, 120_000),
+      ringServerMs: num(pair.ringServerMs, 120_000),
       connectedMs: num(pair.connectedMs, 24 * 3600_000),
     })),
   };
@@ -72,6 +75,9 @@ export function summarizeCallTelemetry(reports) {
     ringWithinTarget: rang.length ? Math.round((rang.filter((pair) => pair.ringMs <= RING_TARGET_MS).length / rang.length) * 1000) / 1000 : null,
     connectionsWithPlayoutRestart: pairs.filter((pair) => (pair.playoutRestarts ?? 0) > 0).length,
     relayShare: pairs.length ? Math.round((pairs.filter((pair) => pair.path === 'relay').length / pairs.length) * 1000) / 1000 : null,
+    // How calls reached the other phone: a push that had to wake it, or the app already connected.
+    ringedByPush: rang.filter((pair) => pair.ringVia === 'push').length,
+    ringedBySocket: rang.filter((pair) => pair.ringVia === 'socket').length,
   };
 }
 

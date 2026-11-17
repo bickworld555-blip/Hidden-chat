@@ -375,6 +375,8 @@ test('the old pairing code endpoints are gone: devices link by QR code (src/link
 test('authenticates sockets, delivers messages, and persists read status', async () => {
   const ava = await createSession('messageava');
   const jordan = await createSession('messagejordan');
+  // Receipts between people who accepted each other (message requests hold them for strangers: message-requests.test).
+  await jsonApi(`/api/v1/contacts/${ava.user.id}/accept`, { session: jordan, method: 'POST' });
   const sender = await connect(ava.token);
   const receiver = await connect(jordan.token);
   const delivered = waitForEvent(receiver, 'message:new');
@@ -410,6 +412,8 @@ test('authenticates sockets, delivers messages, and persists read status', async
 test('queued messages are re-sent on every reconnect until the recipient device confirms them', async () => {
   const ava = await createSession('offlineava');
   const jordan = await createSession('offlinejordan');
+  // Receipts between people who accepted each other (message requests hold them for strangers: message-requests.test).
+  await jsonApi(`/api/v1/contacts/${ava.user.id}/accept`, { session: jordan, method: 'POST' });
   const sender = await connect(ava.token);
   const acknowledgement = waitForEvent(sender, 'message:ack');
   sender.send(JSON.stringify({ type: 'message:send', message: { id: 'offline-message', receiverId: jordan.user.id, content: 'Catch you later' } }));

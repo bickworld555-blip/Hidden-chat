@@ -278,6 +278,8 @@ test('PostgreSQL WebSocket messages retain order, aliases, replies, receipts, re
   const { api, register, connect, service } = await startServer(t);
   const owner = await register('message_owner');
   const peer = await register('message_peer');
+  // Receipts between people who accepted each other (message requests hold them for strangers: message-requests.test).
+  await api(`/api/v1/contacts/${owner.user.id}/accept`, { session: peer, method: 'POST' });
   const a = await connect(owner);
   const b = await connect(peer);
   for (const id of ['first', 'second']) a.send({ type: 'message:send', message: { id, receiverId: peer.user.id, content: id, ...(id === 'second' ? { replyTo: { id: 'first' } } : {}) } });

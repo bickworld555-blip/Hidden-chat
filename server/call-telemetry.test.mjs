@@ -41,7 +41,7 @@ async function api(path, { token, admin = false, method = 'GET', body } = {}) {
 
 test('the app turns an engine summary into a bounded report', () => {
   const pair = pairTelemetry('peer-1', { status: 'connected', rtt: 0.052, lost: 5, packets: 995, jitter: 0.012, fps: 20.4, width: 640, height: 360, audioPackets: 1738, audioPlayed: 2.23, path: 'relay', iceRestarts: 1, playoutRestarts: 1, red: true, ringMs: 1450, connectedMs: 61_000 });
-  assert.deepEqual(pair, { peerId: 'peer-1', status: 'connected', rttMs: 52, loss: 0.005, jitterMs: 12, fps: 20, width: 640, height: 360, audioPackets: 1738, audioPlayedS: 2.2, path: 'relay', iceRestarts: 1, playoutRestarts: 1, red: true, ringMs: 1450, connectedMs: 61_000 });
+  assert.deepEqual(pair, { peerId: 'peer-1', status: 'connected', rttMs: 52, loss: 0.005, jitterMs: 12, fps: 20, width: 640, height: 360, audioPackets: 1738, audioPlayedS: 2.2, path: 'relay', iceRestarts: 1, playoutRestarts: 1, red: true, ringMs: 1450, ringVia: null, pushMs: null, ringServerMs: null, connectedMs: 61_000 });
   assert.equal(pairTelemetry('p', { rtt: 9999 }).rttMs, 60_000, 'bounded');
   assert.equal(pairTelemetry('p', { path: 'mars' }).path, null);
   const report = callTelemetry({ call: { id: 'c1', roomId: 'r1', mode: 'video', direction: 'outgoing', groupId: 'g' }, pairs: [{ peerId: 'peer-1', telemetry: {} }], final: true });
@@ -60,7 +60,7 @@ test('reports are stored, refused when malformed, and summarized for admins', as
   assert.ok([401, 403].includes((await api('/api/admin/v1/call-telemetry')).status), 'admins only');
   const { body } = await api('/api/admin/v1/call-telemetry', { admin: true });
   assert.equal(body.reports.length, 3);
-  assert.deepEqual(body.summary, { calls: 2, connections: 2, ringWithinTarget: 0.5, connectionsWithPlayoutRestart: 1, relayShare: 0.5 });
+  assert.deepEqual(body.summary, { calls: 2, connections: 2, ringWithinTarget: 0.5, connectionsWithPlayoutRestart: 1, relayShare: 0.5, ringedByPush: 0, ringedBySocket: 0 });
   const one = await api('/api/admin/v1/call-telemetry?callId=c2', { admin: true });
   assert.equal(one.body.reports.length, 2);
   assert.equal(one.body.reports.find((r) => r.final).pairs[0].audioPlayedS, 2.2);
@@ -73,7 +73,7 @@ test('cleaning drops unknown fields and bounds numbers', () => {
   assert.equal(clean.pairs[0].fps, null);
   assert.ok(!('secret' in clean.pairs[0]) && !('extra' in clean));
   assert.equal(cleanCallTelemetry({ callId: 'c'.repeat(81), pairs: [{}] }), null);
-  assert.deepEqual(summarizeCallTelemetry([]), { calls: 0, connections: 0, ringWithinTarget: null, connectionsWithPlayoutRestart: 0, relayShare: null });
+  assert.deepEqual(summarizeCallTelemetry([]), { calls: 0, connections: 0, ringWithinTarget: null, connectionsWithPlayoutRestart: 0, relayShare: null, ringedByPush: 0, ringedBySocket: 0 });
 });
 
 test('the call screen reports every 30 s and once at the end', () => {

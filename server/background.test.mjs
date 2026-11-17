@@ -75,6 +75,8 @@ test('the Android service\'s background connection receives messages but never s
   const me = await register('bgsv');
   const friend = await register('bgsf');
   await api('/api/v1/contacts', { session: friend, method: 'POST', body: { userId: me.user.id } });
+  // Receipts between people who accepted each other (message requests hold them for strangers: message-requests.test).
+  await api(`/api/v1/contacts/${friend.user.id}/accept`, { session: me, method: 'POST' });
   const watcher = await connect(friend);
   await until(() => watcher.events.some((event) => event.type === 'connection:ready'), 'ready');
   const service = await connect(me, ['relay.background']);

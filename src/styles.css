@@ -211,6 +211,7 @@ button.file-message { border: 0; background: transparent; color: inherit; text-a
 .unknown-sender-actions { display: flex; gap: 10px; width: 100%; margin-top: 6px; }
 .unknown-sender-actions button { display: inline-flex; flex: 1; align-items: center; justify-content: center; gap: 8px; min-height: 44px; border: 1px solid var(--wa-line, #d1d7db); border-radius: 22px; background: var(--wa-bg, #fff); font-size: 15px; font-weight: 600; cursor: pointer; }
 .unknown-sender-block { color: #c0392b; }
+.unknown-sender-accept { display: inline-flex; align-items: center; justify-content: center; gap: 8px; width: 100%; min-height: 44px; margin-top: 8px; border: 0; border-radius: 22px; background: #008069; color: #fff; font-size: 15px; font-weight: 600; cursor: pointer; }
 .unknown-sender-add { color: #008069; }
 .safety-sheet-backdrop { position: fixed; inset: 0; z-index: 70; display: flex; align-items: flex-end; justify-content: center; background: rgba(11, 20, 26, .5); }
 .safety-sheet { width: min(520px, 100%); max-height: 90vh; overflow-y: auto; padding: 10px 20px calc(16px + env(safe-area-inset-bottom)); border-radius: 18px 18px 0 0; background: var(--wa-bg, #fff); color: var(--wa-text); animation: modal-in .18s ease-out; }

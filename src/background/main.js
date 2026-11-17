@@ -23,6 +23,7 @@ import { groupMessageForStore, notificationPreview, useChatStore } from '../stor
 import { groupChatKey } from '../accountData.js';
 import { hiddenByBlock } from '../blocking.js';
 import { startXmppSession } from '../xmpp/session.js';
+import { holdsReceipts } from '../messageRequests.js';
 import { E2E_LOCK } from '../e2eLock.js';
 
 const bridge = globalThis.HMBackground;
@@ -166,6 +167,8 @@ async function run() {
     legacySend: (event) => { if (event?.type === 'message:send' && event.message?.id) refused.add(event.message.id); return false; },
     targetsFor: local ? xmppTargetsFor : async () => ({ targets: [], complete: false, sender: null }),
     userForAddress: userForXmppAddress, fetchImpl: apiFetch,
+    // Message requests (src/messageRequests.js): no receipts to someone unaccepted or not yet in the chat list.
+    holdReceiptsFor: (peerId) => holdsReceipts(peerId, useChatStore.getState().chats),
     transportOptions: { ackAfterHandled: true },
   });
   if (!session) return 'not-on-xmpp';

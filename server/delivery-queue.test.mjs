@@ -110,6 +110,8 @@ test('a message waits only for devices with end-to-end keys, not for a signed-in
 test('a read receipt for a message already gone from the server still reaches the sender, queued while offline', async () => {
   const alice = await register('ra');
   const bob = await register('rb');
+  // Receipts between people who accepted each other (message requests hold them for strangers: message-requests.test).
+  await api(`/api/v1/contacts/${alice.user.id}/accept`, { session: bob, method: 'POST' });
   const aliceSocket = await connect(alice);
   const bobSocket = await connect(bob);
   aliceSocket.send(JSON.stringify({ type: 'message:send', message: { id: 'r-1', receiverId: bob.user.id, content: 'read me later' } }));
