@@ -103,3 +103,13 @@ test('the whole sync: permission only when asked, then registered and invite lis
   const manifest = readFileSync(new URL('../android/app/src/main/AndroidManifest.xml', import.meta.url), 'utf8');
   assert.ok(manifest.includes('android.permission.READ_CONTACTS') && !manifest.includes('READ_PHONE_NUMBERS') && !manifest.includes('SEND_SMS'), 'contacts only: no phone-number or SMS permission');
 });
+
+test('someone saved twice (SIM and Google account, "+880…" and "0…") is invited once', () => {
+  const twice = categorize(readPhonebook([
+    { id: 'a', name: '+8801324740609', fields: [{ kind: 'phone', text: '+8801324740609' }] },
+    { id: 'b', name: '+8801324740609', fields: [{ kind: 'phone', text: '+880 1324-740609' }] },
+    { id: 'c', name: 'Ammu', fields: [{ kind: 'phone', text: '01324740609' }] },
+    { id: 'd', name: 'Abu', fields: [{ kind: 'phone', text: '01765342154' }] },
+  ]), []);
+  assert.deepEqual(twice.invite.map((item) => item.phone), ['+8801324740609', '01765342154']);
+});

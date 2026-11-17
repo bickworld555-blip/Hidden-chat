@@ -104,7 +104,7 @@ export default function PhoneContactsSection({ query = '', busyId = '', onChat, 
                     <Avatar name={item.name} initials={item.name.slice(0, 2).toUpperCase()} color="gray" />
                     <div className="wa-sc-contact-info">
                       <strong className="wa-sc-contact-name">{item.name}</strong>
-                      <span className="wa-sc-contact-status">{item.phone}</span>
+                      {item.phone !== item.name && <span className="wa-sc-contact-status">{item.phone}</span>}
                     </div>
                     <button type="button" className="wa-sc-invite-btn" onClick={() => invitePerson(item)}><Send size={14} /> Invite</button>
                   </div>

@@ -60,11 +60,16 @@ export function categorize(entries, matches, { userId = '' } = {}) {
   const registered = [];
   const invite = [];
   const seen = new Set();
+  // The same person is often in the phonebook twice (SIM and Google account): one Invite per phone number, compared by
+  // its last 10 digits so "+8801712…" and "01712…" are the same.
+  const invited = new Set();
+  const phoneKey = (phone) => String(phone).replace(/\D/g, '').slice(-10);
   for (const entry of entries) {
     const user = entry.numbers.map((number) => byNumber.get(number)).find(Boolean);
     if (user) {
       if (user.id !== userId && !seen.has(user.id)) { seen.add(user.id); registered.push({ key: entry.key, name: entry.name, user }); }
-    } else if (entry.phones.length) {
+    } else if (entry.phones.length && !invited.has(phoneKey(entry.phones[0]))) {
+      invited.add(phoneKey(entry.phones[0]));
       invite.push({ key: entry.key, name: entry.name, phone: entry.phones[0] });
     }
   }
