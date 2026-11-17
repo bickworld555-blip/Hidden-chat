@@ -58,8 +58,11 @@ const admin = { Cookie: cookie, 'X-HM-Admin': '1' };
 
 let uploaded = 0;
 for (const file of files) {
-  const present = await fetch(`${origin}/api/admin/v1/ota/files/${file.sha256}`, { method: 'HEAD', headers: admin });
-  if (present.status === 200) continue;
+  // Already on the server? One byte of the public copy says so (HEAD requests do not reach the app on Hostinger:
+  // its own 404 answered them, so every file was uploaded again on each publish).
+  const present = await fetch(`${origin}/ota/files/${file.sha256}`, { headers: { Range: 'bytes=0-0' } });
+  await present.arrayBuffer().catch(() => {});
+  if (present.status === 200 || present.status === 206) continue;
   const put = await fetch(`${origin}/api/admin/v1/ota/files/${file.sha256}`, { method: 'PUT', headers: { ...admin, 'Content-Type': 'application/octet-stream' }, body: readFileSync(file.full) });
   if (!put.ok) throw new Error(`Upload of ${file.path} failed: HTTP ${put.status} ${await put.text()}`);
   uploaded += 1;
