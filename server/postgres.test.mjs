@@ -398,7 +398,7 @@ test('an import boundary failure rolls back all earlier tables and rejects schem
   const source = createChatServer({ databaseUrl: null, databasePath: join(directory, 'source.sqlite'), dataDirectory: directory });
   t.after(async () => { await source.close(); rmSync(directory, { recursive: true, force: true }); });
   source.db.prepare('INSERT INTO users(id, username, name, initials, color, created_at) VALUES (?, ?, ?, ?, ?, ?)').run('real', 'real', 'R', 'R', 'blue', 1);
-  source.db.prepare('INSERT INTO contacts VALUES (?, ?, ?, ?, ?)').run('real', 'missing-user', 1, 1, 0);
+  source.db.prepare('INSERT INTO contacts (owner_id, contact_id, created_at, saved, hidden) VALUES (?, ?, ?, ?, ?)').run('real', 'missing-user', 1, 1, 0);
   await assert.rejects(importSqlite(source.db, pool), { code: '23503' });
   assert.equal((await pool.query('SELECT count(*)::integer AS total FROM relay.users')).rows[0].total, 0);
   source.db.exec('DELETE FROM contacts');

@@ -13,6 +13,8 @@ import { haversineDistance, isLiveExpired, parseContact, parseLocation, shouldSe
 import { mergeMessageStatus } from './messageStatus.js';
 import { formatChatListTime } from './time.js';
 import { splitLinks } from './contactBook.js';
+import { bindContactNameSource, normalizeContactName, withContactAlias, withProfileUpdate } from './contactNames.js';
+import { apiFetch } from './api.js';
 import { scheduledCallPreview } from './groupChat.js';
 import { stickerPreview } from './stickers.js';
 import { onCloudStars, toggleStar as toggleCloudStar, uploadLocalStars } from './accountData.js';
@@ -532,11 +534,12 @@ export const useChatStore = create((setState, getState) => ({
   // A profile change (photo, name) from the server: refresh ourselves and the chat row for that person.
   updateUserProfile(user) {
     if (!user?.id) return;
-    const fields = { name: user.name, username: user.username, initials: user.initials, color: user.color, avatar: user.avatar ?? null };
+    const fields = { name: user.name, username: user.username, initials: user.initials, color: user.color, avatar: user.avatar ?? null, ...(user.number ? { number: user.number } : {}) };
+    // A contact's own new name changes their profile name; a name this user saved for them stays what shows.
     setState((state) => ({
       user: state.user?.id === user.id ? { ...state.user, ...fields } : state.user,
-      chats: state.chats.map((chat) => (chat.id === user.id ? { ...chat, ...fields } : chat)),
-      hiddenContacts: state.hiddenContacts.map((chat) => (chat.id === user.id ? { ...chat, ...fields } : chat)),
+      chats: state.chats.map((chat) => (chat.id === user.id ? withProfileUpdate(chat, fields) : chat)),
+      hiddenContacts: state.hiddenContacts.map((chat) => (chat.id === user.id ? withProfileUpdate(chat, fields) : chat)),
     }));
     if (getState().userId && getState().chats.some((chat) => chat.id === user.id)) getState().persistContacts(getState().userId);
   },
@@ -547,7 +550,8 @@ export const useChatStore = create((setState, getState) => ({
     }));
   },
   setContacts(links) {
-    const { chats: contacts, hiddenContacts } = splitLinks(links);
+    // Every row carries its saved name (alias) and the person's own name (profileName); `name` is what shows.
+    const { chats: contacts, hiddenContacts } = splitLinks((Array.isArray(links) ? links : []).map(withContactAlias));
     setState((state) => {
       const current = new Map(state.chats.map((chat) => [chat.id, chat]));
       const chats = orderChatsByActivity(contacts.map((contact) => summarizeChat({
@@ -574,15 +578,54 @@ export const useChatStore = create((setState, getState) => ({
    * the Calls tab, without adding them to the chat list. Adding them made everyone in a group call appear in
    * Personal chats on every phone (reported: "Alamgir" added by himself).
    */
+  /**
+   * Add to contacts / Edit contact: saves the name this account shows for someone (server/index.mjs PUT
+   * /contacts/:id/name), then shows it everywhere at once. An empty name removes it.
+   */
+  async renameContact(id, { name = '' } = {}) {
+    const token = getState().sessionToken;
+    if (!id || !token) throw new Error('Sign in to save contacts.');
+    const response = await apiFetch(`/api/v1/contacts/${encodeURIComponent(id)}/name`, {
+      method: 'PUT',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: normalizeContactName(name) }),
+    });
+    const body = await response.json().catch(() => null);
+    if (!response.ok) throw new Error(body?.error || 'Could not save this contact. Try again.');
+    getState().applyContactAlias(id, body?.alias ?? '', body);
+    return body;
+  },
+  // A saved name changed (here, or on another device of this account: the "contact:alias" event).
+  applyContactAlias(id, alias, user = null) {
+    const rename = (row) => withContactAlias({ ...row, alias, aliasSource: alias ? 'manual' : '', saved: true });
+    setState((state) => {
+      const inChats = state.chats.some((row) => row.id === id);
+      const inHidden = state.hiddenContacts.some((row) => row.id === id);
+      const known = state.knownPeople[id];
+      return {
+        chats: state.chats.map((row) => (row.id === id ? rename(row) : row)),
+        hiddenContacts: state.hiddenContacts.map((row) => (row.id === id ? rename(row) : row)),
+        // Someone saved who has no chat here (met in a group or a call): their saved name, without opening a chat.
+        knownPeople: inChats || inHidden ? state.knownPeople : { ...state.knownPeople, [id]: rename({ ...(known ?? {}), ...(user ?? {}), id }) },
+      };
+    });
+    if (getState().userId) getState().persistContacts(getState().userId);
+  },
   rememberPerson(user) {
     if (!user?.id || typeof user.id !== 'string') return;
-    const { id, name, username, initials, color, avatar } = user;
-    setState((state) => ({ knownPeople: { ...state.knownPeople, [id]: { id, name, username, initials, color, avatar } } }));
+    const { id, name, username, initials, color, avatar, number } = user;
+    setState((state) => {
+      // A name this user saved for them stays (their own name is updated underneath it).
+      const previous = state.knownPeople[id];
+      const person = { id, name, username, initials, color, avatar, ...(number ? { number } : {}) };
+      return { knownPeople: { ...state.knownPeople, [id]: previous?.alias ? withContactAlias({ ...person, profileName: name, alias: previous.alias, aliasSource: previous.aliasSource }) : person } };
+    });
   },
   addContact(contact) {
     setState((state) => {
       const messages = state.messages[contact.id] ? state.messages : { ...state.messages, [contact.id]: EMPTY_MESSAGES };
-      const { hidden, ...link } = contact;
+      const { hidden, ...raw } = contact;
+      const link = withContactAlias(raw);
       const hiddenContacts = state.hiddenContacts.filter((item) => item.id !== link.id);
       if (state.chats.some((chat) => chat.id === link.id)) {
         return {
@@ -1460,6 +1503,9 @@ export const useChatStore = create((setState, getState) => ({
   async persistSession(session) { await set('relay:session', session); },
   async clearSession() { await del('relay:session'); },
 }));
+
+// getContactDisplayName(id) (src/contactNames.js) reads saved names from this store.
+bindContactNameSource(() => useChatStore.getState());
 
 export { EMPTY_MESSAGES };
 /** Where a group's messages are kept in the message store (one-to-one chats use the contact's id). */

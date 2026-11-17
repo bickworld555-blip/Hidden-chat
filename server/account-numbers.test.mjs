@@ -88,3 +88,45 @@ test('every view reads names through the resolver: group members, the call scree
   assert.match(read('src/components/CallsView.jsx'), /getContactDisplayName\(row\.peerId, useChatStore\.getState\(\)\)/);
   assert.match(read('src/components/ToolsView.jsx'), /<AccountNumber number=\{user\?\.number\}/, 'your own number in Settings, with copy');
 });
+
+test('Add to contacts / Edit contact: the saved name is the owner\'s alone, reaches their other devices, and can be removed', async () => {
+  const WebSocket = (await import('ws')).default;
+  const owner = await register('alias_owner');
+  const peer = await register('alias_peer');
+  const socket = new WebSocket(`${base.replace('http:', 'ws:')}/ws`, [`relay.auth.${owner.token}`, 'relay.v1']);
+  const events = [];
+  socket.on('message', (raw) => events.push(JSON.parse(raw.toString())));
+  await new Promise((resolve) => socket.once('open', resolve));
+  await new Promise((resolve) => setTimeout(resolve, 200));
+
+  const saved = await api(`/api/v1/contacts/${peer.user.id}/name`, { token: owner.token, method: 'PUT', body: { name: '  Nasir   Bhai ' } });
+  assert.equal(saved.status, 200);
+  assert.deepEqual([saved.body.alias, saved.body.saved, saved.body.number], ['Nasir Bhai', true, peer.user.number], 'saved (added to contacts if needed), with their number');
+  const list = (await api('/api/v1/contacts', { token: owner.token })).body;
+  assert.equal(list.find((row) => row.id === peer.user.id).alias, 'Nasir Bhai');
+  const theirs = (await api('/api/v1/contacts', { token: peer.token })).body;
+  assert.ok(!theirs.some((row) => row.alias === 'Nasir Bhai'), 'nobody else sees it');
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  assert.ok(events.some((event) => event.type === 'contact:alias' && event.userId === peer.user.id && event.alias === 'Nasir Bhai'), 'other devices hear at once');
+
+  assert.equal((await api(`/api/v1/contacts/${peer.user.id}/name`, { token: owner.token, method: 'PUT', body: { name: '' } })).body.alias, '', 'removed');
+  assert.equal((await api(`/api/v1/contacts/${owner.user.id}/name`, { token: owner.token, method: 'PUT', body: { name: 'Me' } })).status, 400);
+  assert.equal((await api(`/api/v1/contacts/${peer.user.id}/name`, { token: owner.token, method: 'PUT', body: {} })).status, 400);
+  socket.close();
+});
+
+test('the store applies saved names everywhere and keeps them over profile changes', async () => {
+  const { useChatStore } = await import('../src/store.js');
+  const store = useChatStore.getState();
+  store.setContacts([{ id: 'p1', username: 'nasir', name: 'Nasir', alias: 'Nasir Bhai', saved: true }]);
+  assert.equal(useChatStore.getState().chats.find((row) => row.id === 'p1').name, 'Nasir Bhai');
+  useChatStore.getState().updateUserProfile({ id: 'p1', name: 'Nasir Uddin', username: 'nasir' });
+  const row = useChatStore.getState().chats.find((r) => r.id === 'p1');
+  assert.deepEqual([row.name, row.profileName], ['Nasir Bhai', 'Nasir Uddin'], 'their own rename does not replace my saved name');
+  useChatStore.getState().applyContactAlias('p1', '');
+  assert.equal(useChatStore.getState().chats.find((r) => r.id === 'p1').name, 'Nasir Uddin', 'removing it shows their own name again');
+  useChatStore.getState().applyContactAlias('g9', 'Group Friend', { id: 'g9', name: 'Rana' });
+  assert.equal(getContactDisplayName('g9'), 'Group Friend', 'someone with no chat (met in a group) shows the saved name too');
+  useChatStore.getState().rememberPerson({ id: 'g9', name: 'Rana Ahmed' });
+  assert.equal(getContactDisplayName('g9'), 'Group Friend', 'meeting them again in a call keeps the saved name');
+});

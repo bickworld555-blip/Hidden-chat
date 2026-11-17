@@ -14,6 +14,7 @@ import { WebSocket, WebSocketServer } from 'ws';
 import { contentDisposition, isInlineSafe, MAX_MEDIA_BYTES, resolveContentType, sanitizeFilename, SINGLE_REQUEST_MEDIA_BYTES } from './media.mjs';
 import { isDisappearingDuration } from '../src/disappearing.js';
 import { accountNumberFrom, newAccountNumber } from '../src/accountNumber.js';
+import { normalizeContactName } from '../src/contactNames.js';
 import { DEFAULT_ICE_SERVERS, normalizeIceServers, TURN_CREDENTIAL_TTL_SECONDS, turnServerFromEnv } from '../src/rtc.js';
 import { DOWNLOAD_LINK_TTL_MS, UPLOAD_CHUNK_BYTES, UPLOAD_STALE_MS } from '../src/transfer.js';
 import { LIVE_DURATIONS } from '../src/geo.js';
@@ -514,6 +515,8 @@ export function createChatServer({
   const contactColumns = new Set(db.prepare("PRAGMA table_info(contacts)").all().map((column) => column.name));
   if (!contactColumns.has('saved')) db.exec('ALTER TABLE contacts ADD COLUMN saved INTEGER NOT NULL DEFAULT 1');
   if (!contactColumns.has('hidden')) db.exec('ALTER TABLE contacts ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0');
+  // Saved contact names (src/contactNames.js; Postgres: migration 038): the name this owner gave the contact.
+  if (!contactColumns.has('alias')) db.exec("ALTER TABLE contacts ADD COLUMN alias TEXT NOT NULL DEFAULT ''");
   ensureParitySchema(db);
   ensureE2eSchema(db);
   ensureExtrasSchema(db);
@@ -544,7 +547,7 @@ export function createChatServer({
     (await upsertLink.run(ownerId, peerId, Date.now(), save ? 1 : 0));
     linkCache.set(key, true);
   }
-  const linkRow = db.prepare("SELECT saved, hidden FROM contacts WHERE owner_id = ? AND contact_id = ?");
+  const linkRow = db.prepare("SELECT saved, hidden, alias FROM contacts WHERE owner_id = ? AND contact_id = ?");
   const insertUser = db.prepare(`INSERT INTO users(id, username, name, initials, color, created_at)
     VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`);
   const seedContact = db.prepare("INSERT INTO contacts(owner_id, contact_id, created_at) VALUES (?, ?, ?) ON CONFLICT DO NOTHING");
@@ -2784,7 +2787,7 @@ export function createChatServer({
   });
 
   app.get('/api/v1/contacts', requireSession, async (request, response) => {
-    const rows = (await db.prepare(`SELECT ${USER_COLUMNS.replace(/(^|, )/g, '$1users.')}, contacts.saved AS "saved", contacts.hidden AS "hidden"
+    const rows = (await db.prepare(`SELECT ${USER_COLUMNS.replace(/(^|, )/g, '$1users.')}, contacts.saved AS "saved", contacts.hidden AS "hidden", contacts.alias AS "alias"
       FROM contacts JOIN users ON users.id = contacts.contact_id
       WHERE contacts.owner_id = ? ORDER BY lower(users.username)`)
       .all(request.session.user_id));
@@ -2792,6 +2795,7 @@ export function createChatServer({
       ...publicUser(row),
       saved: Boolean(row.saved),
       hidden: Boolean(row.hidden),
+      alias: row.alias ?? '',
       disappearSeconds: (await disappearSecondsFor(request.session.user_id, row.id)),
     }))));
   });
@@ -2934,7 +2938,28 @@ export function createChatServer({
     // Saving someone can reveal "My contacts" presence to them.
     await broadcastPresence(request.session.user_id);
     const link = (await linkRow.get(request.session.user_id, contactId));
-    response.status(200).json({ ...publicUser(contact), saved: Boolean(link?.saved), hidden: false });
+    response.status(200).json({ ...publicUser(contact), saved: Boolean(link?.saved), hidden: false, alias: link?.alias ?? '' });
+  });
+
+  // Add to contacts / Edit contact (WhatsApp): the name this account shows for someone, everywhere (src/contactNames.js).
+  // Only the owner's devices ever see it; an empty name removes it (their own name shows again). Saving someone not
+  // yet a contact (met in a group, a call) adds them as a saved contact.
+  app.put('/api/v1/contacts/:userId/name', requireSession, smallJson, async (request, response) => {
+    const ownerId = request.session.user_id;
+    const contactId = request.params.userId;
+    if (typeof request.body?.name !== 'string') return response.status(400).json({ error: 'Give the contact a name.' });
+    const alias = normalizeContactName(request.body.name);
+    if (!contactId || contactId === ownerId) return response.status(400).json({ error: 'Choose a different Hidden Messenger user.' });
+    const contact = await db.prepare(`SELECT ${USER_COLUMNS} FROM users WHERE id = ?`).get(contactId);
+    if (!contact || contact.deleted_at) return response.status(404).json({ error: 'That Hidden Messenger account was not found.' });
+    if (await blocks.between(ownerId, contactId)) return response.status(403).json({ error: 'Unblock this person to save them.' });
+    await linkUsers(ownerId, contactId, { save: true });
+    await db.prepare('UPDATE contacts SET alias = ? WHERE owner_id = ? AND contact_id = ?').run(alias, ownerId, contactId);
+    const link = await linkRow.get(ownerId, contactId);
+    const body = { ...publicUser(contact), saved: Boolean(link?.saved), hidden: Boolean(link?.hidden), alias };
+    // Every device of this account shows the new name at once.
+    broadcastUser(ownerId, { type: 'contact:alias', userId: contactId, alias, user: body });
+    response.json(body);
   });
 
 

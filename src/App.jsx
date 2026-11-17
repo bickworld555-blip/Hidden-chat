@@ -494,6 +494,8 @@ export default function App() {
           if (event.type === 'chat:disappearing') useChatStore.getState().setDisappearing(event.peerId, event.seconds);
           if (event.type === 'chat:cleared') useChatStore.getState().clearChat(event.peerId, event.keepIds);
           if (event.type === 'chat:deleted') useChatStore.getState().deleteChat(event.peerId, { kept: event.kept });
+          // A contact's saved name changed on another device of this account (Edit contact): shown here at once.
+          if (event.type === 'contact:alias' && typeof event.userId === 'string') useChatStore.getState().applyContactAlias(event.userId, typeof event.alias === 'string' ? event.alias : '', event.user ?? null);
           if (event.type === 'user:updated') {
             useChatStore.getState().updateUserProfile(event.user);
             updateAccountUser(event.user).catch(() => {});

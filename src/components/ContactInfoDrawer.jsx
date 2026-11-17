@@ -35,6 +35,8 @@ import { apiFetch } from '../api.js';
 import { fetchAbout } from '../aboutApi.js';
 import { GalleryTile } from './MediaViewer.jsx';
 import VerifiedBadge from './VerifiedBadge.jsx';
+import AccountNumber from './AccountNumber.jsx';
+import ContactNameSheet from './ContactNameSheet.jsx';
 
 const CLOSE_ANIMATION_MS = 200;
 const STRIP_LIMIT = 4;
@@ -147,6 +149,8 @@ export default function ContactInfoDrawer({
   const store = useChatStore.getState;
 
   const [view, setView] = useState(initialView);
+  // Add to contacts / Edit contact (ContactNameSheet): the name this account shows for them everywhere.
+  const [naming, setNaming] = useState(false);
   const [mediaTab, setMediaTab] = useState('media');
   const [dialog, setDialog] = useState(initialDialog);
   const [keepStarred, setKeepStarred] = useState(true);
@@ -386,6 +390,10 @@ export default function ContactInfoDrawer({
               </p>
             )}
             {chat.username && <p className="wa-info-handle">@{chat.username}{hasCustomDisplayName(chat) ? '' : ' · No display name yet'}</p>}
+            {chat.number && <p className="wa-info-handle"><AccountNumber number={chat.number} /></p>}
+            {chat.alias && chat.profileName && chat.profileName !== chat.alias && <p className="wa-info-handle">~{chat.profileName}</p>}
+            <button type="button" className="wa-info-save-contact" onClick={() => setNaming(true)}>{chat.alias ? 'Edit contact' : 'Add to contacts'}</button>
+            {naming && <ContactNameSheet person={chat} onClose={() => setNaming(false)} />}
             {!blocked && status && <p className="wa-info-status">{status}</p>}
             {!blocked && about && <p className="wa-info-about"><small>About</small>{about}</p>}
             <div className="wa-info-quick">

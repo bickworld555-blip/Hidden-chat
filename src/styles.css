@@ -201,6 +201,8 @@ button.file-message { border: 0; background: transparent; color: inherit; text-a
 .dark-theme { --ink: #e2e6eb; --muted: #959ca5; --line: #2d343d; --canvas: #181d23; --paper: #1b2129; background: #171c23; color: #e2e6eb; }.dark-theme .sidebar,.dark-theme .account-card,.dark-theme .account-menu,.dark-theme .conversation-header,.dark-theme .composer-wrap,.dark-theme .workspace-footer { background: #1d232b; color: #e2e6eb; }.dark-theme .sidebar-top,.dark-theme .sidebar-footer,.dark-theme .conversation-header,.dark-theme .composer-wrap,.dark-theme .workspace-footer { border-color: #2d343d; }.dark-theme .account-card,.dark-theme .search-box,.dark-theme .composer { border-color: #353c44; background: #222931; }.dark-theme .search-box input,.dark-theme .composer input,.dark-theme .chat-row-heading strong,.dark-theme .conversation-person strong { color: #e2e6eb; }.dark-theme .chat-row.active,.dark-theme .chat-row:hover { background: #2d343d; }.dark-theme .message-scroll { background-color: #191f26; background-image: radial-gradient(#313841 0.65px, transparent .65px); }.dark-theme .message-bubble.incoming,.dark-theme .floating-picker,.dark-theme .day-divider span,.dark-theme .scroll-bottom { border-color: #333a42; background: #262d35; color: #e1e4e9; }.dark-theme .message-bubble.outgoing { border-color: #3a4451; background: #313944; }.dark-theme .message-bubble p { color: #e3e6eb; }.dark-theme .conversation-banner { background: #2c3239; color: #94aed0; }.dark-theme .composer-note,.dark-theme .message-meta,.dark-theme .chat-preview { color: #9ba1a9; }.dark-theme .filter-tabs button.selected { background: #333c47; color: #91b5e5; }.dark-theme .workspace-footer-right button { color: #a4aab1; }
 .dark-theme .discovery-row:hover { background: #2d343d; }.dark-theme .discovery-copy strong { color: #e2e6eb; }.dark-theme .discovery-action { color: #92b1d9; }
 
+.wa-info-save-contact { margin: 6px auto 2px; min-height: 36px; padding: 0 18px; border: 1px solid var(--wa-line, #d1d7db); border-radius: 18px; background: transparent; color: #008069; font-size: 14px; font-weight: 500; cursor: pointer; }
+.dark-theme .wa-info-save-contact { color: #00a884; border-color: #2a3540; }
 .account-number { display: inline-flex; align-items: center; gap: 6px; font-variant-numeric: tabular-nums; }
 .account-number-copy { display: inline-grid; place-items: center; width: 28px; height: 28px; margin: -6px 0; padding: 0; border: none; border-radius: 50%; background: transparent; color: inherit; cursor: pointer; }
 .account-number-copy:hover { background: rgba(37, 109, 202, .1); }
@@ -3400,6 +3402,13 @@ html, body { overflow-x: hidden; }
 .wa-info-dialog-body .wa-info-error { margin: 0 0 8px; }
 .wa-info-check { display: flex; align-items: center; gap: 12px; margin: 4px 0 10px; font-size: 15px; cursor: pointer; }
 .wa-info-check input { width: 18px; height: 18px; margin: 0; accent-color: var(--wa-green); }
+.contact-name-sheet-who { display: flex; flex-direction: column; gap: 2px; margin: 0 0 14px; }
+.contact-name-sheet-who small { color: var(--wa-muted, #667781); font-size: 13px; }
+.contact-name-sheet-field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; color: var(--wa-muted, #667781); font-size: 13px; }
+.contact-name-sheet-field input { min-height: 44px; padding: 0 12px; border: 1px solid var(--wa-line, #d1d7db); border-radius: 10px; background: transparent; color: var(--wa-text); font: inherit; font-size: 16px; }
+.contact-name-sheet-field input:focus { outline: 2px solid var(--wa-green); outline-offset: -1px; }
+.contact-name-sheet-hint { margin: 0 0 8px; color: var(--wa-muted, #667781); font-size: 12px; }
+.contact-name-sheet-remove { margin-right: auto; color: #c0392b !important; }
 .wa-info-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
 .wa-info-dialog-actions button { min-width: 72px; height: 38px; padding: 0 16px; border: 0; border-radius: 19px; background: transparent; color: var(--wa-green); font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; }
 .wa-info-dialog-actions .wa-info-dialog-confirm { background: var(--wa-green); color: #fff; }

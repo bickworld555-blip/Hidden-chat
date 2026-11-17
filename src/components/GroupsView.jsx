@@ -1,10 +1,12 @@
 import { apiFetch, isNetworkFailure } from '../api.js';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useContactNames } from '../useContactNames.js';
+import { findPerson } from '../contactNames.js';
+import ContactNameSheet from './ContactNameSheet.jsx';
 import {
   ArrowLeft, MessageCircle, ShieldCheck, UserMinus, Bell, BellOff, CalendarClock, Check, ChevronDown, Clock, Copy, Download, Flag, Link2, LockKeyhole, LogOut, Megaphone, MinusCircle, Paperclip,
   Camera, ListPlus, Mic, Smile, Pencil, Phone, Pin, PinOff, QrCode, Search, SendHorizontal, Share2, Star, Timer, Trash2, UserPlus, Users, Video, X,
-  CheckCheck, Info,
+  CheckCheck, Info, UserPen,
 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { inviteUrl } from '../invites.js';
@@ -311,6 +313,9 @@ function MemberSheet({ member, group, userId, token, onMessage, onCall, onChange
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [removing, setRemoving] = useState(false);
+  // Add to contacts / Edit contact: the name shown for this member everywhere on this account (src/contactNames.js).
+  const [naming, setNaming] = useState(false);
+  const savedAlias = useChatStore((state) => findPerson(member.id, state)?.alias ?? '');
   // WhatsApp: an admin also sees Make group admin / Dismiss as admin and Remove from group here.
   const canManage = group?.role === 'admin' && member.id !== userId && member.id !== group?.createdBy;
   async function manage(action, notice) {
@@ -345,7 +350,9 @@ function MemberSheet({ member, group, userId, token, onMessage, onCall, onChange
           <button type="button" disabled={busy} onClick={message}><MessageCircle size={22} /><span>Message</span></button>
           {onCall && <button type="button" disabled={busy} onClick={() => onCall(member, 'audio')}><Phone size={22} /><span>Voice</span></button>}
           {onCall && <button type="button" disabled={busy} onClick={() => onCall(member, 'video')}><Video size={22} /><span>Video</span></button>}
+          {member.id !== userId && <button type="button" disabled={busy} onClick={() => setNaming(true)}><UserPen size={22} /><span>{savedAlias ? 'Edit contact' : 'Add to contacts'}</span></button>}
         </div>
+        {naming && <ContactNameSheet person={member} onClose={() => setNaming(false)} />}
         {canManage && (
           <>
             <button type="button" className="groups-member-sheet-row" disabled={busy}
