@@ -1,5 +1,21 @@
 # TURN over TLS on port 443 (calls through strict firewalls)
 
+**Done 2026-11-17.** What is running on the VPS now:
+- DNS: `turn.p2pchat.tech` A record pointing at 201.18.220.213. `p2pchat.tech` itself points at Hostinger web hosting, not the VPS, so the old
+  `turns:p2pchat.tech:5349` never reached coturn.
+- Certificate: its own Let's Encrypt certificate for `turn.p2pchat.tech`, issued with webroot `/var/www/html` through nginx on
+  port 80, so it renews. The deploy hook `/etc/letsencrypt/renewal-hooks/deploy/coturn.sh` copies it to coturn.
+- nginx: package `libnginx-mod-stream` added. `/etc/nginx/hm-stream-443.conf` (included at the end of `nginx.conf`) routes `:443` and
+  `[::]:443` by server name. coturn listens only on the public IP, so `turn.p2pchat.tech` goes to `201.18.220.213:5349`; everything
+  else goes to `127.0.0.1:8443`, where `chat.hiddenmessenger.com` (XMPP) and `p2pchat.tech` now listen.
+- Checked: XMPP over IPv4 and IPv6, the p2pchat.tech redirect, and a relay-only TURN allocation from the S23 over
+  `turns:turn.p2pchat.tech:443` (relay candidate in 0.6 s).
+- Backups: `/root/nginx-backup-20261117-184039.tgz` and `/root/coturn-hook.sh.bak-20261117-183921`.
+- `RELAY_TURN_URL` must list `turns:turn.p2pchat.tech:443?transport=tcp` and `turns:turn.p2pchat.tech:5349?transport=tcp`, in place of
+  `turns:p2pchat.tech:5349`. Set it in hPanel: the replace API would wipe the other variables.
+
+The original plan follows.
+
 Some corporate, hotel and public Wi-Fi networks allow only TCP 443. The relay already offers UDP/TCP 3478 and TLS 5349;
 this adds `turns:turn.p2pchat.tech:443?transport=tcp`.
 
