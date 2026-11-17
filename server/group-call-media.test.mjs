@@ -187,3 +187,29 @@ test('someone who left the group call can join again; a newcomer keeps my mute a
   assert.match(engine, /getUserMedia\(\{ video: attempt\.video, audio: false, switchCamera: true \}\)/, 'only the camera switch replaces the camera');
   assert.match(engine, /stream\.getVideoTracks\(\)\.forEach\(\(track\) => \{ track\.enabled = !state\.cameraOff; \}\);/);
 });
+
+test('redundant audio turns on when my audio loses over 5% and off once the network is clean again', async () => {
+  const { updateAudioRed, readQualitySample } = await import('../src/callQuality.js');
+  const { orderAudioCodecs, sdpPrefersRed, AUDIO_RED_LOSS } = await import('../src/rtc.js');
+  assert.equal(AUDIO_RED_LOSS, 0.05);
+  const report = (lost) => new Map([['r', { type: 'remote-inbound-rtp', kind: 'audio', fractionLost: lost }]]);
+  assert.equal(readQualitySample(report(0.08)).sentAudioLoss, 0.08);
+  const state = { on: false, high: 0, low: 0 };
+  const step = (lost) => updateAudioRed(state, readQualitySample(report(lost)));
+  assert.deepEqual([step(0.08), step(0.03), step(0.08), step(0.09)], [null, null, null, true], 'two lossy samples in a row');
+  assert.equal(step(0.1), null, 'already on');
+  const clean = Array.from({ length: 15 }, () => step(0.01));
+  assert.deepEqual([clean.slice(0, 14).every((value) => value === null), clean[14]], [true, false], 'off after 30 s under 2%');
+  assert.equal(updateAudioRed({ on: false }, readQualitySample(new Map())), null, 'no report: no change');
+
+  const codecs = [{ mimeType: 'audio/opus' }, { mimeType: 'audio/red' }, { mimeType: 'audio/G722' }];
+  assert.deepEqual(orderAudioCodecs(codecs, true).map((c) => c.mimeType), ['audio/red', 'audio/opus', 'audio/G722']);
+  assert.deepEqual(orderAudioCodecs(codecs, false).map((c) => c.mimeType), ['audio/opus', 'audio/red', 'audio/G722']);
+  const sdp = (first) => `v=0\r\nm=audio 9 UDP/TLS/RTP/SAVPF ${first} 111\r\na=rtpmap:111 opus/48000/2\r\na=rtpmap:63 red/48000/2\r\n`;
+  assert.equal(sdpPrefersRed(sdp(63)), true);
+  assert.equal(sdpPrefersRed(sdp(111)), false);
+  assert.equal(sdpPrefersRed(null), false);
+  const engine = readFileSync(new URL('../src/callEngine.js', import.meta.url), 'utf8');
+  assert.match(engine, /if \(red != null && setAudioRed\(red\)\) \{[\s\S]{0,200}negotiate\(\);/, 'the change is offered to the other phone');
+  assert.match(engine, /const wantRed = sdpPrefersRed\(description\.sdp\);\s+if \(wantRed !== audioRed\.on\) setAudioRed\(wantRed\);\s+await connection\.setLocalDescription\(await connection\.createAnswer\(\)\);/, 'the answer mirrors it');
+});

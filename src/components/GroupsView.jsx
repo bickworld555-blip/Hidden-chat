@@ -37,6 +37,7 @@ import { createActivitySender, groupActivityLabel, groupActivityPeople } from '.
 import { cachedGroupDetails, cachedGroups, offlineGroupDetails, saveGroupDetails, saveGroups } from '../groupCache.js';
 import { isMediaContent, primeMediaBlob } from '../media.js';
 import { MAX_CALL_PARTICIPANTS } from '../callRoom.js';
+import { SFU_MIN_PARTICIPANTS } from '../callTopology.js';
 import { fetchCallTopology, newCallKey, parseRelayCall, relayCallContent, relayCallJoinable } from '../groupRelayCall.js';
 import { lazyComponent } from '../lazy.js';
 const GroupRelayCall = lazyComponent(() => import('./call/GroupRelayCall.jsx'));
@@ -748,7 +749,7 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
     onClose();
   };
 
-  const relayFits = Boolean(relay && group && group.members.length > MAX_CALL_PARTICIPANTS && group.members.length <= relay.maxParticipants);
+  const relayFits = Boolean(relay && group && group.members.length >= SFU_MIN_PARTICIPANTS && group.members.length <= relay.maxParticipants);
   const startRelayCall = (mode) => perform(async () => {
     setCallMenu(false);
     // The call card carries the media key, so it may only travel end-to-end encrypted: no encrypted group, no call.

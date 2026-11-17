@@ -2,14 +2,20 @@
 // the inbound signal queue, perfect negotiation, ICE restart and all call timers.
 // The UI only subscribes to snapshots; Node tests drive it with @roamhq/wrtc.
 import { recordUsage, transportBytes } from './networkUsage.js';
-import { QUALITY_SAMPLE_MS, VIDEO_LEVELS, createQualityTracker, hasTurnRelay, readQualitySample, updateQuality, videoEncodingFor, updatePlayout } from './callQuality.js';
+import { QUALITY_SAMPLE_MS, VIDEO_LEVELS, createQualityTracker, hasTurnRelay, readQualitySample, updateAudioRed, updateQuality, videoEncodingFor, updatePlayout } from './callQuality.js';
 import {
   AUDIO_MAX_BITRATE,
+  AUDIO_RED_CLEAR_LOSS,
+  AUDIO_RED_CLEAR_SAMPLES,
+  AUDIO_RED_LOSS,
+  AUDIO_RED_SAMPLES,
   candidateToJson,
   describeForPeer,
   mediaConstraints,
+  orderAudioCodecs,
   orderCodecs,
   readDescription,
+  sdpPrefersRed,
   videoConstraints,
 } from './rtc.js';
 
@@ -208,6 +214,7 @@ export function createCallEngine({
   let qualityTimer = null;
   const quality = createQualityTracker();
   const playout = { last: null, still: 0 };
+  const audioRed = { on: false, high: 0, low: 0 };
   let stallActive = false;
   let stallRestarts = 0;
   let relayForced = false;
@@ -431,6 +438,12 @@ export function createCallEngine({
     Promise.resolve().then(() => pc.getStats()).then((report) => {
       if (closed || pc !== connection) return;
       const sample = readQualitySample(report);
+      const red = updateAudioRed(audioRed, sample, { loss: AUDIO_RED_LOSS, samples: AUDIO_RED_SAMPLES, clearLoss: AUDIO_RED_CLEAR_LOSS, clearSamples: AUDIO_RED_CLEAR_SAMPLES });
+      if (red != null && setAudioRed(red)) {
+        // The new codec order reaches the other phone in an offer; its answer mirrors it (handleDescription).
+        log('audio-red', red ? 'on' : 'off', sample.sentAudioLoss);
+        negotiate();
+      }
       if (updatePlayout(playout, sample)) {
         log('playout-stall');
         onPlayoutStall();
@@ -624,6 +637,19 @@ export function createCallEngine({
     }
   }
 
+  // Redundant audio (src/rtc.js orderAudioCodecs) on this connection's audio; false when the phone cannot send red.
+  function setAudioRed(on) {
+    const caps = rtc.RTCRtpSender?.getCapabilities?.('audio');
+    if (!connection || !caps?.codecs?.some((codec) => String(codec.mimeType).toLowerCase() === 'audio/red')) return false;
+    let changed = false;
+    for (const transceiver of connection.getTransceivers()) {
+      if (transceiver.receiver?.track?.kind !== 'audio' || typeof transceiver.setCodecPreferences !== 'function') continue;
+      try { transceiver.setCodecPreferences(orderAudioCodecs(caps.codecs, on)); changed = true; } catch {}
+    }
+    if (changed) audioRed.on = on;
+    return changed;
+  }
+
   async function negotiate() {
     if (closed || !connection) return;
     try {
@@ -793,6 +819,9 @@ export function createCallEngine({
         // First offer on the incoming side: media is captured in accept(); the answer waits there.
         return;
       }
+      // The other phone turned redundant audio on (or off) for a lossy network: the answer follows, so both send it.
+      const wantRed = sdpPrefersRed(description.sdp);
+      if (wantRed !== audioRed.on) setAudioRed(wantRed);
       await connection.setLocalDescription(await connection.createAnswer());
       sendSignal(describeForPeer(connection.localDescription));
     } else {

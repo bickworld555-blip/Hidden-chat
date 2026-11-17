@@ -4,7 +4,7 @@
 // anything readable to the relay.
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ExternalE2EEKeyProvider, Room, RoomEvent, Track, isE2EESupported } from 'livekit-client';
+import { ExternalE2EEKeyProvider, Room, RoomEvent, Track, VideoPresets, isE2EESupported } from 'livekit-client';
 import { Lock, Mic, MicOff, PhoneOff, SwitchCamera, Users, Video, VideoOff } from 'lucide-react';
 import E2EEWorker from 'livekit-client/e2ee-worker?worker';
 import { fetchRelayToken } from '../../groupRelayCall.js';
@@ -62,8 +62,14 @@ export default function GroupRelayCall({ token, groupId, groupName, call, onClos
       const keyProvider = new ExternalE2EEKeyProvider();
       await keyProvider.setKey(call.key);
       current = new Room({
+        // Each receiver gets the layer its tile and network need (adaptiveStream); layers nobody watches are not sent
+        // (dynacast).
         adaptiveStream: true,
         dynacast: true,
+        // Simulcast: the camera goes up once in three sizes (180p, 360p and full) and the SFU forwards the one each
+        // receiver can take, so one weak network no longer lowers everyone's picture. RED: each audio packet also
+        // carries the previous one, so voice survives lost packets. DTX: next to nothing is sent in silence.
+        publishDefaults: { simulcast: true, videoSimulcastLayers: [VideoPresets.h180, VideoPresets.h360], red: true, dtx: true },
         e2ee: { keyProvider, worker: new E2EEWorker() },
       });
       const sync = () => { if (!cancelled) setParticipants([...current.remoteParticipants.values()]); };

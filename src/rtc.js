@@ -94,6 +94,31 @@ export function orderCodecs(codecs, preferred = VIDEO_CODEC_ORDER) {
     .map(({ codec }) => codec);
 }
 
+// Redundant audio (RFC 2198 "red"): each packet also carries the previous Opus frame, so a lost packet is rebuilt
+// from the next one and voice does not stutter on a lossy network. It roughly doubles the audio bitrate (about 32 to
+// 64 kb/s), so a call turns it on only while the loss on what it sends stays above AUDIO_RED_LOSS, and off again once
+// the loss has stayed under AUDIO_RED_CLEAR_LOSS for AUDIO_RED_CLEAR_SAMPLES samples.
+export const AUDIO_RED_LOSS = 0.05;
+export const AUDIO_RED_SAMPLES = 2;
+export const AUDIO_RED_CLEAR_LOSS = 0.02;
+export const AUDIO_RED_CLEAR_SAMPLES = 15;
+
+/** Audio codecs in preference order: red first when `red`, otherwise Opus first (red stays negotiable behind it). */
+export function orderAudioCodecs(codecs, red) {
+  return orderCodecs(codecs, red ? ['audio/red', 'audio/opus'] : ['audio/opus']);
+}
+
+/**
+ * Whether a description's (first) audio section prefers red: its first payload type is red/48000. An answer that
+ * mirrors this choice makes both directions use redundant audio (the codec each side sends follows the answer).
+ */
+export function sdpPrefersRed(sdp) {
+  if (typeof sdp !== 'string') return false;
+  const line = sdp.match(/^m=audio \S+ \S+ (\d+)/m);
+  if (!line) return false;
+  return new RegExp(`^a=rtpmap:${line[1]} red/48000`, 'im').test(sdp);
+}
+
 // fmtp parameters describe what the sender of this SDP wants to receive, so each side
 // tunes only the description it sends: in-band FEC hides packet loss, DTX saves bandwidth in silence.
 export function tuneOpusSdp(sdp) {

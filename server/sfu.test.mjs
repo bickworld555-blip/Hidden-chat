@@ -9,7 +9,7 @@ import { test } from 'node:test';
 import express from 'express';
 import { createChatServer } from './index.mjs';
 import { mintSfuToken, registerSfu, roomForGroup, sfuConfigFromEnv } from './sfu.mjs';
-import { MESH_MAX_PARTICIPANTS, SFU_MEDIA_CLIENT, callCapacity, parseTopology, planCall } from '../src/callTopology.js';
+import { MESH_MAX_PARTICIPANTS, SFU_MEDIA_CLIENT, SFU_MIN_PARTICIPANTS, callCapacity, parseTopology, planCall } from '../src/callTopology.js';
 import { MAX_CALL_PARTICIPANTS } from '../src/callRoom.js';
 
 const SECRET = 'a-very-long-sfu-api-secret-for-tests-0123456789';
@@ -44,7 +44,9 @@ test('topology: mesh up to its limit; the SFU only when advertised and the app h
   const advertised = parseTopology({ sfu: { url: 'wss://sfu.example.com' }, meshMaxParticipants: 4, sfuMaxParticipants: 32 });
   assert.deepEqual(planCall(none, 8), { topology: 'mesh', capacity: 4 });
   assert.deepEqual(planCall(advertised, 8, { mediaClient: false }), { topology: 'mesh', capacity: 4 }, 'without a media client calls stay on mesh');
-  assert.deepEqual(planCall(advertised, 3, { mediaClient: true }), { topology: 'mesh', capacity: 4 }, 'small calls stay on mesh');
+  assert.deepEqual(planCall(advertised, 2, { mediaClient: true }), { topology: 'mesh', capacity: 4 }, 'one-to-one stays direct');
+  assert.deepEqual(planCall(advertised, 3, { mediaClient: true }), { topology: 'sfu', capacity: 32 }, 'three people or more go through the SFU (each phone uploads once)');
+  assert.deepEqual(planCall(none, 3), { topology: 'mesh', capacity: 4 }, 'no SFU: the mesh is the fallback');
   assert.deepEqual(planCall(advertised, 8, { mediaClient: true }), { topology: 'sfu', capacity: 32 });
   assert.equal(callCapacity(advertised, { mediaClient: true }), 32);
   assert.equal(callCapacity(advertised, { mediaClient: false }), 4);
@@ -97,4 +99,14 @@ test('the server advertises mesh by default; with an SFU it gives members (only)
     await service.close();
     rmSync(directory, { recursive: true, force: true });
   }
+});
+
+test('group calls of three or more use the SFU with simulcast and redundant audio', async () => {
+  const { readFileSync } = await import('node:fs');
+  assert.equal(SFU_MIN_PARTICIPANTS, 3);
+  const groups = readFileSync(new URL('../src/components/GroupsView.jsx', import.meta.url), 'utf8');
+  assert.match(groups, /group\.members\.length >= SFU_MIN_PARTICIPANTS && group\.members\.length <= relay\.maxParticipants/);
+  const relay = readFileSync(new URL('../src/components/call/GroupRelayCall.jsx', import.meta.url), 'utf8');
+  assert.match(relay, /publishDefaults: \{ simulcast: true, videoSimulcastLayers: \[VideoPresets\.h180, VideoPresets\.h360\], red: true, dtx: true \}/);
+  assert.match(relay, /adaptiveStream: true,\s+dynacast: true,/);
 });

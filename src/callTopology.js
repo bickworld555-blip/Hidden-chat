@@ -6,6 +6,10 @@
 // The app's media client for the SFU is LiveKit's (src/components/call/GroupRelayCall.jsx, end-to-end encrypted
 // with a key shared in the group's encrypted call card). The SFU itself is used only when the server advertises one.
 export const MESH_MAX_PARTICIPANTS = 4;
+// From this many people (me included) a group call goes through the SFU when the server offers one, as WhatsApp's do:
+// each phone then uploads its video once, and a weak receiver gets a lower simulcast layer without slowing the rest.
+// The mesh stays the fallback (no SFU configured) up to MESH_MAX_PARTICIPANTS.
+export const SFU_MIN_PARTICIPANTS = 3;
 export const SFU_MEDIA_CLIENT = true;
 
 /** The server's answer from GET /api/v1/calls/topology, defaulting to mesh-only. */
@@ -24,7 +28,7 @@ export function parseTopology(value) {
 export function planCall(topology, participants, { mediaClient = SFU_MEDIA_CLIENT } = {}) {
   const { meshMax, sfu } = topology ?? parseTopology(null);
   const sfuUsable = Boolean(sfu && mediaClient);
-  if (participants <= meshMax || !sfuUsable) return { topology: 'mesh', capacity: meshMax };
+  if (participants < SFU_MIN_PARTICIPANTS || !sfuUsable) return { topology: 'mesh', capacity: meshMax };
   return { topology: 'sfu', capacity: sfu.maxParticipants };
 }
 

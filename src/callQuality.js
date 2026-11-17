@@ -73,6 +73,20 @@ export function updatePlayout(state, sample) {
   return true;
 }
 
+/**
+ * Redundant audio on or off from the loss on what this phone sends: true / false when it should change, null to keep.
+ * `state` = { on, high, low } (counters of samples in a row above the threshold, or under the clear threshold).
+ */
+export function updateAudioRed(state, sample, { loss = 0.05, samples = 2, clearLoss = 0.02, clearSamples = 15 } = {}) {
+  const value = sample.sentAudioLoss;
+  if (value == null) return null;
+  state.high = value > loss ? (state.high ?? 0) + 1 : 0;
+  state.low = value < clearLoss ? (state.low ?? 0) + 1 : 0;
+  if (!state.on && state.high >= samples) { state.on = true; state.low = 0; return true; }
+  if (state.on && state.low >= clearSamples) { state.on = false; state.high = 0; return false; }
+  return null;
+}
+
 export function readQualitySample(report) {
   const sample = {
     inboundPackets: 0,
@@ -81,6 +95,8 @@ export function readQualitySample(report) {
     audioPackets: null,
     audioPlayed: null,
     sentVideoLoss: null,
+    // Share of my audio packets the other side reports lost (remote-inbound-rtp), for redundant audio.
+    sentAudioLoss: null,
     rtt: null,
     availableOutgoingBitrate: null,
     cpuLimited: false,
@@ -100,6 +116,9 @@ export function readQualitySample(report) {
     } else if (stat.type === 'remote-inbound-rtp' && stat.kind === 'video') {
       const lost = finite(stat.fractionLost);
       if (lost != null) sample.sentVideoLoss = Math.max(sample.sentVideoLoss ?? 0, lost);
+    } else if (stat.type === 'remote-inbound-rtp' && stat.kind === 'audio') {
+      const lost = finite(stat.fractionLost);
+      if (lost != null) sample.sentAudioLoss = Math.max(sample.sentAudioLoss ?? 0, lost);
     } else if (stat.type === 'outbound-rtp' && stat.kind === 'video') {
       if (stat.qualityLimitationReason === 'cpu') sample.cpuLimited = true;
     } else if (stat.type === 'transport' && stat.selectedCandidatePairId) {
