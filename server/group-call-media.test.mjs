@@ -166,12 +166,15 @@ test('voice that arrives but is not played restarts the call audio output', asyn
   const playing = { last: null, still: 0 };
   assert.deepEqual([[100, 2], [200, 4], [300, 6], [301, 6], [302, 6], [303, 6]].map(([p, s]) => updatePlayout(playing, readQualitySample(report(p, s)))), [false, false, false, false, false, false]);
   assert.equal(updatePlayout({ last: null, still: 0 }, readQualitySample(new Map())), false, 'no audio stats: nothing decided');
+  // Back to back: the new call has played nothing at all: restarted at the first sample with voice arriving (≈2 s).
+  const fresh = { last: null, still: 0 };
+  assert.deepEqual([[60, 0], [160, 0]].map(([p, s]) => updatePlayout(fresh, readQualitySample(report(p, s)))), [false, true]);
 
   const hook = readFileSync(new URL('../src/components/call/useMediaElement.js', import.meta.url), 'utf8');
   assert.match(hook, /window\.addEventListener\(RESTART_EVENT, onRestart\);/, 'every call media element (audio and video) takes part');
   assert.match(hook, /element\.srcObject = null;\s+restart = setTimeout\(bind, RESTART_GAP_MS\);/);
   const engine = readFileSync(new URL('../src/callEngine.js', import.meta.url), 'utf8');
-  assert.match(engine, /if \(updatePlayout\(playout, sample\)\) \{\s+log\('playout-stall'\);\s+onPlayoutStall\(\);/);
+  assert.match(engine, /if \(updatePlayout\(playout, sample\)\) \{\s+playoutRestarts \+= 1;\s+log\('playout-stall'\);\s+onPlayoutStall\(\);/);
   const overlay = readFileSync(new URL('../src/components/CallOverlay.jsx', import.meta.url), 'utf8');
   assert.match(overlay, /onPlayoutStall: \(\) => \{ if \(restartCallMediaOutput\(\)\)/);
 });

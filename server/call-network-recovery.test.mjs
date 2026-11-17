@@ -129,7 +129,7 @@ async function connectedCall({ direction = 'outgoing', iceServers = TURN } = {})
 
 test('stats are read from the selected candidate pair, and each signal maps to a video level', () => {
   const sample = readQualitySample(report({ packets: 120, lost: 4, sentLoss: 0.2, rtt: 0.18, available: 2_000_000, relay: true }));
-  assert.deepEqual(sample, { inboundPackets: 120, inboundLost: 4, audioPackets: 120, audioPlayed: null, sentVideoLoss: 0.2, sentAudioLoss: null, rtt: 0.18, availableOutgoingBitrate: 2_000_000, cpuLimited: false, pathType: 'relay' });
+  assert.deepEqual(sample, { inboundPackets: 120, inboundLost: 4, audioPackets: 120, audioPlayed: null, jitter: null, videoFps: null, videoWidth: null, videoHeight: null, sentVideoLoss: 0.2, sentAudioLoss: null, rtt: 0.18, availableOutgoingBitrate: 2_000_000, cpuLimited: false, pathType: 'relay' });
   assert.equal(levelFor({ sentVideoLoss: 0.01, rtt: 0.1, availableOutgoingBitrate: 3_000_000 }), 0);
   assert.equal(levelFor({ sentVideoLoss: 0.08 }), 1, 'some loss: medium');
   assert.equal(levelFor({ sentVideoLoss: 0.2 }), 2, 'heavy loss: low');

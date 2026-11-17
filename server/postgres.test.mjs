@@ -505,9 +505,9 @@ test('behind a transaction pooler the server refuses to start until the role def
   await createPostgresDatabase({ env, pool }).ready();
   const setup = readFileSync(new URL('../scripts/db-pooler-setup.sql', import.meta.url), 'utf8');
   assert.match(setup, /ALTER ROLE CURRENT_USER SET search_path = relay/);
-  // The queue sweeps delete by age: indexed (migration 030).
+  // The queue sweeps (migration 030) and the call telemetry sweep (036) delete by age: indexed.
   const indexes = (await pool.query("SELECT indexname FROM pg_indexes WHERE schemaname = 'relay' AND indexname LIKE '%_created'")).rows.map((row) => row.indexname).sort();
-  assert.deepEqual(indexes, ['device_events_created', 'message_deliveries_created', 'message_routes_created']);
+  assert.deepEqual(indexes, ['call_telemetry_created', 'device_events_created', 'message_deliveries_created', 'message_routes_created']);
 });
 
 test('PostgreSQL: upload token buckets refill, cap, and never spend the same tokens twice', async () => {

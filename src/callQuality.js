@@ -67,6 +67,9 @@ export function updatePlayout(state, sample) {
   state.last = { packets, played };
   if (!previous || packets < previous.packets || played < previous.played) { state.still = 0; return false; }
   const stalled = packets - previous.packets >= PLAYOUT_MIN_PACKETS && played - previous.played < PLAYOUT_MIN_SECONDS;
+  // Nothing at all played since the call began although voice keeps coming: the output was cut before this call (the
+  // back-to-back case measured on the S23). No need to wait for a second sample.
+  if (stalled && played === 0) { state.still = 0; return true; }
   state.still = stalled ? (state.still ?? 0) + 1 : 0;
   if (state.still < PLAYOUT_STALL_SAMPLES) return false;
   state.still = 0;
@@ -94,6 +97,11 @@ export function readQualitySample(report) {
     // Incoming audio: packets that arrived, and seconds of it the phone has played (null: not reported).
     audioPackets: null,
     audioPlayed: null,
+    // For call telemetry (src/callTelemetry.js): incoming audio jitter (s), incoming video frame rate and size.
+    jitter: null,
+    videoFps: null,
+    videoWidth: null,
+    videoHeight: null,
     sentVideoLoss: null,
     // Share of my audio packets the other side reports lost (remote-inbound-rtp), for redundant audio.
     sentAudioLoss: null,
@@ -112,6 +120,11 @@ export function readQualitySample(report) {
       if (stat.kind === 'audio') {
         sample.audioPackets = finite(stat.packetsReceived);
         sample.audioPlayed = finite(stat.totalSamplesDuration);
+        sample.jitter = finite(stat.jitter);
+      } else if (stat.kind === 'video') {
+        sample.videoFps = finite(stat.framesPerSecond);
+        sample.videoWidth = finite(stat.frameWidth);
+        sample.videoHeight = finite(stat.frameHeight);
       }
     } else if (stat.type === 'remote-inbound-rtp' && stat.kind === 'video') {
       const lost = finite(stat.fractionLost);

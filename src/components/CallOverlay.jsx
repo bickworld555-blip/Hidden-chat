@@ -58,6 +58,7 @@ import ParticipantTile from './call/ParticipantTile.jsx';
 import SpeakingIndicator from './call/SpeakingIndicator.jsx';
 import { CallStatusLabel } from './call/CallTimer.jsx';
 import { restartCallMediaOutput, useMediaElement } from './call/useMediaElement.js';
+import { CALL_TELEMETRY_INTERVAL_MS, callTelemetry, sendCallTelemetry } from '../callTelemetry.js';
 const AvatarStudio = lazyComponent(() => import('./AvatarStudio.jsx'));
 // Rare panels load on first use, so the call screen opens without them (WhatsApp's ViewStub pattern).
 const AddParticipantPicker = lazyComponent(() => import('./call/AddParticipantPicker.jsx'));
@@ -458,6 +459,30 @@ export default function CallOverlay({
   useEffect(() => {
     if (call.join && !engineRef.current) acceptCall();
   }, [call.id]);
+
+  // Call telemetry (src/callTelemetry.js): every connection's summary every 30 s while the call is up, and once more
+  // when it ends, so call faults are visible on the server without a phone on USB.
+  const telemetryPairs = () => [
+    ...(engineRef.current ? [{ peerId: call.peerId, engine: engineRef.current }] : []),
+    ...extrasRef.current.entries().map((entry) => ({ peerId: entry.peerId, engine: entry.engine })),
+  ].filter(({ engine }) => typeof engine.telemetry === 'function' && engine.state?.answered)
+    .map(({ peerId, engine }) => ({ peerId, telemetry: engine.telemetry() }));
+  const reportTelemetry = (final) => {
+    const pairs = telemetryPairs();
+    if (pairs.length) sendCallTelemetry(latest.current.sessionToken, callTelemetry({ call: latest.current.call, pairs, final }));
+  };
+  const telemetryLive = status === 'connected' || status === 'reconnecting' || othersInCall;
+  useEffect(() => {
+    if (!telemetryLive) return undefined;
+    const timer = setInterval(() => reportTelemetry(false), CALL_TELEMETRY_INTERVAL_MS);
+    return () => clearInterval(timer);
+  }, [telemetryLive]); // eslint-disable-line react-hooks/exhaustive-deps
+  const telemetryFinal = useRef(false);
+  useEffect(() => {
+    if (!terminal || telemetryFinal.current) return;
+    telemetryFinal.current = true;
+    reportTelemetry(true);
+  }, [terminal]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // A group call (three people or more) sends lighter video on every connection; back to full quality one-to-one.
   const roomSize = 2 + extrasCount;

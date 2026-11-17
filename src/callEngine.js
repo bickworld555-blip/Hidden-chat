@@ -214,6 +214,12 @@ export function createCallEngine({
   let qualityTimer = null;
   const quality = createQualityTracker();
   const playout = { last: null, still: 0 };
+  // Call telemetry (telemetry() below): the last network sample, voice-output restarts, and how long the first
+  // offer took to make the other phone ring (push-to-ring, for calls this phone placed).
+  let lastSample = null;
+  let playoutRestarts = 0;
+  let offerSentAt = 0;
+  let ringMs = 0;
   const audioRed = { on: false, high: 0, low: 0 };
   let stallActive = false;
   let stallRestarts = 0;
@@ -438,6 +444,7 @@ export function createCallEngine({
     Promise.resolve().then(() => pc.getStats()).then((report) => {
       if (closed || pc !== connection) return;
       const sample = readQualitySample(report);
+      lastSample = sample;
       const red = updateAudioRed(audioRed, sample, { loss: AUDIO_RED_LOSS, samples: AUDIO_RED_SAMPLES, clearLoss: AUDIO_RED_CLEAR_LOSS, clearSamples: AUDIO_RED_CLEAR_SAMPLES });
       if (red != null && setAudioRed(red)) {
         // The new codec order reaches the other phone in an offer; its answer mirrors it (handleDescription).
@@ -445,6 +452,7 @@ export function createCallEngine({
         negotiate();
       }
       if (updatePlayout(playout, sample)) {
+        playoutRestarts += 1;
         log('playout-stall');
         onPlayoutStall();
       }
@@ -656,6 +664,7 @@ export function createCallEngine({
       makingOffer = true;
       await connection.setLocalDescription(await connection.createOffer());
       if (closed || !connection.localDescription) return;
+      if (!offerSent) offerSentAt = Date.now();
       offerSent = true;
       sendSignal(describeForPeer(connection.localDescription));
     } catch (error) {
@@ -844,6 +853,7 @@ export function createCallEngine({
     if (closed || !signal || typeof signal !== 'object') return;
     switch (signal.type) {
       case 'ringing':
+        if (offerSentAt && !ringMs) ringMs = Date.now() - offerSentAt;
         if (state.status === 'connecting' && direction === 'outgoing' && !state.answered) set({ status: 'ringing' });
         return;
       case 'connected':
@@ -1009,6 +1019,29 @@ export function createCallEngine({
       if (signal?.type !== 'ice') log('signal-in', signal?.type);
       queue.push({ signal, done });
       drain();
+    },
+
+    /** A compact summary of this connection for call telemetry (src/callTelemetry.js sanitizes and sends it). */
+    telemetry() {
+      const sample = lastSample ?? {};
+      return {
+        status: state.status,
+        rtt: sample.rtt ?? null,
+        lost: sample.inboundLost ?? null,
+        packets: sample.inboundPackets ?? null,
+        jitter: sample.jitter ?? null,
+        fps: sample.videoFps ?? null,
+        width: sample.videoWidth ?? null,
+        height: sample.videoHeight ?? null,
+        audioPackets: sample.audioPackets ?? null,
+        audioPlayed: sample.audioPlayed ?? null,
+        path: sample.pathType ?? null,
+        iceRestarts: stallRestarts,
+        playoutRestarts,
+        red: audioRed.on,
+        ringMs: ringMs || null,
+        connectedMs: state.connectedAt ? Date.now() - state.connectedAt : 0,
+      };
     },
 
     /** People in the call, this phone included: a group call (3+) sends lighter video on this connection. */
