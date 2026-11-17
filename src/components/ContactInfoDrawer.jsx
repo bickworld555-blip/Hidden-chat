@@ -13,6 +13,7 @@ import {
   Palette,
   Phone,
   Search,
+  ShieldAlert,
   Star,
   ThumbsDown,
   Timer,
@@ -37,6 +38,7 @@ import { GalleryTile } from './MediaViewer.jsx';
 import VerifiedBadge from './VerifiedBadge.jsx';
 import AccountNumber from './AccountNumber.jsx';
 import ContactNameSheet from './ContactNameSheet.jsx';
+import { SafetyToolsSheet } from './UnknownSender.jsx';
 
 const CLOSE_ANIMATION_MS = 200;
 const STRIP_LIMIT = 4;
@@ -151,6 +153,8 @@ export default function ContactInfoDrawer({
   const [view, setView] = useState(initialView);
   // Add to contacts / Edit contact (ContactNameSheet): the name this account shows for them everywhere.
   const [naming, setNaming] = useState(false);
+  // Safety tools (someone not in my contacts): tips, Block and Report.
+  const [safety, setSafety] = useState(false);
   const [mediaTab, setMediaTab] = useState('media');
   const [dialog, setDialog] = useState(initialDialog);
   const [keepStarred, setKeepStarred] = useState(true);
@@ -461,7 +465,16 @@ export default function ContactInfoDrawer({
               <Ban size={20} aria-hidden="true" />
               <span>{blocked ? `Unblock ${name}` : `Block ${name}`}</span>
             </button>
+            {!chat.saved && !chat.alias && <Row icon={ShieldAlert} title="Safety tools" onClick={() => setSafety(true)} />}
             <Row icon={ThumbsDown} title={`Report ${name}`} danger onClick={() => { setDeleteAfterReport(false); openDialog('report'); }} />
+            {safety && (
+              <SafetyToolsSheet
+                chat={chat}
+                onClose={() => setSafety(false)}
+                onBlock={() => { setSafety(false); openDialog('block'); }}
+                onReport={() => { setSafety(false); setDeleteAfterReport(false); openDialog('report'); }}
+              />
+            )}
             <Row icon={Trash2} title="Delete chat" danger onClick={() => openDialog('delete')} />
           </section>
         </div>

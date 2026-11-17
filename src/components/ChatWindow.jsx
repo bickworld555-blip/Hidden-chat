@@ -25,6 +25,8 @@ import { resolveSelection, selectionActions, toggleSelection } from '../selectio
 import { EXTENDED_REACTIONS as EXTENDED_EMOJIS, QUICK_REACTIONS as QUICK_EMOJIS } from '../reactions.js';
 import { formatMessageDate, formatMessageTime, localDateKey } from '../time.js';
 import Avatar from './Avatar.jsx';
+import ContactNameSheet from './ContactNameSheet.jsx';
+import { SafetyToolsSheet, UnknownSenderCard, dismissUnknown, isUnknownSender, readDismissed } from './UnknownSender.jsx';
 import AttachmentMenu from './AttachmentMenu.jsx';
 import SelectContactModal from './SelectContactModal.jsx';
 import { ContactBubble, LiveLocationBubble, LocationBubble } from './LocationMessages.jsx';
@@ -764,6 +766,10 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
   const [contactInfoView, setContactInfoView] = useState('main');
   const [headerMenuOpen, setHeaderMenuOpen] = useState(false);
   const [headerNotice, setHeaderNotice] = useState('');
+  // Unknown sender (someone not in my contacts wrote): the Add / Block card and Safety tools (UnknownSender.jsx).
+  const [safetyOpen, setSafetyOpen] = useState(false);
+  const [namingUnknown, setNamingUnknown] = useState(false);
+  const [unknownHidden, setUnknownHidden] = useState(() => readDismissed());
   const [newContactOpen, setNewContactOpen] = useState(false);
   const muted = useChatStore((state) => state.mutedChatIds.includes(chatId));
   const [contactInfoDialog, setContactInfoDialog] = useState(null);
@@ -1946,6 +1952,25 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
         </header>
       )}
       {headerNotice && <div className="header-notice" role="status">{headerNotice}</div>}
+
+      {isUnknownSender({ chat, messages, blocked, userId }) && !unknownHidden.has(chatId) && (
+        <UnknownSenderCard
+          chat={chat}
+          onAdd={() => setNamingUnknown(true)}
+          onBlock={() => openInfo('main', 'block')}
+          onSafety={() => setSafetyOpen(true)}
+          onDismiss={() => { dismissUnknown(chatId); setUnknownHidden(readDismissed()); }}
+        />
+      )}
+      {namingUnknown && <ContactNameSheet person={chat} onClose={() => setNamingUnknown(false)} />}
+      {safetyOpen && (
+        <SafetyToolsSheet
+          chat={chat}
+          onClose={() => setSafetyOpen(false)}
+          onBlock={() => { setSafetyOpen(false); openInfo('main', 'block'); }}
+          onReport={() => { setSafetyOpen(false); openInfo('main', 'report'); }}
+        />
+      )}
 
       <div className="conversation-banner">
         {chat.disappearSeconds > 0 ? (
