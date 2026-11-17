@@ -44,6 +44,7 @@ import { ensureExtrasSchema, registerExtras, statusAudienceSql } from './extras.
 import { ensureAdminSchema, registerAdmin } from './admin.mjs';
 import { ensureSupportSchema, registerSupport } from './support.mjs';
 import { ensureCallTelemetrySchema, registerCallTelemetry } from './callTelemetry.mjs';
+import { registerOtaUpdates } from './otaUpdates.mjs';
 import { adminCredentialsFrom, createAdminAuth } from './adminAuth.mjs';
 import { ACCEPTED_STATUS_BACKGROUNDS } from '../src/statusColors.js';
 import { registerLinking } from './linking.mjs';
@@ -1543,6 +1544,7 @@ export function createChatServer({
 
   // Hidden Messenger Support: each person's conversation with the support team, answered from the admin console.
   registerCallTelemetry({ app, db, requireSession, requireAdmin: adminAuth.requireAdmin });
+  registerOtaUpdates({ app, dataDirectory, requireAdmin: adminAuth.requireAdmin });
   const support = registerSupport({ app, db, requireSession, requireAdmin: adminAuth.requireAdmin, notifyUser, publicUser, userColumns: USER_COLUMNS });
 
   registerVerification({ app, db, requireSession, requireAdmin: adminAuth.requireAdmin, verified: verifiedAccounts, verifiedChannels, publicUser, userColumns: USER_COLUMNS });

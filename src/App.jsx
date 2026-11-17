@@ -130,6 +130,7 @@ import { useFontSize, useHighContrast } from './displayPrefs.js';
 import { inviteTokenFrom, linkContact, lookupUsername, redeemInviteLink } from './contactsApi.js';
 import { deviceStorage } from './deviceStorage.js';
 import { storageProblemText, useStorageProblem } from './storageHealth.js';
+import { startOtaUpdates } from './otaUpdates.js';
 
 function useIsMobile() {
   const query = '(max-width: 768px)';
@@ -295,6 +296,9 @@ export default function App() {
   const callStartTimeRef = useState(() => ({ current: null }))[0];
   const callRef = useRef(null);
   callRef.current = call;
+  // Over-the-air web updates (src/otaUpdates.js): confirm this copy started properly, then look for a newer signed
+  // bundle for the next start, never during a call.
+  useEffect(() => startOtaUpdates({ busy: () => Boolean(callRef.current && !TERMINAL_STATUSES.includes(callRef.current.status)) }), []);
 
   useEffect(() => {
     let active = true;

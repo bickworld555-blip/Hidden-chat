@@ -138,6 +138,12 @@ export const nativeEndCallWindow = () => invoke('endCallWindow');
 export const nativeSetCallRinging = (ringing) => invoke('setCallRinging', { ringing: Boolean(ringing) });
 // System settings page for 'fullScreen' (ringing calls on the lock screen, Android 14+) or 'pictureInPicture'.
 export const nativeOpenCallSettings = (which) => invoke('openCallSettings', { which });
+// Over-the-air web updates (OtaUpdates.java, src/otaUpdates.js): check prepares a newer signed bundle for the next start
+// ('ready', 'current', 'none', 'needs-app-update', 'failed-before'; null on error or outside the app); ready confirms
+// that this copy started properly.
+export const nativeOtaCheck = async (origin) => (await invoke('otaCheck', { origin }))?.result ?? null;
+export const nativeOtaReady = () => invoke('otaReady');
+export const nativeOtaStatus = () => invoke('otaStatus');
 // Opens a link in the app that handles it (YouTube, Facebook, the browser); Back returns to Hidden Messenger.
 // Resolves true when Android took it, false outside the app (the caller then opens it in a new tab).
 export async function nativeOpenExternal(url) {

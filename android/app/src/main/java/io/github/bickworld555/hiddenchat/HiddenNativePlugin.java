@@ -463,6 +463,44 @@ public class HiddenNativePlugin extends Plugin {
         });
     }
 
+    // --- Over-the-air web updates (OtaUpdates, src/otaUpdates.js) ---
+
+    /** Looks for a newer signed web bundle and prepares it for the next start (off the main thread). */
+    @PluginMethod
+    public void otaCheck(PluginCall call) {
+        String origin = call.getString("origin", "");
+        Context context = getContext().getApplicationContext();
+        new Thread(() -> {
+            try {
+                JSObject result = new JSObject();
+                result.put("result", OtaUpdates.check(context, origin));
+                call.resolve(result);
+            } catch (Exception failure) {
+                call.reject(failure.getMessage() == null ? "Update check failed." : failure.getMessage());
+            }
+        }, "ota-check").start();
+    }
+
+    /** The web app started properly: an update on trial becomes the confirmed copy. */
+    @PluginMethod
+    public void otaReady(PluginCall call) {
+        OtaUpdates.confirm(getContext());
+        call.resolve(otaStatusObject());
+    }
+
+    @PluginMethod
+    public void otaStatus(PluginCall call) {
+        call.resolve(otaStatusObject());
+    }
+
+    private JSObject otaStatusObject() {
+        try {
+            return JSObject.fromJSONObject(OtaUpdates.status(getContext()));
+        } catch (JSONException e) {
+            return new JSObject();
+        }
+    }
+
     @PluginMethod
     public void networkState(PluginCall call) {
         JSObject result = new JSObject();

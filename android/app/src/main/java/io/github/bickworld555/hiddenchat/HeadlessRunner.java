@@ -65,10 +65,13 @@ final class HeadlessRunner {
         appContext = context.getApplicationContext();
         onDone = done;
         // The app's files at the app's origin (Capacitor serves dist-android from assets/public at https://localhost).
+        // A confirmed over-the-air update (OtaUpdates) is served instead, so both pages run the same code.
         WebViewAssetLoader.AssetsPathHandler assets = new WebViewAssetLoader.AssetsPathHandler(appContext);
+        java.io.File updated = OtaUpdates.confirmedDir(appContext);
+        WebViewAssetLoader.PathHandler files = updated != null ? new WebViewAssetLoader.InternalStoragePathHandler(appContext, updated) : null;
         WebViewAssetLoader loader = new WebViewAssetLoader.Builder()
             .setDomain("localhost")
-            .addPathHandler("/", path -> assets.handle("public/" + path))
+            .addPathHandler("/", path -> files != null ? files.handle(path) : assets.handle("public/" + path))
             .build();
         web = new WebView(appContext);
         WebSettings settings = web.getSettings();

@@ -73,6 +73,9 @@ public class AppActivity extends BridgeActivity {
         current = this;
         // The WebView takes over the connection; the service's own one would only duplicate notifications.
         NativeRelay.stop();
+        // Over-the-air web updates: roll back an update that never confirmed it started, before the bridge picks
+        // which copy of the web app to load (OtaUpdates).
+        OtaUpdates.beforeBridge(this);
         super.onCreate(savedInstanceState);
         // Remember what the file chooser returns, so picked videos are read natively (PickedFiles).
         if (getBridge() != null) PickedFiles.install(getBridge());
