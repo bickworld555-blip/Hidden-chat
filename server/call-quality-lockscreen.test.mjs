@@ -87,3 +87,28 @@ test('Android: Home during a video call opens the floating window even where aut
   const plugin = await java('HiddenNativePlugin.java');
   assert.ok(plugin.includes('AppOpsManager.OPSTR_PICTURE_IN_PICTURE'), 'a phone that has picture-in-picture switched off is detected');
 });
+
+test('"Make calls ring": battery optimization, the maker\'s Autostart and Samsung\'s Sleeping apps, in order', async () => {
+  const { autostartHint, readConfirmed, saveConfirmed } = await import('../src/callAccess.js');
+  const xiaomi = { batteryUnrestricted: false, autostartPage: true, sleepingPage: false, fullScreenCalls: false, pictureInPicture: true, maker: 'xiaomi' };
+  assert.deepEqual(missingCallAccess(xiaomi), ['battery', 'autostart', 'fullScreen'], 'battery first: it decides whether the push wakes the app');
+  assert.deepEqual(missingCallAccess(xiaomi, ['autostart']), ['battery', 'fullScreen'], 'Autostart cannot be read: gone once the person confirms');
+  const samsung = { batteryUnrestricted: true, autostartPage: false, sleepingPage: true, fullScreenCalls: true, pictureInPicture: true, maker: 'samsung' };
+  assert.deepEqual(missingCallAccess(samsung), ['sleeping']);
+  assert.deepEqual(missingCallAccess(samsung, ['sleeping']), []);
+  assert.match(autostartHint('Xiaomi'), /Autostart/);
+  assert.match(autostartHint('vivo'), /Background startup/);
+  const store = new Map();
+  const storage = { getItem: (key) => store.get(key) ?? null, setItem: (key, value) => store.set(key, value) };
+  saveConfirmed(['autostart', 'autostart', 'bogus'], storage);
+  assert.deepEqual(readConfirmed(storage), ['autostart']);
+  assert.deepEqual(readConfirmed({ getItem: () => '{bad' }), []);
+
+  const java = await source('android/app/src/main/java/io/github/bickworld555/hiddenchat/WakeSettings.java');
+  assert.ok(java.includes('isIgnoringBatteryOptimizations') && !java.includes('ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS'), 'checked, then fixed by the person in App info › Battery');
+  assert.ok(java.includes('com.miui.permcenter.autostart.AutoStartManagementActivity') && java.includes('BgStartUpManagerActivity'));
+  const manifest = await source('android/app/src/main/AndroidManifest.xml');
+  assert.ok(manifest.includes('<package android:name="com.miui.securitycenter" />'), 'visible to the app on Android 11+');
+  const plugin = await source('android/app/src/main/java/io/github/bickworld555/hiddenchat/HiddenNativePlugin.java');
+  assert.ok(plugin.includes('result.put("batteryUnrestricted", WakeSettings.batteryUnrestricted(context));'));
+});

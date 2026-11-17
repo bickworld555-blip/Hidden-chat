@@ -268,6 +268,11 @@ public class HiddenNativePlugin extends Plugin {
         NotificationManager notifications = context.getSystemService(NotificationManager.class);
         result.put("fullScreenCalls", Build.VERSION.SDK_INT < 34 || (notifications != null && notifications.canUseFullScreenIntent()));
         result.put("pictureInPicture", pictureInPictureAllowed(context));
+        // What can stop calls ringing while the app is closed (WakeSettings: the "Make calls ring" guide).
+        result.put("batteryUnrestricted", WakeSettings.batteryUnrestricted(context));
+        result.put("maker", WakeSettings.maker());
+        result.put("autostartPage", WakeSettings.hasAutostartPage(context));
+        result.put("sleepingPage", WakeSettings.hasSleepingPage(context));
         // Firebase push carries messages and calls (no always-on "Connected" service needed).
         result.put("push", PushRegistration.isActive(context));
         return result;
@@ -288,6 +293,11 @@ public class HiddenNativePlugin extends Plugin {
     public void openCallSettings(PluginCall call) {
         String which = call.getString("which", "");
         Context context = getContext();
+        if ("battery".equals(which) || "autostart".equals(which) || "sleeping".equals(which)) {
+            WakeSettings.open(context, which);
+            call.resolve();
+            return;
+        }
         Uri pkg = Uri.parse("package:" + context.getPackageName());
         Intent intent;
         if ("fullScreen".equals(which) && Build.VERSION.SDK_INT >= 34) intent = new Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT, pkg);

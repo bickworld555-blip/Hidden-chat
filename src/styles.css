@@ -5243,6 +5243,13 @@ textarea.hm-input { min-height: 96px; resize: vertical; }
 .call-access-notice:hover { background: rgba(37, 109, 202, .06); }
 .dark-theme .call-access-notice { border-color: #2a3540; }
 .dark-theme .call-access-notice small { color: #8696a0; }
+.call-access-title { display: flex; flex-direction: column; gap: 2px; margin: 0 2px 2px; }
+.call-access-title strong { font-size: 15px; font-weight: 600; }
+.call-access-title small { color: #667781; font-size: 13px; }
+.dark-theme .call-access-title small { color: #8696a0; }
+.call-access-notices ol { display: flex; flex-direction: column; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.call-access-step { display: flex; align-items: center; gap: 8px; }
+.call-access-done { flex: none; min-height: 40px; padding: 0 14px; border: none; border-radius: 20px; background: #256dca; color: #fff; font-size: 14px; font-weight: 500; cursor: pointer; }
 
 /* Account backup (Tools › Chat backup) and the restore sheet on a new device. */
 .hm-account-backup { display: flex; flex-direction: column; gap: 12px; margin: 4px 0 18px; padding-bottom: 16px; border-bottom: 1px solid var(--wa-line, #e9edef); }
