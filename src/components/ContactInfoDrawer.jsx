@@ -391,7 +391,7 @@ export default function ContactInfoDrawer({
             )}
             {chat.username && <p className="wa-info-handle">@{chat.username}{hasCustomDisplayName(chat) ? '' : ' · No display name yet'}</p>}
             {chat.number && <p className="wa-info-handle"><AccountNumber number={chat.number} /></p>}
-            {chat.alias && chat.profileName && chat.profileName !== chat.alias && <p className="wa-info-handle">~{chat.profileName}</p>}
+            {chat.alias && chat.profileName && chat.profileName !== chat.alias && hasCustomDisplayName({ ...chat, name: chat.profileName }) && <p className="wa-info-handle">~{chat.profileName}</p>}
             <button type="button" className="wa-info-save-contact" onClick={() => setNaming(true)}>{chat.alias ? 'Edit contact' : 'Add to contacts'}</button>
             {naming && <ContactNameSheet person={chat} onClose={() => setNaming(false)} />}
             {!blocked && status && <p className="wa-info-status">{status}</p>}
