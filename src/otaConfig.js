@@ -4,7 +4,8 @@
 // The native features a web bundle may rely on. Bump it (here and OtaUpdates.NATIVE_API) whenever a web change needs
 // new native code (a new HiddenNative method, a manifest permission…): bundles published after that need the new APK,
 // and older APKs keep their bundled copy instead of loading code they cannot run.
-export const NATIVE_API = 1;
+// 2: Sync phone contacts (HiddenNative.contactsPermission / requestContacts / readDeviceContacts).
+export const NATIVE_API = 2;
 
 // The public half of the OTA signing key (ECDSA P-256, SubjectPublicKeyInfo DER, base64). Phones accept a bundle only
 // if its manifest is signed with the private half, which never leaves the publisher's machine

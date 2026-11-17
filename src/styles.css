@@ -202,6 +202,11 @@ button.file-message { border: 0; background: transparent; color: inherit; text-a
 .dark-theme .discovery-row:hover { background: #2d343d; }.dark-theme .discovery-copy strong { color: #e2e6eb; }.dark-theme .discovery-action { color: #92b1d9; }
 
 .wa-info-save-contact { margin: 6px auto 2px; min-height: 36px; padding: 0 18px; border: 1px solid var(--wa-line, #d1d7db); border-radius: 18px; background: transparent; color: #008069; font-size: 14px; font-weight: 500; cursor: pointer; }
+.wa-sc-phone .wa-sc-section-heading { display: flex; align-items: center; justify-content: space-between; }
+.wa-sc-phone-row { display: flex; align-items: center; gap: 12px; cursor: default; }
+.wa-sc-phone-row .wa-sc-contact-info { flex: 1; min-width: 0; }
+.wa-sc-phone .wa-sc-action-label small { display: block; margin-top: 2px; color: #667781; font-size: 12px; font-weight: 400; }
+.wa-sc-invite-btn { display: inline-flex; align-items: center; gap: 6px; min-height: 34px; padding: 0 14px; border: 1px solid #008069; border-radius: 17px; background: transparent; color: #008069; font-size: 13px; font-weight: 600; cursor: pointer; }
 .dark-theme .wa-info-save-contact { color: #00a884; border-color: #2a3540; }
 .account-number { display: inline-flex; align-items: center; gap: 6px; font-variant-numeric: tabular-nums; }
 .account-number-copy { display: inline-grid; place-items: center; width: 28px; height: 28px; margin: -6px 0; padding: 0; border: none; border-radius: 50%; background: transparent; color: inherit; cursor: pointer; }

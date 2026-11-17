@@ -46,7 +46,7 @@ final class OtaUpdates {
     private OtaUpdates() {}
 
     // Must equal NATIVE_API in src/otaConfig.js (a test checks): bump both when web code starts needing new native code.
-    static final int NATIVE_API = 1;
+    static final int NATIVE_API = 2;
     // Must equal OTA_PUBLIC_KEY in src/otaConfig.js.
     static final String PUBLIC_KEY = "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE9D5SrYnL+4D42UU1pHh0kmcGxT/Rjq6mhtbZUWeaIzFUXcFSgBht7WFLYKPYfyuy7yYY0Ld9hU4eRm8/BZyoxg==";
 

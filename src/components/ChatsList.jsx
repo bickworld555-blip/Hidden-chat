@@ -676,6 +676,7 @@ export default function ChatsList({ onOpenChat, onStartCall, onGroups, groups = 
       <SelectContactModal
         isOpen={contactModalOpen}
         onNewGroup={() => onGroups?.(true)}
+        onStartCall={onStartCall}
         onClose={() => { setContactModalOpen(false); setCapturedPhoto(null); }}
         onSelectContact={(contact) => {
           if (capturedPhoto) sendCapturedPhoto(contact, capturedPhoto);

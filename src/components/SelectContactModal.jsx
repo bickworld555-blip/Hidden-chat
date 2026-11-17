@@ -6,6 +6,8 @@ import { exactHandleMatch, isSavedContact, matchesPerson, mergeSuggestions, save
 import Avatar from './Avatar.jsx';
 import StatusRing from './StatusRing.jsx';
 import VerifiedBadge from './VerifiedBadge.jsx';
+import PhoneContactsSection from './PhoneContactsSection.jsx';
+import { findPerson } from '../contactNames.js';
 
 const SUGGEST_DEBOUNCE_MS = 600;
 
@@ -56,7 +58,7 @@ function PersonRow({ person, online, onChat, onAdd, busy, trailing }) {
   );
 }
 
-export default function SelectContactModal({ isOpen, onClose, onSelectContact, onNewGroup }) {
+export default function SelectContactModal({ isOpen, onClose, onSelectContact, onNewGroup, onStartCall }) {
   const rawChats = useChatStore((state) => state.chats);
   const hiddenContacts = useChatStore((state) => state.hiddenContacts);
   const presence = useChatStore((state) => state.presence);
@@ -120,6 +122,19 @@ export default function SelectContactModal({ isOpen, onClose, onSelectContact, o
       setAddError(error.message || 'This invite link could not be opened.');
       setBusyId('');
     }
+  }
+
+  // A phonebook match (PhoneContactsSection): saved with the phonebook name unless a name was typed in the app, then
+  // opened; calls start from the chat that opens.
+  async function openFromPhone(person) {
+    if (!findPerson(person.id, useChatStore.getState())?.alias && person.phonebookName) {
+      await useChatStore.getState().renameContact(person.id, { name: person.phonebookName }).catch(() => {});
+    }
+    await openWith(person, { save: true });
+  }
+  async function callFromPhone(person, mode) {
+    await openFromPhone(person);
+    onStartCall?.(person.id, mode);
   }
 
   // Opens a thread. `save` puts the person in the contact book; otherwise it is a direct chat that only lives
@@ -283,6 +298,8 @@ export default function SelectContactModal({ isOpen, onClose, onSelectContact, o
               </div>
             )}
           </div>
+
+          <PhoneContactsSection query={query} busyId={busyId} onChat={openFromPhone} onCall={onStartCall ? callFromPhone : null} />
 
           {filteredRecent.length > 0 && (
             <>

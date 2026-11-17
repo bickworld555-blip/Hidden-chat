@@ -108,6 +108,8 @@ const LIVE_ACTIONS = new Set(['request', 'accept', 'decline', 'update', 'stop'])
 const MAX_CALL_PARTICIPANTS = 4;
 const LIVE_DURATIONS_MS = new Set(LIVE_DURATIONS.map((duration) => duration.ms));
 // Columns every user projection reads, so profile photos travel with the rest of the public profile.
+// Sync phone contacts: IDs per match request (the app sends larger phonebooks in batches).
+const CONTACT_MATCH_MAX = 500;
 const USER_COLUMNS = 'id, username, name, initials, color, avatar_disk_name, avatar_type, avatar_updated_at, deleted_at, number';
 const MAX_AVATAR_BYTES = 5 * 1024 * 1024;
 // Image formats accepted as profile photos, recognised by their leading bytes rather than the declared type.
@@ -2939,6 +2941,24 @@ export function createChatServer({
     await broadcastPresence(request.session.user_id);
     const link = (await linkRow.get(request.session.user_id, contactId));
     response.status(200).json({ ...publicUser(contact), saved: Boolean(link?.saved), hidden: false, alias: link?.alias ?? '' });
+  });
+
+  // Sync phone contacts (src/deviceContacts.js): which of these 10-digit IDs (found in the phone's contacts) are people
+  // here. Only the IDs arrive, never names or phone numbers; nothing is stored. The same rules as a lookup apply
+  // (Discoverable, blocks, not yourself), and syncs count against the lookup rate limit.
+  app.post('/api/v1/contacts/match', requireSession, express.json({ limit: '64kb' }), async (request, response) => {
+    const viewerId = request.session.user_id;
+    const numbers = [...new Set((Array.isArray(request.body?.numbers) ? request.body.numbers : []).map(accountNumberFrom).filter(Boolean))];
+    if (numbers.length > CONTACT_MATCH_MAX) return response.status(400).json({ error: `Send at most ${CONTACT_MATCH_MAX} IDs at a time.` });
+    if (!numbers.length) return response.json({ matches: [] });
+    const wait = abuseLimits ? await rateLimiter.hit(`lookups:${viewerId}`, abuseLimits.lookups) : 0;
+    if (wait) return response.status(429).set('Retry-After', String(Math.ceil(wait / 1000))).json({ error: `Too many lookups. Try again in ${Math.ceil(wait / 60000)} minutes.`, retryAfterMs: wait });
+    const rows = await db.prepare(`SELECT ${USER_COLUMNS} FROM users u
+      WHERE u.number IN (${numbers.map(() => '?').join(', ')}) AND u.id <> ? AND u.deleted_at IS NULL
+        AND (u.discoverable_by_username = 1 OR EXISTS (SELECT 1 FROM contacts c WHERE (c.owner_id = u.id AND c.contact_id = ?) OR (c.owner_id = ? AND c.contact_id = u.id)))
+        AND NOT EXISTS (SELECT 1 FROM blocks b WHERE (b.blocker_id = u.id AND b.blocked_id = ?) OR (b.blocker_id = ? AND b.blocked_id = u.id))`)
+      .all(...numbers, viewerId, viewerId, viewerId, viewerId, viewerId);
+    response.json({ matches: rows.map((row) => ({ number: row.number, user: publicUser(row) })) });
   });
 
   // Add to contacts / Edit contact (WhatsApp): the name this account shows for someone, everywhere (src/contactNames.js).

@@ -39,9 +39,11 @@ import org.json.JSONObject;
         @Permission(alias = "camera", strings = { Manifest.permission.CAMERA }),
         // Only Android 9 and older need this to save into Download/Hidden Messenger.
         @Permission(alias = "storage", strings = { Manifest.permission.WRITE_EXTERNAL_STORAGE }),
-        // Asked only when a feature needs it: location for sharing it, Bluetooth to route call audio to a headset.
-        // Nothing else is requested; contacts, phone numbers and SMS never (No Email. No Number.).
+        // Asked only when a feature needs it: location for sharing it, Bluetooth to route call audio to a headset,
+        // contacts when the person taps "Sync phone contacts" (DeviceContacts: only Hidden Messenger IDs found in
+        // them leave the phone, never names or phone numbers). No phone number or SMS permission (No Email. No Number.).
         @Permission(alias = "location", strings = { Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION }),
+        @Permission(alias = "contacts", strings = { Manifest.permission.READ_CONTACTS }),
         @Permission(alias = "bluetooth", strings = { Manifest.permission.BLUETOOTH_CONNECT })
     }
 )
@@ -461,6 +463,44 @@ public class HiddenNativePlugin extends Plugin {
                 call.reject(reason);
             }
         });
+    }
+
+    // --- Sync phone contacts (DeviceContacts, src/deviceContacts.js) ---
+
+    /** "granted", "denied" or "prompt" for reading the phone's contacts. */
+    @PluginMethod
+    public void contactsPermission(PluginCall call) {
+        JSObject result = new JSObject();
+        result.put("state", getPermissionState("contacts").toString().toLowerCase(java.util.Locale.ROOT));
+        call.resolve(result);
+    }
+
+    /** Asks for READ_CONTACTS (the person tapped Sync), then answers like contactsPermission. */
+    @PluginMethod
+    public void requestContacts(PluginCall call) {
+        if (getPermissionState("contacts") == PermissionState.GRANTED) { contactsPermission(call); return; }
+        requestPermissionForAlias("contacts", call, "contactsAnswered");
+    }
+
+    @PermissionCallback
+    private void contactsAnswered(PluginCall call) {
+        contactsPermission(call);
+    }
+
+    /** The phone's contacts ({ contacts: [...] }, DeviceContacts.read), off the main thread; rejected without permission. */
+    @PluginMethod
+    public void readDeviceContacts(PluginCall call) {
+        if (getPermissionState("contacts") != PermissionState.GRANTED) { call.reject("Contacts permission is off."); return; }
+        Context context = getContext().getApplicationContext();
+        new Thread(() -> {
+            try {
+                JSObject result = new JSObject();
+                result.put("contacts", DeviceContacts.read(context));
+                call.resolve(result);
+            } catch (Exception failure) {
+                call.reject(failure.getMessage() == null ? "Could not read contacts." : failure.getMessage());
+            }
+        }, "device-contacts").start();
     }
 
     // --- Over-the-air web updates (OtaUpdates, src/otaUpdates.js) ---
@@ -1245,6 +1285,23 @@ public class HiddenNativePlugin extends Plugin {
             result.put("contentType", type);
             call.resolve(result);
         }, call::reject);
+    }
+
+    /** Invite to Hidden Messenger: opens the phone's SMS app to this number with the text filled in; the person sends it. */
+    @PluginMethod
+    public void inviteSms(PluginCall call) {
+        String phone = call.getString("phone", "").replaceAll("[^0-9+]", "");
+        String text = call.getString("text", "");
+        if (phone.isEmpty() || getActivity() == null) { call.reject("No phone number."); return; }
+        Intent sms = new Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:" + phone)).putExtra("sms_body", text);
+        getActivity().runOnUiThread(() -> {
+            try {
+                getActivity().startActivity(sms);
+                call.resolve();
+            } catch (android.content.ActivityNotFoundException none) {
+                call.reject("No messaging app on this phone.");
+            }
+        });
     }
 
     @PluginMethod

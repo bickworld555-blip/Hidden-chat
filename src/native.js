@@ -141,6 +141,16 @@ export const nativeOpenCallSettings = (which) => invoke('openCallSettings', { wh
 // Over-the-air web updates (OtaUpdates.java, src/otaUpdates.js): check prepares a newer signed bundle for the next start
 // ('ready', 'current', 'none', 'needs-app-update', 'failed-before'; null on error or outside the app); ready confirms
 // that this copy started properly.
+// Sync phone contacts (DeviceContacts.java, src/deviceContacts.js). Outside the Android app: null.
+export const nativeContactsPermission = async () => (await invoke('contactsPermission'))?.state ?? null;
+export const nativeRequestContacts = async () => (await invoke('requestContacts'))?.state ?? null;
+/** The phone's contacts ([{ id, name, fields }]), or null outside the app or without permission. */
+export const nativeReadDeviceContacts = async () => {
+  const result = await invoke('readDeviceContacts');
+  return Array.isArray(result?.contacts) ? result.contacts : null;
+};
+/** Invite: the SMS app opens to the phone number with the text filled in (the person sends it). False outside the app. */
+export const nativeInviteSms = async (phone, text) => (await invoke('inviteSms', { phone, text })) !== null;
 export const nativeOtaCheck = async (origin) => (await invoke('otaCheck', { origin }))?.result ?? null;
 export const nativeOtaReady = () => invoke('otaReady');
 export const nativeOtaStatus = () => invoke('otaStatus');

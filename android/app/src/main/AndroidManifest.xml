@@ -238,6 +238,8 @@
     <!-- Saving received files on Android 9 and older (newer versions need no permission). -->
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <!-- Sync phone contacts (DeviceContacts.java): asked only when the person taps Sync. -->
+    <uses-permission android:name="android.permission.READ_CONTACTS" />
     <!-- No Email. No Number.: the app never reads contacts, phone numbers, SMS or call logs (server/no-identifiers.test.mjs
          keeps it so). Microphone, camera and location are asked by Android the first time a call, voice note, photo or
          location share needs them. Files and photos come through the system picker, which needs no permission; invites

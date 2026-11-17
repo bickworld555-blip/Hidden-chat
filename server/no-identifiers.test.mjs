@@ -1,8 +1,10 @@
 // No Email. No Number. Only Privacy. — checked on every run, so nothing brings them back by accident:
 //   * no table (Postgres migrations, after every later DROP, and the SQLite schema the server creates) has a column for
 //     a phone number, an email address, an address book or a hardware identifier;
-//   * the Android app declares no permission that reads contacts, phone numbers, SMS, call logs, accounts, other
-//     apps or background location — in its manifest and, when a build has run, in every merged manifest.
+//   * the Android app declares no permission that reads phone numbers, SMS, call logs, accounts, other apps or
+//     background location — in its manifest and, when a build has run, in every merged manifest. Contacts: only
+//     READ_CONTACTS, asked when the person taps "Sync phone contacts" (DeviceContacts.java); only Hidden Messenger IDs
+//     found there leave the phone (src/deviceContacts.js), never names or phone numbers, and the server stores none.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
@@ -13,7 +15,7 @@ import { createChatServer } from './index.mjs';
 const ROOT = new URL('..', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1');
 const IDENTIFIER = /(?:^|_)(?:phone|phones|mobile|msisdn|e164|email|emails|e_mail|mail_address|imei|imsi|android_id|advertising_id|mac_address|ip_address|address_book|contact_book|phonebook)(?:_|$)/i;
 const PROHIBITED_PERMISSIONS = [
-  'READ_CONTACTS', 'WRITE_CONTACTS', 'GET_ACCOUNTS', 'READ_PROFILE',
+  'WRITE_CONTACTS', 'GET_ACCOUNTS', 'READ_PROFILE',
   'READ_PHONE_STATE', 'READ_PHONE_NUMBERS', 'READ_PRIVILEGED_PHONE_STATE',
   'READ_SMS', 'RECEIVE_SMS', 'SEND_SMS', 'RECEIVE_MMS',
   'READ_CALL_LOG', 'WRITE_CALL_LOG', 'PROCESS_OUTGOING_CALLS',
@@ -84,7 +86,7 @@ function manifests() {
   return found;
 }
 
-test('the Android app asks for no contacts, phone, SMS, call log, account or background-location permission', () => {
+test('the Android app asks for no phone, SMS, call log, account or background-location permission; contacts only for Sync', () => {
   const files = manifests();
   assert.ok(existsSync(files[0]), 'the app manifest exists');
   for (const file of files) {
@@ -94,6 +96,8 @@ test('the Android app asks for no contacts, phone, SMS, call log, account or bac
     assert.deepEqual(declared.filter((name) => PROHIBITED_PERMISSIONS.includes(name)), [], file);
   }
   const plugin = readFileSync(join(ROOT, 'android', 'app', 'src', 'main', 'java', 'io', 'github', 'bickworld555', 'hiddenchat', 'HiddenNativePlugin.java'), 'utf8');
-  assert.equal(/ContactsContract|READ_CONTACTS|listContacts/.test(plugin), false, 'no code reads the address book');
+  assert.equal(/ContactsContract/.test(plugin), false, 'the address book is read only in DeviceContacts.java');
+  const sync = readFileSync(join(ROOT, 'src', 'deviceContacts.js'), 'utf8');
+  assert.ok(sync.includes('body: JSON.stringify({ numbers: unique.slice(start, start + CONTACT_MATCH_BATCH) })'), 'only IDs are sent to the server');
   assert.equal(existsSync(join(ROOT, 'android', 'app', 'src', 'main', 'java', 'io', 'github', 'bickworld555', 'hiddenchat', 'Invites.java')), false);
 });
