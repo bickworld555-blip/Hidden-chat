@@ -342,7 +342,7 @@ test('the UI wires the WhatsApp composer, display names, the live-location sheet
   assert.ok(chat.includes("action === 'voice' && (") && chat.includes("action === 'send' ? (") && chat.includes('insertEmoji(emoji)'), 'the FAB flips between mic and send; emoji insert at the caret');
   assert.ok(styles.includes('.composer-fab {') && styles.includes('.composer-emoji-tray {') && styles.includes('border-radius: 24px'), 'pill and FAB styling');
 
-  assert.ok(tools.includes('function DisplayNameEditor') && tools.includes('updateDisplayName(draft, sessionToken)') && tools.includes('className="user-handle"') && tools.includes('ID · {userId}'), 'the profile card edits the display name and shows the @handle and ID separately');
+  assert.ok(tools.includes('function DisplayNameEditor') && tools.includes('updateDisplayName(draft, sessionToken)') && tools.includes('className="user-handle"') && tools.includes('<AccountNumber number={user?.number} className="user-id" />'), 'the profile card edits the display name and shows the @handle and the account number separately');
   assert.ok(tools.includes('className="display-name-pencil"') && tools.includes('aria-label="Edit display name"') && styles.includes('.display-name-pencil {') && !styles.includes('.display-name-button svg { color: #89969b; opacity: 0;'), 'an always-visible pencil beside the name opens the editor');
   assert.ok(sidebar.includes('presentName(user)') && drawer.includes('presentName(chat)') && chat.includes('presentName(chat)') && !chat.includes('className="conversation-handle"'), 'headers show the display name; the chat header has no @handle line (like WhatsApp)');
 

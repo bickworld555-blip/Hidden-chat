@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import AccountNumber from './AccountNumber.jsx';
 import { Archive, AtSign, Bell, ChevronDown, LogOut, MessageSquarePlus, MoreHorizontal, Pin, Search, Settings2, UserRoundPlus, Users, Volume2, VolumeX } from 'lucide-react';
 import { useChatStore } from '../store.js';
 import Avatar from './Avatar.jsx';
@@ -108,7 +109,7 @@ export default function Sidebar({ onPair, onSounds, onNotifications, onAccountSe
         </div>
         {accountMenu && <div className="account-menu">
           <span className="menu-caption">SIGNED IN AS @{user?.username ?? userId}</span>
-          <span className="account-id">ID · {userId}</span>
+          <AccountNumber number={user?.number} className="account-id" />
           <button className="account-option" onClick={() => { setAccountMenu(false); onAccountSettings?.(); }}><Settings2 size={16} />Account</button>
           <button className="account-option" onClick={() => { setAccountMenu(false); onAccounts?.(); }}><Users size={16} />Switch account{accounts.length > 1 ? ` (${accounts.length})` : ''}</button>
           <button className="account-option add-account-option" onClick={() => { setAccountMenu(false); onOpenAuth?.(); }}><AtSign size={16} />Add another account</button>

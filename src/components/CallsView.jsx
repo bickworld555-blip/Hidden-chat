@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { getContactDisplayName } from '../contactNames.js';
 import CallAccessNotice from './CallAccessNotice.jsx';
 import { Phone, Video, ArrowDownLeft, ArrowUpRight, CalendarClock, Grid3x3, Heart, PhoneCall, PhoneMissed, Search, Users, VideoOff, X } from 'lucide-react';
 import { scheduledCallContent } from '../groupChat.js';
@@ -199,8 +200,9 @@ export default function CallsView({ onCall, onSheet, onSettings, onOpenChat }) {
         {rows.map((row) => {
           const chat = chats.find((c) => c.id === row.peerId);
           const group = Boolean(row.groupId || (row.participants?.length ?? 0) > 1);
-          const others = (row.participants ?? []).map((id) => chats.find((c) => c.id === id) ?? useChatStore.getState().knownPeople?.[id]).filter(Boolean).map(nameOf);
-          const name = group ? (row.groupName || others.slice(0, 3).join(', ') || 'Group call') : nameOf(chat);
+          // Names as this user saved them (src/contactNames.js), also for people not in the chat list.
+          const others = (row.participants ?? []).filter(Boolean).map((id) => getContactDisplayName(id, useChatStore.getState()));
+          const name = group ? (row.groupName || others.slice(0, 3).join(', ') || 'Group call') : chat ? nameOf(chat) : getContactDisplayName(row.peerId, useChatStore.getState());
           const video = row.mode === 'video';
           const Arrow = row.direction === 'incoming' ? ArrowDownLeft : ArrowUpRight;
           // Voice and video calls look different at a glance; a missed one has the crossed-out icon, in red.

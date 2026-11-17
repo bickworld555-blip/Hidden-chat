@@ -1,4 +1,5 @@
 import { acknowledgeEvents, acknowledgeSaved } from './deliveryAck.js';
+import { getContactDisplayName } from './contactNames.js';
 import { apiFetch, apiUrl, isNetworkFailure } from './api.js';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { cachedGroups, prefetchGroupDetails, saveGroups } from './groupCache.js';
@@ -889,8 +890,8 @@ export default function App() {
     if (!call?.peerId) return null;
     const found = chats.find((item) => item.id === call.peerId || item.username === call.peerId);
     if (found) return found;
-    if (call.peerInfo) return call.peerInfo;
-    return { id: call.peerId, name: `@${call.peerId}`, initials: '??', color: 'blue' };
+    const known = call.peerInfo ?? { id: call.peerId, initials: '??', color: 'blue' };
+    return { ...known, name: getContactDisplayName(call.peerId, useChatStore.getState(), call.peerInfo) };
   }, [chats, call?.peerId, call?.peerInfo]);
   const connection = useChatStore((state) => state.connection);
 

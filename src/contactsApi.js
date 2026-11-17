@@ -1,4 +1,5 @@
 import { apiFetch } from './api.js';
+import { accountNumberFrom } from './accountNumber.js';
 // People lookup and chat links, shared by the chat list, sidebar and contact picker.
 
 async function readJson(response, fallback) {
@@ -7,10 +8,16 @@ async function readJson(response, fallback) {
   return data;
 }
 
-// People are found by their exact @username only (no prefixes, no display names), so nobody can list accounts.
+// People are found by their exact @username or their 10-digit account number (src/accountNumber.js) only (no
+// prefixes, no display names), so nobody can list accounts.
 export const USERNAME_SHAPE = /^[a-z0-9_]{3,24}$/;
-/** The handle a search box holds ("@Rahim_42 " -> "rahim_42"), or '' when it can't be a whole username. */
+/**
+ * What a search box can look someone up by: an account number ("482 193 7765" -> "4821937765", which the server
+ * reads as a number) or a whole username ("@Rahim_42 " -> "rahim_42"); '' when it is neither.
+ */
 export function handleFrom(query) {
+  const number = accountNumberFrom(query);
+  if (number) return number;
   const handle = String(query ?? '').trim().replace(/^@/, '').toLowerCase();
   return USERNAME_SHAPE.test(handle) ? handle : '';
 }

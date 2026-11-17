@@ -1,5 +1,6 @@
 import { apiFetch, isNetworkFailure } from '../api.js';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useContactNames } from '../useContactNames.js';
 import {
   ArrowLeft, MessageCircle, ShieldCheck, UserMinus, Bell, BellOff, CalendarClock, Check, ChevronDown, Clock, Copy, Download, Flag, Link2, LockKeyhole, LogOut, Megaphone, MinusCircle, Paperclip,
   Camera, ListPlus, Mic, Smile, Pencil, Phone, Pin, PinOff, QrCode, Search, SendHorizontal, Share2, Star, Timer, Trash2, UserPlus, Users, Video, X,
@@ -425,7 +426,15 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
   const [groups, setGroups] = useState([]);
   const [selected, setSelected] = useState(initialCreate ? '' : initialGroupId);
   const pendingMessages = usePending(userId, selected);
-  const [group, setGroup] = useState(null);
+  const [rawGroup, setGroup] = useState(null);
+  // Members as this user knows them: a saved contact name wins over the name a member goes by (WhatsApp), in every
+  // member list, sender label and call picker below; renaming a contact updates them at once. `profileName` keeps
+  // the member's own name.
+  const contactName = useContactNames();
+  const group = useMemo(() => (rawGroup && {
+    ...rawGroup,
+    members: (rawGroup.members ?? []).map((member) => ({ ...member, profileName: member.profileName ?? member.name, name: contactName(member) })),
+  }), [rawGroup, contactName]);
   const [messages, setMessages] = useState([]);
   // Whether every member can receive end-to-end encrypted messages; otherwise the group shows a warning.
   const [groupSecurity, setGroupSecurity] = useState(null);

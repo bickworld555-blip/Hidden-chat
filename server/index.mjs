@@ -1,4 +1,4 @@
-import { createHash, createHmac, randomBytes, randomUUID, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto';
+import { createHash, createHmac, randomBytes, randomInt, randomUUID, scrypt as scryptCallback, timingSafeEqual } from 'node:crypto';
 import { copyFileSync, createWriteStream, existsSync, linkSync, mkdirSync } from 'node:fs';
 import { readdir, stat, unlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
@@ -13,6 +13,7 @@ import express from 'express';
 import { WebSocket, WebSocketServer } from 'ws';
 import { contentDisposition, isInlineSafe, MAX_MEDIA_BYTES, resolveContentType, sanitizeFilename, SINGLE_REQUEST_MEDIA_BYTES } from './media.mjs';
 import { isDisappearingDuration } from '../src/disappearing.js';
+import { accountNumberFrom, newAccountNumber } from '../src/accountNumber.js';
 import { DEFAULT_ICE_SERVERS, normalizeIceServers, TURN_CREDENTIAL_TTL_SECONDS, turnServerFromEnv } from '../src/rtc.js';
 import { DOWNLOAD_LINK_TTL_MS, UPLOAD_CHUNK_BYTES, UPLOAD_STALE_MS } from '../src/transfer.js';
 import { LIVE_DURATIONS } from '../src/geo.js';
@@ -106,7 +107,7 @@ const LIVE_ACTIONS = new Set(['request', 'accept', 'decline', 'update', 'stop'])
 const MAX_CALL_PARTICIPANTS = 4;
 const LIVE_DURATIONS_MS = new Set(LIVE_DURATIONS.map((duration) => duration.ms));
 // Columns every user projection reads, so profile photos travel with the rest of the public profile.
-const USER_COLUMNS = 'id, username, name, initials, color, avatar_disk_name, avatar_type, avatar_updated_at, deleted_at';
+const USER_COLUMNS = 'id, username, name, initials, color, avatar_disk_name, avatar_type, avatar_updated_at, deleted_at, number';
 const MAX_AVATAR_BYTES = 5 * 1024 * 1024;
 // Image formats accepted as profile photos, recognised by their leading bytes rather than the declared type.
 const AVATAR_SIGNATURES = [
@@ -466,6 +467,9 @@ export function createChatServer({
   if (!userColumns.has('avatar_disk_name')) db.exec('ALTER TABLE users ADD COLUMN avatar_disk_name TEXT');
   if (!userColumns.has('avatar_type')) db.exec('ALTER TABLE users ADD COLUMN avatar_type TEXT');
   if (!userColumns.has('avatar_updated_at')) db.exec('ALTER TABLE users ADD COLUMN avatar_updated_at INTEGER');
+  // Account numbers (src/accountNumber.js; Postgres: migration 037).
+  if (!userColumns.has('number')) db.exec('ALTER TABLE users ADD COLUMN number TEXT');
+  db.exec('CREATE UNIQUE INDEX IF NOT EXISTS users_number ON users(number)');
   if (!userColumns.has('last_seen_at')) db.exec('ALTER TABLE users ADD COLUMN last_seen_at INTEGER');
   if (!userColumns.has('last_seen_privacy')) {
     db.exec("ALTER TABLE users ADD COLUMN last_seen_privacy TEXT NOT NULL DEFAULT 'everyone' CHECK (last_seen_privacy IN ('everyone', 'contacts', 'nobody'))");
@@ -544,6 +548,27 @@ export function createChatServer({
   const insertUser = db.prepare(`INSERT INTO users(id, username, name, initials, color, created_at)
     VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`);
   const seedContact = db.prepare("INSERT INTO contacts(owner_id, contact_id, created_at) VALUES (?, ?, ?) ON CONFLICT DO NOTHING");
+  // Account numbers (src/accountNumber.js): a random unique 10-digit public ID per account, set once. A collision (1 in
+  // billions per pair) just draws again. Accounts from before numbers get theirs at the next start.
+  async function assignAccountNumber(userId) {
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const number = newAccountNumber(randomInt);
+      try {
+        await db.prepare('UPDATE users SET number = ? WHERE id = ? AND number IS NULL').run(number, userId);
+        return number;
+      } catch (error) {
+        if (error.code === '23505' || error.code === 'ERR_SQLITE_CONSTRAINT_UNIQUE' || error.errcode === 2067) continue;
+        throw error;
+      }
+    }
+    throw new Error('Could not assign an account number.');
+  }
+  async function backfillAccountNumbers() {
+    const missing = await db.prepare('SELECT id FROM users WHERE number IS NULL AND deleted_at IS NULL').all();
+    for (const row of missing) await assignAccountNumber(row.id);
+    if (missing.length) console.log(`Gave ${missing.length} account${missing.length === 1 ? '' : 's'} an account number.`);
+  }
+
   async function seedDemoUsers() {
     if (!seedDemo) return;
     for (const profile of Object.values(DEMO_USERS)) {
@@ -949,7 +974,7 @@ export function createChatServer({
   function publicUser(row) {
     const avatar = row.avatar_disk_name ? `/api/v1/users/${encodeURIComponent(row.id)}/avatar?v=${row.avatar_updated_at ?? 0}` : null;
     if (row.deleted_at) return { id: row.id, username: row.username, name: 'Deleted account', initials: '?', color: row.color, avatar: null, deleted: true };
-    return { id: row.id, username: row.username, name: row.name, initials: row.initials, color: row.color, avatar, ...(verifiedAccounts.has(row.id) ? { verified: true } : {}) };
+    return { id: row.id, username: row.username, name: row.name, initials: row.initials, color: row.color, avatar, ...(row.number ? { number: row.number } : {}), ...(verifiedAccounts.has(row.id) ? { verified: true } : {}) };
   }
 
   async function hashPassword(password) {
@@ -1831,6 +1856,7 @@ export function createChatServer({
       }
       throw error;
     }
+    await assignAccountNumber(userId);
     const session = (await issueSession(userId, deviceNameFromUserAgent(request.get('user-agent'))));
     response.status(201).json(session);
   });
@@ -2808,17 +2834,19 @@ export function createChatServer({
   // or one blocked either way all get the same 404. People already linked with you still find you.
   const LOOKUP_MISSING = Object.freeze({ error: 'No one on Hidden Messenger has that username.', code: 'not_found' });
   app.post('/api/v1/users/lookup', requireSession, async (request, response) => {
+    // By @username or by account number (10 digits, src/accountNumber.js); both follow "Discoverable" and blocks.
+    const number = accountNumberFrom(request.body?.number ?? request.body?.username);
     const raw = typeof request.body?.username === 'string' ? request.body.username.trim().replace(/^@/, '') : '';
-    const username = normalizeUsername(raw);
-    if (!USERNAME_PATTERN.test(username)) return response.status(400).json({ error: 'Type the full username, like @rahim_42.' });
+    const username = number ? '' : normalizeUsername(raw);
+    if (!number && !USERNAME_PATTERN.test(username)) return response.status(400).json({ error: 'Type the full username, like @rahim_42, or a 10-digit ID.' });
     const viewerId = request.session.user_id;
     const wait = abuseLimits ? await rateLimiter.hit(`lookups:${viewerId}`, abuseLimits.lookups) : 0;
     if (wait) return response.status(429).set('Retry-After', String(Math.ceil(wait / 1000))).json({ error: `Too many lookups. Try again in ${Math.ceil(wait / 60000)} minutes.`, retryAfterMs: wait });
     const row = await db.prepare(`SELECT ${USER_COLUMNS} FROM users u
-      WHERE lower(u.username) = lower(?) AND u.id <> ? AND u.deleted_at IS NULL
+      WHERE ${number ? 'u.number = ?' : 'lower(u.username) = lower(?)'} AND u.id <> ? AND u.deleted_at IS NULL
         AND (u.discoverable_by_username = 1 OR EXISTS (SELECT 1 FROM contacts c WHERE (c.owner_id = u.id AND c.contact_id = ?) OR (c.owner_id = ? AND c.contact_id = u.id)))
         AND NOT EXISTS (SELECT 1 FROM blocks b WHERE (b.blocker_id = u.id AND b.blocked_id = ?) OR (b.blocker_id = ? AND b.blocked_id = u.id))`)
-      .get(username, viewerId, viewerId, viewerId, viewerId, viewerId);
+      .get(number || username, viewerId, viewerId, viewerId, viewerId, viewerId);
     if (!row) return response.status(404).json(LOOKUP_MISSING);
     response.json({ user: publicUser(row) });
   });
@@ -3820,6 +3848,7 @@ export function createChatServer({
         if (migrate && db.migrate && await db.migrate()) console.log('Created the Hidden Messenger database schema.');
         await db.ready?.();
         await seedDemoUsers();
+        await backfillAccountNumbers();
         await discardStaleUploads();
         // History from before the queue (delivered messages, anything past 30 days) leaves the server at start.
         await deliveryQueue.sweep();

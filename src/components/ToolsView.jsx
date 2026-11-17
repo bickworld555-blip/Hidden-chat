@@ -1,4 +1,5 @@
 import { setMediaSaveEnabled, useMediaSave } from '../mediaSave.js';
+import AccountNumber from './AccountNumber.jsx';
 import { nativeGetAppIcon, nativeOpenExternal, nativeSetAppIcon, nativeShell } from '../native.js';
 import { APP_ICONS, appIconLabel } from '../appIcons.js';
 import { THEME_CHOICES } from '../appearance.js';
@@ -162,7 +163,7 @@ export function DisplayNameEditor({ user, userId }) {
       </span>
       {user && !hasCustomDisplayName(user) && <small className="display-name-hint">Add a display name</small>}
       {(!user || hasCustomDisplayName(user)) && <small className="user-handle">@{user?.username ?? userId}</small>}
-      <span className="user-id">ID · {userId}</span>
+      <AccountNumber number={user?.number} className="user-id" />
     </div>
   );
 }
