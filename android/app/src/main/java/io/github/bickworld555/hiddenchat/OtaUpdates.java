@@ -4,7 +4,6 @@ import android.app.Activity;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.content.pm.PackageInfo;
-import android.os.Build;
 import android.util.Base64;
 import java.io.File;
 import java.io.FileInputStream;
@@ -75,10 +74,12 @@ final class OtaUpdates {
         return new File(root(context), version);
     }
 
+    // Which APK is installed: its install/update time. Every build has versionCode 1 and versionName 1.0 (build.gradle),
+    // so neither those nor Capacitor's own new-binary check notice a new APK; the update time changes with each install.
     private static long appVersion(Context context) {
         try {
             PackageInfo info = context.getPackageManager().getPackageInfo(context.getPackageName(), 0);
-            return Build.VERSION.SDK_INT >= 28 ? info.getLongVersionCode() : info.versionCode;
+            return info.lastUpdateTime;
         } catch (Exception e) {
             return -1;
         }

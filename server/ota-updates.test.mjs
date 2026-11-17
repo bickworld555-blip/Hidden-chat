@@ -86,6 +86,7 @@ test('the app and the Android shell share the native API number, the key and the
   assert.ok(java.includes('Signature.getInstance("SHA256withECDSA")'), 'the shell verifies the signature itself');
   assert.match(java, /if \(boots < 2\) \{[\s\S]*?\/\/ Started with this bundle before and it never confirmed/, 'a bundle that never confirmed is rolled back');
   assert.ok(java.includes('if (p.getLong("apk", -2) != installed)'), 'a new APK starts from its own code');
+  assert.ok(java.includes('return info.lastUpdateTime;'), 'every build is versionCode 1: the install time tells APKs apart');
   assert.ok(java.includes('copyIfMatches(') && java.includes('download(origin + "/ota/files/" + sha'), 'only changed files are downloaded');
   const activity = readFileSync(new URL('../android/app/src/main/java/io/github/bickworld555/hiddenchat/AppActivity.java', import.meta.url), 'utf8');
   assert.ok(activity.indexOf('OtaUpdates.beforeBridge(this);') < activity.indexOf('super.onCreate(savedInstanceState);'), 'before the bridge picks the copy');
