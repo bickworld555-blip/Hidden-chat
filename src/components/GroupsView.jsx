@@ -4,6 +4,7 @@ import { useContactNames } from '../useContactNames.js';
 import { findPerson } from '../contactNames.js';
 import ContactNameSheet from './ContactNameSheet.jsx';
 import {
+  EllipsisVertical, ChevronRight,
   ArrowLeft, MessageCircle, ShieldCheck, UserMinus, Bell, BellOff, CalendarClock, Check, ChevronDown, Clock, Copy, Download, Flag, Link2, LockKeyhole, LogOut, Megaphone, MinusCircle, Paperclip,
   Camera, ListPlus, Mic, Smile, Pencil, Phone, Pin, PinOff, QrCode, Search, SendHorizontal, Share2, Star, Timer, Trash2, UserPlus, Users, Video, X,
   CheckCheck, Info, UserPen,
@@ -23,7 +24,7 @@ import { StickerMessage, StickerPalette } from './parity/Stickers.jsx';
 import { ComposerAssist, MentionText } from './parity/ComposerAssist.jsx';
 import PinnedBanner from './parity/PinnedBanner.jsx';
 import { ProductCard, parseProductContent } from './parity/ProductCard.jsx';
-import { GroupAdminSettings, JoinGroupSheet, MemberAdminActions, inviteCodeFrom } from './parity/GroupAdmin.jsx';
+import { GroupAdminSettings, GroupLinkScreen, GroupPermissionsScreen, JoinGroupSheet, MemberAdminActions, inviteCodeFrom } from './parity/GroupAdmin.jsx';
 import { handleFrom, lookupUsername } from '../contactsApi.js';
 import { uploadFile } from '../upload.js';
 import { attachmentContent, sealForUpload } from '../mediaCrypto.js';
@@ -49,7 +50,7 @@ import { exportGroupChat, parseScheduledCall, scheduledCallContent, senderColor,
 import { setGroupMuted, setViewingGroup, useMutedGroups } from '../groupPrefs.js';
 import Avatar from './Avatar.jsx';
 import GroupPhoto from './GroupPhoto.jsx';
-import NewGroupFlow from './NewGroupFlow.jsx';
+import NewGroupFlow, { MemberPicker, pickedPerson } from './NewGroupFlow.jsx';
 import { prepareAvatarBlob, uploadGroupAvatar } from '../avatar.js';
 import MediaRenderer from './MediaRenderer.jsx';
 import VoiceMessage from './VoiceMessage.jsx';
@@ -454,7 +455,11 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
   const [infoTab, setInfoTab] = useState('members');
   const [infoCallMenu, setInfoCallMenu] = useState(false);
   const [memberSearchOpen, setMemberSearchOpen] = useState(false);
-  const [addingMember, setAddingMember] = useState(false);
+  // Full screens over group info (WhatsApp's): 'permissions', 'link' (Group link) or 'add' (Add members).
+  const [groupScreen, setGroupScreen] = useState('');
+  const [adding, setAdding] = useState([]);
+  // The chat header's menu: '' (closed), 'main' or 'more'.
+  const [chatMenu, setChatMenu] = useState('');
   const [tagDraft, setTagDraft] = useState(null);
   const [infoSheet, setInfoSheet] = useState('');
   const [recordingVoice, setRecordingVoice] = useState(false);
@@ -472,8 +477,6 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
   useEffect(() => { fetchCallTopology(token).then((value) => setRelay(value.sfu)).catch(() => setRelay(null)); }, [token]);
   const [scheduling, setScheduling] = useState(false);
   const [richComposer, setRichComposer] = useState('');
-  const [query, setQuery] = useState('');
-  const [results, setResults] = useState([]);
   const [picked, setPicked] = useState([]);
   const [draft, setDraft] = useState('');
   const activityRef = useRef(null);
@@ -597,16 +600,6 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
     if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
   }, [messages.length, selected, settings]);
 
-  useEffect(() => {
-    if (!handleFrom(query) || !settings) { setResults([]); return undefined; }
-    const controller = new AbortController();
-    const timer = setTimeout(() => {
-      lookupUsername(token, query, { signal: controller.signal })
-        .then((person) => setResults(person && person.id !== userId ? [person] : []))
-        .catch((caught) => { if (caught.name !== 'AbortError') setError(caught.message); });
-    }, 600);
-    return () => { clearTimeout(timer); controller.abort(); };
-  }, [query, settings, token, userId]);
 
   useEffect(() => {
     if (!notice) return undefined;
@@ -731,7 +724,9 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
 
   function goBack() {
     if (callPicker || scheduling) { setCallPicker(''); setScheduling(false); }
-    else if (settings) { setSettings(false); setQuery(''); setMemberFilter(''); setConfirming(''); setReportReason(''); }
+    else if (groupScreen) { setGroupScreen(''); setAdding([]); }
+    else if (chatMenu) setChatMenu('');
+    else if (settings) { setSettings(false); setMemberFilter(''); setConfirming(''); setReportReason(''); }
     else if (creating) { setCreating(false); setPicked([]); }
     else if (selected) { setSelected(''); setGroup(null); setMessages([]); setCallMenu(false); }
     else onClose();
@@ -796,6 +791,26 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
     setCreating(true);
     setPicked(others.map((member) => ({ id: member.id, username: member.username, name: member.name, avatar: member.avatar, color: member.color, initials: member.initials })));
   };
+
+  const openInfo = (tab, confirm = '') => {
+    setChatMenu('');
+    setSettings(true);
+    setInfoTab(tab);
+    setConfirming(confirm);
+  };
+
+  // Add members: everyone picked is added one by one (the server takes one per request); a refusal is reported.
+  const addPicked = () => perform(async () => {
+    let added = 0;
+    for (const person of adding) {
+      await groupRequest(token, `${groupPath}/members`, { method: 'POST', body: { userId: person.id } });
+      added += 1;
+    }
+    setAdding([]);
+    setGroupScreen('');
+    await refresh(new AbortController().signal);
+    setNotice(added === 1 ? 'Added 1 member.' : `Added ${added} members.`);
+  });
 
   const exportChat = () => {
     const blob = new Blob([exportGroupChat(group, messages, userId)], { type: 'text/plain;charset=utf-8' });
@@ -919,7 +934,7 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
           ) : settings && group && !creating ? (
             <span className="groups-info-header-tools">
               <button type="button" onClick={() => setInfoSheet('lists')} aria-label="Add to lists" title="Add to lists"><ListPlus size={22} /></button>
-              {group.role === 'admin' && <button type="button" onClick={openGroupQr} disabled={busy} aria-label="Group QR code" title="Group QR code"><QrCode size={22} /></button>}
+              {group.role === 'admin' && <button type="button" onClick={() => setGroupScreen('link')} aria-label="Invite" title="Invite"><Link2 size={22} /></button>}
             </span>
           ) : <h2>{creating ? 'New group' : 'Groups'}</h2>}
           {inConversation && onStartGroupCall && (
@@ -939,6 +954,29 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
                   <li className="groups-menu-divider" role="separator" />
                   <li><button type="button" role="menuitem" onClick={() => { setCallMenu(false); setCallPicker('video'); }}><Users size={18} /> Select people</button></li>
                   <li><button type="button" role="menuitem" onClick={() => { setCallMenu(false); setScheduling(true); }}><CalendarClock size={18} /> Schedule call</button></li>
+                </ul>
+              )}
+            </span>
+          )}
+          {inConversation && <button type="button" onClick={() => setInfoSheet('lists')} aria-label="Add to list" title="Add to list"><ListPlus size={22} /></button>}
+          {inConversation && (
+            <span className="groups-call-menu-wrap">
+              <button type="button" onClick={() => setChatMenu((open) => (open ? '' : 'main'))} aria-label="More options" aria-expanded={Boolean(chatMenu)}><EllipsisVertical size={22} /></button>
+              {chatMenu === 'main' && (
+                <ul className="groups-call-menu groups-chat-menu" role="menu" aria-label="More options">
+                  <li><button type="button" role="menuitem" onClick={() => openInfo('members')}>Group info</button></li>
+                  <li><button type="button" role="menuitem" onClick={() => openInfo('media')}>Group media</button></li>
+                  <li><button type="button" role="menuitem" onClick={() => { setChatMenu(''); setGroupMuted(userId, selected, !muted); }}>{muted ? 'Unmute notifications' : 'Mute notifications'}</button></li>
+                  <li><button type="button" role="menuitem" onClick={() => openInfo('settings')}>Disappearing messages</button></li>
+                  <li><button type="button" role="menuitem" className="groups-menu-more" onClick={() => setChatMenu('more')}>More <ChevronRight size={18} /></button></li>
+                </ul>
+              )}
+              {chatMenu === 'more' && (
+                <ul className="groups-call-menu groups-chat-menu" role="menu" aria-label="More">
+                  <li><button type="button" role="menuitem" onClick={() => openInfo('settings', 'clear')}>Clear chat</button></li>
+                  <li><button type="button" role="menuitem" onClick={() => { setChatMenu(''); exportChat(); }} disabled={!messages.length}>Export chat</button></li>
+                  <li><button type="button" role="menuitem" onClick={() => openInfo('settings', 'report')}>Report</button></li>
+                  <li><button type="button" role="menuitem" onClick={() => openInfo('settings', 'leave')}>Exit group</button></li>
                 </ul>
               )}
             </span>
@@ -1039,9 +1077,9 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
             </div>
             <button type="button" className="groups-info-row" onClick={() => setInfoSheet('lists')}><ListPlus size={22} /><span>Add to lists</span></button>
             <div className="groups-tabs" role="tablist" aria-label="Group information">
-              <button type="button" role="tab" aria-selected={infoTab === 'members'} onClick={() => { setInfoTab('members'); setQuery(''); }}>Members</button>
-              <button type="button" role="tab" aria-selected={infoTab === 'media'} onClick={() => { setInfoTab('media'); setQuery(''); }}>Media</button>
-              <button type="button" role="tab" aria-selected={infoTab === 'settings'} onClick={() => { setInfoTab('settings'); setQuery(''); }}>Settings</button>
+              <button type="button" role="tab" aria-selected={infoTab === 'members'} onClick={() => setInfoTab('members')}>Members</button>
+              <button type="button" role="tab" aria-selected={infoTab === 'media'} onClick={() => setInfoTab('media')}>Media</button>
+              <button type="button" role="tab" aria-selected={infoTab === 'settings'} onClick={() => setInfoTab('settings')}>Settings</button>
             </div>
 
             {infoTab === 'members' && <div className="groups-tab-body">
@@ -1056,15 +1094,14 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
                 ) : <button type="button" className="groups-icon-button groups-members-search" onClick={openMemberSearch} aria-label="Search members"><Search size={21} /></button>}
               </div>
               {(group.role === 'admin' || group.membersCanAdd) && <>
-                <button type="button" className="groups-add-row" onClick={() => setAddingMember((open) => !open)} aria-expanded={addingMember}>
+                <button type="button" className="groups-add-row" onClick={() => setGroupScreen('add')}>
                   <span className="groups-add-icon"><UserPlus size={22} /></span><strong>Add members</strong>
                 </button>
-                {addingMember && <label className="groups-add-member"><Search size={18} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Add member by username" aria-label="Add a member" autoFocus /></label>}
-                {results.filter((person) => !group.members.some((item) => item.id === person.id)).map((person) => (
-                  <button type="button" className="groups-row" key={person.id} disabled={busy} onClick={() => perform(async () => { await groupRequest(token, `${groupPath}/members`, { method: 'POST', body: { userId: person.id } }); setQuery(''); })}>
-                    <Avatar {...person} size="small" /><span><strong>Add {person.name}</strong><small>@{person.username}</small></span>
+                {group.role === 'admin' && (
+                  <button type="button" className="groups-add-row" onClick={() => setGroupScreen('link')}>
+                    <span className="groups-add-icon"><Link2 size={22} /></span><strong>Invite via link or QR code</strong>
                   </button>
-                ))}
+                )}
               </>}
               {visibleMembers.map((member) => (
                 <div className="groups-member" key={member.id}>
@@ -1103,6 +1140,7 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
             )}
 
             {infoTab === 'settings' && <div className="groups-tab-body">
+              {group.role === 'admin' && <SettingsRow icon={ShieldCheck} title="Group permissions" detail="Who can edit, send messages and add members" onClick={() => setGroupScreen('permissions')} />}
               <GroupAdminSettings key={group.id} group={group} token={token} onChanged={() => refresh(new AbortController().signal)} onNotice={setNotice} onError={setError} />
               <SettingsRow icon={muted ? BellOff : Bell} title="Notifications" detail={muted ? 'Muted · unread count stays grey and out of the app badge' : 'All'} onClick={() => setGroupMuted(userId, selected, !muted)}>
                 <span className={`groups-switch ${muted ? '' : 'is-on'}`} role="switch" aria-checked={!muted} aria-label="Group notifications" />
@@ -1354,6 +1392,23 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
         {personSheet && <MemberSheet member={personSheet} group={group} userId={userId} token={token} onMessage={onMessagePerson} onCall={onCallPerson}
           onChanged={(notice) => { setNotice(notice); refresh(new AbortController().signal); }} onClose={() => setPersonSheet(null)} />}
         {infoSheet === 'qr' && group?.inviteCode && <GroupQrSheet group={group} onShare={shareGroup} onClose={() => setInfoSheet('')} />}
+        {group && groupScreen === 'permissions' && (
+          <GroupPermissionsScreen group={group} token={token} onBack={() => setGroupScreen('')}
+            onChanged={() => refresh(new AbortController().signal)} onNotice={setNotice} onError={setError} />
+        )}
+        {group && groupScreen === 'link' && (
+          <GroupLinkScreen group={group} token={token} onBack={() => setGroupScreen('')}
+            onChanged={() => refresh(new AbortController().signal)} onNotice={setNotice} onError={setError}
+            onShowQr={() => { setGroupScreen(''); openGroupQr(); }} onEditPermissions={() => setGroupScreen('permissions')} />
+        )}
+        {group && groupScreen === 'add' && (
+          <MemberPicker token={token} userId={userId} title="Add members" picked={adding} busy={busy}
+            excludeIds={group.members.map((member) => member.id)}
+            onToggle={(person) => setAdding((current) => (current.some((item) => item.id === person.id) ? current.filter((item) => item.id !== person.id) : [...current, pickedPerson(person)]))}
+            onBack={() => { setGroupScreen(''); setAdding([]); }} onNext={addPicked} nextLabel="Add members" nextIcon={<Check size={26} />}
+            actions={group.role === 'admin' ? [{ icon: Link2, label: 'Invite via link or QR code', onClick: () => setGroupScreen('link') }] : []}
+            notice={group.role === 'admin' ? '' : 'Group admins allow members to add others in Group permissions.'} />
+        )}
         {group && scheduling && <ScheduleCallSheet busy={busy} onSchedule={scheduleCall} onClose={() => setScheduling(false)} />}
         {group && richComposer && (() => {
           const Composer = richComposer === 'poll' ? PollComposer : EventComposer;

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, ArrowRight, Camera, Check, Search, Settings, Smile, Timer, UserPlus, X } from 'lucide-react';
 import { useChatStore } from '../store.js';
-import { matchesPerson, savedContacts, unifiedContacts, unsavedThreads } from '../contactBook.js';
+import { matchesPerson, memberSections, savedContacts, unifiedContacts, unsavedThreads } from '../contactBook.js';
 import { findPerson } from '../contactNames.js';
 import { forwardSections } from '../forwarding.js';
 import { handleFrom, lookupUsername } from '../contactsApi.js';
@@ -21,6 +21,7 @@ const NAME_EMOJI = ['😀', '😂', '😍', '🥳', '😎', '🙏', '❤️', '�
 const DEFAULT_PERMISSIONS = Object.freeze({ onlyAdminsEdit: false, onlyAdminsSend: false, membersCanAdd: false, approveJoins: false });
 
 const label = (person) => person.name ?? (person.username ? `@${person.username}` : 'Unknown');
+
 
 function MemberRow({ person, picked, onToggle }) {
   return (
@@ -44,21 +45,126 @@ function Toggle({ title, detail, on, onChange }) {
   );
 }
 
+const NO_IDS = Object.freeze([]);
+const NO_ACTIONS = Object.freeze([]);
+
+/** A picked person as the pickers keep them: enough to show a chip and an avatar. */
+export const pickedPerson = (person) => ({ id: person.id, name: label(person), username: person.username, avatar: person.avatar, color: person.color, initials: person.initials });
+
 /**
- * `request(path, options)`: the groups API (GroupsView's groupRequest). `onCreated(groupId, warning)`: the group exists;
- * `warning` names a setting that could not be applied (the group itself is fine).
+ * Pick people from your contacts, as WhatsApp's "Add members" does: a search box, the chosen people as chips, action
+ * rows (`actions`: [{ icon, label, onClick }], such as "Invite via link or QR code"), then "Frequently contacted",
+ * "Contacts on Hidden Messenger" and "Recent chats" with a round check each (every person once, contactBook.js
+ * memberSections), and a round button that moves on. Used by New group (step 1) and by Add members in group info.
+ * `excludeIds`: people who cannot be picked (already in the group).
  */
-export default function NewGroupFlow({ token, userId, initialMembers = [], request, onClose, onCreated }) {
+export function MemberPicker({ token, userId, title, picked, onToggle, onBack, onNext, nextLabel = 'Next', nextIcon = <ArrowRight size={24} />, busy = false, excludeIds = NO_IDS, actions = NO_ACTIONS, notice = '' }) {
   useContactNames(); // re-render when a saved name changes
   const phone = usePhoneContacts();
   const chats = useChatStore((state) => state.chats);
   const hiddenContacts = useChatStore((state) => state.hiddenContacts);
   const messages = useChatStore((state) => state.messages);
-
-  const [step, setStep] = useState('members');
-  const [picked, setPicked] = useState(() => initialMembers);
   const [query, setQuery] = useState('');
   const [found, setFound] = useState([]);
+  // Keyed by the ids themselves, not the array: a new array each render must not restart the lookup below.
+  const excludedKey = excludeIds.join(',');
+  const excluded = useMemo(() => new Set([userId, ...excludedKey.split(',').filter(Boolean)]), [userId, excludedKey]);
+
+  const contacts = useMemo(() => unifiedContacts(savedContacts(chats, hiddenContacts, { userId }), phone.registered,
+    { userId, aliasFor: (id) => findPerson(id, useChatStore.getState())?.alias }), [chats, hiddenContacts, phone.registered, userId]);
+  const recent = useMemo(() => {
+    const listed = new Set(contacts.map((person) => person.id));
+    return unsavedThreads(chats, { userId }).filter((person) => !listed.has(person.id));
+  }, [chats, contacts, userId]);
+  const frequent = useMemo(() => {
+    const direct = (chats ?? []).filter((chat) => chat?.id && !chat.group && !chat.deleted && chat.id !== userId);
+    return forwardSections(direct, messages, userId).find((section) => section.id === 'frequent')?.chats ?? [];
+  }, [chats, messages, userId]);
+
+  const needle = query.trim().toLowerCase();
+  const visible = (list) => list.filter((person) => !excluded.has(person.id)
+    && (matchesPerson(person, needle) || (person.phonebookName ?? '').toLowerCase().includes(needle)));
+
+  // Someone not in the lists: their exact @username or 10-digit ID.
+  useEffect(() => {
+    const handle = handleFrom(query);
+    if (!handle || !token) { setFound([]); return undefined; }
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      lookupUsername(token, handle, { signal: controller.signal })
+        .then((person) => setFound(person && !excluded.has(person.id) ? [person] : []))
+        .catch(() => setFound([]));
+    }, 500);
+    return () => { clearTimeout(timer); controller.abort(); };
+  }, [query, token, excluded]);
+
+  const isPicked = (person) => picked.some((item) => item.id === person.id);
+  const sections = memberSections({ frequent: visible(frequent), contacts: visible(contacts), recent: visible(recent), found });
+  return (
+    <div className="ng-screen" role="dialog" aria-modal="true" aria-label={`${title}: choose people`}>
+      <header className="wa-sc-header">
+        <button type="button" className="wa-sc-back" onClick={onBack} aria-label="Back"><ArrowLeft size={22} /></button>
+        <div className="wa-sc-title-wrap">
+          <h2>{title}</h2>
+          <span className="wa-sc-subtitle">{picked.length ? `${picked.length} selected` : 'Add members'}</span>
+        </div>
+      </header>
+      <div className="wa-sc-search-bar ng-search">
+        <Search size={18} className="wa-sc-search-icon" />
+        <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Name, @username or ID" aria-label="Search people" maxLength={64} />
+        {query && <button type="button" className="wa-sc-clear-btn" onClick={() => setQuery('')} aria-label="Clear"><X size={16} /></button>}
+      </div>
+      {picked.length > 0 && (
+        <div className="ng-chips" aria-label="Selected members">
+          {picked.map((person) => (
+            <button type="button" key={person.id} className="ng-chip" onClick={() => onToggle(person)} aria-label={`Remove ${person.name}`}>
+              <span className="ng-chip-avatar">
+                <Avatar name={person.name} initials={person.initials ?? person.name.slice(0, 2).toUpperCase()} color={person.color} image={person.avatar} size="small" />
+                <span className="ng-chip-x"><X size={11} strokeWidth={3} /></span>
+              </span>
+              <small>{person.name}</small>
+            </button>
+          ))}
+        </div>
+      )}
+      <div className="wa-sc-scroll-body ng-scroll">
+        {notice && <p className="ng-notice">{notice}</p>}
+        {actions.map(({ icon: Icon, label: text, onClick }) => (
+          <button type="button" key={text} className="wa-sc-action-row" onClick={onClick}>
+            <div className="wa-sc-action-icon green"><Icon size={22} /></div>
+            <div className="wa-sc-action-label"><strong>{text}</strong></div>
+          </button>
+        ))}
+        {phone.available && !phone.granted && (
+          <button type="button" className="wa-sc-action-row" onClick={() => phone.sync(true)} disabled={phone.status === 'syncing'}>
+            <div className="wa-sc-action-icon green"><UserPlus size={22} /></div>
+            <div className="wa-sc-action-label"><strong>{phone.status === 'syncing' ? 'Syncing…' : 'Sync phone contacts'}</strong></div>
+          </button>
+        )}
+        {sections.map(([heading, list]) => (
+          <section key={heading} aria-label={heading}>
+            <div className="wa-sc-section-heading"><span>{heading}</span></div>
+            {list.map((person) => <MemberRow key={`${heading}:${person.id}`} person={person} picked={isPicked(person)} onToggle={onToggle} />)}
+          </section>
+        ))}
+        {!sections.length && (
+          <div className="wa-sc-empty-state"><p>{needle ? 'No one found. Type their full @username or 10-digit ID.' : 'No contacts yet. Search by @username or ID to add people.'}</p></div>
+        )}
+      </div>
+      <button type="button" className="ng-fab" onClick={onNext} disabled={busy || !picked.length} aria-label={nextLabel}>
+        {busy ? <span className="ng-spinner" aria-hidden="true" /> : nextIcon}
+      </button>
+    </div>
+  );
+}
+
+/**
+ * `request(path, options)`: the groups API (GroupsView's groupRequest). `onCreated(groupId, warning)`: the group exists;
+ * `warning` names a setting that could not be applied (the group itself is fine).
+ */
+export default function NewGroupFlow({ token, userId, initialMembers = [], request, onClose, onCreated }) {
+  const [step, setStep] = useState('members');
+  const [picked, setPicked] = useState(() => initialMembers);
   const [name, setName] = useState('');
   const [emojiOpen, setEmojiOpen] = useState(false);
   const [photo, setPhoto] = useState(null); // { blob, url }
@@ -79,38 +185,9 @@ export default function NewGroupFlow({ token, userId, initialMembers = [], reque
   });
   useEffect(() => () => { if (photo?.url) URL.revokeObjectURL(photo.url); }, [photo]);
 
-  const contacts = useMemo(() => unifiedContacts(savedContacts(chats, hiddenContacts, { userId }), phone.registered,
-    { userId, aliasFor: (id) => findPerson(id, useChatStore.getState())?.alias }), [chats, hiddenContacts, phone.registered, userId]);
-  const recent = useMemo(() => {
-    const listed = new Set(contacts.map((person) => person.id));
-    return unsavedThreads(chats, { userId }).filter((person) => !listed.has(person.id));
-  }, [chats, contacts, userId]);
-  const frequent = useMemo(() => {
-    const direct = (chats ?? []).filter((chat) => chat?.id && !chat.group && !chat.deleted && chat.id !== userId);
-    return forwardSections(direct, messages, userId).find((section) => section.id === 'frequent')?.chats ?? [];
-  }, [chats, messages, userId]);
-
-  const needle = query.trim().toLowerCase();
-  const visible = (list) => list.filter((person) => matchesPerson(person, needle) || (person.phonebookName ?? '').toLowerCase().includes(needle));
-  const known = new Set([...contacts, ...recent].map((person) => person.id));
-
-  // Someone not in the lists: their exact @username or 10-digit ID.
-  useEffect(() => {
-    const handle = handleFrom(query);
-    if (!handle || !token) { setFound([]); return undefined; }
-    const controller = new AbortController();
-    const timer = setTimeout(() => {
-      lookupUsername(token, handle, { signal: controller.signal })
-        .then((person) => setFound(person && person.id !== userId && !known.has(person.id) ? [person] : []))
-        .catch(() => setFound([]));
-    }, 500);
-    return () => { clearTimeout(timer); controller.abort(); };
-  }, [query, token, userId]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const isPicked = (person) => picked.some((item) => item.id === person.id);
   const toggle = (person) => setPicked((current) => (current.some((item) => item.id === person.id)
     ? current.filter((item) => item.id !== person.id)
-    : [...current, { id: person.id, name: label(person), username: person.username, avatar: person.avatar, color: person.color, initials: person.initials }]));
+    : [...current, pickedPerson(person)]));
 
   async function choosePhoto(file) {
     setError('');
@@ -157,61 +234,7 @@ export default function NewGroupFlow({ token, userId, initialMembers = [], reque
   }
 
   if (step === 'members') {
-    const sections = [
-      ['Frequently contacted', visible(frequent)],
-      ['Contacts on Hidden Messenger', visible(contacts)],
-      ['Recent chats', visible(recent)],
-      ['Found on Hidden Messenger', found],
-    ].filter(([, list]) => list.length);
-    return (
-      <div className="ng-screen" role="dialog" aria-modal="true" aria-label="New group: add members">
-        <header className="wa-sc-header">
-          <button type="button" className="wa-sc-back" onClick={onClose} aria-label="Back"><ArrowLeft size={22} /></button>
-          <div className="wa-sc-title-wrap">
-            <h2>New group</h2>
-            <span className="wa-sc-subtitle">{picked.length ? `${picked.length} selected` : 'Add members'}</span>
-          </div>
-        </header>
-        <div className="wa-sc-search-bar ng-search">
-          <Search size={18} className="wa-sc-search-icon" />
-          <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Name, @username or ID" aria-label="Search people" maxLength={64} />
-          {query && <button type="button" className="wa-sc-clear-btn" onClick={() => setQuery('')} aria-label="Clear"><X size={16} /></button>}
-        </div>
-        {picked.length > 0 && (
-          <div className="ng-chips" aria-label="Selected members">
-            {picked.map((person) => (
-              <button type="button" key={person.id} className="ng-chip" onClick={() => toggle(person)} aria-label={`Remove ${person.name}`}>
-                <span className="ng-chip-avatar">
-                  <Avatar name={person.name} initials={person.initials ?? person.name.slice(0, 2).toUpperCase()} color={person.color} image={person.avatar} size="small" />
-                  <span className="ng-chip-x"><X size={11} strokeWidth={3} /></span>
-                </span>
-                <small>{person.name}</small>
-              </button>
-            ))}
-          </div>
-        )}
-        <div className="wa-sc-scroll-body ng-scroll">
-          {phone.available && !phone.granted && (
-            <button type="button" className="wa-sc-action-row" onClick={() => phone.sync(true)} disabled={phone.status === 'syncing'}>
-              <div className="wa-sc-action-icon green"><UserPlus size={22} /></div>
-              <div className="wa-sc-action-label"><strong>{phone.status === 'syncing' ? 'Syncing…' : 'Sync phone contacts'}</strong></div>
-            </button>
-          )}
-          {sections.map(([title, list]) => (
-            <section key={title} aria-label={title}>
-              <div className="wa-sc-section-heading"><span>{title}</span></div>
-              {list.map((person) => <MemberRow key={`${title}:${person.id}`} person={person} picked={isPicked(person)} onToggle={toggle} />)}
-            </section>
-          ))}
-          {!sections.length && (
-            <div className="wa-sc-empty-state"><p>{needle ? 'No one found. Type their full @username or 10-digit ID.' : 'No contacts yet. Search by @username or ID to add people.'}</p></div>
-          )}
-        </div>
-        <button type="button" className="ng-fab" onClick={() => setStep('details')} disabled={!picked.length} aria-label="Next">
-          <ArrowRight size={24} />
-        </button>
-      </div>
-    );
+    return <MemberPicker token={token} userId={userId} title="New group" picked={picked} onToggle={toggle} onBack={onClose} onNext={() => setStep('details')} />;
   }
 
   return (

@@ -5875,3 +5875,24 @@ button.groups-sender { padding: 0; border: 0; background: none; font: inherit; f
 .ng-toggle input { flex: none; width: 22px; height: 22px; accent-color: var(--wa-green); }
 .ng-sheet .groups-primary { width: 100%; margin-top: 14px; }
 @media (min-width: 900px) { .ng-screen { inset: 0 auto 0 0; width: 420px; border-right: 1px solid var(--wa-panel); } .ng-fab { left: 340px; right: auto; } }
+
+.ng-notice { margin: 8px 16px; padding: 10px 12px; border-radius: 10px; background: var(--wa-panel); color: var(--wa-sub); font-size: 13px; }
+
+/* Group link and Group permissions screens (parity/GroupAdmin.jsx), the chat header's ⋮ menu (GroupsView). */
+.hm-link-card { display: flex; align-items: center; gap: 14px; padding: 18px 16px; border-bottom: 1px solid var(--wa-panel); }
+.hm-link-card span { min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.hm-link-card strong { font-size: 16px; }
+.hm-link-card small { color: var(--wa-green); font-size: 14px; word-break: break-all; }
+.hm-link-action { width: 100%; border: 0; background: transparent; color: var(--wa-text); font: inherit; text-align: left; cursor: pointer; }
+.hm-link-action.is-danger, .hm-link-action.is-danger .groups-setting-icon { color: #d93025; }
+.hm-link-empty { padding: 18px 16px; color: var(--wa-sub); }
+.hm-link-empty .groups-primary { margin-top: 12px; }
+.hm-link-manage { display: flex; align-items: center; justify-content: space-between; margin-top: 8px; }
+.hm-link-edit { padding: 6px 12px; border: 0; border-radius: 16px; background: transparent; color: var(--wa-green); font: inherit; font-weight: 600; cursor: pointer; }
+.hm-link-info { margin: 4px 16px 10px; color: var(--wa-sub); font-size: 14px; }
+.hm-permissions .hm-group-admin-label { margin: 18px 16px 4px; color: var(--wa-sub); font-size: 13px; font-weight: 600; }
+.hm-permissions .groups-setting { padding-left: 16px; padding-right: 16px; }
+.hm-permissions .hm-group-admins { margin: 0 16px; }
+.groups-chat-menu { right: 0; min-width: 230px; }
+.groups-chat-menu button { width: 100%; justify-content: flex-start; }
+.groups-chat-menu .groups-menu-more { justify-content: space-between; }

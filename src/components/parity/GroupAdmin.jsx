@@ -1,6 +1,8 @@
 // Group administration (WhatsApp's "Group settings", invite links and member management).
 import { useEffect, useState } from 'react';
-import { Check, Copy, EllipsisVertical, Link2, Pencil, RefreshCw, ShieldCheck, UserMinus, Users, X } from 'lucide-react';
+import { ArrowLeft, Check, Copy, EllipsisVertical, Link2, Pencil, QrCode, RefreshCw, Share2, ShieldCheck, UserMinus, Users, X } from 'lucide-react';
+import { shareText } from '../../share.js';
+import GroupPhoto from '../GroupPhoto.jsx';
 import * as api from '../../parityApi.js';
 import Avatar from '../Avatar.jsx';
 import { inviteCodeFrom, inviteUrl } from '../../invites.js';
@@ -17,7 +19,7 @@ function Toggle({ title, detail, checked, disabled, onChange }) {
   );
 }
 
-/** Description (everyone, or admins when restricted), permissions, invite link and join requests (admins). */
+/** Description (everyone, or admins when restricted) and join requests (admins). Permissions and the invite link have their own screens below. */
 export function GroupAdminSettings({ group, token, onChanged, onNotice, onError }) {
   const isAdmin = group.role === 'admin';
   const canEditInfo = isAdmin || !group.onlyAdminsEdit;
@@ -26,8 +28,6 @@ export function GroupAdminSettings({ group, token, onChanged, onNotice, onError 
   const [description, setDescription] = useState(group.description ?? '');
   const [busy, setBusy] = useState(false);
   const [requests, setRequests] = useState([]);
-  const [copied, setCopied] = useState(false);
-  const [editingAdmins, setEditingAdmins] = useState(false);
 
   useEffect(() => {
     if (!isAdmin || !group.approveJoins && !group.pendingRequests) { setRequests([]); return; }
@@ -47,15 +47,6 @@ export function GroupAdminSettings({ group, token, onChanged, onNotice, onError 
     }
   }
 
-  const copyLink = async () => {
-    try {
-      await navigator.clipboard.writeText(inviteUrl(group.inviteCode));
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      onError('Copy the link by selecting it.');
-    }
-  };
 
   return (
     <div className="hm-group-admin">
@@ -76,67 +67,6 @@ export function GroupAdminSettings({ group, token, onChanged, onNotice, onError 
           </button>
         )}
       </section>
-
-      {isAdmin && (
-        <section aria-label="Group permissions">
-          {/* WhatsApp's Group permissions: what members can do, what only admins do, and who the admins are. */}
-          <h4>Group permissions</h4>
-          <p className="hm-group-admin-label">Members can:</p>
-          <Toggle title="Edit group settings" detail="Change the group's name, photo and description, and pin messages"
-            checked={!group.onlyAdminsEdit} disabled={busy}
-            onChange={(value) => run(() => api.updateGroupPermissions(token, group.id, { onlyAdminsEdit: !value }))} />
-          <Toggle title="Send new messages" detail={group.isAnnouncement ? 'Always off in a community’s announcement group' : 'Off: only admins send; members still read and react'}
-            checked={!group.onlyAdminsSend} disabled={busy || group.isAnnouncement}
-            onChange={(value) => run(() => api.updateGroupPermissions(token, group.id, { onlyAdminsSend: !value }), value ? 'Everyone can send messages now.' : 'Only admins can send messages now.')} />
-          <Toggle title="Add other members" detail="Members can add people to the group"
-            checked={Boolean(group.membersCanAdd)} disabled={busy}
-            onChange={(value) => run(() => api.updateGroupPermissions(token, group.id, { membersCanAdd: value }))} />
-          <p className="hm-group-admin-label">Admins can:</p>
-          <Toggle title="Approve new members" detail="People who join with a link wait for an admin"
-            checked={group.approveJoins} disabled={busy}
-            onChange={(value) => run(() => api.updateGroupPermissions(token, group.id, { approveJoins: value }))} />
-          <p className="hm-group-admin-label">Group admins</p>
-          <button type="button" className="hm-group-admins-toggle" onClick={() => setEditingAdmins((open) => !open)} aria-expanded={editingAdmins}>
-            <ShieldCheck size={18} aria-hidden="true" /> Edit group admins
-          </button>
-          {editingAdmins && (
-            <ul className="hm-group-admins" aria-label="Group admins">
-              {(group.members ?? []).map((member) => {
-                const admin = member.role === 'admin';
-                const locked = member.id === group.createdBy;
-                return (
-                  <li key={member.id}>
-                    <label>
-                      <input type="checkbox" checked={admin} disabled={busy || locked}
-                        onChange={() => run(() => api.setMemberRole(token, group.id, member.id, admin ? 'member' : 'admin'), admin ? `${member.name} is no longer an admin.` : `${member.name} is now an admin.`)} />
-                      <Avatar {...member} size="small" />
-                      <span><strong>{member.name}</strong><small>{locked ? 'Group creator' : admin ? 'Admin' : 'Member'}</small></span>
-                    </label>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </section>
-      )}
-
-      {isAdmin && (
-        <section aria-label="Invite via link">
-          <h4><Link2 size={16} aria-hidden="true" /> Invite via link</h4>
-          {group.inviteCode ? (
-            <>
-              <p className="hm-invite-link"><code>{inviteUrl(group.inviteCode)}</code></p>
-              <div className="hm-row-actions">
-                <button type="button" onClick={copyLink}>{copied ? <Check size={16} /> : <Copy size={16} />} {copied ? 'Copied' : 'Copy link'}</button>
-                <button type="button" disabled={busy} onClick={() => run(() => api.resetInvite(token, group.id), 'Link reset. The old link no longer works.')}><RefreshCw size={16} /> Reset link</button>
-                <button type="button" className="groups-danger" disabled={busy} onClick={() => run(() => api.revokeInvite(token, group.id), 'Invite link turned off.')}><X size={16} /> Turn off</button>
-              </div>
-            </>
-          ) : (
-            <button type="button" className="groups-primary" disabled={busy} onClick={() => run(() => api.resetInvite(token, group.id), 'Invite link created.')}>Create invite link</button>
-          )}
-        </section>
-      )}
 
       {isAdmin && requests.length > 0 && (
         <section aria-label="Pending members">
@@ -239,6 +169,139 @@ export function JoinGroupSheet({ code, token, onJoined, onClose }) {
           </div>
         )}
         <button type="button" className="hm-sheet-close" onClick={onClose}>Close</button>
+      </div>
+    </div>
+  );
+}
+
+// One busy flag and error/notice reporting for an admin action, then a refresh of the group.
+function useGroupAction({ onChanged, onNotice, onError }) {
+  const [busy, setBusy] = useState(false);
+  const run = async (action, notice) => {
+    setBusy(true);
+    try {
+      await action();
+      if (notice) onNotice(notice);
+      await onChanged();
+    } catch (caught) {
+      onError(caught.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return [busy, run];
+}
+
+function ScreenHeader({ title, subtitle, onBack }) {
+  return (
+    <header className="wa-sc-header">
+      <button type="button" className="wa-sc-back" onClick={onBack} aria-label="Back"><ArrowLeft size={22} /></button>
+      <div className="wa-sc-title-wrap"><h2>{title}</h2>{subtitle && <span className="wa-sc-subtitle">{subtitle}</span>}</div>
+    </header>
+  );
+}
+
+/**
+ * Group permissions (admins), laid out as WhatsApp's: "Members can:" edit group settings, send new messages, add other
+ * members; "Admins can:" approve new members; "Group admins": edit group admins.
+ */
+export function GroupPermissionsScreen({ group, token, onBack, onChanged, onNotice, onError }) {
+  const [busy, run] = useGroupAction({ onChanged, onNotice, onError });
+  const [editingAdmins, setEditingAdmins] = useState(false);
+  const set = (change, notice) => run(() => api.updateGroupPermissions(token, group.id, change), notice);
+  const adminCount = (group.members ?? []).filter((member) => member.role === 'admin').length;
+  return (
+    <div className="ng-screen" role="dialog" aria-modal="true" aria-label="Group permissions">
+      <ScreenHeader title="Group permissions" subtitle={group.name} onBack={onBack} />
+      <div className="wa-sc-scroll-body ng-scroll hm-permissions">
+        <p className="hm-group-admin-label">Members can:</p>
+        <Toggle title="Edit group settings" detail="This includes the name, photo, description and disappearing messages, and pinning messages."
+          checked={!group.onlyAdminsEdit} disabled={busy} onChange={(value) => set({ onlyAdminsEdit: !value })} />
+        <Toggle title="Send new messages" detail={group.isAnnouncement ? 'Always off in a community’s announcement group.' : ''}
+          checked={!group.onlyAdminsSend} disabled={busy || group.isAnnouncement}
+          onChange={(value) => set({ onlyAdminsSend: !value }, value ? 'Everyone can send messages now.' : 'Only admins can send messages now.')} />
+        <Toggle title="Add other members" detail="" checked={Boolean(group.membersCanAdd)} disabled={busy} onChange={(value) => set({ membersCanAdd: value })} />
+        <p className="hm-group-admin-label">Admins can:</p>
+        <Toggle title="Approve new members" detail="When turned on, admins must approve anyone who wants to join this group."
+          checked={group.approveJoins} disabled={busy} onChange={(value) => set({ approveJoins: value })} />
+        <p className="hm-group-admin-label">Group admins</p>
+        <button type="button" className="groups-setting hm-group-admins-toggle" onClick={() => setEditingAdmins((open) => !open)} aria-expanded={editingAdmins}>
+          <ShieldCheck size={22} className="groups-setting-icon" aria-hidden="true" />
+          <span className="groups-setting-copy"><strong>Edit group admins</strong><small>{adminCount} {adminCount === 1 ? 'admin' : 'admins'}</small></span>
+        </button>
+        {editingAdmins && (
+          <ul className="hm-group-admins" aria-label="Group admins">
+            {(group.members ?? []).map((member) => {
+              const admin = member.role === 'admin';
+              const locked = member.id === group.createdBy;
+              return (
+                <li key={member.id}>
+                  <label>
+                    <input type="checkbox" checked={admin} disabled={busy || locked}
+                      onChange={() => run(() => api.setMemberRole(token, group.id, member.id, admin ? 'member' : 'admin'), admin ? `${member.name} is no longer an admin.` : `${member.name} is now an admin.`)} />
+                    <Avatar {...member} size="small" />
+                    <span><strong>{member.name}</strong><small>{locked ? 'Group creator' : admin ? 'Admin' : 'Member'}</small></span>
+                  </label>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Group link (admins), as WhatsApp lays it out: the group with its link, then Copy link, Share link, QR code and Reset
+ * link (and turning the link off), then "Manage permissions" with Edit. Without a link, one button creates it.
+ */
+export function GroupLinkScreen({ group, token, onBack, onChanged, onNotice, onError, onShowQr, onEditPermissions }) {
+  const [busy, run] = useGroupAction({ onChanged, onNotice, onError });
+  const link = group.inviteCode ? inviteUrl(group.inviteCode) : '';
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(link); onNotice('Link copied.'); } catch { onError('Copy the link by selecting it.'); }
+  };
+  const share = async () => {
+    try {
+      if (await shareText({ title: group.name, text: `Follow this link to join my Hidden Messenger group "${group.name}"`, url: link }) === 'copied') onNotice('Link copied.');
+    } catch { onError('Sharing isn’t available here. Copy the link instead.'); }
+  };
+  const actions = [
+    [Copy, 'Copy link', copy],
+    [Share2, 'Share link', share],
+    [QrCode, 'QR code', onShowQr],
+    [RefreshCw, 'Reset link', () => run(() => api.resetInvite(token, group.id), 'Link reset. The old link no longer works.')],
+    [X, 'Turn off link', () => run(() => api.revokeInvite(token, group.id), 'Invite link turned off.')],
+  ];
+  return (
+    <div className="ng-screen" role="dialog" aria-modal="true" aria-label="Group link">
+      <ScreenHeader title="Group link" onBack={onBack} />
+      <div className="wa-sc-scroll-body ng-scroll">
+        {link ? (
+          <>
+            <div className="hm-link-card">
+              <GroupPhoto image={group.avatar} className="groups-avatar" iconSize={22} />
+              <span><strong>{group.name}</strong><small>{link}</small></span>
+            </div>
+            {actions.map(([Icon, title, onClick]) => (
+              <button type="button" key={title} className={`groups-setting hm-link-action ${title === 'Turn off link' ? 'is-danger' : ''}`} onClick={onClick} disabled={busy}>
+                <Icon size={22} className="groups-setting-icon" aria-hidden="true" /><span className="groups-setting-copy"><strong>{title}</strong></span>
+              </button>
+            ))}
+          </>
+        ) : (
+          <div className="hm-link-empty">
+            <p>Anyone with Hidden Messenger can follow a group link to join this group. Only share it with people you trust.</p>
+            <button type="button" className="groups-primary" disabled={busy} onClick={() => run(() => api.resetInvite(token, group.id), 'Invite link created.')}>Create invite link</button>
+          </div>
+        )}
+        <div className="wa-sc-section-heading hm-link-manage">
+          <span>Manage permissions</span>
+          <button type="button" className="hm-link-edit" onClick={onEditPermissions}>Edit</button>
+        </div>
+        <p className="hm-link-info">{group.approveJoins ? 'Admins approve new members who join with the link.' : 'Anyone with the link can join without an admin’s approval.'}</p>
+        <p className="hm-link-info">{group.membersCanAdd ? 'Members can add other members.' : 'Only admins can add other members.'}</p>
       </div>
     </div>
   );

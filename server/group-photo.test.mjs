@@ -73,7 +73,8 @@ test('New group is two steps: pick members from your contacts, then name, photo,
   // Step 1: the contact picker's people, with a round check each, and the round Next button.
   assert.match(flow, /unifiedContacts\(savedContacts\(chats, hiddenContacts/);
   assert.match(flow, /role="checkbox" aria-checked=\{picked\}/);
-  assert.match(flow, /className="ng-fab" onClick=\{\(\) => setStep\('details'\)\} disabled=\{!picked\.length\} aria-label="Next"/);
+  assert.match(flow, /<MemberPicker token=\{token\} userId=\{userId\} title="New group"[^\n]*onNext=\{\(\) => setStep\('details'\)\}/);
+  assert.match(flow, /className="ng-fab" onClick=\{onNext\} disabled=\{busy \|\| !picked\.length\} aria-label=\{nextLabel\}/, 'Next stays off until someone is picked');
   // Step 2: photo, the bordered name with emoji, the two settings, the members with Add, and the round create button.
   for (const part of ['aria-label={photo ? \'Change group photo\' : \'Add group photo\'}', 'placeholder="Group name"', 'aria-label="Emoji"',
     '<strong>Disappearing messages</strong>', '<strong>Group permissions</strong>', 'Members: {picked.length || \'None\'}', 'aria-label="Add members"', 'aria-label="Create group"']) {
@@ -83,4 +84,38 @@ test('New group is two steps: pick members from your contacts, then name, photo,
   assert.match(flow, /`\$\{path\}\/permissions`/);
   assert.match(flow, /`\$\{path\}\/member-settings`, \{ method: 'PUT', body: \{ autoDelete: true \} \}/);
   assert.equal(groupRow({ id: 'g1', name: 'Team', avatar: '/api/v1/groups/g1/avatar?v=1' }, 'me').avatar, '/api/v1/groups/g1/avatar?v=1', 'chat list rows show the photo');
+});
+
+test('Add members lists each person once: frequently contacted people are not repeated under contacts or recent chats', async () => {
+  const { memberSections } = await import('../src/contactBook.js');
+  const a = { id: 'a', name: 'A' }; const b = { id: 'b', name: 'B' }; const c = { id: 'c', name: 'C' };
+  const sections = memberSections({ frequent: [a], contacts: [a, b], recent: [b, c], found: [c] });
+  assert.deepEqual(sections.map(([title, list]) => [title, list.map((person) => person.id)]), [['Frequently contacted', ['a']], ['Contacts on Hidden Messenger', ['b']], ['Recent chats', ['c']]]);
+});
+
+test('group screens follow WhatsApp\'s structure: chat menu, Invite, Group link, Group permissions, Add members', () => {
+  const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+  const groups = read('src/components/GroupsView.jsx');
+  const admin = read('src/components/parity/GroupAdmin.jsx');
+  // Chat header: Add to list, then ⋮ with Group info, Group media, Mute, Disappearing messages, More (Clear, Export, Report, Exit).
+  for (const item of ['aria-label="Add to list"', 'aria-label="More options"', '>Group info</button>', '>Group media</button>', "'Mute notifications'",
+    '>Disappearing messages</button>', 'More <ChevronRight', '>Clear chat</button>', '>Export chat</button>', '>Report</button>', '>Exit group</button>']) {
+    assert.ok(groups.includes(item), item);
+  }
+  // Group info: Invite in the toolbar and under Add members; Group permissions first in Settings; Add members is the picker.
+  assert.match(groups, /onClick=\{\(\) => setGroupScreen\('link'\)\} aria-label="Invite"/);
+  assert.ok(groups.includes('<strong>Invite via link or QR code</strong>'));
+  assert.match(groups, /title="Group permissions"[^\n]*setGroupScreen\('permissions'\)/);
+  assert.match(groups, /<MemberPicker token=\{token\} userId=\{userId\} title="Add members"/);
+  assert.match(groups, /excludeIds=\{group\.members\.map\(\(member\) => member\.id\)\}/, 'people already in the group are not offered');
+  assert.ok(!groups.includes('Add member by username'), 'no more typing usernames to add members');
+  // Group link: the group and link, then Copy, Share, QR code, Reset; then Manage permissions with Edit.
+  const link = admin.slice(admin.indexOf('export function GroupLinkScreen'));
+  for (const action of ["'Copy link'", "'Share link'", "'QR code'", "'Reset link'", '<span>Manage permissions</span>', '>Edit</button>']) assert.ok(link.includes(action), action);
+  // Group permissions: Members can / Admins can / Group admins, with the four switches and Edit group admins, in order.
+  const permissions = admin.slice(admin.indexOf('export function GroupPermissionsScreen'), admin.indexOf('export function GroupLinkScreen'));
+  const order = ['Members can:', 'title="Edit group settings"', 'title="Send new messages"', 'title="Add other members"', 'Admins can:', 'title="Approve new members"', 'Group admins', 'Edit group admins'];
+  const at = order.map((part) => permissions.indexOf(part));
+  assert.ok(at.every((index) => index >= 0), `all present: ${order.filter((_, index) => at[index] < 0).join(', ')}`);
+  assert.deepEqual([...at].sort((left, right) => left - right), at, 'in WhatsApp\'s order');
 });

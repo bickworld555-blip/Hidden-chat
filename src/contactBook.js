@@ -88,3 +88,18 @@ export function exactHandleMatch(suggestions, query) {
   if (!handle) return null;
   return (suggestions ?? []).find((person) => String(person.username ?? '').toLowerCase() === handle) ?? null;
 }
+
+/**
+ * The member list's sections, each person once: whoever is in "Frequently contacted" is left out of the sections
+ * below it (they were listed twice), then contacts, recent chats and a person found by @username or ID.
+ */
+export function memberSections({ frequent = [], contacts = [], recent = [], found = [] }) {
+  const shown = new Set();
+  const once = (list) => list.filter((person) => person?.id && !shown.has(person.id) && shown.add(person.id));
+  return [
+    ['Frequently contacted', once(frequent)],
+    ['Contacts on Hidden Messenger', once(contacts)],
+    ['Recent chats', once(recent)],
+    ['Found on Hidden Messenger', once(found)],
+  ].filter(([, list]) => list.length);
+}
