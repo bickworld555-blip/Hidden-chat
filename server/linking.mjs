@@ -50,6 +50,24 @@ export function registerLinking({ app, requireSession, issueSession, suspended, 
   const timer = setInterval(sweep, 30_000);
   timer.unref?.();
 
+  // A long poll: resolves when a waiter wakes this item, WAIT_MS pass, or the browser goes away, whichever is first.
+  // It keeps its own item (the handlers reassign theirs afterwards: undefined once the request expired) and unhooks
+  // itself everywhere, so the request's later 'close' event cannot run it again. That second run read `.waiters` of
+  // undefined, an uncaught error in an event handler, and took the whole API down (2026-11-18, an expired QR code).
+  function waitFor(item, request) {
+    return new Promise((resolve) => {
+      const done = () => {
+        clearTimeout(timeout);
+        item.waiters.delete(done);
+        request.off('close', done);
+        resolve();
+      };
+      const timeout = setTimeout(done, WAIT_MS);
+      item.waiters.add(done);
+      request.on('close', done);
+    });
+  }
+
   function find(id, secret) {
     sweep();
     const item = requests.get(id);
@@ -77,12 +95,7 @@ export function registerLinking({ app, requireSession, issueSession, suspended, 
     let item = find(request.params.id, request.query.secret);
     if (!item) return response.status(404).json({ error: 'This QR code expired. Refresh it to try again.' });
     if (item.status === 'pending') {
-      await new Promise((resolve) => {
-        const done = () => { clearTimeout(timeout); item.waiters.delete(done); resolve(); };
-        const timeout = setTimeout(done, WAIT_MS);
-        item.waiters.add(done);
-        request.on('close', done);
-      });
+      await waitFor(item, request);
       item = requests.get(request.params.id);
       if (!item) return response.status(404).json({ error: 'This QR code expired. Refresh it to try again.' });
     }
@@ -157,12 +170,7 @@ export function registerLinking({ app, requireSession, issueSession, suspended, 
     const part = partNumber(request.query.part, 0);
     if (part === null) return response.status(400).json({ error: 'Invalid part.' });
     if (!item.parts.has(part) && !(item.finalPart !== null && part > item.finalPart)) {
-      await new Promise((resolve) => {
-        const done = () => { clearTimeout(timeout); item.waiters.delete(done); resolve(); };
-        const timeout = setTimeout(done, WAIT_MS);
-        item.waiters.add(done);
-        request.on('close', done);
-      });
+      await waitFor(item, request);
       item = requests.get(request.params.id);
     }
     if (!item) return response.status(404).json({ error: 'Link not found.' });
