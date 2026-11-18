@@ -73,8 +73,14 @@ function transport(server, { grant = { transport: 'xmpp', jid: MY_JID, token: 'g
   });
   return { t, events, states, timers };
 }
-async function until(check, label) {
-  for (let i = 0; i < 200; i += 1) { if (check()) return; await flush(); }
+// Waits for a condition across event-loop turns, up to a wall-clock limit. Some steps wait on work off the loop (the
+// sender check's WebCrypto digest), so a fixed 200 turns could run out in a few milliseconds on a busy CI runner
+// before the digest came back ("timeout: all events" after 4 ms on GitHub, 2026-11-18). A met condition still
+// returns at once.
+async function until(check, label, timeoutMs = 3000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) { if (check()) return; await flush(); }
+  if (check()) return;
   throw new Error(`timeout: ${label}`);
 }
 const sentNames = (socket) => socket.sent.map((frame) => local(parseXml(frame)));
