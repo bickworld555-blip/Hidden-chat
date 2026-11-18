@@ -19,10 +19,18 @@ terminates TLS and exposes `/xmpp-websocket` and `/api/` (admin API, admin login
   # /etc/ejabberd/ejabberdctl.cfg: ERL_OPTIONS="... -pa /opt/hm-ejabberd/ebin"
   ```
 
+  Load a new build without dropping connections: copy the `.beam` into `/opt/hm-ejabberd/ebin`, then
+  `ejabberdctl update mod_hm`; after a change to the options, `ejabberdctl reload_config`.
+
+  The wake-up hook is retried for about half a minute (1, 2, 4, 8, 16 s) when the API answers 5xx, 408 or 429 or cannot
+  be reached (it restarts on every deploy); each attempt is signed with the current time. ejabberd logs
+  `mod_hm: wake-up hook accepted for … on attempt N` after a retry, and `… given up` if every attempt failed.
+
   ```yaml
   modules:
     mod_hm:
-      hook_url: "https://hiddenmessenger.com/api/v1/xmpp/offline"
+      hook_url: "http://127.0.0.1:4174/api/v1/xmpp/offline"   # the API on this machine: no TLS or DNS round trip
+      check_url: "http://127.0.0.1:4174/api/v1/xmpp/allow"
       hook_key: "<the k value of /etc/ejabberd/jwt.jwk>"
   ```
 

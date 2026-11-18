@@ -3,6 +3,8 @@
 %%% 1. Offline wake-up: when mod_offline has stored a message for a device that is not connected, POST
 %%%    {"to": localpart, "ts": seconds} to the Node API (hook_url), signed with HMAC-SHA256 under the shared JWT key
 %%%    (hook_key, base64url) in the x-hm-signature header. The API sends that device's encrypted FCM wake-up.
+%%%    hook_url is the API on this machine (http://127.0.0.1:4174/...), and a failed call is retried with backoff for about
+%%%    half a minute (deliver_hook), so a message stored while the API restarts still wakes its phone.
 %%%    For a direct message the body also has its stanza "id" (no content): when the phone confirms the wake-up push
 %%%    arrived, the API sends the sender the delivery receipt for it (5. below), as for messages through the API.
 %%% 5. hm_receipt (admin command, Node API only): routes a XEP-0184 receipt <received id=…/> from one device account
@@ -32,6 +34,8 @@
 -export([start/2, stop/1, reload/3, depends/2, mod_options/1, mod_opt_type/1, mod_doc/0]).
 -export([offline_message/1, user_send_packet/1]).
 -export([clear_verdicts/0, send_receipt/4]).
+%% For operators: one wake-up hook call with retries, to check a hook URL from the shell (see README).
+-export([deliver_hook/4]).
 
 -include("logger.hrl").
 -include("ejabberd_commands.hrl").
@@ -158,25 +162,50 @@ notify(LServer, LUser, FromUser, Group, Id) ->
         {<<>>, _} -> ok;
         {_, <<>>} -> ok;
         _ ->
-            Body = iolist_to_binary(json:encode(#{<<"to">> => LUser, <<"from">> => FromUser, <<"group">> => Group,
-                                                   <<"id">> => Id, <<"ts">> => erlang:system_time(second)})),
-            Request = {binary_to_list(Url), signed_headers(Key, Body), "application/json", Body},
-            case httpc:request(post, Request, [{timeout, 8000}, {connect_timeout, 4000}, {ssl, ssl_opts()}],
-                               [{sync, false}, {receiver, fun(Reply) -> log_reply(LUser, Reply) end}]) of
-                {ok, _RequestId} -> ok;
-                {error, Reason} -> ?WARNING_MSG("mod_hm: wake-up hook not sent: ~p", [Reason])
-            end
+            %% Its own process: retries wait without holding up the hook chain or this connection.
+            Fields = #{<<"to">> => LUser, <<"from">> => FromUser, <<"group">> => Group, <<"id">> => Id},
+            spawn(fun() -> deliver_hook(Url, Key, Fields, 1) end),
+            ok
     end.
 
-%% The API answers 202 when the hook is accepted; anything else is worth seeing in the log.
-log_reply(LUser, {_RequestId, {{_, 202, _}, _Headers, _Body}}) ->
-    ?INFO_MSG("mod_hm: wake-up hook accepted for ~s", [LUser]);
-log_reply(LUser, {_RequestId, {{_, Status, _}, _Headers, _Body}}) ->
-    ?WARNING_MSG("mod_hm: wake-up hook for ~s answered ~p", [LUser, Status]);
-log_reply(LUser, {_RequestId, {error, Reason}}) ->
-    ?WARNING_MSG("mod_hm: wake-up hook for ~s failed: ~p", [LUser, Reason]);
-log_reply(_LUser, _Other) ->
-    ok.
+%% The wake-up hook, retried when the API cannot take it right now (it restarts on every deploy, for a few seconds):
+%% HOOK_ATTEMPTS tries, waiting HOOK_FIRST_DELAY_MS, then twice as long each time (1, 2, 4, 8, 16 s: about half a
+%% minute). Every attempt is signed afresh with the current time, so a late retry is not refused as stale. The API
+%% coalesces repeated wake-ups for one device, so a retry after a lost answer costs one push at most.
+-define(HOOK_ATTEMPTS, 6).
+-define(HOOK_FIRST_DELAY_MS, 1000).
+
+deliver_hook(Url, Key, Fields, Attempt) ->
+    Body = iolist_to_binary(json:encode(Fields#{<<"ts">> => erlang:system_time(second)})),
+    Request = {binary_to_list(Url), signed_headers(Key, Body), "application/json", Body},
+    Result = httpc:request(post, Request, [{timeout, 8000}, {connect_timeout, 4000} | tls_options(Url)], []),
+    LUser = maps:get(<<"to">>, Fields),
+    case hook_outcome(Result) of
+        accepted when Attempt =:= 1 ->
+            ?INFO_MSG("mod_hm: wake-up hook accepted for ~s", [LUser]);
+        accepted ->
+            ?INFO_MSG("mod_hm: wake-up hook accepted for ~s on attempt ~b", [LUser, Attempt]);
+        {final, Why} ->
+            ?WARNING_MSG("mod_hm: wake-up hook for ~s refused (~p), not retried", [LUser, Why]);
+        {retry, Why} when Attempt < ?HOOK_ATTEMPTS ->
+            Delay = ?HOOK_FIRST_DELAY_MS bsl (Attempt - 1),
+            ?INFO_MSG("mod_hm: wake-up hook for ~s failed (~p), retrying in ~b ms", [LUser, Why, Delay]),
+            timer:sleep(Delay),
+            deliver_hook(Url, Key, Fields, Attempt + 1);
+        {retry, Why} ->
+            ?WARNING_MSG("mod_hm: wake-up hook for ~s failed ~b times (last: ~p), given up", [LUser, Attempt, Why])
+    end.
+
+%% 202: accepted. The API restarting, overloaded or briefly unreachable is worth retrying (5xx, 408, 429, network
+%% errors); any other answer (bad signature, bad body) will not change by asking again.
+hook_outcome({ok, {{_, 202, _}, _Headers, _Body}}) -> accepted;
+hook_outcome({ok, {{_, Status, _}, _Headers, _Body}}) when Status >= 500; Status =:= 408; Status =:= 429 -> {retry, Status};
+hook_outcome({ok, {{_, Status, _}, _Headers, _Body}}) -> {final, Status};
+hook_outcome({error, Reason}) -> {retry, Reason}.
+
+%% Certificate checks for an https hook URL; a local http one (the API on 127.0.0.1) needs none.
+tls_options(<<"https:", _/binary>>) -> [{ssl, ssl_opts()}];
+tls_options(_) -> [].
 
 %%% --- 2. Group fan-out --------------------------------------------------------------------------------------
 

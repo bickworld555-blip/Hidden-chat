@@ -3,7 +3,9 @@
 //
 // Payloads are wake-ups with ids only (pushBody), encrypted between this server and the device (AES-256-GCM with a
 // key the device made and registered): Google relays them but cannot read who wrote; no push carries a name or text.
-import { createCipheriv, createSign, randomBytes } from 'node:crypto';
+// Nothing beside the ciphertext is in the clear either: the data is { enc, iv } (the type is inside), and collapse keys
+// are per-device HMACs (deviceCollapseKey), so Firebase cannot tell a call from a message or link a push to a chat.
+import { createCipheriv, createHmac, createSign, randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
 const FCM_SCOPE = 'https://www.googleapis.com/auth/firebase.messaging';
@@ -56,6 +58,25 @@ export function validDeviceKey(value) {
     return false;
   }
 }
+
+/**
+ * The collapse key Firebase sees for one device: an HMAC of the server's logical key ("call:<id>", "wake") under the
+ * device's push key. Firebase can still tell two pushes to the same phone apart or together, but not which chat, group,
+ * person or call they belong to, and the same call gets unrelated keys on different phones.
+ */
+export function deviceCollapseKey(deviceKey, logicalKey) {
+  return `k${createHmac('sha256', Buffer.from(deviceKey, 'base64')).update(`collapse:${logicalKey}`).digest('base64url').slice(0, 22)}`;
+}
+
+/**
+ * Collapse keys the server uses. Firebase keeps at most 4 collapse keys per offline phone, and one wake-up makes the
+ * phone fetch everything that waits, so every message wake-up shares one key; a call keeps its own (its "ended"
+ * push replaces its ring for a phone that was offline).
+ */
+export const collapseKeys = Object.freeze({
+  wake: 'wake',
+  call: (callId) => `call:${callId}`,
+});
 
 /** Encrypts a push body for one device: { enc: base64(ciphertext || tag), iv: base64(12 bytes) }. */
 export function encryptForDevice(deviceKey, body) {

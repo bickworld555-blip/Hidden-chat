@@ -24,7 +24,7 @@ import { DEMO_USERS } from './demo.mjs';
 import { createEventPilot } from './eventPilot.mjs';
 import { pdfPageCountOfFile } from './pdfPages.mjs';
 import { createLinkPreviews } from './linkPreview.mjs';
-import { createPushSender, encryptForDevice, loadServiceAccount, pushBody, validDeviceKey } from './push.mjs';
+import { collapseKeys, createPushSender, deviceCollapseKey, encryptForDevice, loadServiceAccount, pushBody, validDeviceKey } from './push.mjs';
 import { createObjectStore, MAX_PARTS, OBJECT_KEY_PREFIX, objectStoreConfigFromEnv, PART_BYTES, UPLOAD_URL_TTL_SECONDS } from './objectStore.mjs';
 import { createLoginThrottle, ensureParitySchema, registerParity } from './parity.mjs';
 import { createVerifiedAccounts, createVerifiedChannels, ensureVerificationSchema, registerVerification } from './verification.mjs';
@@ -893,7 +893,7 @@ export function createChatServer({
     clearTimeout(activeCall.reachTimer);
     activeCalls.delete(callId);
     // A phone that was rung by push stops ringing even if its socket never connected.
-    if (activeCall.pushed && !activeCall.calleeSocket) pushInBackground(activeCall.calleeId, pushBody.callEnd({ callId, reason: by === activeCall.calleeId ? 'declined' : undefined }), { ttlSeconds: 30, collapseKey: `call:${callId}` });
+    if (activeCall.pushed && !activeCall.calleeSocket) pushInBackground(activeCall.calleeId, pushBody.callEnd({ callId, reason: by === activeCall.calleeId ? 'declined' : undefined }), { ttlSeconds: 30, collapseKey: collapseKeys.call(callId) });
     const event = {
       type: 'call:signal',
       from: reason === 'no-answer' || reason === 'unavailable' ? activeCall.calleeId : activeCall.callerId,
@@ -1172,7 +1172,9 @@ export function createChatServer({
     let sent = 0;
     await Promise.all(devices.map(async (device) => {
       const { enc, iv } = encryptForDevice(device.deviceKey, body);
-      const result = await push.send(device.token, { t: body.t, enc, iv }, options);
+      // Only the ciphertext travels: the type is inside it, and the collapse key is this device's HMAC of ours.
+      const collapseKey = options?.collapseKey ? deviceCollapseKey(device.deviceKey, options.collapseKey) : undefined;
+      const result = await push.send(device.token, { enc, iv }, { ...options, collapseKey });
       if (result.ok) sent += 1;
       else if (result.invalidToken) await db.prepare('DELETE FROM push_devices WHERE token = ?').run(device.token);
       else { console.error('Push not sent:', result.error); notePushFailure(result.error); }
@@ -1574,14 +1576,15 @@ export function createChatServer({
       // P5: a phone that keeps its own connection (Settings › Notifications › Always connected) is told over it too,
       // so a late Firebase push does not hold the message up; whichever arrives first wakes it.
       wakeOverBackgroundSockets(userId, deviceId, { from: sender?.id ?? null, groupId });
-      // A group message: the group notification (group name, "sender: 🔒 Message"), collapsed per group.
+      // A group message: the group notification (group name, "sender: 🔒 Message"). Every wake-up shares one collapse
+      // key (collapseKeys.wake): one makes the phone fetch everything waiting, and Firebase learns no chat or group.
       const group = groupId && await db.prepare('SELECT g.name AS "name" FROM groups g JOIN group_members m ON m.group_id = g.id WHERE g.id = ? AND m.user_id = ?').get(groupId, userId);
       if (group) {
         return pushToDevice(userId, deviceId, pushBody.wake({ groupId, from: sender?.id }),
-          { collapseKey: `group:${groupId}`, ttlSeconds: 86_400 });
+          { collapseKey: collapseKeys.wake, ttlSeconds: 86_400 });
       }
       const body = pushBody.wake({ from: sender?.id });
-      return pushToDevice(userId, deviceId, body, { collapseKey: sender ? `chat:${sender.id}` : 'xmpp-wake', ttlSeconds: 86_400 });
+      return pushToDevice(userId, deviceId, body, { collapseKey: collapseKeys.wake, ttlSeconds: 86_400 });
     } });
   xmpp.register(app, requireSession);
   forgetXmppVerdicts = () => xmpp.forgetVerdictsSoon();
@@ -3422,7 +3425,7 @@ export function createChatServer({
         if (initialOffer && current && !current.silenced && needsPush(targetId)) {
           // Not awaited: the caller's candidates keep flowing while Firebase is asked to ring the phone.
           current.pushed = true;
-          trackSocketTask(pushToUser(targetId, pushBody.call({ callId, from: userId, mode }), { ttlSeconds: 45, collapseKey: `call:${callId}` })
+          trackSocketTask(pushToUser(targetId, pushBody.call({ callId, from: userId, mode }), { ttlSeconds: 45, collapseKey: collapseKeys.call(callId) })
             .then((sent) => {
               if (sent > 0 && !current.pushAt) current.pushAt = Date.now();
               if (sent === 0) current.pushed = false;
@@ -3463,7 +3466,7 @@ export function createChatServer({
           // connection that push opens. "Offline" only when nobody could be rung at all.
           if (needsPush(targetId)) {
             holdInvite(targetId, invite);
-            trackSocketTask(pushToUser(targetId, pushBody.call({ callId: roomId, from: userId, mode }), { ttlSeconds: GROUP_INVITE_RING_MS / 1000, collapseKey: `call:${roomId}` })
+            trackSocketTask(pushToUser(targetId, pushBody.call({ callId: roomId, from: userId, mode }), { ttlSeconds: GROUP_INVITE_RING_MS / 1000, collapseKey: collapseKeys.call(roomId) })
               .then((sent) => {
                 if (sent > 0 || delivered > 0) return;
                 takeHeldInvite(targetId, roomId);

@@ -8,6 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, test } from 'node:test';
 import { createChatServer } from './index.mjs';
+import { deviceCollapseKey } from './push.mjs';
 import { createXmpp, localpartFor, rolloutBucket, rolloutFromEnv, signOfflineHook, signXmppToken, xmppConfigFromEnv, XMPP_TOKEN_TTL_SECONDS } from './xmpp.mjs';
 
 const PASSWORD = 'correct horse battery staple';
@@ -264,7 +265,7 @@ test('the offline hook wakes exactly the device whose message waits, once per bu
   assert.equal((await woken.json()).pushed, 1);
   assert.deepEqual(pushes.map((push) => push.token), [`fcm-gina-phone-${'y'.repeat(30)}`], 'only that device, not the tablet');
   assert.ok(pushes[0].data.enc && pushes[0].data.iv, 'the wake-up is encrypted for the device like every push');
-  assert.deepEqual(pushes[0].options, { collapseKey: 'xmpp-wake', ttlSeconds: 86_400 });
+  assert.deepEqual(pushes[0].options, { collapseKey: deviceCollapseKey(PUSH_KEY, 'wake'), ttlSeconds: 86_400 });
 
   const again = await (await hook({ to: localpart, ts })).json();
   assert.deepEqual(again, { pushed: 0, coalesced: true }, 'a second message seconds later does not push again');
@@ -456,7 +457,7 @@ test('a wake-up for a message from a known device names the sender, like today\'
   pushes.length = 0;
   const woken = await hook({ to: umaDevice, from: vicDevice, ts: Math.floor(Date.now() / 1000) });
   assert.equal((await woken.json()).pushed, 1);
-  assert.equal(pushes[0].options.collapseKey, `chat:${vic.user.id}`, 'collapses with that chat, as message pushes do');
+  assert.equal(pushes[0].options.collapseKey, deviceCollapseKey(PUSH_KEY, 'wake'), 'one wake-up key per phone: Firebase learns no chat or sender');
 });
 
 test('group fan-out: only a member allowed to post, with the current members hash, reaches other members', async () => {
@@ -478,7 +479,7 @@ test('group fan-out: only a member allowed to post, with the current members has
   pushes.length = 0;
   const woken = await hook({ to: xiaD, from: wesD, group: groupId, ts: Math.floor(Date.now() / 1000) });
   assert.equal((await woken.json()).pushed, 1);
-  assert.equal(pushes[0].options.collapseKey, `group:${groupId}`, "a group wake-up is the group's notification");
+  assert.equal(pushes[0].options.collapseKey, deviceCollapseKey(PUSH_KEY, 'wake'), 'nor any group');
 });
 
 test('a group message may carry its own id (the one it was first sent over XMPP with); a reused id is refused', async () => {

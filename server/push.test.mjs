@@ -83,9 +83,10 @@ test('a message to a phone with no app on screen is pushed, encrypted for that p
   const sender = await connect(a);
   await until(() => sender.events.some((event) => event.type === 'connection:ready'), 'ready');
   sender.send(JSON.stringify({ type: 'message:send', message: { id: 'push-msg-1', receiverId: b.user.id, content: 'Hello 👋 secret' } }));
-  const push = await until(() => pushesTo(token).find((item) => item.data.t === 'msg'), 'message push');
+  const push = await until(() => pushesTo(token).find((item) => decrypt(key, item.data).t === 'msg'), 'message push');
   assert.equal(push.options.collapseKey, undefined, 'no collapse key: Firebase keeps only 4 collapse keys for an offline phone, but up to 100 plain pushes');
   assert.ok(!JSON.stringify(push.data).includes('secret'), 'Google sees no message text');
+  assert.deepEqual(Object.keys(push.data).sort(), ['enc', 'iv'], 'nor the push type or any id: only the ciphertext');
   const body = decrypt(key, push.data);
   // Content-free: a wake-up with the ids only. The phone shows the name it keeps locally; even our server's push
   // key (known to the server) opens no text, name or photo.
@@ -108,7 +109,7 @@ test('a message to a phone with no app on screen is pushed, encrypted for that p
   open.send(JSON.stringify({ type: 'client:state', visibility: 'hidden', idle: false }));
   await new Promise((resolve) => setTimeout(resolve, 100));
   sender.send(JSON.stringify({ type: 'message:send', message: { id: 'push-msg-3', receiverId: b.user.id, content: 'later' } }));
-  await until(() => pushesTo(token).some((item) => item.data.t === 'msg' && decrypt(key, item.data).id === 'push-msg-3'), 'background push');
+  await until(() => pushesTo(token).some((item) => decrypt(key, item.data).t === 'msg' && decrypt(key, item.data).id === 'push-msg-3'), 'background push');
   open.close();
   sender.close();
 });
@@ -120,7 +121,7 @@ test('a call rings a sleeping phone by push; the phone connecting later still ge
   const callId = `push-call-${Date.now()}`;
   caller.send(JSON.stringify({ type: 'call:signal', targetId: b.user.id, callId, mode: 'video', signalId: 's1', signal: { type: 'offer', sdp: 'v=0 fake' } }));
   caller.send(JSON.stringify({ type: 'call:signal', targetId: b.user.id, callId, mode: 'video', signalId: 's2', signal: { type: 'ice', candidate: { candidate: 'c1' } } }));
-  const push = await until(() => pushesTo(token).find((item) => item.data.t === 'call'), 'call push');
+  const push = await until(() => pushesTo(token).find((item) => decrypt(key, item.data).t === 'call'), 'call push');
   const body = decrypt(key, push.data);
   assert.deepEqual(body, { t: 'call', callId, from: a.user.id, mode: 'video' }, 'no caller name or photo: the phone names the caller itself');
   assert.equal(push.options.ttlSeconds, 45, 'a call push is useless after the ring');
@@ -138,14 +139,14 @@ test('a call rings a sleeping phone by push; the phone connecting later still ge
   await until(() => phone.events.some((event) => event.type === 'call:signal' && event.callId === callId && event.signal.type === 'ice'), 'held candidate');
 
   caller.send(JSON.stringify({ type: 'call:signal', targetId: b.user.id, callId, mode: 'video', signalId: 's3', signal: { type: 'end', reason: 'ended' } }));
-  const end = await until(() => pushesTo(token).find((item) => item.data.t === 'call_end'), 'call end push');
+  const end = await until(() => pushesTo(token).find((item) => decrypt(key, item.data).t === 'call_end'), 'call end push');
   assert.equal(decrypt(key, end.data).callId, callId);
   phone.close();
 
   // Declined from the push-rung call screen before any socket connected: the caller hears it straight away.
   const second = `push-call-2-${Date.now()}`;
   caller.send(JSON.stringify({ type: 'call:signal', targetId: b.user.id, callId: second, mode: 'audio', signalId: 't1', signal: { type: 'offer', sdp: 'v=0' } }));
-  await until(() => pushesTo(token).some((item) => item.data.t === 'call' && decrypt(key, item.data).callId === second), 'second call push');
+  await until(() => pushesTo(token).some((item) => decrypt(key, item.data).t === 'call' && decrypt(key, item.data).callId === second), 'second call push');
   assert.equal((await api(`/api/v1/calls/${second}/decline`, { session: b, method: 'POST' })).status, 204);
   await until(() => caller.events.some((event) => event.type === 'call:signal' && event.callId === second && event.signal.type === 'end'), 'caller hears the decline');
   assert.equal((await api(`/api/v1/calls/${second}/decline`, { session: a, method: 'POST' })).status, 404, 'only the callee can decline');
@@ -162,7 +163,7 @@ test('reactions to my message are pushed; a phone the app is gone from is forgot
   author.close();
   await new Promise((resolve) => setTimeout(resolve, 100));
   reader.send(JSON.stringify({ type: 'message:reaction', messageId: 'push-react-target', emoji: '❤️' }));
-  const push = await until(() => pushesTo(token).find((item) => item.data.t === 'react'), 'reaction push');
+  const push = await until(() => pushesTo(token).find((item) => decrypt(key, item.data).t === 'react'), 'reaction push');
   assert.deepEqual(decrypt(key, push.data), { t: 'react', id: 'push-react-target', from: a.user.id }, 'no emoji, no quoted text');
 
   // An uninstalled app's token is dropped on the first failed send.
@@ -171,7 +172,7 @@ test('reactions to my message are pushed; a phone the app is gone from is forgot
   reader.send(JSON.stringify({ type: 'message:send', message: { id: 'push-gone-1', receiverId: b.user.id, content: 'x' } }));
   await until(() => pushesTo(gone).length === 1, 'tried the gone token');
   reader.send(JSON.stringify({ type: 'message:send', message: { id: 'push-gone-2', receiverId: b.user.id, content: 'y' } }));
-  await until(() => pushesTo(token).some((item) => item.data.t === 'msg' && decrypt(key, item.data).id === 'push-gone-2'), 'second push');
+  await until(() => pushesTo(token).some((item) => decrypt(key, item.data).t === 'msg' && decrypt(key, item.data).id === 'push-gone-2'), 'second push');
   assert.equal(pushesTo(gone).length, 1, 'never tried again');
 
   // Signing out of that session forgets the phone.
@@ -205,7 +206,7 @@ test('the FCM sender signs in with the service account (RS256 JWT) and sends hig
     return new Response('{}', { status: 200 });
   };
   const sender = createPushSender({ serviceAccount: account, fetchImpl });
-  assert.deepEqual(await sender.send('tok', { t: 'msg', enc: 'x', iv: 'y' }, { collapseKey: 'chat:1' }), { ok: true });
+  assert.deepEqual(await sender.send('tok', { enc: 'x', iv: 'y' }, { collapseKey: 'chat:1' }), { ok: true });
   const assertion = new URLSearchParams(calls[0].init.body).get('assertion');
   const [header, claims, signature] = assertion.split('.');
   assert.ok(createVerify('RSA-SHA256').update(`${header}.${claims}`).verify(publicKey, Buffer.from(signature, 'base64url')), 'signed with the account key');

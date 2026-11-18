@@ -3,16 +3,25 @@
 // real ones are CALL_UNREACHABLE_MS (30 s), DELIVERY_PUSH_MS (8 s) and NUDGE_AFTER_MS (10 s).
 import test, { after, before } from 'node:test';
 import assert from 'node:assert/strict';
-import { randomBytes } from 'node:crypto';
+import { createDecipheriv, randomBytes } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import WebSocket from 'ws';
 import { createChatServer } from './index.mjs';
+import { deviceCollapseKey } from './push.mjs';
 
 const PASSWORD = 'Correct-Horse-Battery-42!';
 const sent = [];
-const fakePush = { send: async (token, data, options) => { sent.push({ token, data, options }); return { ok: true }; } };
+// Push keys by token, so the fake sender can open each push as the phone does (the type travels inside it).
+const keys = new Map();
+function open(token, data) {
+  const blob = Buffer.from(data.enc, 'base64');
+  const decipher = createDecipheriv('aes-256-gcm', Buffer.from(keys.get(token), 'base64'), Buffer.from(data.iv, 'base64'));
+  decipher.setAuthTag(blob.subarray(blob.length - 16));
+  return JSON.parse(Buffer.concat([decipher.update(blob.subarray(0, blob.length - 16)), decipher.final()]).toString('utf8'));
+}
+const fakePush = { send: async (token, data, options) => { sent.push({ token, data, options, body: open(token, data) }); return { ok: true }; } };
 let service;
 let directory;
 let baseUrl;
@@ -38,12 +47,16 @@ async function pair() {
   await api('/api/v1/contacts', { session: a, method: 'POST', body: { userId: b.user.id } });
   await api('/api/v1/contacts', { session: b, method: 'POST', body: { userId: a.user.id } });
   const token = `fcm-${randomBytes(8).toString('hex')}`;
-  await api('/api/v1/push/devices', { session: b, method: 'POST', body: { token, key: randomBytes(32).toString('base64'), platform: 'android' } });
-  return { a, b, token };
+  const key = randomBytes(32).toString('base64');
+  keys.set(token, key);
+  await api('/api/v1/push/devices', { session: b, method: 'POST', body: { token, key, platform: 'android' } });
+  return { a, b, token, key };
 }
 async function registerOldPhone(session) {
   const token = `fcm-old-${randomBytes(8).toString('hex')}`;
-  await fetch(baseUrl + '/api/v1/push/devices', { method: 'POST', headers: { 'X-HM-Client': '2', Authorization: `Bearer ${session.token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ token, key: randomBytes(32).toString('base64'), platform: 'android' }) });
+  const key = randomBytes(32).toString('base64');
+  keys.set(token, key);
+  await fetch(baseUrl + '/api/v1/push/devices', { method: 'POST', headers: { 'X-HM-Client': '2', Authorization: `Bearer ${session.token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ token, key, platform: 'android' }) });
   return token;
 }
 function connect(session, protocol = 'relay.client.3') {
@@ -64,11 +77,11 @@ const signalsOf = (socket, callId, type) => socket.events.filter((event) => even
 const offer = (socket, targetId, callId) => socket.send(JSON.stringify({ type: 'call:signal', targetId, callId, roomId: callId, mode: 'audio', signalId: `${callId}-o`, signal: { type: 'offer', sdp: 'v=0 x' } }));
 
 test('a call to an offline phone never shows "Ringing", and ends as "unavailable" when no device confirms', async () => {
-  const { a, b, token } = await pair();
+  const { a, b, token, key } = await pair();
   const caller = await connect(a);
   await ready(caller);
   offer(caller, b.user.id, 'c-offline');
-  await until(() => sent.some((item) => item.token === token && item.options?.collapseKey === 'call:c-offline'), 'call push');
+  await until(() => sent.some((item) => item.token === token && item.options?.collapseKey === deviceCollapseKey(key, 'call:c-offline')), 'call push');
   const end = await until(() => signalsOf(caller, 'c-offline', 'end')[0], 'the call ends');
   assert.equal(end.signal.reason, 'unavailable');
   assert.equal(signalsOf(caller, 'c-offline', 'ringing').length, 0, 'a queued push is no proof the phone rang');
@@ -115,7 +128,7 @@ test('a message written to a screen that never confirms it still gets its push; 
   const sender = await connect(a);
   const screen = await connect(b);
   await Promise.all([ready(sender), ready(screen)]);
-  const pushes = () => sent.filter((item) => item.token === token && item.data?.t === 'msg');
+  const pushes = () => sent.filter((item) => item.token === token && item.body?.t === 'msg');
   sender.send(JSON.stringify({ type: 'message:send', message: { id: 'unconfirmed-1', receiverId: b.user.id, content: 'hi' } }));
   await until(() => screen.events.some((event) => event.type === 'message:new' && event.message.id === 'unconfirmed-1'), 'written to the screen');
   assert.equal(pushes().length, 0, 'someone is on screen: no push at once');
@@ -130,12 +143,15 @@ test('a message written to a screen that never confirms it still gets its push; 
 });
 
 test('XMPP wake-up: only between linked people, content-free, rate limited', async () => {
-  const { a, b, token } = await pair();
+  const { a, b, token, key } = await pair();
   const result = await api('/api/v1/xmpp/nudge', { session: a, method: 'POST', body: { userId: b.user.id, messageId: 'm' } });
   assert.deepEqual([result.status, result.body.sent], [202, 1]);
   const pushed = sent.filter((item) => item.token === token).at(-1);
-  assert.equal(pushed.data.t, 'xwake');
+  assert.equal(pushed.body.t, 'xwake');
+  assert.deepEqual(Object.keys(pushed.data).sort(), ['enc', 'iv'], 'Firebase sees only the ciphertext: no type, no ids');
   assert.equal(pushed.options.collapseKey, undefined);
+  assert.notEqual(deviceCollapseKey(key, 'call:x'), deviceCollapseKey(randomBytes(32).toString('base64'), 'call:x'), 'the same call gets unrelated keys on different phones');
+  assert.match(deviceCollapseKey(key, 'call:x'), /^k[A-Za-z0-9_-]{22}$/, 'no ids in a collapse key');
   counter += 1;
   const stranger = (await api('/api/v1/auth/register', { method: 'POST', body: { username: `reachs${counter}`, dob: '1990-04-12', password: PASSWORD } })).body;
   assert.equal((await api('/api/v1/xmpp/nudge', { session: stranger, method: 'POST', body: { userId: b.user.id } })).body.sent, 0, 'not linked: nothing');
@@ -185,7 +201,7 @@ test('a call to a phone that was offline the whole time leaves a missed-call pus
   const { a, b, token } = await pair();
   const caller = await connect(a);
   await ready(caller);
-  const missedFor = (callId) => sent.filter((item) => item.token === token && item.data?.t === 'missed');
+  const missedFor = (callId) => sent.filter((item) => item.token === token && item.body?.t === 'missed');
   const before = missedFor().length;
   offer(caller, b.user.id, 'c-missed');
   await until(() => signalsOf(caller, 'c-missed', 'end')[0], 'ended as unavailable');
@@ -218,15 +234,15 @@ test('a call to a phone that was offline the whole time leaves a missed-call pus
 });
 
 test('C1: a group-call invite to a phone with no app open rings it by push, waits for its connection, and a decline reaches the host', async () => {
-  const { a, b, token } = await pair();
+  const { a, b, token, key } = await pair();
   const host = await connect(a);
   await ready(host);
   const before = sent.length;
   host.send(JSON.stringify({ type: 'call:invite', roomId: 'room-c1', targetId: b.user.id, mode: 'video', participants: [] }));
-  await until(() => sent.slice(before).some((item) => item.token === token && item.data?.t === 'call'), 'the invite rings the phone by push');
-  const push = sent.slice(before).find((item) => item.token === token && item.data?.t === 'call');
+  await until(() => sent.slice(before).some((item) => item.token === token && item.body?.t === 'call'), 'the invite rings the phone by push');
+  const push = sent.slice(before).find((item) => item.token === token && item.body?.t === 'call');
   // The payload is encrypted for the phone; its collapse key and lifetime show it rings under the room id, briefly.
-  assert.deepEqual([push.options.collapseKey, push.options.ttlSeconds], ['call:room-c1', 45], 'rung under the room id');
+  assert.deepEqual([push.options.collapseKey, push.options.ttlSeconds], [deviceCollapseKey(key, 'call:room-c1'), 45], 'rung under the room id');
   await sleep(100);
   assert.ok(!host.events.some((event) => event.type === 'call:invite-reply' && event.reason === 'offline'), 'not "offline": the phone is ringing');
   // The connection the push opens collects the invite.
@@ -347,7 +363,7 @@ test('P5: a phone that keeps its own connection (Always connected) gets the mess
   assert.deepEqual([result.status, result.body.sent], [202, 2], 'the push and the connection');
   const wake = await until(() => service.events.find((event) => event.type === 'xmpp:wake'), 'the wake-up over the connection');
   assert.deepEqual(wake, { type: 'xmpp:wake', from: a.user.id }, 'content-free, like the push');
-  assert.ok(sent.slice(before).some((item) => item.token === token && item.data?.t === 'xwake'), 'Firebase still gets it');
+  assert.ok(sent.slice(before).some((item) => item.token === token && item.body?.t === 'xwake'), 'Firebase still gets it');
   // An app on screen is not sent it (it is connected to XMPP itself).
   const app = await connect(b);
   await ready(app);
