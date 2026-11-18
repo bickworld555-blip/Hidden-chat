@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, Building2, Check, QrCode, Search, UserPlus, Users, X } from 'lucide-react';
+import { ArrowLeft, Building2, MessageCircle, Phone, QrCode, RefreshCw, Search, UserPlus, Users, Video, X } from 'lucide-react';
 import { useChatStore } from '../store.js';
 import { handleFrom, inviteTokenFrom, linkContact, lookupUsername, redeemInviteLink } from '../contactsApi.js';
-import { exactHandleMatch, isSavedContact, matchesPerson, mergeSuggestions, savedContacts, unsavedThreads } from '../contactBook.js';
+import { exactHandleMatch, isSavedContact, matchesPerson, mergeSuggestions, savedContacts, unifiedContacts, unsavedThreads } from '../contactBook.js';
 import Avatar from './Avatar.jsx';
 import StatusRing from './StatusRing.jsx';
 import VerifiedBadge from './VerifiedBadge.jsx';
-import PhoneContactsSection from './PhoneContactsSection.jsx';
+import { PhoneInviteSection, PhoneSyncRow, usePhoneContacts } from './PhoneContactsSection.jsx';
 import { findPerson } from '../contactNames.js';
+import { useContactNames } from '../useContactNames.js';
 
 const SUGGEST_DEBOUNCE_MS = 600;
 
@@ -58,7 +59,34 @@ function PersonRow({ person, online, onChat, onAdd, busy, trailing }) {
   );
 }
 
-export default function SelectContactModal({ isOpen, onClose, onSelectContact, onNewGroup, onStartCall }) {
+// A person on Hidden Messenger in the one contact list: tap the row (or the chat icon) to open the chat; voice and
+// video calls start from the same row, as in WhatsApp's picker.
+function ContactRow({ person, online, busy, onOpen, onCall }) {
+  const label = person.name ?? person.username ?? 'Unknown';
+  return (
+    <div className="wa-sc-contact-item wa-sc-contact-row">
+      <button type="button" className="wa-sc-contact-main" onClick={() => onOpen(person)} disabled={busy} aria-label={`Chat with ${label}`}>
+        <StatusRing userId={person.id} name={label}><Avatar name={label} initials={person.initials ?? label.slice(0, 2).toUpperCase()} color={person.color} image={person.avatar} online={online} /></StatusRing>
+        <div className="wa-sc-contact-info">
+          <strong className="wa-sc-contact-name">{label}{person.verified && <VerifiedBadge size={15} />}</strong>
+          <span className="wa-sc-contact-status">{person.username ? `@${person.username}` : ''}</span>
+        </div>
+      </button>
+      <button type="button" className="wa-sc-icon-btn" onClick={() => onOpen(person)} disabled={busy} aria-label={`Message ${label}`}><MessageCircle size={20} /></button>
+      {onCall && <button type="button" className="wa-sc-icon-btn" onClick={() => onCall(person, 'audio')} disabled={busy} aria-label={`Voice call ${label}`}><Phone size={20} /></button>}
+      {onCall && <button type="button" className="wa-sc-icon-btn" onClick={() => onCall(person, 'video')} disabled={busy} aria-label={`Video call ${label}`}><Video size={20} /></button>}
+    </div>
+  );
+}
+
+// Mounted only while open, so nothing (the phone's contacts included) is read before the picker is shown.
+export default function SelectContactModal(props) {
+  return props.isOpen ? <SelectContactPicker {...props} /> : null;
+}
+
+function SelectContactPicker({ isOpen, onClose, onSelectContact, onNewGroup, onStartCall }) {
+  useContactNames(); // re-render when a saved name changes
+  const phone = usePhoneContacts();
   const rawChats = useChatStore((state) => state.chats);
   const hiddenContacts = useChatStore((state) => state.hiddenContacts);
   const presence = useChatStore((state) => state.presence);
@@ -78,11 +106,19 @@ export default function SelectContactModal({ isOpen, onClose, onSelectContact, o
   const newHandleInputRef = useRef(null);
 
   const saved = useMemo(() => savedContacts(rawChats, hiddenContacts, { userId }), [rawChats, hiddenContacts, userId]);
-  const recent = useMemo(() => unsavedThreads(rawChats, { userId }), [rawChats, userId]);
-  const known = useMemo(() => [...saved, ...recent], [saved, recent]);
+  // Saved contacts and phonebook matches, each person once (contactBook.js unifiedContacts); recent chats with
+  // anyone in that list are not listed again below it.
+  const contacts = useMemo(() => unifiedContacts(saved, phone.registered, { userId, aliasFor: (id) => findPerson(id, useChatStore.getState())?.alias }),
+    [saved, phone.registered, userId]);
+  const recent = useMemo(() => {
+    const listed = new Set(contacts.map((person) => person.id));
+    return unsavedThreads(rawChats, { userId }).filter((person) => !listed.has(person.id));
+  }, [rawChats, userId, contacts]);
+  const known = useMemo(() => [...contacts, ...recent], [contacts, recent]);
 
   const normalizedQuery = query.trim().toLowerCase();
-  const filteredSaved = useMemo(() => saved.filter((person) => matchesPerson(person, normalizedQuery)), [saved, normalizedQuery]);
+  const filteredContacts = useMemo(() => contacts.filter((person) => matchesPerson(person, normalizedQuery)
+    || (person.phonebookName ?? '').toLowerCase().includes(normalizedQuery)), [contacts, normalizedQuery]);
   const filteredRecent = useMemo(() => recent.filter((person) => matchesPerson(person, normalizedQuery)), [recent, normalizedQuery]);
 
   // Two searches: the header search bar (people not yet known) and the "Enter @username" box (live suggestions).
@@ -107,7 +143,6 @@ export default function SelectContactModal({ isOpen, onClose, onSelectContact, o
     return () => window.removeEventListener('keydown', onKey);
   }, [isOpen, onClose]);
 
-  if (!isOpen) return null;
   const inviteToken = inviteTokenFrom(query);
 
   // A pasted invite link (…/c#<token>): redeeming it links both people as contacts, then the chat opens.
@@ -124,16 +159,17 @@ export default function SelectContactModal({ isOpen, onClose, onSelectContact, o
     }
   }
 
-  // A phonebook match (PhoneContactsSection): saved with the phonebook name unless a name was typed in the app, then
-  // opened; calls start from the chat that opens.
-  async function openFromPhone(person) {
+  // A row of the contact list. A phonebook match not saved yet is saved with the phonebook name (unless a name was
+  // typed in the app), as the phone's own contacts are; a saved contact just opens. Calls start from the chat that opens.
+  async function openContact(person) {
+    if (isSavedContact(person)) return openWith(person, { save: false });
     if (!findPerson(person.id, useChatStore.getState())?.alias && person.phonebookName) {
       await useChatStore.getState().renameContact(person.id, { name: person.phonebookName }).catch(() => {});
     }
-    await openWith(person, { save: true });
+    return openWith(person, { save: true });
   }
-  async function callFromPhone(person, mode) {
-    await openFromPhone(person);
+  async function callContact(person, mode) {
+    await openContact(person);
     onStartCall?.(person.id, mode);
   }
 
@@ -191,7 +227,7 @@ export default function SelectContactModal({ isOpen, onClose, onSelectContact, o
           </button>
           <div className="wa-sc-title-wrap">
             <h2>Select contact</h2>
-            <span className="wa-sc-subtitle">{saved.length} contact{saved.length === 1 ? '' : 's'}{recent.length ? ` · ${recent.length} recent` : ''}</span>
+            <span className="wa-sc-subtitle">{contacts.length} contact{contacts.length === 1 ? '' : 's'}{recent.length ? ` · ${recent.length} recent` : ''}</span>
           </div>
           <div className="wa-sc-actions">
             <button type="button" className="wa-sc-icon-btn" onClick={() => setShowSearchInput((open) => !open)} aria-label="Search contacts">
@@ -280,26 +316,23 @@ export default function SelectContactModal({ isOpen, onClose, onSelectContact, o
             </form>
           )}
 
-          <div className="wa-sc-section-heading"><span>Contacts on Hidden Messenger</span></div>
+          <PhoneSyncRow phone={phone} />
+
+          <div className="wa-sc-section-heading wa-sc-contacts-heading">
+            <span>Contacts on Hidden Messenger</span>
+            {phone.granted && <button type="button" className="wa-sc-icon-btn" onClick={() => phone.sync(false)} disabled={phone.status === 'syncing'} aria-label="Sync phone contacts again"><RefreshCw size={16} /></button>}
+          </div>
           <div className="wa-sc-contacts-list">
-            {filteredSaved.map((contact) => (
-              <button type="button" key={contact.id} className="wa-sc-contact-item" onClick={() => chatWith(contact)} disabled={busyId === contact.id}>
-                <StatusRing userId={contact.id} name={contact.name}><Avatar name={contact.name} initials={contact.initials ?? contact.name?.slice(0, 2)?.toUpperCase() ?? '?'} color={contact.color} image={contact.avatar} online={presence?.[contact.id] === 'online'} /></StatusRing>
-                <div className="wa-sc-contact-info">
-                  <strong className="wa-sc-contact-name">{contact.name ?? 'Unknown'}{contact.verified && <VerifiedBadge size={15} />}</strong>
-                  <span className="wa-sc-contact-status">{contact.username ? `@${contact.username}` : 'Hey there! I am using Hidden Messenger'}</span>
-                </div>
-                <span className="wa-sc-saved-badge" aria-hidden="true"><Check size={14} /></span>
-              </button>
+            {filteredContacts.map((person) => (
+              <ContactRow key={person.id} person={person} online={presence?.[person.id] === 'online'} busy={busyId === person.id}
+                onOpen={openContact} onCall={onStartCall ? callContact : null} />
             ))}
-            {filteredSaved.length === 0 && (
+            {filteredContacts.length === 0 && phone.status !== 'syncing' && (
               <div className="wa-sc-empty-state">
-                <p>{normalizedQuery ? `No contacts found matching “${query}”` : 'No saved contacts yet. Add someone by @username above.'}</p>
+                <p>{normalizedQuery ? `No contacts found matching “${query}”` : 'No contacts on Hidden Messenger yet. Add someone by @username or ID above, or invite friends below.'}</p>
               </div>
             )}
           </div>
-
-          <PhoneContactsSection query={query} busyId={busyId} onChat={openFromPhone} onCall={onStartCall ? callFromPhone : null} />
 
           {filteredRecent.length > 0 && (
             <>
@@ -321,6 +354,8 @@ export default function SelectContactModal({ isOpen, onClose, onSelectContact, o
               ))}
             </div>
           )}
+          {/* Last: phone contacts who are not on Hidden Messenger, with Invite. */}
+          <PhoneInviteSection phone={phone} query={query} />
           {addError && !isAddingNew && <div className="wa-sc-error-msg" role="alert">{addError}</div>}
         </div>
       </div>

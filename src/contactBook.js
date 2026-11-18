@@ -31,6 +31,30 @@ export function savedContacts(chats, hiddenContacts = [], { userId } = {}) {
   return out.sort(byName);
 }
 
+/**
+ * The picker's one list of people on Hidden Messenger: saved contacts and phonebook matches (src/deviceContacts.js
+ * `registered`: { name, user }), each person once, by name. A saved contact keeps its row (its name already follows
+ * src/contactNames.js) and only learns it is in the phonebook; a phonebook match not saved yet shows a name typed in
+ * the app if there is one (`aliasFor`), else the phonebook name, and carries `phonebookName` to be saved with when
+ * opened.
+ */
+export function unifiedContacts(saved, phoneRegistered = [], { userId, aliasFor = () => '' } = {}) {
+  const byId = new Map();
+  for (const person of saved ?? []) {
+    if (person?.id && person.id !== userId) byId.set(person.id, person);
+  }
+  for (const { name, user } of phoneRegistered ?? []) {
+    if (!user?.id || user.id === userId) continue;
+    const existing = byId.get(user.id);
+    if (existing) {
+      byId.set(user.id, { ...existing, inPhone: true, phonebookName: existing.phonebookName ?? name });
+      continue;
+    }
+    byId.set(user.id, { ...user, name: aliasFor(user.id) || name || user.name, phonebookName: name, inPhone: true });
+  }
+  return [...byId.values()].sort(byName);
+}
+
 // Threads with people who are not in the contact book (direct chats started from a search).
 export function unsavedThreads(chats, { userId } = {}) {
   return (chats ?? []).filter((link) => link?.id && link.id !== userId && !link.group && !link.deleted && !isSavedContact(link)).sort(byName);

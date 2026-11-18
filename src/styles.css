@@ -5814,3 +5814,9 @@ button.groups-sender { padding: 0; border: 0; background: none; font: inherit; f
 .notif-delivery { margin: 4px 16px 8px; color: var(--wa-text, #e9edef); font-size: 14px; }
 .notif-delivery.is-late { color: #f6b44b; }
 .notif-delivery-advice { margin: 0 16px 12px; color: var(--wa-sub, #8696a0); font-size: 13px; line-height: 1.4; }
+
+/* Select contact: one row per person on Hidden Messenger, the row opens the chat, icons call (SelectContactModal ContactRow). */
+.wa-sc-contacts-heading { display: flex; align-items: center; justify-content: space-between; }
+.wa-sc-contact-row { cursor: default; gap: 2px; }
+.wa-sc-contact-main { flex: 1; min-width: 0; display: flex; align-items: center; gap: 14px; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.wa-sc-contact-row > .wa-sc-icon-btn { flex: none; color: var(--wa-green, #008069); }

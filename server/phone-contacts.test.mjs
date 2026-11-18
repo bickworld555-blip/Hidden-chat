@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { after, before, test } from 'node:test';
 import { createChatServer } from './index.mjs';
 import { accountNumbersIn, categorize, inviteText, matchNumbers, planDeviceNames, readPhonebook, syncDeviceContacts } from '../src/deviceContacts.js';
+import { unifiedContacts } from '../src/contactBook.js';
 
 const PASSWORD = 'correct horse battery staple';
 let directory;
@@ -112,4 +113,39 @@ test('someone saved twice (SIM and Google account, "+880…" and "0…") is invi
     { id: 'd', name: 'Abu', fields: [{ kind: 'phone', text: '01765342154' }] },
   ]), []);
   assert.deepEqual(twice.invite.map((item) => item.phone), ['+8801324740609', '01765342154']);
+});
+
+test('the picker lists each person on Hidden Messenger once: saved contacts and phonebook matches merge by account', () => {
+  const saved = [
+    { id: 'u-nasir', name: 'Nasir Bhai', username: 'nasir', saved: true },
+    { id: 'u-rana', name: 'Rana', username: 'rana', saved: true },
+  ];
+  const registered = [
+    { key: 'p1', name: 'Nasir (phone)', user: { id: 'u-nasir', username: 'nasir', name: '@nasir' } }, // saved too
+    { key: 'p2', name: 'Abir Office', user: { id: 'u-abir', username: 'abir', name: '@abir' } },     // phone only
+    { key: 'p3', name: 'Me', user: { id: 'u-me', username: 'me' } },                                 // my own ID
+  ];
+  const list = unifiedContacts(saved, registered, { userId: 'u-me', aliasFor: (id) => (id === 'u-abir' ? '' : '') });
+  assert.deepEqual(list.map((person) => person.id), ['u-abir', 'u-nasir', 'u-rana'], 'once each, by name, never myself');
+  const nasir = list.find((person) => person.id === 'u-nasir');
+  assert.equal(nasir.name, 'Nasir Bhai', 'a saved contact keeps its saved name');
+  assert.equal(nasir.saved, true);
+  assert.equal(nasir.inPhone, true, 'and is known to be in the phonebook');
+  const abir = list.find((person) => person.id === 'u-abir');
+  assert.deepEqual([abir.name, abir.phonebookName, abir.saved, abir.inPhone], ['Abir Office', 'Abir Office', undefined, true], 'a phone-only match shows its phonebook name and is not saved yet');
+  assert.equal(unifiedContacts([], registered, { userId: 'u-me', aliasFor: (id) => (id === 'u-abir' ? 'Abir (typed in app)' : '') })
+    .find((person) => person.id === 'u-abir').name, 'Abir (typed in app)', 'a name typed in the app wins over the phonebook');
+  assert.deepEqual(unifiedContacts(saved, [], { userId: 'u-me' }).map((person) => person.id), ['u-nasir', 'u-rana'], 'without a phone sync, the saved contacts');
+});
+
+test('the picker shows one contact list with chat, voice and video on every row, and the invite list last', () => {
+  const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+  const picker = read('src/components/SelectContactModal.jsx');
+  const phone = read('src/components/PhoneContactsSection.jsx');
+  assert.ok(!picker.includes('From your phone') && !phone.includes('From your phone'), 'no second "from your phone" list');
+  assert.match(picker, /unifiedContacts\(saved, phone\.registered/, 'saved contacts and phonebook matches are one list');
+  assert.match(picker, /aria-label=\{`Message \$\{label\}`\}[\s\S]*aria-label=\{`Voice call \$\{label\}`\}[\s\S]*aria-label=\{`Video call \$\{label\}`\}/, 'chat, voice and video on each row');
+  assert.match(picker, /!listed\.has\(person\.id\)/, 'a recent chat with someone in the list is not listed again');
+  assert.ok(picker.lastIndexOf('<PhoneInviteSection') > picker.lastIndexOf('Recent chats · not in contacts'), 'the invite list comes last');
+  assert.match(picker, /return props\.isOpen \? <SelectContactPicker/, 'the phonebook is read only once the picker is open');
 });
