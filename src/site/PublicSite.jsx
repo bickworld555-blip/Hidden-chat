@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 import { ArrowRight, BadgeCheck, Building2, Check, ChevronRight, CircleDashed, Download as DownloadIcon, KeyRound, Lock, Megaphone, MessageCircle, Monitor, Phone, Search, ShieldCheck, Smartphone, Store, UsersRound } from 'lucide-react';
 import BrandMark from '../components/BrandMark.jsx';
 import { apiFetch } from '../api.js';
+import { formatAccountNumber } from '../accountNumber.js';
 import { ANDROID_APK_URL, WINDOWS_APP_VERSION, WINDOWS_INSTALLER_URL, WINDOWS_PORTABLE_URL } from './links.js';
 import './site.css';
 
@@ -314,6 +315,23 @@ function ConnectInvite() {
   );
 }
 
+// A shared ID (hiddenmessenger.com/u/<number>, from "Share" on the account-ready screen). "Open in the app" hands it
+// to the Android app (hiddenmessenger://u/<number>), which opens a chat with that person.
+function AccountLink({ number }) {
+  return (
+    <div className="site-wrap site-page site-narrow">
+      <h1>Chat on Hidden Messenger</h1>
+      <p className="site-lede">Someone shared their Hidden Messenger ID with you: private messaging with no phone number and no email.</p>
+      <p className="site-account-id">ID <strong>{formatAccountNumber(number)}</strong></p>
+      <div className="site-actions">
+        <a className="site-button is-large" href={`hiddenmessenger://u/${number}`}>Open in the app</a>
+        <a className="site-button is-large is-ghost" href={ANDROID_APK_URL}>Get the app</a>
+      </div>
+      <p className="site-muted">New to Hidden Messenger? Install the app and sign up, then open this link again, or type this ID in New chat.</p>
+    </div>
+  );
+}
+
 function Steps({ items }) {
   return <ol className="site-steps">{items.map(([title, text]) => <li key={title}><strong>{title}</strong><span>{text}</span></li>)}</ol>;
 }
@@ -464,7 +482,8 @@ function HelpArticle({ slug, go }) {
 
 export default function PublicSite() {
   const [path, go] = usePath();
-  useEffect(() => { document.title = path === '/' ? 'Hidden Messenger · Private messaging' : `${(PAGES.find(([to]) => path.startsWith(to))?.[1] ?? (path.startsWith('/delete-account') ? 'Delete your account' : /^\/c\/?$/.test(path) ? 'Invite' : 'Download'))} · Hidden Messenger`; }, [path]);
+  const accountNumber = /^\/u\/([1-9]\d{9})\/?$/.exec(path)?.[1];
+  useEffect(() => { document.title = path === '/' ? 'Hidden Messenger · Private messaging' : `${(PAGES.find(([to]) => path.startsWith(to))?.[1] ?? (path.startsWith('/delete-account') ? 'Delete your account' : /^\/c\/?$/.test(path) ? 'Invite' : accountNumber ? 'Chat' : 'Download'))} · Hidden Messenger`; }, [path]); // eslint-disable-line react-hooks/exhaustive-deps
   const helpSlug = /^\/help\/([a-z0-9-]+)\/?$/.exec(path)?.[1];
   const page = helpSlug ? <HelpArticle slug={helpSlug} go={go} />
     : path.startsWith('/help') ? <HelpCenter go={go} />
@@ -474,6 +493,7 @@ export default function PublicSite() {
         : path.startsWith('/privacy') ? <Privacy go={go} />
         : path.startsWith('/delete-account') ? <DeleteAccount go={go} />
         : /^\/c\/?$/.test(path) ? <ConnectInvite />
+        : accountNumber ? <AccountLink number={accountNumber} />
         : path.startsWith('/terms') ? <Terms />
           : path.startsWith('/business') ? <Business go={go} />
             : path.startsWith('/download') ? <Download />

@@ -37,12 +37,14 @@
                 <data android:mimeType="audio/*" />
                 <data android:mimeType="application/*" />
             </intent-filter>
-            <!-- Invite links: hiddenmessenger.com/c#<token> offers "Open in the app", which opens hiddenmessenger://c#<token>. -->
+            <!-- "Open in the app" on the website: invite links (hiddenmessenger.com/c#<token> → hiddenmessenger://c#<token>)
+                 and shared IDs (hiddenmessenger.com/u/<number> → hiddenmessenger://u/<number>). -->
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="hiddenmessenger" android:host="c" />
+                <data android:scheme="hiddenmessenger" android:host="u" />
             </intent-filter>
 
         </activity>

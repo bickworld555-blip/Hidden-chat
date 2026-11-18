@@ -1,6 +1,8 @@
-import { apiFetch } from '../api.js';
+import { apiFetch, publicOrigin } from '../api.js';
 import { useEffect, useState } from 'react';
-import { ArrowRight, AtSign, Copy, Eye, EyeOff, Facebook, Instagram, ShieldCheck } from 'lucide-react';
+import { ArrowRight, AtSign, Check, Copy, Eye, EyeOff, Facebook, Instagram, Share2, ShieldCheck } from 'lucide-react';
+import { accountLinkFor, accountShareText, formatAccountNumber } from '../accountNumber.js';
+import { shareText } from '../share.js';
 import BrandMark from './BrandMark.jsx';
 import { LinkWithPhone } from './LinkDevice.jsx';
 import { nativeShell } from '../native.js';
@@ -82,6 +84,7 @@ function PasswordGate({ onAuthenticated, onClose }) {
   const [error, setError] = useState('');
   const [createdSession, setCreatedSession] = useState(null);
   const [copied, setCopied] = useState(false);
+  const [shareNotice, setShareNotice] = useState('');
   // Two-step verification: the server asks for the 6-digit PIN after the password matched.
   const [pinRequired, setPinRequired] = useState(false);
   const [pin, setPin] = useState('');
@@ -138,9 +141,26 @@ function PasswordGate({ onAuthenticated, onClose }) {
     }
   }
 
+  // The ID people share is the account number (src/accountNumber.js); the UUID only for an account without one.
+  const uniqueId = createdSession?.user.number ?? createdSession?.user.id ?? '';
   async function copyUniqueId() {
-    await navigator.clipboard.writeText(createdSession.user.id);
-    setCopied(true);
+    setShareNotice('');
+    try {
+      await navigator.clipboard.writeText(uniqueId);
+      setCopied(true);
+    } catch {
+      setShareNotice('Copying isn’t allowed here. Select the ID and copy it.');
+    }
+  }
+  async function shareUniqueId() {
+    setShareNotice('');
+    const number = createdSession.user.number;
+    try {
+      const result = await shareText({ title: 'My Hidden Messenger ID', text: accountShareText(number, accountLinkFor(number, publicOrigin())) });
+      if (result === 'copied') setShareNotice('Sharing isn’t available here, so your ID and link were copied. Paste them into any chat.');
+    } catch {
+      setShareNotice('Sharing isn’t available here. Use Copy instead.');
+    }
   }
 
   const canSubmit = mode === 'register'
@@ -154,8 +174,16 @@ function PasswordGate({ onAuthenticated, onClose }) {
         <section className="identity-card identity-success" role="dialog" aria-modal="true" aria-labelledby="identity-success-title">
         <div className="identity-kicker">ACCOUNT READY</div>
         <h1 id="identity-success-title">Your account is ready.</h1>
-        <p className="identity-copy">Your unique ID can also be used to sign in. Keep it somewhere safe.</p>
-        <div className="generated-id"><span>YOUR UNIQUE ID</span><code>{createdSession.user.id}</code><button onClick={copyUniqueId} title="Copy unique ID"><Copy size={15} />{copied ? 'Copied' : 'Copy'}</button></div>
+        <p className="identity-copy">This is your Hidden Messenger ID. Share it so friends can find you and start a chat, with no phone number needed. You can also sign in with it, so keep it somewhere safe.</p>
+        <div className="generated-id">
+          <span>YOUR UNIQUE ID</span>
+          <code className={createdSession.user.number ? 'is-number' : ''}>{formatAccountNumber(uniqueId)}</code>
+          <div className="generated-id-actions">
+            <button type="button" onClick={copyUniqueId} aria-label={copied ? 'ID copied' : 'Copy your ID'}>{copied ? <Check size={15} /> : <Copy size={15} />}{copied ? 'Copied' : 'Copy'}</button>
+            {createdSession.user.number && <button type="button" className="is-share" onClick={shareUniqueId} aria-label="Share your ID"><Share2 size={15} />Share</button>}
+          </div>
+        </div>
+        {shareNotice && <p className="identity-share-notice" role="status">{shareNotice}</p>}
         <button className="identity-submit" onClick={() => onAuthenticated(createdSession)}>Continue to Hidden Messenger<ArrowRight size={16} /></button>
         </section>
       </div>
@@ -198,7 +226,7 @@ function PasswordGate({ onAuthenticated, onClose }) {
             <input className="identity-text-input" id="relay-dob" type="date" value={dob} max={new Date().toISOString().slice(0, 10)} onChange={(event) => setDob(event.target.value)} autoComplete="bday" />
           </> : <>
             <label className="identity-label" htmlFor="relay-identity">Username or unique ID</label>
-            <div className="handle-input"><AtSign size={17} /><input id="relay-identity" value={identity} onChange={(event) => { setIdentity(event.target.value); setPinRequired(false); setPin(''); }} placeholder="@yourname or UUID" autoComplete="username" /></div>
+            <div className="handle-input"><AtSign size={17} /><input id="relay-identity" value={identity} onChange={(event) => { setIdentity(event.target.value); setPinRequired(false); setPin(''); }} placeholder="@yourname or 10-digit ID" autoComplete="username" /></div>
           </>}
           <label className="identity-label password-label" htmlFor="relay-password">Password</label>
           <div className="identity-password">

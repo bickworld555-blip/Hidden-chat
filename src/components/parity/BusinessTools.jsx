@@ -13,6 +13,7 @@ import { LABEL_PALETTE, labelColor } from '../../labels.js';
 import { CatalogImage, formatPrice } from './ProductCard.jsx';
 import Panel, { Notice } from './Panel.jsx';
 import TabMenu from '../TabMenu.jsx';
+import { shareText } from '../../share.js';
 
 // Grouped the way a business messenger's Tools tab is: grow the business, organise chats, manage the account.
 // `sheet` opens an app-wide sheet; `target` opens another section; `hidden` sections open from elsewhere (Profile).
@@ -587,7 +588,7 @@ function ShortLink({ onError, onNotice }) {
     try { await navigator.clipboard.writeText(link); onNotice('Link copied.'); } catch { onError('Copying isn’t allowed here. Select the link and copy it.'); }
   }
   async function share() {
-    try { if (navigator.share) await navigator.share({ title: 'Chat with me on Hidden Messenger', url: link }); else await copy(); } catch (caught) { if (caught?.name !== 'AbortError') onError('Sharing isn’t available here.'); }
+    try { if (await shareText({ title: 'Chat with me on Hidden Messenger', url: link }) === 'copied') onNotice('Link copied.'); } catch { onError('Sharing isn’t available here.'); }
   }
   return (
     <div className="hm-form hm-short-link">

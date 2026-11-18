@@ -21,6 +21,19 @@ export function accountNumberFrom(query) {
   return ACCOUNT_NUMBER_PATTERN.test(digits) ? digits : '';
 }
 
+/** The link people share to be added: https://<site>/u/<number>. It opens a chat with this account in the app. */
+export const accountLinkFor = (number, origin = 'https://hiddenmessenger.com') => `${origin}/u/${number}`;
+
+/** The account number in an account link (https://<site>/u/<number>, hiddenmessenger://u/<number>), or ''. */
+export function accountNumberFromLink(text) {
+  const match = /^(?:hiddenmessenger:\/\/u|https?:\/\/[^/?#]+\/u)\/([1-9]\d{9})\/?(?:[?#].*)?$/i.exec(String(text ?? '').trim());
+  return match ? match[1] : '';
+}
+
+/** What the "Share" button sends: who to add, by ID and by link. */
+export const accountShareText = (number, link) =>
+  `Add me on Hidden Messenger, private messaging with no phone number or email.\nMy ID: ${formatAccountNumber(number)}\n${link}`;
+
 /** "4821937765" → "482 193 7765" (groups of 3-3-4, easy to read out and type); anything else unchanged. */
 export function formatAccountNumber(number) {
   const value = String(number ?? '');

@@ -1907,10 +1907,13 @@ export function createChatServer({
     if (!identity || typeof password !== 'string' || password.length > 128) {
       return response.status(400).json({ error: 'Enter your username or unique ID and password.' });
     }
+    // Username, account number (the "unique ID" shown at sign-up, typed with or without spaces) or the internal UUID.
     const username = normalizeUsername(identity);
-    const user = USERNAME_PATTERN.test(username)
-      ? (await db.prepare("SELECT id, password_hash FROM users WHERE lower(username) = lower(?)").get(username))
-      : (await db.prepare("SELECT id, password_hash FROM users WHERE id = ?").get(identity));
+    const number = accountNumberFrom(identity);
+    const user = (number && await db.prepare('SELECT id, password_hash FROM users WHERE number = ?').get(number))
+      || (USERNAME_PATTERN.test(username)
+        ? (await db.prepare("SELECT id, password_hash FROM users WHERE lower(username) = lower(?)").get(username))
+        : (await db.prepare("SELECT id, password_hash FROM users WHERE id = ?").get(identity)));
     // Per account (behind the hosting proxy every client shares one address, so addresses are not used).
     const throttleKeys = [`account:${(user?.id ?? username).toLowerCase()}`];
     const wait = loginThrottle.retryAfter(throttleKeys);

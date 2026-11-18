@@ -129,6 +129,7 @@ import { isRoomOffer } from './callRoom.js';
 import { animationsAttribute, callAnimationsAttribute, resolveDark, startsDark, THEME_KEY, themeChoice, useAppearance, watchSystemTheme } from './appearance.js';
 import { useFontSize, useHighContrast } from './displayPrefs.js';
 import { inviteTokenFrom, linkContact, lookupUsername, redeemInviteLink } from './contactsApi.js';
+import { accountNumberFromLink } from './accountNumber.js';
 import { deviceStorage } from './deviceStorage.js';
 import { storageProblemText, useStorageProblem } from './storageHealth.js';
 import { startOtaUpdates } from './otaUpdates.js';
@@ -1301,7 +1302,13 @@ export default function App() {
     return () => { cancelled = true; };
   }, [sessionToken, shortLink]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  useEffect(() => onNative('connectLink', ({ url } = {}) => { const token = inviteTokenFrom(url); if (token) setPendingInvite(token); }), []);
+  // From the website's "Open in the app": an invite link, or someone's shared ID (opens the chat like a short link).
+  useEffect(() => onNative('connectLink', ({ url } = {}) => {
+    const token = inviteTokenFrom(url);
+    if (token) { setPendingInvite(token); return; }
+    const number = accountNumberFromLink(url);
+    if (number) setShortLink({ username: number, text: '' });
+  }), []);
   useEffect(() => {
     if (!sessionToken || !pendingInvite) return undefined;
     let cancelled = false;

@@ -107,9 +107,11 @@ public class HiddenNativePlugin extends Plugin {
             Alerts.clearMissedCalls(getContext(), callBack);
             intent.removeExtra(Alerts.EXTRA_CALL_BACK);
         }
-        // An invite link opened from the website ("Open in the app"): the web app redeems it. Retained until it listens.
+        // A link opened from the website ("Open in the app"): an invite (hiddenmessenger://c#<token>), redeemed by the
+        // web app, or someone's ID (hiddenmessenger://u/<number>), whose chat it opens. Retained until it listens.
         Uri link = intent.getData();
-        if (Intent.ACTION_VIEW.equals(intent.getAction()) && link != null && "hiddenmessenger".equals(link.getScheme()) && "c".equals(link.getHost())) {
+        if (Intent.ACTION_VIEW.equals(intent.getAction()) && link != null && "hiddenmessenger".equals(link.getScheme())
+                && ("c".equals(link.getHost()) || "u".equals(link.getHost()))) {
             JSObject data = new JSObject();
             data.put("url", link.toString());
             notifyListeners("connectLink", data, true);
@@ -1300,6 +1302,25 @@ public class HiddenNativePlugin extends Plugin {
                 call.resolve();
             } catch (android.content.ActivityNotFoundException none) {
                 call.reject("No messaging app on this phone.");
+            }
+        });
+    }
+
+    /** The system share sheet with plain text (an ID, a link): the WebView has no navigator.share. */
+    @PluginMethod
+    public void shareText(PluginCall call) {
+        String text = call.getString("text", "");
+        String title = call.getString("title", "");
+        if (text.isEmpty() || getActivity() == null) { call.reject("Nothing to share."); return; }
+        Intent send = new Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, text);
+        if (!title.isEmpty()) send.putExtra(Intent.EXTRA_SUBJECT, title);
+        Intent chooser = Intent.createChooser(send, title.isEmpty() ? null : title);
+        getActivity().runOnUiThread(() -> {
+            try {
+                getActivity().startActivity(chooser);
+                call.resolve();
+            } catch (android.content.ActivityNotFoundException none) {
+                call.reject("No app on this phone can share text.");
             }
         });
     }

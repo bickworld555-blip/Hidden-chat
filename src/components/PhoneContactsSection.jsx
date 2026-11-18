@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { MessageCircle, Phone, RefreshCw, Send, Video } from 'lucide-react';
 import { nativeInviteSms, nativeShell } from '../native.js';
+import { shareText } from '../share.js';
 import { useChatStore } from '../store.js';
 import { useContactNames } from '../useContactNames.js';
 import { findPerson } from '../contactNames.js';
@@ -51,7 +52,7 @@ export default function PhoneContactsSection({ query = '', busyId = '', onChat, 
   const invitePerson = async (item) => {
     const text = inviteText({ number: myNumber });
     if (await nativeInviteSms(item.phone, text)) return;
-    try { await navigator.share?.({ text }); } catch {}
+    try { await shareText({ text }); } catch { /* nothing to share with here */ }
   };
 
   return (

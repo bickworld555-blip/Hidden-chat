@@ -91,6 +91,7 @@ import PinnedBanner from './parity/PinnedBanner.jsx';
 import { ProductCard, parseProductContent, productContent } from './parity/ProductCard.jsx';
 import VerifiedBadge from './VerifiedBadge.jsx';
 import { keepKeyboard } from '../keyboard.js';
+import { shareText } from '../share.js';
 const CatalogPicker = lazyComponent(() => import('./parity/CatalogPicker.jsx'));
 
 function usePageVisible() {
@@ -1835,12 +1836,12 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
             >
               <Forward size={18} />
             </button>
-            {actions.canShare && typeof navigator.share === 'function' && (
+            {actions.canShare && (
               <button type="button" className="icon-button" title="Share" aria-label="Share"
                 onClick={() => {
                   const text = selectedMessages.map((item) => item.content).join('\n\n');
                   clearSelection();
-                  navigator.share({ text }).catch(() => {});
+                  shareText({ text }).catch(() => {});
                 }}>
                 <Share2 size={18} />
               </button>

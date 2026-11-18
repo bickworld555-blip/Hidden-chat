@@ -7,6 +7,7 @@ import { Copy, Link2, Share2, Trash2 } from 'lucide-react';
 import { publicOrigin } from '../../api.js';
 import { createInviteLink, listInviteLinks, revokeInviteLink } from '../../contactsApi.js';
 import Panel, { Notice } from './Panel.jsx';
+import { shareText } from '../../share.js';
 
 export const DOWNLOAD_URL = 'https://hiddenmessenger.com/download';
 export const inviteLinkUrl = (token) => `${publicOrigin()}/c#${token}`;
@@ -42,12 +43,7 @@ export default function InviteFriend({ sessionToken, onClose }) {
     try {
       const url = await makeLink();
       const text = inviteText(url);
-      if (navigator.share) {
-        try { await navigator.share({ title: 'Hidden Messenger', text }); } catch (caught) { if (caught?.name !== 'AbortError') throw caught; }
-      } else {
-        await navigator.clipboard.writeText(text);
-        setNotice('Invite link copied. Paste it into any chat or app.');
-      }
+      if (await shareText({ title: 'Hidden Messenger', text }) === 'copied') setNotice('Invite link copied. Paste it into any chat or app.');
     } catch (caught) {
       setError(caught?.message || 'Sharing isn’t available here. Copy the link instead.');
     } finally {

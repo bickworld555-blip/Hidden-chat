@@ -11,11 +11,15 @@ export const WINDOWS_PORTABLE_URL = `${WINDOWS_RELEASE}/HiddenMessenger-${WINDOW
 
 // Public pages (src/site/PublicSite.jsx); every other path opens the messenger.
 export const PUBLIC_PATH = /^\/(?:features|calling|messaging|privacy|terms|business|download|delete-account|c|help(?:\/[a-z0-9-]+)?)?\/?$/;
+// A shared ID (https://<site>/u/<number>, src/accountNumber.js): a page with "Open in the app" for visitors; signed-in
+// web users go straight to the chat (App.jsx short links).
+export const ACCOUNT_LINK_PATH = /^\/u\/[1-9]\d{9}\/?$/;
 export const SIGNED_IN_HINT = 'hm:signed-in';
 
 /** Which experience a page load shows: the public site, or the messenger (always in the Android app). */
 export function entryFor(pathname, { native = false, signedIn = false } = {}) {
   if (native) return 'app';
+  if (ACCOUNT_LINK_PATH.test(pathname)) return signedIn ? 'app' : 'site';
   if (!PUBLIC_PATH.test(pathname)) return 'app';
   if (pathname === '/' && signedIn) return 'redirect-app';
   return 'site';

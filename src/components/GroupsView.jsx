@@ -63,6 +63,7 @@ import { EventBubble, EventComposer, PollBubble, PollComposer } from './RichMess
 import { parsePollContent } from '../polls.js';
 import { parseEventContent } from '../calendarEvents.js';
 import { keepKeyboard } from '../keyboard.js';
+import { shareText } from '../share.js';
 
 const DELETE_WINDOW_MS = 24 * 60 * 60 * 1000;
 // What the group share sheet offers (the one-to-one sheet minus what is per contact: location, contact, catalog…).
@@ -869,12 +870,7 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
   const ensureInvite = async () => group.inviteCode || (await resetInvite(token, group.id)).inviteCode;
   const shareGroup = () => perform(async () => {
     const link = inviteUrl(await ensureInvite());
-    if (navigator.share) {
-      try { await navigator.share({ title: group.name, text: `Join "${group.name}" on Hidden Messenger`, url: link }); } catch (caught) { if (caught?.name !== 'AbortError') throw caught; }
-    } else {
-      await navigator.clipboard.writeText(link);
-      setNotice('Invite link copied.');
-    }
+    if (await shareText({ title: group.name, text: `Join "${group.name}" on Hidden Messenger`, url: link }) === 'copied') setNotice('Invite link copied.');
   });
   const openGroupQr = () => perform(async () => { await ensureInvite(); setInfoSheet('qr'); });
   const saveMemberTag = () => perform(async () => {

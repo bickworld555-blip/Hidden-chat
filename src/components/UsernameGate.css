@@ -294,3 +294,34 @@
 /* Clear of the status bar on edge-to-edge phones. */
 .identity-backdrop.identity-backdrop { padding-top: calc(32px + var(--hm-safe-top, 0px)); }
 @media (max-width: 480px) { .identity-backdrop.identity-backdrop { padding-top: calc(24px + var(--hm-safe-top, 0px)); } }
+
+/* Account ready: the ID large enough to read out, with Copy and Share side by side. */
+.identity-backdrop .generated-id code.is-number {
+  color: #16263b;
+  font-size: 24px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  font-variant-numeric: tabular-nums;
+}
+.identity-backdrop .generated-id-actions {
+  display: flex;
+  gap: 6px;
+}
+.identity-backdrop .generated-id-actions button {
+  min-height: 36px;
+  padding: 6px 10px;
+  font-size: 13px;
+}
+.identity-backdrop .generated-id-actions button.is-share {
+  border-color: #214068;
+  background: #214068;
+  color: #f0f7ff;
+}
+.identity-backdrop .identity-share-notice {
+  margin: 0;
+  color: #525b66;
+  font-size: 13px;
+}
+@media (max-width: 380px) {
+  .identity-backdrop .generated-id { grid-template-columns: minmax(0, 1fr); }
+}

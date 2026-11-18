@@ -151,7 +151,9 @@ export const nativeReadDeviceContacts = async () => {
 };
 /** Invite: the SMS app opens to the phone number with the text filled in (the person sends it). False outside the app. */
 export const nativeInviteSms = async (phone, text) => (await invoke('inviteSms', { phone, text })) !== null;
-export const nativeOtaCheck = async (origin) => (await invoke('otaCheck', { origin }))?.result ?? null;
+/** Android's share sheet with this text (WhatsApp, Telegram, SMS…). False outside the app and in APKs without it. */
+export const nativeShareText = async (text, title = '') => (await invoke('shareText', { text, title })) !== null;
+export const nativeOtaCheck =async (origin) => (await invoke('otaCheck', { origin }))?.result ?? null;
 export const nativeOtaReady = () => invoke('otaReady');
 export const nativeOtaStatus = () => invoke('otaStatus');
 // Opens a link in the app that handles it (YouTube, Facebook, the browser); Back returns to Hidden Messenger.
