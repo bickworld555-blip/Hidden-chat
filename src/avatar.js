@@ -85,6 +85,14 @@ export async function uploadAvatar(blob, sessionToken) {
   return data.user;
 }
 
+/** A group's photo (server/parity.mjs): the same prepared square JPEG as a profile photo. Resolves its URL. */
+export async function uploadGroupAvatar(groupId, blob, sessionToken) {
+  const response = await apiFetch(`/api/v1/groups/${encodeURIComponent(groupId)}/avatar`, { method: 'PUT', headers: { Authorization: 'Bearer ' + sessionToken, 'Content-Type': blob.type || 'image/jpeg' }, body: blob });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || !data?.avatar) throw new Error(data?.error || 'Could not set the group photo.');
+  return data.avatar;
+}
+
 export async function removeAvatar(sessionToken) {
   const response = await apiFetch('/api/v1/me/avatar', { method: 'DELETE', headers: { Authorization: 'Bearer ' + sessionToken } });
   const data = await response.json().catch(() => ({}));

@@ -48,6 +48,9 @@ import { groupPreviewText, unreadBadge } from '../groupRows.js';
 import { exportGroupChat, parseScheduledCall, scheduledCallContent, senderColor, withDaySeparators } from '../groupChat.js';
 import { setGroupMuted, setViewingGroup, useMutedGroups } from '../groupPrefs.js';
 import Avatar from './Avatar.jsx';
+import GroupPhoto from './GroupPhoto.jsx';
+import NewGroupFlow from './NewGroupFlow.jsx';
+import { prepareAvatarBlob, uploadGroupAvatar } from '../avatar.js';
 import MediaRenderer from './MediaRenderer.jsx';
 import VoiceMessage from './VoiceMessage.jsx';
 import VoiceRecorderBar from './VoiceRecorderBar.jsx';
@@ -144,8 +147,8 @@ function formatSchedule(timestamp) {
   return new Date(timestamp).toLocaleString(undefined, { weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });
 }
 
-function GroupAvatar({ size = 'normal' }) {
-  return <span className={`groups-avatar groups-avatar-${size}`} aria-hidden="true"><Users size={size === 'large' ? 56 : size === 'small' ? 18 : 24} /></span>;
+function GroupAvatar({ size = 'normal', image }) {
+  return <GroupPhoto image={image} className={`groups-avatar groups-avatar-${size}`} iconSize={size === 'large' ? 56 : size === 'small' ? 18 : 24} />;
 }
 
 // Picks up to MAX_CALL_PARTICIPANTS - 1 other members for a group call; everyone is preselected when they all fit.
@@ -386,7 +389,7 @@ function GroupQrSheet({ group, onShare, onClose }) {
         <button type="button" onClick={onClose} aria-label="Close"><X size={18} /></button>
       </header>
       <div className="groups-qr-card">
-        <GroupAvatar size="small" />
+        <GroupAvatar size="small" image={group.avatar} />
         <strong>{group.name}</strong>
         <small>Group · {group.members.length} {group.members.length === 1 ? 'member' : 'members'}</small>
         <span className="groups-qr-code"><QRCodeSVG value={link} size={196} level="M" bgColor="#ffffff" fgColor="#0b1628" includeMargin aria-label="QR code to join this group" /></span>
@@ -469,7 +472,6 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
   useEffect(() => { fetchCallTopology(token).then((value) => setRelay(value.sfu)).catch(() => setRelay(null)); }, [token]);
   const [scheduling, setScheduling] = useState(false);
   const [richComposer, setRichComposer] = useState('');
-  const [name, setName] = useState('');
   const [query, setQuery] = useState('');
   const [results, setResults] = useState([]);
   const [picked, setPicked] = useState([]);
@@ -596,7 +598,7 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
   }, [messages.length, selected, settings]);
 
   useEffect(() => {
-    if (!handleFrom(query) || (!creating && !settings)) { setResults([]); return undefined; }
+    if (!handleFrom(query) || !settings) { setResults([]); return undefined; }
     const controller = new AbortController();
     const timer = setTimeout(() => {
       lookupUsername(token, query, { signal: controller.signal })
@@ -604,7 +606,7 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
         .catch((caught) => { if (caught.name !== 'AbortError') setError(caught.message); });
     }, 600);
     return () => { clearTimeout(timer); controller.abort(); };
-  }, [query, creating, settings, token, userId]);
+  }, [query, settings, token, userId]);
 
   useEffect(() => {
     if (!notice) return undefined;
@@ -730,7 +732,7 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
   function goBack() {
     if (callPicker || scheduling) { setCallPicker(''); setScheduling(false); }
     else if (settings) { setSettings(false); setQuery(''); setMemberFilter(''); setConfirming(''); setReportReason(''); }
-    else if (creating) { setCreating(false); setQuery(''); setPicked([]); }
+    else if (creating) { setCreating(false); setPicked([]); }
     else if (selected) { setSelected(''); setGroup(null); setMessages([]); setCallMenu(false); }
     else onClose();
     setError('');
@@ -792,9 +794,7 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
     setSettings(false);
     setConfirming('');
     setCreating(true);
-    setName('');
-    setQuery('');
-    setPicked(others.map((member) => ({ id: member.id, username: member.username, name: member.name })));
+    setPicked(others.map((member) => ({ id: member.id, username: member.username, name: member.name, avatar: member.avatar, color: member.color, initials: member.initials })));
   };
 
   const exportChat = () => {
@@ -908,7 +908,7 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
           <button type="button" onClick={goBack} aria-label="Back"><ArrowLeft size={22} /></button>
           {inConversation ? (
             <button type="button" className="groups-title" onClick={() => setSettings(true)} aria-label="Open group info">
-              <GroupAvatar size="small" />
+              <GroupAvatar size="small" image={group.avatar} />
               <span className="groups-title-copy">
                 <h2>{group.name}</h2>
                 {groupActivity
@@ -950,7 +950,7 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
 
         {!selected && !creating && (
           <div className="groups-content groups-list">
-            <button type="button" className="groups-new" onClick={() => { setCreating(true); setName(''); setPicked([]); }}>
+            <button type="button" className="groups-new" onClick={() => { setCreating(true); setPicked([]); }}>
               <span className="groups-new-icon"><UserPlus size={22} /></span><strong>New group</strong>
             </button>
             {joinInput === null ? (
@@ -975,7 +975,7 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
               const isMuted = mutedGroupIds.includes(item.id);
               return (
                 <button type="button" className="groups-list-row" key={item.id} onClick={() => setSelected(item.id)}>
-                  <GroupAvatar />
+                  <GroupAvatar image={item.avatar} />
                   <span className="groups-list-copy">
                     <span className="groups-list-top">
                       <strong>{item.name}</strong>
@@ -994,30 +994,28 @@ export default function GroupsView({ token, userId, client, revision, onClose, o
         )}
 
         {creating && (
-          <div className="groups-content">
-            <label>Group name<input value={name} onChange={(event) => setName(event.target.value)} maxLength={100} placeholder="Group name" /></label>
-            <label>Add members by username<input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Type the full @username" /></label>
-            {picked.length > 0 && <div className="groups-chips">{picked.map((person) => (
-              <button type="button" key={person.id} onClick={() => setPicked((current) => current.filter((item) => item.id !== person.id))} aria-label={`Remove @${person.username}`}>
-                @{person.username} <X size={14} />
-              </button>
-            ))}</div>}
-            {results.filter((person) => !picked.some((item) => item.id === person.id)).map((person) => (
-              <button type="button" className="groups-row" key={person.id} onClick={() => { setPicked((current) => [...current, person]); setQuery(''); }}>
-                <Avatar {...person} size="small" /><span><strong>{person.name}</strong><small>@{person.username}</small></span>
-              </button>
-            ))}
-            <button type="button" className="groups-primary" disabled={busy || !name.trim()} onClick={() => perform(async () => {
-              const created = await groupRequest(token, '', { method: 'POST', body: { name, memberIds: picked.map((person) => person.id) } });
-              setCreating(false); setSelected(created.id); setQuery(''); setPicked([]);
-            })}>Create group</button>
-          </div>
+          // New group in two steps (members, then name, photo and settings): its own screen over this one.
+          <NewGroupFlow token={token} userId={userId} initialMembers={picked}
+            request={(path, options) => groupRequest(token, path, options)}
+            onClose={() => { setCreating(false); setPicked([]); }}
+            onCreated={(groupId, warning) => { setCreating(false); setPicked([]); setSelected(groupId); if (warning) setNotice(warning); }} />
         )}
 
         {group && settings && !creating && (
           <div className="groups-content groups-info">
             <div className="groups-info-summary">
-              <GroupAvatar size="large" />
+              {/* The photo: anyone who may edit the group's info changes it (server/parity.mjs). */}
+              {group.role === 'admin' || !group.onlyAdminsEdit ? (
+                <label className="groups-photo-edit" aria-label="Change group photo" title="Change group photo">
+                  <GroupAvatar size="large" image={group.avatar} />
+                  <span className="groups-photo-camera"><Camera size={18} /></span>
+                  <input type="file" accept="image/*" hidden onChange={(event) => {
+                    const file = event.target.files?.[0];
+                    event.target.value = '';
+                    if (file) perform(async () => { await uploadGroupAvatar(group.id, await prepareAvatarBlob(file), token); await refresh(new AbortController().signal); });
+                  }} />
+                </label>
+              ) : <GroupAvatar size="large" image={group.avatar} />}
               <h3>{group.name}</h3>
               <small>Group · {group.members.length} {group.members.length === 1 ? 'member' : 'members'}</small>
               {group.description && <p className="groups-info-description">{group.description}</p>}

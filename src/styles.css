@@ -5820,3 +5820,58 @@ button.groups-sender { padding: 0; border: 0; background: none; font: inherit; f
 .wa-sc-contact-row { cursor: default; gap: 2px; }
 .wa-sc-contact-main { flex: 1; min-width: 0; display: flex; align-items: center; gap: 14px; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 .wa-sc-contact-row > .wa-sc-icon-btn { flex: none; color: var(--wa-green, #008069); }
+
+/* Group photos (GroupPhoto.jsx): the picture fills the round frame; without one the group icon stays. */
+.groups-avatar.has-photo, .wa-group-avatar.has-photo { overflow: hidden; background: transparent; }
+.groups-avatar.has-photo img, .wa-group-avatar.has-photo img { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; }
+.groups-photo-edit { position: relative; display: inline-grid; cursor: pointer; }
+.groups-photo-camera { position: absolute; right: 2px; bottom: 2px; display: grid; place-items: center; width: 34px; height: 34px; border: 2px solid var(--wa-bg); border-radius: 50%; background: var(--wa-green); color: #fff; }
+
+/* New group (NewGroupFlow.jsx): members with round checks, then name, photo and settings; a round button moves on. */
+.ng-screen { position: fixed; inset: 0; z-index: 1300; display: flex; flex-direction: column; background: var(--wa-bg); color: var(--wa-text); }
+.ng-scroll { flex: 1; overflow-y: auto; padding-bottom: 96px; }
+.ng-search { margin: 4px 12px 8px; }
+.ng-member-row { gap: 14px; }
+.ng-check { flex: none; display: grid; place-items: center; width: 26px; height: 26px; border: 2px solid var(--wa-sub); border-radius: 50%; color: #fff; }
+.ng-check.is-on { border-color: var(--wa-green); background: var(--wa-green); }
+.ng-chips { display: flex; gap: 14px; overflow-x: auto; padding: 4px 16px 10px; border-bottom: 1px solid var(--wa-panel); }
+.ng-chip { flex: none; display: flex; flex-direction: column; align-items: center; gap: 4px; width: 60px; padding: 0; border: 0; background: none; color: inherit; font: inherit; cursor: pointer; }
+.ng-chip small { width: 100%; overflow: hidden; color: var(--wa-sub); font-size: 12px; text-align: center; text-overflow: ellipsis; white-space: nowrap; }
+.ng-chip-avatar { position: relative; }
+.ng-chip-avatar .avatar { width: 48px; height: 48px; }
+.ng-chip-x { position: absolute; right: -2px; bottom: -2px; display: grid; place-items: center; width: 20px; height: 20px; border: 2px solid var(--wa-bg); border-radius: 50%; background: var(--wa-sub); color: var(--wa-bg); }
+.ng-fab { position: fixed; right: 20px; bottom: calc(24px + env(safe-area-inset-bottom, 0px)); z-index: 1301; display: grid; place-items: center; width: 60px; height: 60px; border: 0; border-radius: 18px; background: var(--wa-green); color: #fff; box-shadow: 0 6px 16px rgba(0, 0, 0, 0.25); cursor: pointer; }
+.ng-fab:disabled { opacity: 0.4; cursor: default; }
+.ng-spinner { width: 24px; height: 24px; border: 3px solid rgba(255, 255, 255, 0.4); border-top-color: #fff; border-radius: 50%; animation: ng-spin 0.8s linear infinite; }
+@keyframes ng-spin { to { transform: rotate(360deg); } }
+.ng-details { padding-top: 8px; }
+.ng-identity { display: flex; align-items: center; gap: 14px; padding: 12px 16px; }
+.ng-photo { flex: none; display: grid; place-items: center; width: 64px; height: 64px; overflow: hidden; border: 0; border-radius: 50%; background: var(--wa-panel); color: var(--wa-sub); cursor: pointer; }
+.ng-photo img { width: 100%; height: 100%; object-fit: cover; }
+.ng-name { flex: 1; min-width: 0; display: flex; align-items: center; gap: 4px; padding: 0 4px 0 14px; border: 2px solid var(--wa-text); border-radius: 12px; background: var(--wa-input); }
+.ng-name:focus-within { border-color: var(--wa-green); }
+.ng-name input { flex: 1; min-width: 0; height: 52px; border: 0; outline: 0; background: transparent; color: var(--wa-text); font: inherit; font-size: 17px; }
+.ng-emoji-btn { flex: none; display: grid; place-items: center; width: 40px; height: 40px; border: 0; border-radius: 50%; background: transparent; color: var(--wa-sub); cursor: pointer; }
+.ng-emoji { display: grid; grid-template-columns: repeat(8, 1fr); gap: 4px; margin: 0 16px 8px; padding: 8px; border-radius: 12px; background: var(--wa-panel); }
+.ng-emoji button { height: 38px; border: 0; border-radius: 8px; background: transparent; font-size: 22px; cursor: pointer; }
+.ng-setting { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; padding: 16px; border: 0; background: transparent; color: var(--wa-text); font: inherit; text-align: left; cursor: pointer; }
+.ng-setting span { display: flex; flex-direction: column; gap: 2px; }
+.ng-setting strong { font-size: 16px; font-weight: 500; }
+.ng-setting small { color: var(--wa-sub); font-size: 14px; }
+.ng-setting svg { flex: none; color: var(--wa-sub); }
+.ng-members { display: flex; flex-wrap: wrap; gap: 16px; padding: 8px 16px 16px; }
+.ng-member { display: flex; flex-direction: column; align-items: center; gap: 6px; width: 64px; padding: 0; border: 0; background: none; color: inherit; font: inherit; }
+.ng-member .avatar { width: 56px; height: 56px; }
+.ng-member small { width: 100%; overflow: hidden; color: var(--wa-sub); font-size: 13px; text-align: center; text-overflow: ellipsis; white-space: nowrap; }
+.ng-add { cursor: pointer; }
+.ng-add-icon { display: grid; place-items: center; width: 56px; height: 56px; border-radius: 50%; background: var(--wa-text); color: var(--wa-bg); }
+.ng-sheet-backdrop { position: fixed; inset: 0; z-index: 1310; display: flex; align-items: flex-end; background: rgba(0, 0, 0, 0.45); }
+.ng-sheet { width: 100%; max-height: 85vh; overflow-y: auto; padding: 18px 16px calc(18px + env(safe-area-inset-bottom, 0px)); border-radius: 18px 18px 0 0; background: var(--wa-bg); color: var(--wa-text); }
+.ng-sheet h3 { margin: 0 0 8px; font-size: 18px; }
+.ng-sheet-caption { margin: 14px 0 4px; color: var(--wa-sub); font-size: 13px; font-weight: 600; }
+.ng-toggle { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 0; cursor: pointer; }
+.ng-toggle span { display: flex; flex-direction: column; gap: 2px; }
+.ng-toggle small { color: var(--wa-sub); font-size: 13px; }
+.ng-toggle input { flex: none; width: 22px; height: 22px; accent-color: var(--wa-green); }
+.ng-sheet .groups-primary { width: 100%; margin-top: 14px; }
+@media (min-width: 900px) { .ng-screen { inset: 0 auto 0 0; width: 420px; border-right: 1px solid var(--wa-panel); } .ng-fab { left: 340px; right: auto; } }

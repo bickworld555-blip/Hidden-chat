@@ -26,7 +26,7 @@ import { pdfPageCountOfFile } from './pdfPages.mjs';
 import { createLinkPreviews } from './linkPreview.mjs';
 import { collapseKeys, createPushSender, deviceCollapseKey, encryptForDevice, loadServiceAccount, pushBody, validDeviceKey } from './push.mjs';
 import { createObjectStore, MAX_PARTS, OBJECT_KEY_PREFIX, objectStoreConfigFromEnv, PART_BYTES, UPLOAD_URL_TTL_SECONDS } from './objectStore.mjs';
-import { createLoginThrottle, ensureParitySchema, registerParity } from './parity.mjs';
+import { createLoginThrottle, ensureParitySchema, groupAvatarUrl, registerParity } from './parity.mjs';
 import { createVerifiedAccounts, createVerifiedChannels, ensureVerificationSchema, registerVerification } from './verification.mjs';
 import { ensureRegionSchema, registerRegions } from './regions.mjs';
 import { createDeliveryQueue, ensureDeliveryQueueSchema } from './deliveryQueue.mjs';
@@ -1327,6 +1327,7 @@ export function createChatServer({
   app.get('/api/v1/groups', requireSession, async (request, response) => {
     const now = Date.now();
     const groups = await db.prepare(`SELECT g.id, g.name, g.created_by AS "createdBy", g.created_at AS "createdAt", g.community_id AS "communityId", g.is_announcement AS "isAnnouncement",
+      g.avatar_disk_name AS "avatarDiskName", g.avatar_updated_at AS "avatarUpdatedAt",
       m.role, m.auto_delete AS "autoDelete", latest.content AS "lastContent",
       latest.sender_id AS "lastSenderId", sender.name AS "lastSenderName", latest.created_at AS "lastMessageAt",
       (SELECT count(*) FROM group_messages x WHERE x.group_id = g.id AND x.sender_id <> m.user_id
@@ -1338,7 +1339,7 @@ export function createChatServer({
       )
       LEFT JOIN users sender ON sender.id = latest.sender_id
       WHERE m.user_id = ? ORDER BY COALESCE(latest.created_at, g.created_at) DESC, g.id`).all(now, now, request.session.user_id);
-    response.json(groups.map((group) => ({ ...group, communityId: group.communityId ?? null, isAnnouncement: Number(group.isAnnouncement) === 1, autoDelete: Boolean(group.autoDelete), unread: Number(group.unread) })));
+    response.json(groups.map(({ avatarDiskName, avatarUpdatedAt, ...group }) => ({ ...group, avatar: groupAvatarUrl(group.id, avatarDiskName, avatarUpdatedAt), communityId: group.communityId ?? null, isAnnouncement: Number(group.isAnnouncement) === 1, autoDelete: Boolean(group.autoDelete), unread: Number(group.unread) })));
   });
 
   app.post('/api/v1/groups', requireSession, async (request, response) => {

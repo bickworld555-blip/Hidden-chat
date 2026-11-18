@@ -17,6 +17,7 @@ export function groupRow(group, userId, mutedIds = []) {
     kind: 'group',
     id: group.id,
     name: group.name,
+    avatar: group.avatar ?? null,
     preview: groupPreviewText(group, userId),
     time: group.lastMessageAt ? formatChatListTime(group.lastMessageAt) : '',
     unread: Number(group.unread) || 0,

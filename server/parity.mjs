@@ -20,6 +20,9 @@ export const MAX_QUICK_REPLIES = 50;
 export const MAX_CATALOG_ITEMS = 500;
 export const MAX_GROUP_MEMBERS = 1024;
 export const MAX_CATALOG_IMAGE_BYTES = 5 * 1024 * 1024;
+export const GROUP_AVATAR_MAX_BYTES = 5 * 1024 * 1024; // as a profile photo
+/** A group's photo URL for members (versioned, so it is cached until it changes), or null without a photo. */
+export const groupAvatarUrl = (groupId, diskName, updatedAt) => (diskName ? `/api/v1/groups/${encodeURIComponent(groupId)}/avatar?v=${Number(updatedAt) || 0}` : null);
 export const AWAY_INTERVAL_MS = 24 * 60 * 60 * 1000;
 export const GREETING_QUIET_MS = 14 * 24 * 60 * 60 * 1000;
 
@@ -142,6 +145,10 @@ export function ensureParitySchema(db) {
   if (!groups.has('invite_code')) db.exec('ALTER TABLE groups ADD COLUMN invite_code TEXT');
   if (!groups.has('community_id')) db.exec('ALTER TABLE groups ADD COLUMN community_id TEXT');
   if (!groups.has('is_announcement')) db.exec('ALTER TABLE groups ADD COLUMN is_announcement INTEGER NOT NULL DEFAULT 0');
+  // Group photo (Postgres: 040).
+  if (!groups.has('avatar_disk_name')) db.exec('ALTER TABLE groups ADD COLUMN avatar_disk_name TEXT');
+  if (!groups.has('avatar_type')) db.exec('ALTER TABLE groups ADD COLUMN avatar_type TEXT');
+  if (!groups.has('avatar_updated_at')) db.exec('ALTER TABLE groups ADD COLUMN avatar_updated_at INTEGER');
   const groupMembers = columns('group_members');
   if (!groupMembers.has('member_tag')) db.exec("ALTER TABLE group_members ADD COLUMN member_tag TEXT NOT NULL DEFAULT ''");
   const users = columns('users');
@@ -293,7 +300,8 @@ export function registerParity(ctx) {
   const userExists = db.prepare('SELECT 1 FROM users WHERE id = ?');
   const groupRow = db.prepare(`SELECT id, name, description, created_by AS "createdBy", only_admins_send AS "onlyAdminsSend",
     only_admins_edit AS "onlyAdminsEdit", approve_joins AS "approveJoins", members_can_add AS "membersCanAdd", invite_code AS "inviteCode",
-    community_id AS "communityId", is_announcement AS "isAnnouncement" FROM groups WHERE id = ?`);
+    community_id AS "communityId", is_announcement AS "isAnnouncement", avatar_disk_name AS "avatarDiskName", avatar_type AS "avatarType",
+    avatar_updated_at AS "avatarUpdatedAt" FROM groups WHERE id = ?`);
   const memberCount = db.prepare('SELECT count(*) AS "count" FROM group_members WHERE group_id = ?');
   const adminCount = db.prepare("SELECT count(*) AS \"count\" FROM group_members WHERE group_id = ? AND role = 'admin'");
   const directMessage = db.prepare(`SELECT id, sender_id AS "senderId", receiver_id AS "receiverId", content, created_at AS "timestamp",
@@ -309,6 +317,7 @@ export function registerParity(ctx) {
     approveJoins: Number(row.approveJoins) === 1,
     membersCanAdd: Number(row.membersCanAdd) === 1,
     isAnnouncement: Number(row.isAnnouncement) === 1,
+    avatar: groupAvatarUrl(row.id, row.avatarDiskName, row.avatarUpdatedAt),
   });
   async function groupOf(groupId) {
     return flags(await groupRow.get(groupId));
@@ -520,9 +529,60 @@ export function registerParity(ctx) {
       membersCanAdd: group.membersCanAdd,
       communityId: group.communityId ?? null,
       isAnnouncement: group.isAnnouncement,
+      avatar: group.avatar,
       ...(role === 'admin' ? { inviteCode: group.inviteCode ?? null, pendingRequests: pending } : {}),
     };
   }
+
+  // Group photo: set at New group or in group info by anyone who may edit the group's info (admins only when "Edit
+  // group info" is admins-only), shown to members only. One file per group, replaced on change.
+  const groupAvatarDirectory = join(dataDirectory, 'group-avatars');
+  mkdirSync(groupAvatarDirectory, { recursive: true });
+  async function requireGroupEditor(request, response) {
+    const membership = await requireMember(request, response);
+    if (!membership) return null;
+    const group = await groupOf(request.params.groupId);
+    if (group.onlyAdminsEdit && membership.role !== 'admin') {
+      response.status(403).json({ error: 'Only admins can edit this group’s info.' });
+      return null;
+    }
+    return group;
+  }
+  app.put('/api/v1/groups/:groupId/avatar', requireSession, express.raw({ type: () => true, limit: GROUP_AVATAR_MAX_BYTES }), async (request, response) => {
+    const group = await requireGroupEditor(request, response);
+    if (!group) return;
+    const image = Buffer.isBuffer(request.body) ? detectImage(request.body) : null;
+    if (!image) return response.status(415).json({ error: 'Choose a JPEG, PNG, WebP or GIF image.' });
+    const updatedAt = now();
+    const diskName = `${group.id}-${updatedAt}.${image.extension}`;
+    await writeFile(join(groupAvatarDirectory, diskName), request.body, { flag: 'wx' });
+    await db.prepare('UPDATE groups SET avatar_disk_name = ?, avatar_type = ?, avatar_updated_at = ? WHERE id = ?').run(diskName, image.type, updatedAt, group.id);
+    if (group.avatarDiskName) await unlink(join(groupAvatarDirectory, group.avatarDiskName)).catch(() => {});
+    await changed(group.id);
+    response.json({ avatar: groupAvatarUrl(group.id, diskName, updatedAt) });
+  });
+  app.delete('/api/v1/groups/:groupId/avatar', requireSession, async (request, response) => {
+    const group = await requireGroupEditor(request, response);
+    if (!group) return;
+    await db.prepare('UPDATE groups SET avatar_disk_name = NULL, avatar_type = NULL, avatar_updated_at = ? WHERE id = ?').run(now(), group.id);
+    if (group.avatarDiskName) await unlink(join(groupAvatarDirectory, group.avatarDiskName)).catch(() => {});
+    await changed(group.id);
+    response.json({ avatar: null });
+  });
+  app.get('/api/v1/groups/:groupId/avatar', requireSession, async (request, response) => {
+    if (!await requireMember(request, response)) return;
+    const group = await groupOf(request.params.groupId);
+    if (!group?.avatarDiskName) return response.status(404).json({ error: 'No group photo.' });
+    response.set({
+      'Content-Type': group.avatarType,
+      'Content-Security-Policy': "sandbox; default-src 'none'; img-src 'self'",
+      'X-Content-Type-Options': 'nosniff',
+      'Cache-Control': 'private, max-age=86400, immutable', // the URL carries the version
+    });
+    response.sendFile(group.avatarDiskName, { root: groupAvatarDirectory, cacheControl: false, dotfiles: 'deny' }, (error) => {
+      if (error && !response.headersSent) response.status(404).json({ error: 'No group photo.' });
+    });
+  });
 
   /** Whether this member may post (index.mjs calls this before storing a group message). */
   async function canPostToGroup(groupId, userId) {

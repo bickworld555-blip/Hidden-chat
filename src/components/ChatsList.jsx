@@ -13,6 +13,7 @@ import { orderChats } from '../chatOrder.js';
 import { uploadFile } from '../upload.js';
 import { attachmentContent, sealForUpload } from '../mediaCrypto.js';
 import Avatar from './Avatar.jsx';
+import GroupPhoto from './GroupPhoto.jsx';
 import SelectContactModal from './SelectContactModal.jsx';
 import BrandMark from './BrandMark.jsx';
 import FormattedText from './FormattedText.jsx';
@@ -51,7 +52,7 @@ function GroupListRow({ row, onOpen, pressHandlers, labels = [], consumeLongPres
   return (
     <div className="wa-row-wrapper" {...pressHandlers}>
       <button type="button" className="wa-row" onClick={() => { if (!consumeLongPress()) onOpen?.(row.id); }} aria-label={`Open group ${row.name}${row.unread > 0 ? `, ${row.unread} unread` : ''}`}>
-        <div className="wa-row-avatar-wrap"><span className="wa-group-avatar" aria-hidden="true"><Users size={24} /></span></div>
+        <div className="wa-row-avatar-wrap"><GroupPhoto image={row.avatar} className="wa-group-avatar" iconSize={24} /></div>
         <span className="wa-row-body">
           <span className="wa-row-top">
             <strong>{row.name}</strong>
@@ -720,7 +721,7 @@ export default function ChatsList({ onOpenChat, onStartCall, onGroups, groups = 
         <div className="wa-sheet-backdrop" onClick={() => setActionChat(null)} role="presentation">
           <div className="wa-action-sheet" role="menu" aria-label={`Actions for ${actionChat.name ?? actionChat.username}`} onClick={(event) => event.stopPropagation()}>
             <header className="wa-action-sheet-head">
-              {actionChat.kind === 'group' ? <span className="wa-group-avatar" aria-hidden="true"><Users size={20} /></span> : <Avatar name={actionChat.name} initials={actionChat.initials ?? actionChat.name?.slice(0, 2)?.toUpperCase() ?? '?'} color={actionChat.color} image={actionChat.avatar} size="small" />}
+              {actionChat.kind === 'group' ? <GroupPhoto image={actionChat.avatar} className="wa-group-avatar" iconSize={20} /> : <Avatar name={actionChat.name} initials={actionChat.initials ?? actionChat.name?.slice(0, 2)?.toUpperCase() ?? '?'} color={actionChat.color} image={actionChat.avatar} size="small" />}
               <span>
                 <strong>{actionChat.name ?? actionChat.username}</strong>
                 {actionChat.username && <small>@{actionChat.username}{actionChat.saved ? '' : ' · Not in contacts'}</small>}
