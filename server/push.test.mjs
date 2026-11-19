@@ -346,3 +346,32 @@ test('a relay-wake phone: its service connection gets wake-ups, not messages; th
   assert.ok(fetcher.events.some((event) => event.type === 'message:new' && event.message.id === 'native-wake-0'), 'the fetch gets what waited too');
   for (const socket of [service, fetcher, sender]) socket.close();
 });
+
+// Seen on the S23 (2026-11-20, after an APK update): the app said it opens messages in the background before its new
+// push token registered, the new token's row had the mark off, and that phone got sealed "🔒 Message" pushes. The mark
+// now belongs to the session: a token registered afterwards gets wake-ups too.
+test('a push token registered after the app asked for wake-ups still gets wake-ups (the mark is the session\'s)', async () => {
+  const a = await register('pusha');
+  const b = await register('pushb');
+  await api('/api/v1/contacts', { session: a, method: 'POST', body: { userId: b.user.id } });
+  await api('/api/v1/contacts', { session: b, method: 'POST', body: { userId: a.user.id } });
+  assert.deepEqual((await api('/api/v1/push/relay-wake', { session: b, method: 'POST', body: { on: true } })).body, { devices: 0 }, 'no token yet');
+  const key = randomBytes(32).toString('base64');
+  const token = `fcm-late-${randomBytes(12).toString('hex')}`;
+  const registered = await fetch(baseUrl + '/api/v1/push/devices', { method: 'POST', headers: { 'X-HM-Client': '3', Authorization: `Bearer ${b.token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ token, key, platform: 'android' }) });
+  assert.equal(registered.status, 200);
+  const sender = await connect(a);
+  await until(() => sender.events.some((event) => event.type === 'connection:ready'), 'ready');
+  sender.send(JSON.stringify({ type: 'message:send', message: { id: 'late-token-1', receiverId: b.user.id, content: 'hi' } }));
+  const push = await until(() => pushesTo(token)[0], 'push');
+  const body = decrypt(key, push.data);
+  assert.equal(body.t, 'xwake', 'a wake-up, not the sealed message push');
+  assert.equal(body.pid, 'w:late-token-1');
+  // And the Android service's own connection for that session gets wake-ups instead of messages.
+  const service = await connect(b, ['relay.background']);
+  await until(() => service.events.some((event) => event.type === 'connection:ready'), 'service ready');
+  sender.send(JSON.stringify({ type: 'message:send', message: { id: 'late-token-2', receiverId: b.user.id, content: 'again' } }));
+  await until(() => service.events.some((event) => event.type === 'xmpp:wake' && event.pid === 'w:late-token-2'), 'service wake-up');
+  assert.ok(!service.events.some((event) => event.type === 'message:new'));
+  for (const socket of [service, sender]) socket.close();
+});

@@ -371,8 +371,8 @@ export function createChatServer({
   db.exec('CREATE INDEX IF NOT EXISTS push_devices_session ON push_devices(session_hash)');
   // The wire version of the app that registered the phone (X-HM-Client): whether its push handler confirms calls.
   if (!db.prepare('PRAGMA table_info(push_devices)').all().some((column) => column.name === 'client_protocol')) db.exec('ALTER TABLE push_devices ADD COLUMN client_protocol INTEGER NOT NULL DEFAULT 0');
-  // Whether this phone's app opens messages from this server in the background (Postgres: migration 046): then a new
-  // message wakes it ("xwake") to fetch, decrypt and notify with the real text, instead of a sealed "🔒 Message".
+  // Superseded by sessions.relay_wake (migration 047, below): no longer read or written; kept only so a database
+  // created between 046 and 047 carries its marks over to the sessions.
   if (!db.prepare('PRAGMA table_info(push_devices)').all().some((column) => column.name === 'relay_wake')) db.exec('ALTER TABLE push_devices ADD COLUMN relay_wake INTEGER NOT NULL DEFAULT 0');
   // Public identity keys for end-to-end encryption (Postgres: migration 008).
   db.exec(`CREATE TABLE IF NOT EXISTS identity_keys (
@@ -511,6 +511,12 @@ export function createChatServer({
   const sessionColumns = new Set(db.prepare("PRAGMA table_info(sessions)").all().map((column) => column.name));
   if (!sessionColumns.has('created_at')) db.exec('ALTER TABLE sessions ADD COLUMN created_at INTEGER');
   if (!sessionColumns.has('last_active_at')) db.exec('ALTER TABLE sessions ADD COLUMN last_active_at INTEGER');
+  // Whether the app behind this session opens messages in the background (Postgres: migration 047): a property of the
+  // session, so every push token it registers, before or after it said so, gets wake-ups. Marks carried over from 046.
+  if (!sessionColumns.has('relay_wake')) {
+    db.exec('ALTER TABLE sessions ADD COLUMN relay_wake INTEGER NOT NULL DEFAULT 0');
+    db.exec('UPDATE sessions SET relay_wake = 1 WHERE token_hash IN (SELECT session_hash FROM push_devices WHERE relay_wake = 1)');
+  }
   // Invite links: only the SHA-256 of each token (Postgres: 027_zero_number.sql).
   db.exec(`CREATE TABLE IF NOT EXISTS connect_tokens (
     id TEXT PRIMARY KEY,
@@ -1176,11 +1182,12 @@ export function createChatServer({
   /** Sends one encrypted push to every phone the person registered; forgets phones the app is gone from. */
   /**
    * `options.wakeInstead`: the wake-up to send, instead of `body`, to phones whose app opens messages in the
-   * background (push_devices.relay_wake, set by the app: POST /api/v1/push/relay-wake). Others get `body` as before.
+   * background (sessions.relay_wake, set by the app: POST /api/v1/push/relay-wake). Others get `body` as before.
    */
   async function pushToUser(userId, body, { wakeInstead = null, ...options } = {}) {
     if (!push) return 0;
-    const devices = await db.prepare('SELECT token, device_key AS "deviceKey", relay_wake AS "relayWake" FROM push_devices WHERE user_id = ?').all(userId);
+    const devices = await db.prepare(`SELECT p.token, p.device_key AS "deviceKey", COALESCE(s.relay_wake, 0) AS "relayWake"
+      FROM push_devices p LEFT JOIN sessions s ON s.token_hash = p.session_hash WHERE p.user_id = ?`).all(userId);
     if (!wakeInstead) return sendPushes(devices, body, options);
     const waking = devices.filter((device) => Number(device.relayWake) === 1);
     const sealed = devices.filter((device) => Number(device.relayWake) !== 1);
@@ -2684,12 +2691,13 @@ export function createChatServer({
   });
 
   // The app on this phone opens messages from this server in the background (src/background/main.js relay fetch):
-  // from now on new messages wake it rather than show a sealed notice. Said again at each start (a new push token
-  // registers as a new row).
+  // from now on new messages wake it rather than show a sealed notice. Kept on the session (migration 047), so a push
+  // token registered later (a new token after an update) is covered too. `devices`: its push registrations so far.
   app.post('/api/v1/push/relay-wake', requireSession, async (request, response) => {
     const on = request.body?.on !== false;
-    const result = await db.prepare('UPDATE push_devices SET relay_wake = ? WHERE session_hash = ?').run(on ? 1 : 0, request.session.token_hash);
-    response.json({ devices: Number(result.changes ?? 0) });
+    await db.prepare('UPDATE sessions SET relay_wake = ? WHERE token_hash = ?').run(on ? 1 : 0, request.session.token_hash);
+    const row = await db.prepare('SELECT COUNT(*) AS "count" FROM push_devices WHERE session_hash = ?').get(request.session.token_hash);
+    response.json({ devices: Number(row?.count ?? 0) });
   });
 
   // The push and background timings the app uses (server/pushConfig.mjs): tunable on the server, no new bundle.
@@ -3262,7 +3270,7 @@ export function createChatServer({
     // The first queued task, so "ready" (with the presence the viewer may see) precedes pending messages.
     enqueue(async () => {
       if (socket.relayBackground && !socket.relayFetch) {
-        socket.relayWakeOnly = Boolean(await db.prepare('SELECT 1 AS "on" FROM push_devices WHERE session_hash = ? AND relay_wake = 1 LIMIT 1').get(socket.sessionHash));
+        socket.relayWakeOnly = Boolean(await db.prepare('SELECT 1 AS "on" FROM sessions WHERE token_hash = ? AND relay_wake = 1').get(socket.sessionHash));
       }
       json(socket, { type: 'connection:ready', user: request.session.user, presence: await presenceSnapshot(userId) });
       // Group-call invites a push rang this phone for (C1): to the background connection, or the app it opened.
