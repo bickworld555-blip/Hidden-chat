@@ -312,3 +312,26 @@ test('back-to-back messages wake a phone that can open them in the background; o
   assert.deepEqual(decrypt(key, groupPush.data), { t: 'xwake', from: a.user.id, groupId: group.id });
   sender.close();
 });
+
+// Seen on the S23 (third run): in the minute after a call push, the Android service's own connection received the
+// messages and could only post "🔒 Message", which then kept the real notification from showing. On a relay-wake phone
+// that connection now gets a content-free wake-up instead; the background page's fetch connection gets the messages.
+test('a relay-wake phone: its service connection gets wake-ups, not messages; the background fetch gets the messages', async () => {
+  const { a, b } = await pair();
+  assert.deepEqual((await api('/api/v1/push/relay-wake', { session: b, method: 'POST', body: { on: true } })).body, { devices: 1 });
+  const sender = await connect(a);
+  await until(() => sender.events.some((event) => event.type === 'connection:ready'), 'ready');
+  sender.send(JSON.stringify({ type: 'message:send', message: { id: 'native-wake-0', receiverId: b.user.id, content: 'waiting' } }));
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  const service = await connect(b, ['relay.background']);
+  const fetcher = await connect(b, ['relay.background', 'relay.fetch']);
+  await until(() => service.events.some((event) => event.type === 'connection:ready') && fetcher.events.some((event) => event.type === 'connection:ready'), 'both ready');
+  await until(() => service.events.some((event) => event.type === 'xmpp:wake'), 'a wake-up for what waited');
+  sender.send(JSON.stringify({ type: 'message:send', message: { id: 'native-wake-1', receiverId: b.user.id, content: 'live' } }));
+  await until(() => fetcher.events.some((event) => event.type === 'message:new' && event.message.id === 'native-wake-1'), 'the fetch gets it');
+  await until(() => service.events.filter((event) => event.type === 'xmpp:wake').length >= 2, 'a wake-up for the live one');
+  assert.ok(!service.events.some((event) => event.type === 'message:new'), 'the service connection never gets the message itself');
+  assert.deepEqual(service.events.filter((event) => event.type === 'xmpp:wake').map((event) => event.from), [a.user.id, a.user.id], 'content-free: who it is from');
+  assert.ok(fetcher.events.some((event) => event.type === 'message:new' && event.message.id === 'native-wake-0'), 'the fetch gets what waited too');
+  for (const socket of [service, fetcher, sender]) socket.close();
+});

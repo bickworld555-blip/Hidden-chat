@@ -1053,10 +1053,23 @@ export function createChatServer({
     let delivered = 0;
     for (const socket of userSockets(userId)) {
       if (socket === except) continue;
+      if (wakeInsteadOf(socket, event)) { delivered += 1; continue; }
       json(socket, event);
       delivered += 1;
     }
     return delivered;
+  }
+
+  // A message for the Android service's own connection on a phone whose app opens messages itself (relay_wake): only a
+  // content-free wake-up (handled as a push "xwake": the app or its background page fetches, decrypts and notifies with
+  // the real text). Given the message, that connection could only post a sealed "🔒 Message", which then kept the real
+  // notification from showing. Its own messages from another device need nothing. True when handled here.
+  const WAKE_FOR = new Set(['message:new', 'group:message']);
+  function wakeInsteadOf(socket, event) {
+    if (!socket.relayWakeOnly || !WAKE_FOR.has(event?.type)) return false;
+    const from = event.message?.senderId;
+    if (from && from !== socket.userId) json(socket, { type: 'xmpp:wake', from, ...(event.message?.groupId ? { groupId: event.message.groupId } : {}) });
+    return true;
   }
 
   // P5: the wake-up for a message waiting on XMPP, over this device's always-connected socket (relay.background, the
@@ -3174,7 +3187,10 @@ export function createChatServer({
       return;
     }
     request.session = session;
-    request.relayBackground = offered.includes('relay.background');
+    // relay.fetch: the background page's short fetch (src/background/relayFetch.js), a background device that takes
+    // messages itself, unlike the Android service's own connection (relay.background alone).
+    request.relayFetch = offered.includes('relay.fetch');
+    request.relayBackground = offered.includes('relay.background') || request.relayFetch;
     // The app's wire version on this socket (relay.client.<n>): what it can do (CALL_CONFIRM_PROTOCOL).
     request.clientProtocol = Math.max(0, ...offered.filter((part) => part.startsWith('relay.client.')).map((part) => clientProtocolOf(part.slice('relay.client.'.length)) || 0));
     if (socket.destroyed || closing) {
@@ -3193,6 +3209,9 @@ export function createChatServer({
     socket.sessionHash = request.session.token_hash;
     // The Android service's own connection only keeps the phone reachable; it never makes the user "online".
     socket.relayBackground = Boolean(request.relayBackground);
+    socket.relayFetch = Boolean(request.relayFetch);
+    // Set below once known: this is the Android service's connection on a phone whose app opens messages itself.
+    socket.relayWakeOnly = false;
     socket.clientProtocol = Number(request.clientProtocol) || 0;
     socket.backgrounded = socket.relayBackground;
     socket.idle = false;
@@ -3213,6 +3232,9 @@ export function createChatServer({
     }
     // The first queued task, so "ready" (with the presence the viewer may see) precedes pending messages.
     enqueue(async () => {
+      if (socket.relayBackground && !socket.relayFetch) {
+        socket.relayWakeOnly = Boolean(await db.prepare('SELECT 1 AS "on" FROM push_devices WHERE session_hash = ? AND relay_wake = 1 LIMIT 1').get(socket.sessionHash));
+      }
       json(socket, { type: 'connection:ready', user: request.session.user, presence: await presenceSnapshot(userId) });
       // Group-call invites a push rang this phone for (C1): to the background connection, or the app it opened.
       for (const invite of heldInvitesFor(userId)) json(socket, invite);
@@ -3246,7 +3268,12 @@ export function createChatServer({
       WHERE messages.receiver_id = ? AND messages.status = 'sent' AND messages.deleted_at IS NULL`).all(userId));
     // Re-sent on every connect until the device acknowledges them with message:delivered.
     for (const message of pendingMessages) {
+      // The service's own connection on a relay-wake phone: one wake-up per sender is enough to fetch them all.
+      if (socket.relayWakeOnly) continue;
       json(socket, { type: 'message:new', message: { ...(await presentMessage(message)), status: 'sent' } });
+    }
+    if (socket.relayWakeOnly) {
+      for (const from of new Set(pendingMessages.map((message) => message.senderId))) json(socket, { type: 'xmpp:wake', from });
     }
 
     }

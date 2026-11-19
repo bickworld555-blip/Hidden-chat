@@ -19,7 +19,9 @@ export function relayFetch({ token, handle, createSocket = (url, protocols) => n
   return new Promise((resolve) => {
     let socket;
     try {
-      socket = createSocket(url, [`relay.auth.${token}`, 'relay.v1', CLIENT_SUBPROTOCOL, 'relay.background']);
+      // relay.fetch: a background device that takes the messages itself (the Android service's own connection only
+      // gets wake-ups for them on a phone like this: server/index.mjs wakeInsteadOf).
+      socket = createSocket(url, [`relay.auth.${token}`, 'relay.v1', CLIENT_SUBPROTOCOL, 'relay.background', 'relay.fetch']);
     } catch (error) {
       log(`relay: ${error?.message ?? error}`);
       resolve('offline');

@@ -234,6 +234,8 @@ export default function App() {
   // The latest link of the chain that opens and handles incoming events in order (a background fetch waits for it).
   // When the relay connection last brought anything (a relay wake-up waits until it goes quiet).
   const lastRealtimeEventRef = useRef(0);
+  // The relay wake-up fetch in progress (one at a time), and when a push last asked for it.
+  const relayWakeRef = useRef({ running: false, extendedAt: 0 });
   const pendingEventsRef = useRef(Promise.resolve());
   const removingRef = useRef(new Set());
   const [authOpen, setAuthOpen] = useState(false);
@@ -880,16 +882,22 @@ export default function App() {
       // background. Check it now (a dead one reconnects and the server sends what waited); each message is opened and
       // notified with its real text as usual. Android's sealed notice stands in only if none was posted in time.
       if (nativeShell() && document.visibilityState !== 'visible' && !xmppRef.current) {
+        // Pushes in quick succession (five messages in a row): one fetch, which each later push keeps going. A second
+        // reconnect would cut the first mid-delivery, and the first finishing would let Android freeze the app while
+        // the second was still connecting (seen on the S23: only the first message showed its text).
+        relayWakeRef.current.extendedAt = Date.now();
+        if (relayWakeRef.current.running) return;
+        relayWakeRef.current.running = true;
         const client = useChatStore.getState().client;
         const started = Date.now();
         // A fresh connection (the server sends what waited as it opens), then done once nothing has arrived for
         // RELAY_WAKE_QUIET_MS and everything received has been opened and notified, at most RELAY_WAKE_MAX_MS later.
         Promise.resolve(client?.reconnectNow?.() ?? client?.wake?.()).then(async () => {
-          while (Date.now() - started < RELAY_WAKE_MAX_MS && Date.now() - Math.max(lastRealtimeEventRef.current, started) < RELAY_WAKE_QUIET_MS) {
+          while (Date.now() - started < RELAY_WAKE_MAX_MS && Date.now() - Math.max(lastRealtimeEventRef.current, relayWakeRef.current.extendedAt, started) < RELAY_WAKE_QUIET_MS) {
             await new Promise((resolve) => setTimeout(resolve, 250));
           }
           await Promise.resolve(pendingEventsRef.current).catch(() => {});
-        }).catch(() => {}).finally(() => nativeBackgroundFetchDone('relay').catch(() => {}));
+        }).catch(() => {}).finally(() => { relayWakeRef.current.running = false; nativeBackgroundFetchDone('relay').catch(() => {}); });
         return;
       }
       if (nativeShell() && document.visibilityState !== 'visible') {
