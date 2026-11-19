@@ -167,6 +167,29 @@ export class RealtimeClient {
     this.connect();
   }
 
+  /**
+   * A push says something waits and the app is in the background: a fresh connection now, without first asking the
+   * old one for a pong. Android may have cut the old socket while it still reads as open, and a pong check takes
+   * PONG_TIMEOUT_MS, longer than the phone stays awake for the push. The server then sends what waited at once.
+   * Resolves when the new connection is ready (or after `timeoutMs`).
+   */
+  reconnectNow({ timeoutMs = 10_000 } = {}) {
+    if (this.closed) return Promise.resolve(false);
+    this.attempt = 0;
+    const old = this.socket;
+    this.socket = null;
+    this.stopChecks();
+    if (old) { try { old.close(4001, 'push wake'); } catch { /* already closing */ } }
+    this.connect();
+    const socket = this.socket;
+    return new Promise((resolve) => {
+      if (!socket) { resolve(false); return; }
+      const timer = window.setTimeout(() => resolve(false), timeoutMs);
+      socket.addEventListener('open', () => { window.clearTimeout(timer); resolve(true); }, { once: true });
+      socket.addEventListener('close', () => { window.clearTimeout(timer); resolve(false); }, { once: true });
+    });
+  }
+
   /** Asks the server for a pong; no frame of any kind within PONG_TIMEOUT_MS means the socket is dead. */
   probe() {
     const socket = this.socket;

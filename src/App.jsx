@@ -157,10 +157,12 @@ async function validateAccount(account) {
   const profile = await response.json();
   return { token: account.token, deviceId: profile.device?.id ?? account.deviceId, deviceName: profile.device?.name ?? account.deviceName, user: profile.user, device: profile.device };
 }
-
-// A relay wake-up in the background: how long the app's connection gets to bring and notify what waited before it
-// tells Android it is done (Android's own sealed-notice timer runs regardless: PushService FALLBACK_NOTICE_MS).
-const RELAY_WAKE_SETTLE_MS = 6000;
+
+// A relay wake-up in the background: the app tells Android it is done once nothing has arrived for RELAY_WAKE_QUIET_MS
+// after reconnecting (at most RELAY_WAKE_MAX_MS). Android's sealed notice stands in after PushService
+// FALLBACK_NOTICE_MS (8 s) only if no notification was posted for that chat meanwhile.
+const RELAY_WAKE_QUIET_MS = 2000;
+const RELAY_WAKE_MAX_MS = 15_000;
 
 export default function App() {
   const isMobile = useIsMobile();
@@ -230,6 +232,8 @@ export default function App() {
   // A message request accepted (here or on another device): the XMPP receipts held for that person go out.
   useEffect(() => onContactAccepted((peerId) => xmppRef.current?.releaseReceipts?.(peerId)), []);
   // The latest link of the chain that opens and handles incoming events in order (a background fetch waits for it).
+  // When the relay connection last brought anything (a relay wake-up waits until it goes quiet).
+  const lastRealtimeEventRef = useRef(0);
   const pendingEventsRef = useRef(Promise.resolve());
   const removingRef = useRef(new Set());
   const [authOpen, setAuthOpen] = useState(false);
@@ -634,6 +638,7 @@ export default function App() {
         // Events that may carry ciphertext are opened in arrival order before they are handled (src/e2e/messaging.js).
         let openChain = Promise.resolve();
         const onRealtimeEvent = (event) => {
+          lastRealtimeEventRef.current = Date.now();
           // A call's other device announces its XMPP address with the server-relayed offer/answer (src/xmpp/session.js).
           if (event?.type === 'call:signal') xmppRef.current?.observe(event);
           if (event?.type === 'message:reaction:error' && handleReactionError(event, realtime)) return;
@@ -875,8 +880,16 @@ export default function App() {
       // background. Check it now (a dead one reconnects and the server sends what waited); each message is opened and
       // notified with its real text as usual. Android's sealed notice stands in only if none was posted in time.
       if (nativeShell() && document.visibilityState !== 'visible' && !xmppRef.current) {
-        useChatStore.getState().client?.wake?.();
-        setTimeout(() => { Promise.resolve(pendingEventsRef.current).catch(() => {}).finally(() => nativeBackgroundFetchDone('relay').catch(() => {})); }, RELAY_WAKE_SETTLE_MS);
+        const client = useChatStore.getState().client;
+        const started = Date.now();
+        // A fresh connection (the server sends what waited as it opens), then done once nothing has arrived for
+        // RELAY_WAKE_QUIET_MS and everything received has been opened and notified, at most RELAY_WAKE_MAX_MS later.
+        Promise.resolve(client?.reconnectNow?.() ?? client?.wake?.()).then(async () => {
+          while (Date.now() - started < RELAY_WAKE_MAX_MS && Date.now() - Math.max(lastRealtimeEventRef.current, started) < RELAY_WAKE_QUIET_MS) {
+            await new Promise((resolve) => setTimeout(resolve, 250));
+          }
+          await Promise.resolve(pendingEventsRef.current).catch(() => {});
+        }).catch(() => {}).finally(() => nativeBackgroundFetchDone('relay').catch(() => {}));
         return;
       }
       if (nativeShell() && document.visibilityState !== 'visible') {

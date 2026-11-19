@@ -54,5 +54,12 @@ test('the background page uses the relay fetch for relay accounts and acknowledg
   assert.ok(page.includes("return reason === 'quiet' ? 'done' : `relay: ${reason}`;"), 'only a complete fetch lets Android skip the sealed notice');
   const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
   assert.ok(app.includes("apiFetch('/api/v1/push/relay-wake'"), 'the app tells the server it can be woken');
-  assert.ok(app.includes("useChatStore.getState().client?.wake?.();"), 'a woken app in the background checks its relay connection');
+  // Seen on the S23 (second run): a wake-up only pinged the old socket (8 s to call it dead) and told Android it was done
+  // after 6 s, so the app slept before reconnecting and the sealed notice came instead. Now it reconnects at once and
+  // reports done only once what waited has arrived and been handled.
+  assert.ok(app.includes('Promise.resolve(client?.reconnectNow?.() ?? client?.wake?.())'), 'a woken app reconnects at once');
+  assert.ok(app.includes('Date.now() - Math.max(lastRealtimeEventRef.current, started) < RELAY_WAKE_QUIET_MS'), 'and waits until nothing more arrives');
+  assert.ok(!app.includes('RELAY_WAKE_SETTLE_MS'));
+  const realtime = readFileSync(new URL('../src/realtime.js', import.meta.url), 'utf8');
+  assert.ok(realtime.includes('reconnectNow({ timeoutMs = 10_000 } = {}) {') && realtime.includes("old.close(4001, 'push wake')"), 'without first asking a socket Android may have cut');
 });
