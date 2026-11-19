@@ -100,6 +100,9 @@ export const GROUP_CALL_PRESENCE_MS = 90_000;
 // a connection that died a moment ago (the phone just lost its network) still looks connected here, and the message
 // written to it reached nobody (like WhatsApp: no delivery receipt, then a push).
 export const DELIVERY_PUSH_MS = 8_000;
+// Leaving the app announces "offline" once the state has held this long: Android reports hidden, visible and hidden
+// again within a second of pressing Home, which showed contacts offline → online → offline. Coming back is at once.
+export const HIDDEN_SETTLE_MS = 2_000;
 // 'ice-restart': the callee asks the caller to restart ICE after a network switch (only the caller offers, so the two
 // phones never send crossing offers). Refused here before, the callee's request never reached a caller on this path.
 const CALL_SIGNAL_TYPES = new Set(['offer', 'answer', 'ice', 'ice-restart', 'end', 'connected', 'ringing', 'media', 'video-request', 'video-accept', 'video-decline', 'video-cancel', 'reaction']);
@@ -1733,7 +1736,8 @@ export function createChatServer({
       return;
     }
     if (online === wasOnline) return;
-    if (!online && dropped && reconnectGraceMs > 0 && !closing) {
+    const graceMs = dropped ? reconnectGraceMs : HIDDEN_SETTLE_MS;
+    if (!online && graceMs > 0 && !closing) {
       if (pending) return;
       const droppedAt = Date.now();
       const timer = setTimeout(() => {
@@ -1741,7 +1745,7 @@ export function createChatServer({
         if (isOnline(userId)) return;
         trackSocketTask(Promise.resolve(db.prepare('UPDATE users SET last_seen_at = ? WHERE id = ?').run(droppedAt, userId))
           .then(() => broadcastPresence(userId)).catch((error) => console.error('Presence could not be sent:', error.code ?? error.name)));
-      }, reconnectGraceMs);
+      }, graceMs);
       timer.unref?.();
       pendingOffline.set(userId, timer);
       return;

@@ -244,3 +244,35 @@ test('linked devices lists every signed-in device and can sign one out remotely'
   assert.equal((await api('/api/v1/me', { session: phone })).status, 401);
   assert.equal((await api('/api/v1/me/sessions', { session: user })).body.length, 1);
 });
+
+// Seen between the S23 and the desktop app (2026-11-19): pressing Home on the phone sent hidden, visible and hidden
+// within a second, and the desktop showed offline → online → offline. Leaving now settles for HIDDEN_SETTLE_MS before
+// "offline" goes out; coming back cancels it, and coming online is announced at once.
+test('leaving the app settles before "offline": a hidden-visible-hidden blink shows no flicker, coming back is at once', async () => {
+  const { HIDDEN_SETTLE_MS } = await import('./index.mjs');
+  const ava = await register('ava');
+  const ben = await register('ben');
+  assert.equal((await api('/api/v1/contacts', { session: ben, method: 'POST', body: { userId: ava.user.id } })).status, 200);
+  const avaSocket = await connect(ava);
+  const benSocket = await connect(ben);
+  await until(() => benSocket.events.find((event) => event.type === 'connection:ready'), 'ben ready');
+  await new Promise((resolve) => setTimeout(resolve, 300));
+  const seen = () => benSocket.events.filter((event) => event.type === 'presence:update' && event.userId === ava.user.id).map((event) => event.status);
+  const before = seen().length;
+  const state = (visibility) => avaSocket.send(JSON.stringify({ type: 'client:state', visibility, idle: false }));
+  state('hidden');
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  state('visible');
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  state('hidden');
+  await new Promise((resolve) => setTimeout(resolve, HIDDEN_SETTLE_MS / 2));
+  assert.deepEqual(seen().slice(before), [], 'nothing while it settles');
+  await until(() => seen().slice(before).includes('offline'), 'offline once settled', HIDDEN_SETTLE_MS * 2);
+  assert.deepEqual(seen().slice(before), ['offline'], 'one change, no flicker');
+  const at = Date.now();
+  state('visible');
+  await until(() => seen().at(-1) === 'online', 'back online');
+  assert.ok(Date.now() - at < 1000, 'coming back is announced at once');
+  avaSocket.close();
+  benSocket.close();
+});

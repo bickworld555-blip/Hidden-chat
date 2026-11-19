@@ -68,7 +68,12 @@ test('back-to-back wake-ups make one fetch in the app, kept going by each push; 
   const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
   assert.ok(app.includes('relayWakeRef.current.extendedAt = Date.now();\n        if (relayWakeRef.current.running) return;') || app.includes('relayWakeRef.current.extendedAt = Date.now();\r\n        if (relayWakeRef.current.running) return;'), 'a later push extends the running fetch');
   assert.ok(app.includes('Math.max(lastRealtimeEventRef.current, relayWakeRef.current.extendedAt, started) < RELAY_WAKE_QUIET_MS'));
-  assert.ok(app.includes("relayWakeRef.current.running = false; nativeBackgroundFetchDone('relay')"), 'Android hears "done" only when the one fetch ends');
+  assert.ok(app.includes("nativeBackgroundFetchDone(connected ? 'quiet' : 'relay')"), 'Android hears "done" only when the one fetch ends: quiet after a fresh connection brought everything');
+  // Seen in the desktop→S23 run: the app posted the real notification before the push arrived, and 8 s later the sealed
+  // notice replaced it (Android counted only notifications after the push). A completed fetch now says "quiet".
+  assert.ok(app.includes('connected = opened === true;'));
+  // Calls: no server round trip before ringing someone already in the chat list.
+  assert.ok(app.includes('if (sessionToken && !targetChat) {'), 'no wait for someone already in the chat list');
   const fetch = readFileSync(new URL('../src/background/relayFetch.js', import.meta.url), 'utf8');
   assert.ok(fetch.includes("'relay.background', 'relay.fetch']"));
 });

@@ -892,12 +892,19 @@ export default function App() {
         const started = Date.now();
         // A fresh connection (the server sends what waited as it opens), then done once nothing has arrived for
         // RELAY_WAKE_QUIET_MS and everything received has been opened and notified, at most RELAY_WAKE_MAX_MS later.
-        Promise.resolve(client?.reconnectNow?.() ?? client?.wake?.()).then(async () => {
+        let connected = false;
+        Promise.resolve(client?.reconnectNow?.() ?? client?.wake?.()).then(async (opened) => {
+          connected = opened === true;
           while (Date.now() - started < RELAY_WAKE_MAX_MS && Date.now() - Math.max(lastRealtimeEventRef.current, relayWakeRef.current.extendedAt, started) < RELAY_WAKE_QUIET_MS) {
             await new Promise((resolve) => setTimeout(resolve, 250));
           }
           await Promise.resolve(pendingEventsRef.current).catch(() => {});
-        }).catch(() => {}).finally(() => { relayWakeRef.current.running = false; nativeBackgroundFetchDone('relay').catch(() => {}); });
+        }).catch(() => {}).finally(() => {
+          relayWakeRef.current.running = false;
+          // "quiet": a fresh connection brought everything that waited and it was handled (Android then skips its sealed
+          // notice, which otherwise covered a real notification posted before the push arrived). Otherwise "relay".
+          nativeBackgroundFetchDone(connected ? 'quiet' : 'relay').catch(() => {});
+        });
         return;
       }
       if (nativeShell() && document.visibilityState !== 'visible') {
@@ -1044,7 +1051,8 @@ export default function App() {
     const targetChat = chats.find((c) => c.id === peerId || c.username === peerId);
     const resolvedId = targetChat?.id || peerId;
     // Calling links the two of you so signalling is allowed; it does not add them to the contact book.
-    if (sessionToken) {
+    // Someone already in the chat list is linked: no request waits before the call starts (it rings ~0.5 s sooner).
+    if (sessionToken && !targetChat) {
       try {
         await linkContact(sessionToken, resolvedId, { save: false });
       } catch {}

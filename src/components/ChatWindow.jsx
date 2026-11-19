@@ -2037,7 +2037,7 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
       ) : (
       <form className="composer-wrap" onSubmit={handleSubmit}>
         {encryption === false && (
-          <p className="e2e-warning is-waiting" role="status">🔒 {chat?.name ?? 'This contact'} hasn’t opened an updated Hidden Messenger yet. What you send <strong>waits on your phone</strong> and goes out end-to-end encrypted as soon as they do; nothing is ever sent unencrypted.</p>
+          <p className="e2e-warning is-waiting" role="status">🔒 {chat?.name ?? 'This contact'} can’t receive end-to-end encrypted messages right now: they need Hidden Messenger open and signed in on their phone. What you send <strong>waits on your phone</strong> and goes out encrypted as soon as they can receive it; nothing is ever sent unencrypted.</p>
         )}
         {editing && (
           <div className="wa-composer-reply-banner hm-edit-banner">
