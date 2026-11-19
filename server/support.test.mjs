@@ -174,13 +174,51 @@ test('campaigns are read-only: no reply where only campaigns arrived, unless the
   assert.equal((await api('/api/v1/support/messages', { token: jon.token, method: 'POST', body: { body: 'Any news?' } })).status, 201);
 });
 
-test('the pinned Hidden Messenger chat hides the composer for campaigns; Help Center asks for help', () => {
+test('the Hidden Messenger chat is an ordinary chat: listed by its newest message, deletable, and read-only for campaigns', async () => {
+  const kim = await register('support_kim');
+  const lee = await register('support_lee');
+  const kimSocket = await listen(kim);
+  assert.equal((await api('/api/v1/support/summary', { token: kim.token })).body.last, null, 'no messages yet: no chat in the list');
+  await api('/api/admin/v1/support-campaigns', { admin: true, method: 'POST', body: { body: 'Version 2 is out.' } });
+  assert.equal((await api('/api/v1/support/summary', { token: kim.token })).body.last.preview, 'Version 2 is out.');
+
+  // Delete chat: gone from this person's view (and their other devices hear it), still in the console.
+  assert.equal((await api('/api/v1/support/messages', { token: kim.token, method: 'DELETE' })).status, 204);
+  assert.ok(await until(() => kimSocket.events.find((event) => event.type === 'support:cleared')), 'other devices drop it too');
+  assert.deepEqual((await api('/api/v1/support/summary', { token: kim.token })).body, { last: null, unread: 0 });
+  assert.deepEqual((await api('/api/v1/support/messages', { token: kim.token })).body.messages, []);
+  assert.equal((await api('/api/v1/support/summary', { token: lee.token })).body.last.preview, 'Version 2 is out.', 'only for the person who deleted it');
+  assert.equal((await api(`/api/admin/v1/support/${kim.user.id}`, { admin: true })).body.messages.length, 1, 'the console keeps the history');
+
+  // A new message brings the chat back, holding only what came after.
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  await api('/api/admin/v1/support-campaigns', { admin: true, method: 'POST', body: { body: 'Version 2.1 is out.' } });
+  const chat = (await api('/api/v1/support/messages', { token: kim.token })).body;
+  assert.deepEqual(chat.messages.map((message) => message.body), ['Version 2.1 is out.']);
+  assert.equal(chat.replies, 'closed', 'read-only');
+  assert.equal((await api('/api/v1/support/messages', { token: kim.token, method: 'POST', body: { body: 'reply' } })).status, 403);
+  kimSocket.close();
+});
+
+test('the Hidden Messenger chat sits among chats by time, deletes from a long press, and shows "Only Hidden Messenger can send messages"', async () => {
   const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
   const help = read('src/components/HelpCenter.jsx');
   const list = read('src/components/ChatsList.jsx');
-  assert.match(list, /<SupportRow summary=\{supportSummary\} onOpen=\{\(\) => onSheet\?\.\('official'\)\} \/>/, 'the pinned row opens the read-only view');
-  assert.match(help, /const canWrite = replies === 'open' \|\| asking \|\| messages\?\.length === 0;/);
-  assert.match(help, /canWrite \? \(\n\s+<form className="support-composer"/, 'the composer only where writing is allowed');
-  assert.ok(help.includes('Only Hidden Messenger can send messages here.'));
-  assert.match(help, /sendSupportMessage\(token, body, \{ start: replies !== 'open' \}\)/);
+  const { mergeGroupRows } = await import('../src/groupRows.js');
+  const at = (minutes) => new Date(Date.UTC(2026, 10, 19, 9, minutes)).toISOString();
+  const rows = mergeGroupRows([{ id: 'a', lastActivityAt: at(30) }, { id: 'b', lastActivityAt: at(10) }], [{ kind: 'support', id: 'hm-official', lastActivityAt: at(20) }]);
+  assert.deepEqual(rows.map((row) => row.id), ['a', 'hm-official', 'b'], 'by its newest message, not pinned');
+  const row = list.slice(list.indexOf('function SupportRow'), list.indexOf('export default function ChatsList'));
+  assert.ok(!row.includes('<Pin '), 'no pin on the row');
+  for (const part of [
+    'mergeGroupRows(visibleChats, [...visibleGroups, ...visibleSupport]',
+    "if (chat.kind === 'support') { setSupportDelete(true); return; }",
+    'deleteSupportChat(sessionToken)',
+  ]) assert.ok(list.includes(part), part);
+  for (const part of [
+    '<p className="support-readonly" role="note">Only {SUPPORT_NAME} can send messages</p>',
+    "const canWrite = replies === 'open' || asking || messages?.length === 0;",
+    '<div className="day-divider support-day"><span>{formatMessageDate(message.createdAt)}</span></div>',
+    "sendSupportMessage(token, body, { start: replies !== 'open' })",
+  ]) assert.ok(help.includes(part), part);
 });

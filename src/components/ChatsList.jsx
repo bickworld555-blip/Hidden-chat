@@ -21,7 +21,7 @@ import MessageSearch, { SearchFilterChips } from './MessageSearch.jsx';
 import { ListEditor, ListPicker, listEntries } from './ChatLists.jsx';
 import { countUnreadConversations, mergeGroupRows, unreadBadge } from '../groupRows.js';
 import VerifiedBadge from './VerifiedBadge.jsx';
-import { SUPPORT_EVENT, SUPPORT_NAME, SUPPORT_READ_EVENT, fetchSupportSummary } from '../supportApi.js';
+import { SUPPORT_EVENT, SUPPORT_NAME, SUPPORT_READ_EVENT, deleteSupportChat, fetchSupportSummary } from '../supportApi.js';
 import { formatChatListTime } from '../time.js';
 import { activityLabel, groupActivityLabel, groupActivityPeople } from '../typing.js';
 import { statusRingProps } from './StatusRing.jsx';
@@ -75,8 +75,10 @@ function GroupListRow({ row, onOpen, pressHandlers, labels = [], consumeLongPres
   );
 }
 
-// The official Hidden Messenger account, pinned first for everyone: its newest message (a reply or an announcement)
-// and the unread count, kept current from the live connection. Tapping it opens the support chat.
+// The official Hidden Messenger account's chat: its newest message (a reply or an announcement) and the unread count,
+// kept current from the live connection. It sits among the other chats by that message's time, and is listed only
+// while it has messages (deleting it clears them for this person). Tapping it opens the chat.
+export const SUPPORT_ROW_ID = 'hm-official';
 function useSupportSummary(token) {
   const [summary, setSummary] = useState(null);
   useEffect(() => {
@@ -98,12 +100,18 @@ function useSupportSummary(token) {
   return summary;
 }
 
-function SupportRow({ summary, onOpen }) {
+/** The chat list row for the official chat, or null when it has no messages to show. */
+export function supportRowFor(summary) {
+  if (!summary?.last) return null;
+  return { kind: 'support', id: SUPPORT_ROW_ID, name: SUPPORT_NAME, unread: summary.unread ?? 0, lastActivityAt: new Date(summary.last.createdAt).toISOString() };
+}
+
+function SupportRow({ summary, onOpen, pressHandlers, consumeLongPress = () => false }) {
   const last = summary?.last;
   const unread = summary?.unread ?? 0;
   return (
-    <div className="wa-row-wrapper wa-support-row">
-      <button type="button" className="wa-row" onClick={onOpen} aria-label={`${SUPPORT_NAME}, official account${unread ? `, ${unread} unread` : ''}`}>
+    <div className="wa-row-wrapper wa-support-row" {...pressHandlers}>
+      <button type="button" className="wa-row" onClick={() => { if (!consumeLongPress()) onOpen(); }} aria-label={`${SUPPORT_NAME}, official account${unread ? `, ${unread} unread` : ''}`}>
         <div className="wa-row-avatar-wrap"><BrandMark className="wa-support-avatar" /></div>
         <span className="wa-row-body">
           <span className="wa-row-top">
@@ -113,7 +121,6 @@ function SupportRow({ summary, onOpen }) {
           <span className="wa-row-bottom">
             <span className="wa-preview"><FormattedText text={last ? `${last.fromSupport ? '' : 'You: '}${last.preview}` : 'Official account · Message us for help'} inline /></span>
             <span className="wa-row-indicators">
-              <Pin size={15} className="wa-row-badge-icon" title="Pinned" />
               {unread > 0 && <span className="wa-badge">{unread}</span>}
             </span>
           </span>
@@ -131,6 +138,7 @@ export default function ChatsList({ onOpenChat, onStartCall, onGroups, groups = 
   const statusRings = useChatStore((state) => state.statusRings);
   const sessionToken = useChatStore((state) => state.sessionToken);
   const supportSummary = useSupportSummary(sessionToken);
+  const [supportDelete, setSupportDelete] = useState(false);
   const userId = useChatStore((state) => state.userId);
   const addContact = useChatStore((state) => state.addContact);
   const pinnedChatIds = useChatStore((state) => state.pinnedChatIds ?? []);
@@ -256,6 +264,7 @@ export default function ChatsList({ onOpenChat, onStartCall, onGroups, groups = 
     const chat = pressTargetRef.current;
     if (!chat) return;
     navigator.vibrate?.(10);
+    if (chat.kind === 'support') { setSupportDelete(true); return; }
     if (selectedChatIdsRef.current.length) setSelectedChatIds((prev) => prev.includes(chat.id) ? prev : [...prev, chat.id]);
     else setActionChat(chat);
   }));
@@ -400,7 +409,10 @@ export default function ChatsList({ onOpenChat, onStartCall, onGroups, groups = 
   const visibleGroups = isSelectionMode || filterTab === 'favourites' ? []
     : normalizedQuery ? folderGroups.filter((group) => group.name.toLowerCase().includes(normalizedQuery))
       : filterTab === 'unread' ? folderGroups.filter((group) => group.unread > 0) : folderGroups;
-  const visibleRows = mergeGroupRows(visibleChats, visibleGroups, { leadingIds: [...pinnedChatIds, ...favouriteChatIds] });
+  // The official chat, by its newest message's time like any other chat (not in folders, searches or selections).
+  const supportRow = !showArchived && !showLocked && !normalizedQuery && !isSelectionMode && (filterTab === 'all' || filterTab === 'unread') ? supportRowFor(supportSummary) : null;
+  const visibleSupport = supportRow && (filterTab === 'all' || supportRow.unread > 0) ? [supportRow] : [];
+  const visibleRows = mergeGroupRows(visibleChats, [...visibleGroups, ...visibleSupport], { leadingIds: [...pinnedChatIds, ...favouriteChatIds] });
   const newResults = searchResults.filter((contact) => contact?.id && !chats.some((chat) => chat.id === contact.id));
   const totalUnread = countUnreadConversations(chats.filter((chat) => !archivedSet.has(chat.id)), groups.filter((group) => !archivedSet.has(`group:${group.id}`)));
 
@@ -571,9 +583,6 @@ export default function ChatsList({ onOpenChat, onStartCall, onGroups, groups = 
       )}
 
       <div className="wa-rows">
-        {!showArchived && !showLocked && !normalizedQuery && !isSelectionMode && !searchFilter && (filterTab === 'all' || (filterTab === 'unread' && supportSummary?.unread > 0)) && (
-          <SupportRow summary={supportSummary} onOpen={() => onSheet?.('official')} />
-        )}
         {!showArchived && !showLocked && !normalizedQuery && !isSelectionMode && lockedCount > 0 && (
           <button type="button" className="wa-row wa-archived-row" onClick={openLockedFolder} aria-label={`Locked chats, ${lockedCount}`}>
             <span className="wa-archived-icon" aria-hidden="true"><Lock size={20} /></span>
@@ -600,6 +609,7 @@ export default function ChatsList({ onOpenChat, onStartCall, onGroups, groups = 
         )}
         {showArchived && !normalizedQuery && <p className="wa-note">These chats stay archived when new messages arrive.</p>}
         {!searchFilter && visibleRows.map((chat) => {
+          if (chat.kind === 'support') return <SupportRow key={SUPPORT_ROW_ID} summary={supportSummary} onOpen={() => onSheet?.('official')} pressHandlers={rowPressHandlers(chat)} consumeLongPress={() => longPress.consumeFired()} />;
           if (chat.kind === 'group') return <GroupListRow key={`group-${chat.id}`} row={chat} onOpen={onOpenGroup} labels={labelsFor(chat)} pressHandlers={rowPressHandlers(chat)} consumeLongPress={() => longPress.consumeFired()} />;
           const online = presence?.[chat.id] === 'online';
           const activity = chat.deleted ? null : typing?.[chat.id];
@@ -800,6 +810,24 @@ export default function ChatsList({ onOpenChat, onStartCall, onGroups, groups = 
                 <span>{action.label}</span>
               </button>
             ))}
+          </div>
+        </div>
+      )}
+
+      {supportDelete && (
+        <div className="wa-sheet-backdrop" onClick={() => setSupportDelete(false)} role="presentation">
+          <div className="wa-info-dialog" role="alertdialog" aria-modal="true" aria-labelledby="delete-support-title" onClick={(event) => event.stopPropagation()}>
+            <h3 id="delete-support-title">Delete this chat?</h3>
+            <div className="wa-info-dialog-body"><p>Messages from {SUPPORT_NAME} in this chat will be deleted from your devices. New messages will appear here again.</p></div>
+            <div className="wa-info-dialog-actions">
+              <button type="button" onClick={() => setSupportDelete(false)}>Cancel</button>
+              <button type="button" className="wa-info-dialog-confirm danger" onClick={() => {
+                setSupportDelete(false);
+                deleteSupportChat(sessionToken)
+                  .then(() => { window.dispatchEvent(new Event(SUPPORT_READ_EVENT)); setListNotice('Chat deleted'); })
+                  .catch((caught) => setListNotice(caught.message));
+              }}>Delete chat</button>
+            </div>
           </div>
         </div>
       )}

@@ -5915,3 +5915,7 @@ button.groups-sender { padding: 0; border: 0; background: none; font: inherit; f
 .support-readonly { position: sticky; bottom: 0; display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 4px 10px; margin: 0; padding: 14px 12px; background: inherit; color: #667781; font-size: 14px; text-align: center; border-top: 1px solid rgba(134, 150, 160, .2); }
 .support-readonly button { padding: 0; border: 0; background: transparent; color: #005ad1; font: inherit; font-weight: 600; cursor: pointer; }
 .dark-theme .support-readonly button { color: #6ea8ff; }
+/* Day dividers in the Hidden Messenger chat ("Today", "Yesterday", a date), like any chat's. */
+.support-day { margin: 10px 0 6px; }
+.support-day span { font-size: 12px; font-weight: 500; }
+.dark-theme .support-day span { border-color: #2a3942; background: #182229; color: #8696a0; }

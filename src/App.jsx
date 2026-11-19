@@ -78,7 +78,7 @@ const Channels = lazyComponent(extrasPanels, (module) => module.Channels);
 const ScheduledMessages = lazyComponent(extrasPanels, (module) => module.ScheduledMessages);
 const CallLinks = lazyComponent(extrasPanels, (module) => module.CallLinks);
 const InviteFriend = lazyComponent(() => import('./components/parity/InviteFriend.jsx'));
-import { SUPPORT_EVENT } from './supportApi.js';
+import { SUPPORT_EVENT, SUPPORT_READ_EVENT } from './supportApi.js';
 const HelpCenter = lazyComponent(() => import('./components/HelpCenter.jsx'));
 const ListsManager = lazyComponent(() => import('./components/ChatLists.jsx'), (module) => module.ListsManager);
 const JoinCallLink = lazyComponent(extrasPanels, (module) => module.JoinCallLink);
@@ -421,6 +421,8 @@ export default function App() {
           if (event.type === 'contact:invited' && event.user?.id) useChatStore.getState().addContact(event.user);
           // Hidden Messenger Support answered (or this account wrote from another device): the open support chat shows it.
           if (event.type === 'support:message' && event.message?.id) window.dispatchEvent(new CustomEvent(SUPPORT_EVENT, { detail: event.message }));
+          // The Hidden Messenger chat was deleted on another device: the chat list drops it here too.
+          if (event.type === 'support:cleared') window.dispatchEvent(new Event(SUPPORT_READ_EVENT));
           if (event.type === 'message:edited') updateMessage(event.messageId, { content: event.content, editedAt: event.editedAt, ...(event.e2eError ? { e2eError: event.e2eError } : {}) });
           // Reconnected after a drop: catch up on anything that changed meanwhile (the first connect already loaded history).
           if (event.type === 'connection:ready') {

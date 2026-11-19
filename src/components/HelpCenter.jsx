@@ -1,6 +1,6 @@
 // Help Center, laid out like a business messenger's: "How can we help?", a search box, help topics, articles, and a
 // floating "Contact us" that opens the conversation with Hidden Messenger Support (answered from the admin console).
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { BookOpen, FileText, Briefcase, ChevronRight, LifeBuoy, Lock, MessageCircle, Phone, Search, Send, ShieldCheck, UserRound, Users } from 'lucide-react';
 import Panel, { Notice } from './parity/Panel.jsx';
 import FormattedText from './FormattedText.jsx';
@@ -8,7 +8,7 @@ import VerifiedBadge from './VerifiedBadge.jsx';
 import BrandMark from './BrandMark.jsx';
 import { useAvatarSrc } from '../avatar.js';
 import { SUPPORT_EVENT, SUPPORT_MESSAGE_MAX, SUPPORT_NAME, SUPPORT_READ_EVENT, fetchArticle, fetchHelp, fetchSupportChat, fetchSupportMessages, mergeSupportMessage, sendSupportMessage } from '../supportApi.js';
-import { formatMessageTime } from '../time.js';
+import { formatMessageDate, formatMessageTime, localDateKey } from '../time.js';
 
 // The server's help categories (server/admin.mjs HELP_CATEGORIES), in the app's words.
 export const HELP_TOPICS = {
@@ -35,12 +35,11 @@ function SupportMedia({ media }) {
 }
 
 // `asking`: opened to ask for help (Help Center › Contact us, Send feedback), so the person may write even where only
-// campaigns arrived. Opened from the chat list's pinned row, campaigns are read-only like a broadcast: no composer
-// until a conversation is open or the person chooses Contact support.
-export function SupportChat({ token, onBack, onClose, asking: askingAtStart = true }) {
+// campaigns arrived. Opened from the chat list, campaigns are read-only like a WhatsApp official account: no composer,
+// only "Only Hidden Messenger can send messages", until a support conversation is open (the server enforces the same).
+export function SupportChat({ token, onBack, onClose, asking = true }) {
   const [messages, setMessages] = useState(null);
   const [replies, setReplies] = useState('closed');
-  const [asking, setAsking] = useState(askingAtStart);
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -85,26 +84,28 @@ export function SupportChat({ token, onBack, onClose, asking: askingAtStart = tr
         <div className="support-messages" aria-live="polite">
           {messages === null && <p className="hm-muted">Loading…</p>}
           {messages?.length === 0 && <p className="support-empty">Tell us what’s wrong and we’ll reply here. You’ll get a notification when we do.</p>}
-          {messages?.map((message) => (
-            <div key={message.id} className={`support-bubble ${message.fromSupport ? 'is-support' : 'is-mine'}${message.campaign ? ' is-campaign' : ''}`}>
+          {messages?.map((message, index) => (
+            <Fragment key={message.id}>
+            {localDateKey(message.createdAt) !== localDateKey(messages[index - 1]?.createdAt) && (
+              <div className="day-divider support-day"><span>{formatMessageDate(message.createdAt)}</span></div>
+            )}
+            <div className={`support-bubble ${message.fromSupport ? 'is-support' : 'is-mine'}${message.campaign ? ' is-campaign' : ''}`}>
               {message.media && <SupportMedia media={message.media} />}
               {message.body && <FormattedText text={message.body} />}
               <time>{formatMessageTime(message.createdAt)}{!message.fromSupport && (message.readBySupport ? ' · Seen' : '')}</time>
             </div>
+            </Fragment>
           ))}
           <span ref={endRef} />
         </div>
         <Notice error={error} />
         {messages !== null && (canWrite ? (
           <form className="support-composer" onSubmit={send}>
-            <textarea value={draft} rows={1} maxLength={SUPPORT_MESSAGE_MAX} onChange={(event) => setDraft(event.target.value)} placeholder="Message" aria-label="Message to support" autoFocus={asking && !askingAtStart} />
+            <textarea value={draft} rows={1} maxLength={SUPPORT_MESSAGE_MAX} onChange={(event) => setDraft(event.target.value)} placeholder="Message" aria-label="Message to support" />
             <button type="submit" className="support-send" disabled={busy || !draft.trim()} aria-label="Send"><Send size={20} /></button>
           </form>
         ) : (
-          <p className="support-readonly" role="note">
-            Only Hidden Messenger can send messages here.
-            <button type="button" onClick={() => setAsking(true)}>Contact support</button>
-          </p>
+          <p className="support-readonly" role="note">Only {SUPPORT_NAME} can send messages</p>
         ))}
       </div>
     </Panel>

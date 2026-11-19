@@ -76,6 +76,7 @@ export const IMPORT_TABLES = Object.freeze([
   // Support attachments and campaigns (migration 041) come before the messages that name them.
   { name: 'support_media', columns: ['id', 'disk_name', 'type', 'name', 'size', 'created_at'], users: [] },
   { name: 'support_campaigns', columns: ['id', 'body', 'media_id', 'created_by', 'created_at'], users: [] },
+  { name: 'support_threads', columns: ['user_id', 'cleared_at'], users: ['user_id'], key: ['user_id'] },
   { name: 'support_messages', columns: ['id', 'user_id', 'from_admin', 'body', 'created_at', 'read_by_user_at', 'read_by_admin_at', 'media_id', 'campaign_id'], users: ['user_id'] },
   { name: 'call_telemetry', columns: ['id', 'user_id', 'call_id', 'final', 'created_at', 'report'], users: ['user_id'] },
   { name: 'connect_tokens', columns: ['id', 'owner_id', 'token_hash', 'uses_left', 'expires_at', 'created_at'], users: ['owner_id'] },

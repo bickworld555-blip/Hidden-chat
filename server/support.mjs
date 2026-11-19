@@ -31,6 +31,8 @@ export function ensureSupportSchema(db) {
   db.exec(`CREATE TABLE IF NOT EXISTS support_media (
     id TEXT PRIMARY KEY, disk_name TEXT NOT NULL, type TEXT NOT NULL, name TEXT NOT NULL, size INTEGER NOT NULL, created_at INTEGER NOT NULL
   )`);
+  // When the person deleted their Hidden Messenger chat: older messages leave their view (the console keeps them).
+  db.exec('CREATE TABLE IF NOT EXISTS support_threads (user_id TEXT PRIMARY KEY, cleared_at INTEGER NOT NULL)');
   db.exec(`CREATE TABLE IF NOT EXISTS support_campaigns (
     id TEXT PRIMARY KEY, body TEXT NOT NULL, media_id TEXT, created_by TEXT NOT NULL, created_at INTEGER NOT NULL
   )`);
@@ -71,6 +73,9 @@ const present = (row, mediaBase) => ({
 });
 const COLUMNS = `m.id, m.from_admin AS "fromAdmin", m.body, m.created_at AS "createdAt", m.read_by_user_at AS "readByUserAt",
   m.read_by_admin_at AS "readByAdminAt", m.media_id AS "mediaId", m.campaign_id AS "campaignId", d.type AS "mediaType", d.name AS "mediaName", d.size AS "mediaSize"`;
+// The messages a person still sees: those after they last deleted the chat (support_threads). Every person-side query
+// uses this one rule, so the chat, the chat list row, unread counts, attachments and replies agree.
+const VISIBLE = 'm.created_at > COALESCE((SELECT t.cleared_at FROM support_threads t WHERE t.user_id = m.user_id), 0)';
 const cleanBody = (value) => (typeof value === 'string' ? value.replace(/\r\n/g, '\n').trim() : '');
 // What a conversation list shows for a message: its text, else what was attached.
 const previewOf = (body, mediaType) => (body ? body.slice(0, 160) : mediaType ? { image: '📷 Photo', video: '🎥 Video', file: '📄 Document' }[kindOf(mediaType)] : '');
@@ -82,11 +87,12 @@ export function registerSupport({ app, db, requireSession, requireAdmin, notifyU
   const fail = (response, status, error) => response.status(status).json({ error });
   const mediaDirectory = join(dataDirectory, 'support-media');
   mkdirSync(mediaDirectory, { recursive: true });
-  const conversation = (userId) => db.prepare(`SELECT * FROM (SELECT ${COLUMNS} FROM support_messages m LEFT JOIN support_media d ON d.id = m.media_id
-    WHERE m.user_id = ? ORDER BY m.created_at DESC LIMIT ${PAGE}) AS newest ORDER BY "createdAt" ASC`).all(userId);
+  // `everything`: the console's view, which keeps what the person deleted from theirs.
+  const conversation = (userId, { everything = false } = {}) => db.prepare(`SELECT * FROM (SELECT ${COLUMNS} FROM support_messages m LEFT JOIN support_media d ON d.id = m.media_id
+    WHERE m.user_id = ? AND ${everything ? 'TRUE' : VISIBLE} ORDER BY m.created_at DESC LIMIT ${PAGE}) AS newest ORDER BY "createdAt" ASC`).all(userId);
   // A support conversation is open once the person asked for help or support wrote to them directly; campaigns alone
   // do not open one (they are announcements, and cannot be answered).
-  const conversationOpen = async (userId) => Boolean(await db.prepare('SELECT 1 AS "found" FROM support_messages WHERE user_id = ? AND campaign_id IS NULL LIMIT 1').get(userId));
+  const conversationOpen = async (userId) => Boolean(await db.prepare(`SELECT 1 AS "found" FROM support_messages m WHERE m.user_id = ? AND m.campaign_id IS NULL AND ${VISIBLE} LIMIT 1`).get(userId));
   const mediaRow = (id) => db.prepare('SELECT id, disk_name AS "diskName", type, name, size FROM support_media WHERE id = ?').get(String(id ?? ''));
 
   function sendMedia(response, media) {
@@ -124,15 +130,16 @@ export function registerSupport({ app, db, requireSession, requireAdmin, notifyU
     const userId = request.session.user_id;
     const rows = await conversation(userId);
     await db.prepare('UPDATE support_messages SET read_by_user_at = ? WHERE user_id = ? AND from_admin = 1 AND read_by_user_at IS NULL').run(Date.now(), userId);
-    response.json({ messages: rows.map((row) => present(row, USER_MEDIA_BASE)), replies: rows.some((row) => !row.campaignId) ? 'open' : 'closed' });
+    response.json({ messages: rows.map((row) => present(row, USER_MEDIA_BASE)), replies: (await conversationOpen(userId)) ? 'open' : 'closed' });
   });
 
-  // The chat list's pinned Hidden Messenger row: the newest message and how many from support are unread. Reads nothing.
+  // The chat list's Hidden Messenger row: the newest message (null: no row) and how many from support are unread.
+  // Reads nothing.
   app.get('/api/v1/support/summary', requireSession, async (request, response) => {
     const userId = request.session.user_id;
     const last = await db.prepare(`SELECT m.body, m.from_admin AS "fromAdmin", m.created_at AS "createdAt", d.type AS "mediaType"
-      FROM support_messages m LEFT JOIN support_media d ON d.id = m.media_id WHERE m.user_id = ? ORDER BY m.created_at DESC LIMIT 1`).get(userId);
-    const unread = Number((await db.prepare('SELECT count(*) AS "count" FROM support_messages WHERE user_id = ? AND from_admin = 1 AND read_by_user_at IS NULL').get(userId))?.count ?? 0);
+      FROM support_messages m LEFT JOIN support_media d ON d.id = m.media_id WHERE m.user_id = ? AND ${VISIBLE} ORDER BY m.created_at DESC LIMIT 1`).get(userId);
+    const unread = Number((await db.prepare(`SELECT count(*) AS "count" FROM support_messages m WHERE m.user_id = ? AND m.from_admin = 1 AND m.read_by_user_at IS NULL AND ${VISIBLE}`).get(userId))?.count ?? 0);
     response.json({
       last: last ? { preview: previewOf(last.body, last.mediaType), fromSupport: Boolean(Number(last.fromAdmin)), createdAt: Number(last.createdAt) } : null,
       unread,
@@ -141,10 +148,21 @@ export function registerSupport({ app, db, requireSession, requireAdmin, notifyU
 
   // An attachment of this person's own conversation (a reply to them, or a campaign they received).
   app.get(`${USER_MEDIA_BASE}/:mediaId`, requireSession, async (request, response) => {
-    const owned = await db.prepare('SELECT 1 AS "found" FROM support_messages WHERE user_id = ? AND media_id = ? LIMIT 1').get(request.session.user_id, request.params.mediaId);
+    const owned = await db.prepare(`SELECT 1 AS "found" FROM support_messages m WHERE m.user_id = ? AND m.media_id = ? AND ${VISIBLE} LIMIT 1`).get(request.session.user_id, request.params.mediaId);
     const media = owned ? await mediaRow(request.params.mediaId) : null;
     if (!media) return fail(response, 404, 'No such attachment.');
     sendMedia(response, media);
+  });
+
+  // Delete chat (chat list): the Hidden Messenger chat leaves this person's list on every device, like any chat,
+  // until a new message arrives. The support team keeps the history in the console.
+  app.delete('/api/v1/support/messages', requireSession, async (request, response) => {
+    const userId = request.session.user_id;
+    const now = Date.now();
+    const updated = await db.prepare('UPDATE support_threads SET cleared_at = ? WHERE user_id = ?').run(now, userId);
+    if (!updated.changes) await db.prepare('INSERT INTO support_threads(user_id, cleared_at) VALUES (?, ?)').run(userId, now);
+    await notifyUser(userId, { type: 'support:cleared', clearedAt: now });
+    response.status(204).end();
   });
 
   app.post('/api/v1/support/messages', requireSession, async (request, response) => {
@@ -153,7 +171,7 @@ export function registerSupport({ app, db, requireSession, requireAdmin, notifyU
     if (!body || body.length > SUPPORT_MESSAGE_MAX) return fail(response, 400, `Write a message of up to ${SUPPORT_MESSAGE_MAX.toLocaleString('en-US')} characters.`);
     // Campaigns are read-only: writing needs an open conversation, or an explicit new request (Contact support).
     if (request.body?.start !== true && !(await conversationOpen(userId))) {
-      return fail(response, 403, 'Only Hidden Messenger can send messages here. To get help, choose Contact support.');
+      return fail(response, 403, 'Only Hidden Messenger can send messages. To get help, use Help Center › Contact us.');
     }
     const now = Date.now();
     const recent = Number((await db.prepare('SELECT count(*) AS "count" FROM support_messages WHERE user_id = ? AND from_admin = 0 AND created_at >= ?').get(userId, now - 60 * 60 * 1000))?.count ?? 0);
@@ -247,7 +265,7 @@ export function registerSupport({ app, db, requireSession, requireAdmin, notifyU
   app.get('/api/admin/v1/support/:userId', requireAdmin, async (request, response) => {
     const user = await db.prepare(`SELECT ${userColumns} FROM users WHERE id = ?`).get(request.params.userId);
     if (!user) return fail(response, 404, 'No such account.');
-    const rows = await conversation(user.id);
+    const rows = await conversation(user.id, { everything: true });
     await db.prepare('UPDATE support_messages SET read_by_admin_at = ? WHERE user_id = ? AND from_admin = 0 AND read_by_admin_at IS NULL').run(Date.now(), user.id);
     response.json({ user: publicUser(user), messages: rows.map((row) => present(row, ADMIN_MEDIA_BASE)) });
   });
