@@ -1,10 +1,13 @@
 // Help Center, laid out like a business messenger's: "How can we help?", a search box, help topics, articles, and a
 // floating "Contact us" that opens the conversation with Hidden Messenger Support (answered from the admin console).
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { BadgeCheck, BookOpen, Briefcase, ChevronRight, LifeBuoy, Lock, MessageCircle, Phone, Search, Send, ShieldCheck, UserRound, Users } from 'lucide-react';
+import { BookOpen, FileText, Briefcase, ChevronRight, LifeBuoy, Lock, MessageCircle, Phone, Search, Send, ShieldCheck, UserRound, Users } from 'lucide-react';
 import Panel, { Notice } from './parity/Panel.jsx';
 import FormattedText from './FormattedText.jsx';
-import { SUPPORT_EVENT, SUPPORT_MESSAGE_MAX, fetchArticle, fetchHelp, fetchSupportMessages, mergeSupportMessage, sendSupportMessage } from '../supportApi.js';
+import VerifiedBadge from './VerifiedBadge.jsx';
+import BrandMark from './BrandMark.jsx';
+import { useAvatarSrc } from '../avatar.js';
+import { SUPPORT_EVENT, SUPPORT_MESSAGE_MAX, SUPPORT_NAME, SUPPORT_READ_EVENT, fetchArticle, fetchHelp, fetchSupportMessages, mergeSupportMessage, sendSupportMessage } from '../supportApi.js';
 import { formatMessageTime } from '../time.js';
 
 // The server's help categories (server/admin.mjs HELP_CATEGORIES), in the app's words.
@@ -18,6 +21,19 @@ export const HELP_TOPICS = {
   business: { label: 'Hidden Messenger for business', icon: Briefcase },
 };
 
+// A photo, video or PDF from support: fetched with the session (an <img> can't send it), then shown or offered.
+function SupportMedia({ media }) {
+  const src = useAvatarSrc(media.url);
+  if (!src) return <span className="support-media is-loading">Loading {media.kind === 'image' ? 'photo' : media.kind === 'video' ? 'video' : 'document'}…</span>;
+  if (media.kind === 'image') return <a className="support-media" href={src} target="_blank" rel="noreferrer"><img src={src} alt={media.name} /></a>;
+  if (media.kind === 'video') return <video className="support-media" src={src} controls playsInline preload="metadata" />;
+  return (
+    <a className="support-media support-file" href={src} download={media.name}>
+      <FileText size={26} aria-hidden="true" /><span><strong>{media.name}</strong><small>{Math.max(1, Math.round(media.size / 1024)).toLocaleString()} KB · PDF</small></span>
+    </a>
+  );
+}
+
 export function SupportChat({ token, onBack, onClose }) {
   const [messages, setMessages] = useState(null);
   const [draft, setDraft] = useState('');
@@ -26,10 +42,13 @@ export function SupportChat({ token, onBack, onClose }) {
   const endRef = useRef(null);
   useEffect(() => {
     let live = true;
-    fetchSupportMessages(token).then((list) => { if (live) setMessages(list); }).catch((caught) => { if (live) { setMessages([]); setError(caught.message); } });
-    const onMessage = (event) => setMessages((current) => mergeSupportMessage(current ?? [], event.detail));
+    let arrived = false;
+    const read = () => window.dispatchEvent(new Event(SUPPORT_READ_EVENT));
+    fetchSupportMessages(token).then((list) => { read(); if (live) setMessages(list); }).catch((caught) => { if (live) { setMessages([]); setError(caught.message); } });
+    const onMessage = (event) => { if (event.detail?.fromSupport) arrived = true; setMessages((current) => mergeSupportMessage(current ?? [], event.detail)); };
     window.addEventListener(SUPPORT_EVENT, onMessage);
-    return () => { live = false; window.removeEventListener(SUPPORT_EVENT, onMessage); };
+    // Replies that arrived while the chat was open were seen: loading the chat once more marks them read.
+    return () => { live = false; window.removeEventListener(SUPPORT_EVENT, onMessage); if (arrived) fetchSupportMessages(token).then(read, () => {}); };
   }, [token]);
   useEffect(() => { endRef.current?.scrollIntoView({ block: 'end' }); }, [messages?.length]);
 
@@ -51,7 +70,7 @@ export function SupportChat({ token, onBack, onClose }) {
   }
 
   return (
-    <Panel title={<span className="support-title">Hidden Messenger Support <BadgeCheck size={16} aria-label="Official" /></span>} subtitle="Official support account" label="Hidden Messenger Support" onClose={onClose} onBack={onBack}>
+    <Panel title={<span className="support-title"><BrandMark className="support-title-mark" />{SUPPORT_NAME} <VerifiedBadge size={16} /></span>} subtitle="Official account · Support" label={SUPPORT_NAME} onClose={onClose} onBack={onBack}>
       <div className="support-chat">
         <p className="support-notice"><Lock size={14} aria-hidden="true" /> Messages to support aren’t end-to-end encrypted: the Hidden Messenger team reads them to help you. Never share your password.</p>
         <div className="support-messages" aria-live="polite">
@@ -59,7 +78,8 @@ export function SupportChat({ token, onBack, onClose }) {
           {messages?.length === 0 && <p className="support-empty">Tell us what’s wrong and we’ll reply here. You’ll get a notification when we do.</p>}
           {messages?.map((message) => (
             <div key={message.id} className={`support-bubble ${message.fromSupport ? 'is-support' : 'is-mine'}`}>
-              <FormattedText text={message.body} />
+              {message.media && <SupportMedia media={message.media} />}
+              {message.body && <FormattedText text={message.body} />}
               <time>{formatMessageTime(message.createdAt)}{!message.fromSupport && (message.readBySupport ? ' · Seen' : '')}</time>
             </div>
           ))}

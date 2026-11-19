@@ -254,3 +254,19 @@ button.ad-tile:hover { border-color: #3987e566; transform: translateY(-1px); }
 .ad-support-bubble time { display: block; margin-top: 3px; color: var(--ad-muted); font-size: 11px; text-align: right; }
 .ad-support-reply { display: flex; gap: 8px; align-items: flex-end; padding-top: 10px; border-top: 1px solid var(--ad-line); }
 .ad-support-reply textarea { flex: 1; min-height: 44px; padding: 10px; border: 1px solid var(--ad-line); border-radius: 10px; background: var(--ad-bg); color: var(--ad-text); font: inherit; resize: vertical; }
+/* Support: attachments, the reply/campaign composer, and the campaign button. */
+.ad-support-reply { flex-direction: column; align-items: stretch; }
+.ad-support-reply-row { display: flex; gap: 8px; align-items: flex-end; }
+.ad-support-attached { display: inline-flex; align-items: center; gap: 6px; align-self: flex-start; padding: 4px 8px; border-radius: 8px; background: var(--ad-surface-2); font-size: 13px; }
+.ad-support-attached small { color: var(--ad-muted); }
+.ad-support-attached button { display: grid; place-items: center; padding: 2px; border: 0; background: transparent; color: var(--ad-sub); cursor: pointer; }
+.ad-support-media { display: block; max-width: 260px; margin-bottom: 6px; border-radius: 8px; overflow: hidden; }
+.ad-support-media img, video.ad-support-media { display: block; width: 100%; max-height: 260px; object-fit: cover; }
+.ad-support-media.is-loading { padding: 12px; color: var(--ad-muted); font-size: 12px; background: var(--ad-bg); }
+.ad-support-file { display: inline-flex; align-items: center; gap: 6px; padding: 8px 10px; background: var(--ad-bg); color: var(--ad-text); text-decoration: none; }
+.ad-support-file small { color: var(--ad-muted); }
+.ad-support-tag { display: inline-flex; align-items: center; gap: 4px; margin-bottom: 4px; color: #f5c451; font-size: 11px; }
+.ad-support-campaign { width: 100%; justify-content: center; margin-bottom: 12px; }
+.ad-support-campaign.is-on { outline: 2px solid #f5c451; }
+.ad-support-subhead { margin: 18px 0 8px; font-size: 14px; }
+.ad-support-notice { margin: 8px 0 0; color: #5fd08a; font-size: 13px; }

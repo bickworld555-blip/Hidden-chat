@@ -1613,7 +1613,7 @@ export function createChatServer({
   // Hidden Messenger Support: each person's conversation with the support team, answered from the admin console.
   registerCallTelemetry({ app, db, requireSession, requireAdmin: adminAuth.requireAdmin });
   registerOtaUpdates({ app, dataDirectory, requireAdmin: adminAuth.requireAdmin });
-  const support = registerSupport({ app, db, requireSession, requireAdmin: adminAuth.requireAdmin, notifyUser, publicUser, userColumns: USER_COLUMNS });
+  const support = registerSupport({ app, db, requireSession, requireAdmin: adminAuth.requireAdmin, notifyUser, broadcastUser, publicUser, userColumns: USER_COLUMNS, dataDirectory });
 
   registerVerification({ app, db, requireSession, requireAdmin: adminAuth.requireAdmin, verified: verifiedAccounts, verifiedChannels, publicUser, userColumns: USER_COLUMNS });
   // Approximate country for the admin world map (server/regions.mjs) and the prepared billing structure.

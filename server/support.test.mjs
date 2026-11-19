@@ -97,3 +97,55 @@ test('deleting the account deletes its support conversation', async () => {
   const threads = (await api('/api/admin/v1/support', { admin: true })).body.threads;
   assert.equal(threads.some((thread) => thread.user.id === dee.user.id), false);
 });
+
+const PNG = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(64, 7)]);
+const upload = (bytes, name) => fetch(`${base}/api/admin/v1/support-media`, {
+  method: 'POST', headers: { Cookie: cookie, 'X-HM-Admin': '1', 'Content-Type': 'application/octet-stream', 'X-File-Name': encodeURIComponent(name) }, body: bytes,
+}).then(async (response) => ({ status: response.status, body: await response.json() }));
+
+test('a reply can carry a photo: only the console and that person can load it, and the pinned row shows it unread', async () => {
+  const eve = await register('support_eve');
+  const fay = await register('support_fay');
+  assert.equal((await upload(Buffer.from('not a file we accept, at all'), 'x.exe')).status, 415);
+  assert.equal((await fetch(`${base}/api/admin/v1/support-media`, { method: 'POST', headers: { 'X-HM-Admin': '1' }, body: PNG })).status, 401, 'admins only');
+  const media = (await upload(PNG, '../../screens/how-to.png')).body.media;
+  assert.deepEqual([media.type, media.kind, media.name, media.size], ['image/png', 'image', 'how-to.png', PNG.length], 'the name has no path');
+
+  assert.equal((await api(`/api/admin/v1/support/${eve.user.id}`, { admin: true, method: 'POST', body: {} })).status, 400, 'text or a file');
+  assert.equal((await api(`/api/admin/v1/support/${eve.user.id}`, { admin: true, method: 'POST', body: { mediaId: 'missing' } })).status, 400);
+  const reply = await api(`/api/admin/v1/support/${eve.user.id}`, { admin: true, method: 'POST', body: { mediaId: media.id } });
+  assert.equal(reply.status, 201);
+  assert.equal(reply.body.body, '');
+
+  const summary = (await api('/api/v1/support/summary', { token: eve.token })).body;
+  assert.deepEqual([summary.unread, summary.last.preview, summary.last.fromSupport], [1, '📷 Photo', true]);
+  const [message] = (await api('/api/v1/support/messages', { token: eve.token })).body.messages;
+  assert.equal(message.media.url, `/api/v1/support/media/${media.id}`);
+  assert.equal((await api('/api/v1/support/summary', { token: eve.token })).body.unread, 0, 'opening the chat reads it');
+
+  const seen = await fetch(base + message.media.url, { headers: { Authorization: `Bearer ${eve.token}` } });
+  assert.deepEqual([seen.status, seen.headers.get('content-type'), Buffer.compare(Buffer.from(await seen.arrayBuffer()), PNG)], [200, 'image/png', 0]);
+  assert.equal((await fetch(base + message.media.url, { headers: { Authorization: `Bearer ${fay.token}` } })).status, 404, 'not another person');
+  assert.equal((await fetch(`${base}/api/admin/v1/support-media/${media.id}`, { headers: { Cookie: cookie, 'X-HM-Admin': '1' } })).status, 200);
+});
+
+test('a campaign reaches every active account live, stays out of the support inbox, and counts who saw it', async () => {
+  const gil = await register('support_gil');
+  const hal = await register('support_hal');
+  const socket = await listen(hal);
+  const before = (await api('/api/admin/v1/support', { admin: true })).body.threads.length;
+  assert.equal((await api('/api/admin/v1/support-campaigns', { admin: true, method: 'POST', body: { body: '   ' } })).status, 400);
+  const sent = await api('/api/admin/v1/support-campaigns', { admin: true, method: 'POST', body: { body: 'New: group photos are here.' } });
+  assert.equal(sent.status, 201);
+  assert.ok(sent.body.recipients >= 2, 'everyone, not only people who wrote to support');
+
+  const live = await until(() => socket.events.find((event) => event.type === 'support:message' && event.message.campaign));
+  assert.equal(live?.message.body, 'New: group photos are here.', 'an open app shows it at once');
+  assert.deepEqual((await api('/api/v1/support/summary', { token: gil.token })).body.last, { preview: 'New: group photos are here.', fromSupport: true, createdAt: live.message.createdAt });
+  assert.equal((await api('/api/admin/v1/support', { admin: true })).body.threads.length, before, 'no new conversations in the inbox');
+
+  await api('/api/v1/support/messages', { token: gil.token });
+  const [campaign] = (await api('/api/admin/v1/support-campaigns', { admin: true })).body.campaigns;
+  assert.deepEqual([campaign.body, campaign.recipients, campaign.seen], ['New: group photos are here.', sent.body.recipients, 1]);
+  socket.close();
+});

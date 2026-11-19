@@ -21,6 +21,8 @@ import MessageSearch, { SearchFilterChips } from './MessageSearch.jsx';
 import { ListEditor, ListPicker, listEntries } from './ChatLists.jsx';
 import { countUnreadConversations, mergeGroupRows, unreadBadge } from '../groupRows.js';
 import VerifiedBadge from './VerifiedBadge.jsx';
+import { SUPPORT_EVENT, SUPPORT_NAME, SUPPORT_READ_EVENT, fetchSupportSummary } from '../supportApi.js';
+import { formatChatListTime } from '../time.js';
 import { activityLabel, groupActivityLabel, groupActivityPeople } from '../typing.js';
 import { statusRingProps } from './StatusRing.jsx';
 import { statusQuoteView } from '../replies.js';
@@ -73,6 +75,54 @@ function GroupListRow({ row, onOpen, pressHandlers, labels = [], consumeLongPres
   );
 }
 
+// The official Hidden Messenger account, pinned first for everyone: its newest message (a reply or an announcement)
+// and the unread count, kept current from the live connection. Tapping it opens the support chat.
+function useSupportSummary(token) {
+  const [summary, setSummary] = useState(null);
+  useEffect(() => {
+    if (!token) return undefined;
+    let live = true;
+    const load = () => fetchSupportSummary(token).then((data) => { if (live) setSummary(data); }).catch(() => {});
+    const onVisible = () => { if (document.visibilityState === 'visible') load(); };
+    load();
+    window.addEventListener(SUPPORT_EVENT, load);
+    window.addEventListener(SUPPORT_READ_EVENT, load);
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      live = false;
+      window.removeEventListener(SUPPORT_EVENT, load);
+      window.removeEventListener(SUPPORT_READ_EVENT, load);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [token]);
+  return summary;
+}
+
+function SupportRow({ summary, onOpen }) {
+  const last = summary?.last;
+  const unread = summary?.unread ?? 0;
+  return (
+    <div className="wa-row-wrapper wa-support-row">
+      <button type="button" className="wa-row" onClick={onOpen} aria-label={`${SUPPORT_NAME}, official account${unread ? `, ${unread} unread` : ''}`}>
+        <div className="wa-row-avatar-wrap"><BrandMark className="wa-support-avatar" /></div>
+        <span className="wa-row-body">
+          <span className="wa-row-top">
+            <strong>{SUPPORT_NAME}<VerifiedBadge size={15} /></strong>
+            <time className={unread > 0 ? 'unread' : ''}>{last ? formatChatListTime(last.createdAt) : ''}</time>
+          </span>
+          <span className="wa-row-bottom">
+            <span className="wa-preview"><FormattedText text={last ? `${last.fromSupport ? '' : 'You: '}${last.preview}` : 'Official account · Message us for help'} inline /></span>
+            <span className="wa-row-indicators">
+              <Pin size={15} className="wa-row-badge-icon" title="Pinned" />
+              {unread > 0 && <span className="wa-badge">{unread}</span>}
+            </span>
+          </span>
+        </span>
+      </button>
+    </div>
+  );
+}
+
 export default function ChatsList({ onOpenChat, onStartCall, onGroups, groups = [], onOpenGroup, onSettings, onSheet }) {
   const [headerMenu, setHeaderMenu] = useState(false);
   const rawChats = useChatStore((state) => state.chats);
@@ -80,6 +130,7 @@ export default function ChatsList({ onOpenChat, onStartCall, onGroups, groups = 
   const typing = useChatStore((state) => state.typing);
   const statusRings = useChatStore((state) => state.statusRings);
   const sessionToken = useChatStore((state) => state.sessionToken);
+  const supportSummary = useSupportSummary(sessionToken);
   const userId = useChatStore((state) => state.userId);
   const addContact = useChatStore((state) => state.addContact);
   const pinnedChatIds = useChatStore((state) => state.pinnedChatIds ?? []);
@@ -520,6 +571,9 @@ export default function ChatsList({ onOpenChat, onStartCall, onGroups, groups = 
       )}
 
       <div className="wa-rows">
+        {!showArchived && !showLocked && !normalizedQuery && !isSelectionMode && !searchFilter && (filterTab === 'all' || (filterTab === 'unread' && supportSummary?.unread > 0)) && (
+          <SupportRow summary={supportSummary} onOpen={() => onSheet?.('support')} />
+        )}
         {!showArchived && !showLocked && !normalizedQuery && !isSelectionMode && lockedCount > 0 && (
           <button type="button" className="wa-row wa-archived-row" onClick={openLockedFolder} aria-label={`Locked chats, ${lockedCount}`}>
             <span className="wa-archived-icon" aria-hidden="true"><Lock size={20} /></span>

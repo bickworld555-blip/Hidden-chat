@@ -5896,3 +5896,16 @@ button.groups-sender { padding: 0; border: 0; background: none; font: inherit; f
 .groups-chat-menu { right: 0; min-width: 230px; }
 .groups-chat-menu button { width: 100%; justify-content: flex-start; }
 .groups-chat-menu .groups-menu-more { justify-content: space-between; }
+
+/* The official Hidden Messenger account, pinned first in the chat list (ChatsList SupportRow) and its chat header. */
+.wa-support-avatar { display: block; width: 52px; height: 52px; flex: none; }
+.wa-support-row .wa-row-top strong { display: inline-flex; align-items: center; gap: 4px; }
+.support-title-mark { width: 24px; height: 24px; flex: none; }
+/* A photo, video or PDF that support sent (HelpCenter SupportMedia). */
+.support-media { display: block; max-width: min(280px, 100%); margin: 0 0 4px; border-radius: 8px; overflow: hidden; }
+.support-media img, video.support-media { display: block; width: 100%; max-height: 320px; object-fit: cover; background: rgba(0, 0, 0, .06); }
+.support-media.is-loading { padding: 18px 12px; color: #8696a0; font-size: 13px; background: rgba(134, 150, 160, .12); }
+.support-file { display: flex; align-items: center; gap: 10px; padding: 10px 12px; background: rgba(134, 150, 160, .14); color: inherit; text-decoration: none; }
+.support-file span { display: flex; flex-direction: column; min-width: 0; }
+.support-file strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+.support-file small { color: #8696a0; font-size: 12px; }
