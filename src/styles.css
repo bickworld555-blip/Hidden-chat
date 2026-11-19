@@ -5919,3 +5919,26 @@ button.groups-sender { padding: 0; border: 0; background: none; font: inherit; f
 .support-day { margin: 10px 0 6px; }
 .support-day span { font-size: 12px; font-weight: 500; }
 .dark-theme .support-day span { border-color: #2a3942; background: #182229; color: #8696a0; }
+/* A video in the send preview's strip: its own frame with the length, like WhatsApp (MediaComposer). */
+.mc-video-thumb { position: relative; display: block; width: 100%; height: 100%; }
+.mc-video-blank { display: block; width: 100%; height: 100%; background: #111b21; }
+.mc-video-thumb small { position: absolute; left: 3px; bottom: 2px; display: inline-flex; align-items: center; gap: 2px; color: #fff; font-size: 10px; font-weight: 600; text-shadow: 0 1px 2px rgba(0, 0, 0, .8); }
+/* Channels: the tappable name (Channel info), attachments and link cards in updates, and Channel info's actions. */
+.hm-channel-title { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.hm-channel-bubble.has-media { padding: 4px 4px 6px; }
+.hm-channel-bubble.has-media > p { padding: 4px 6px 0; }
+.hm-channel-bubble .link-preview { margin-bottom: 6px; }
+.hm-channel-compose { display: flex; flex-direction: column; align-items: stretch; gap: 6px; }
+.hm-channel-compose-row { display: flex; align-items: center; gap: 6px; }
+.hm-channel-compose-row .hm-input { flex: 1; min-width: 0; }
+.hm-channel-attached { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 10px; background: rgba(134, 150, 160, .14); font-size: 13px; }
+.hm-channel-attached img { width: 40px; height: 40px; border-radius: 6px; object-fit: cover; }
+.hm-channel-attached > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hm-channel-actions { display: flex; flex-direction: column; margin-top: 8px; border-top: 1px solid var(--line, rgba(134, 150, 160, .2)); }
+.hm-channel-action { display: flex; align-items: center; gap: 16px; width: 100%; margin: 0; padding: 14px 4px; border: 0; border-bottom: 1px solid var(--line, rgba(134, 150, 160, .2)); background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.hm-channel-action.is-static { cursor: default; }
+.hm-channel-action > span { display: flex; flex: 1; flex-direction: column; gap: 2px; min-width: 0; }
+.hm-channel-action small { color: var(--muted, #667781); font-size: 13px; }
+.hm-channel-action.is-danger { color: #d93025; }
+.hm-channel-edit { margin-top: 8px; }
+.hm-channel-compose .hm-channel-attached .icon-button, .hm-channel-compose .hm-channel-compose-row > .icon-button:first-of-type { width: 36px; height: 36px; background: transparent; color: var(--muted, #667781); }

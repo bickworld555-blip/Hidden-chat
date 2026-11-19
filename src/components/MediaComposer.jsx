@@ -4,9 +4,10 @@
 // and videos, the chat's name as the recipient chip, and a round send button counting the items. Each item keeps its
 // own caption; photos and videos sent together become one album in the chat.
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { FileText, Plus, Send, X } from 'lucide-react';
+import { FileText, Play, Plus, Send, X } from 'lucide-react';
 import { formatFileSize } from '../media.js';
 import { useBackHandler } from '../backStack.js';
+import { videoPreview } from '../mediaThumb.js';
 
 const kindOf = (file) => (file.type.startsWith('image/') ? 'image' : file.type.startsWith('video/') ? 'video' : 'file');
 let nextKey = 0;
@@ -25,6 +26,24 @@ function useObjectUrls(items) {
   return urls;
 }
 
+// Each video's own frame (and length), from one decode that the sent bubble reuses (src/mediaThumb.js videoPreview):
+// a bare <video> showed only a dark box with a play icon until it was played.
+function useVideoFrames(items) {
+  const [frames, setFrames] = useState({});
+  useEffect(() => {
+    let live = true;
+    for (const item of items) {
+      if (item.kind !== 'video') continue;
+      videoPreview(item.file).then((preview) => {
+        if (live && (preview.poster || preview.thumb)) setFrames((known) => ({ ...known, [item.key]: { image: preview.poster || preview.thumb, seconds: preview.seconds } }));
+      });
+    }
+    return () => { live = false; };
+  }, [items]);
+  return frames;
+}
+const clock = (seconds) => (seconds > 0 ? `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}` : '');
+
 // `added`: { version, files } from the parent's picker after "+" (onAddMore); each new version joins the strip.
 export default function MediaComposer({ files, added = null, recipient, quality = 'standard', allowViewOnce = true, initialViewOnce = false, asDocuments = false, onAddMore, onClose, onSend }) {
   const [items, setItems] = useState(() => files.map((file) => itemOf(file, asDocuments)));
@@ -37,6 +56,7 @@ export default function MediaComposer({ files, added = null, recipient, quality 
   // Only the files matter for previews: a caption edit keeps the same URLs.
   const fileList = useMemo(() => items.map(({ key, file, kind }) => ({ key, file, kind })), [items.map((entry) => entry.key).join('|')]); // eslint-disable-line react-hooks/exhaustive-deps
   const urls = useObjectUrls(fileList);
+  const frames = useVideoFrames(fileList);
 
   const item = items[Math.min(current, items.length - 1)];
   const visual = items.some((entry) => entry.kind !== 'file');
@@ -63,7 +83,7 @@ export default function MediaComposer({ files, added = null, recipient, quality 
   const stage = useMemo(() => {
     if (!item) return null;
     if (item.kind === 'image') return urls[item.key] ? <img className="mc-preview" src={urls[item.key]} alt="" /> : null;
-    if (item.kind === 'video') return urls[item.key] ? <video className="mc-preview" src={urls[item.key]} controls playsInline /> : null;
+    if (item.kind === 'video') return urls[item.key] ? <video className="mc-preview" src={urls[item.key]} poster={frames[item.key]?.image} preload="metadata" controls playsInline /> : null;
     return (
       <div className="mc-document">
         <FileText size={56} aria-hidden="true" />
@@ -71,7 +91,7 @@ export default function MediaComposer({ files, added = null, recipient, quality 
         <span>{formatFileSize(item.file.size)} · {(item.file.name.split('.').pop() || 'file').toUpperCase()}</span>
       </div>
     );
-  }, [item, urls]);
+  }, [item, urls, frames]);
 
   if (!item) return null;
   return (
@@ -90,7 +110,12 @@ export default function MediaComposer({ files, added = null, recipient, quality 
           {items.map((entry, index) => (
             <span key={entry.key} className={`mc-thumb${index === current ? ' is-current' : ''}`}>
               <button type="button" role="option" aria-selected={index === current} onClick={() => setCurrent(index)} aria-label={`Item ${index + 1}: ${entry.file.name}`}>
-                {entry.kind === 'image' ? <img src={urls[entry.key]} alt="" /> : entry.kind === 'video' ? <video src={urls[entry.key]} muted playsInline preload="metadata" /> : <FileText size={24} />}
+                {entry.kind === 'image' ? <img src={urls[entry.key]} alt="" /> : entry.kind === 'video' ? (
+                  <span className="mc-video-thumb">
+                    {frames[entry.key] ? <img src={frames[entry.key].image} alt="" /> : <span className="mc-video-blank" />}
+                    <small><Play size={10} fill="currentColor" aria-hidden="true" />{clock(frames[entry.key]?.seconds)}</small>
+                  </span>
+                ) : <FileText size={24} />}
               </button>
               {index === current && count > 1 && <button type="button" className="mc-remove" onClick={() => remove(index)} aria-label={`Remove item ${index + 1}`}><X size={14} /></button>}
             </span>

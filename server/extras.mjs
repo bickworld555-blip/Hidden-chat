@@ -35,6 +35,13 @@ export function ensureExtrasSchema(db) {
   db.exec(`CREATE TABLE IF NOT EXISTS scheduled_messages (id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, receiver_id TEXT NOT NULL, content TEXT NOT NULL, send_at INTEGER NOT NULL, created_at INTEGER NOT NULL)`);
   db.exec(`CREATE TABLE IF NOT EXISTS status_audience_members (owner_id TEXT NOT NULL, user_id TEXT NOT NULL, PRIMARY KEY (owner_id, user_id))`);
   db.exec(`CREATE TABLE IF NOT EXISTS call_links (code TEXT PRIMARY KEY, owner_id TEXT NOT NULL, mode TEXT NOT NULL, created_at INTEGER NOT NULL, revoked_at INTEGER)`);
+  // A photo, video or file on a channel update (Postgres: migration 044). Channels are public, so whoever can read the
+  // channel may open it while the post names it; it is removed with the post.
+  const postColumns = new Set(db.prepare('PRAGMA table_info(channel_posts)').all().map((column) => column.name));
+  if (!postColumns.has('media_id')) db.exec('ALTER TABLE channel_posts ADD COLUMN media_id TEXT');
+  // A video's frame (a small JPEG the poster's phone made), shown before it plays.
+  if (!postColumns.has('poster')) db.exec('ALTER TABLE channel_posts ADD COLUMN poster TEXT');
+  db.exec('CREATE INDEX IF NOT EXISTS channel_posts_media ON channel_posts(media_id)');
   const users = new Set(db.prepare('PRAGMA table_info(users)').all().map((column) => column.name));
   if (!users.has('status_audience')) db.exec("ALTER TABLE users ADD COLUMN status_audience TEXT NOT NULL DEFAULT 'contacts'");
 }
@@ -50,9 +57,12 @@ export function statusAudienceSql(owner, viewer) {
     OR (${audience} = 'only' AND EXISTS (SELECT 1 FROM status_audience_members m WHERE m.owner_id = ${owner} AND m.user_id = ${viewer})))`;
 }
 
+// The same rule as a chat video's poster (src/mediaThumb.js cleanPoster): a JPEG data URL of up to 32,000 characters.
+const POSTER_PATTERN = /^data:image\/jpeg;base64,[A-Za-z0-9+/]+={0,2}$/;
+const cleanPoster = (value) => (typeof value === 'string' && value.length <= 32000 && POSTER_PATTERN.test(value) ? value : null);
 const cleanText = (value, limit) => (typeof value === 'string' ? value.trim().slice(0, limit) : '');
 
-export function registerExtras({ verifiedChannels = { has: () => false }, app, db, requireSession, broadcastUser, publicUser, userColumns, deliverDirectMessage, linkUsers, appOrigin = () => '' }) {
+export function registerExtras({ verifiedChannels = { has: () => false }, app, db, requireSession, broadcastUser, publicUser, userColumns, deliverDirectMessage, linkUsers, appOrigin = () => '', purgeMedia = async () => {} }) {
   const userRow = db.prepare(`SELECT ${userColumns} FROM users WHERE id = ?`);
   const fail = (response, status, error) => response.status(status).json({ error });
 
@@ -130,15 +140,20 @@ export function registerExtras({ verifiedChannels = { has: () => false }, app, d
   }
 
   async function postsOf(channelId, viewerId) {
-    const posts = await db.prepare('SELECT id, content, created_at AS "createdAt" FROM channel_posts WHERE channel_id = ? ORDER BY created_at DESC LIMIT 100').all(channelId);
+    const posts = await db.prepare(`SELECT p.id, p.content, p.created_at AS "createdAt", p.media_id AS "mediaId", p.poster, m.filename, m.content_type AS "contentType", m.byte_size AS "size"
+      FROM channel_posts p LEFT JOIN media m ON m.id = p.media_id WHERE p.channel_id = ? ORDER BY p.created_at DESC LIMIT 100`).all(channelId);
     const out = [];
     for (const post of posts.reverse()) {
       const reactions = await db.prepare('SELECT emoji, count(*) AS "count" FROM channel_reactions WHERE post_id = ? GROUP BY emoji').all(post.id);
       const mine = await db.prepare('SELECT emoji FROM channel_reactions WHERE post_id = ? AND user_id = ?').get(post.id, viewerId);
-      out.push({ ...post, createdAt: Number(post.createdAt), reactions: Object.fromEntries(reactions.map((row) => [row.emoji, Number(row.count)])), myReaction: mine?.emoji ?? null });
+      const { mediaId, filename, contentType, size, poster, ...rest } = post;
+      out.push({ ...rest, media: mediaId ? channelMedia({ id: mediaId, filename, contentType, size, poster }) : null, createdAt: Number(post.createdAt), reactions: Object.fromEntries(reactions.map((row) => [row.emoji, Number(row.count)])), myReaction: mine?.emoji ?? null });
     }
     return out;
   }
+
+  // What a post's attachment is, for the feed: the app loads it from /api/v1/media/<id> like any attachment.
+  const channelMedia = ({ id, filename, contentType, size, poster = null }) => ({ id, filename, contentType, size: Number(size ?? 0), content: `media:${id}:${filename}`, poster: poster || null });
 
   async function notifyFollowers(channelId, event) {
     const followers = await db.prepare('SELECT user_id AS "userId" FROM channel_followers WHERE channel_id = ?').all(channelId);
@@ -199,10 +214,12 @@ export function registerExtras({ verifiedChannels = { has: () => false }, app, d
     const channel = await channelView(request.params.id, request.session.user_id);
     if (!channel?.mine) return fail(response, channel ? 403 : 404, channel ? 'Only the channel owner can delete it.' : 'Channel not found.');
     await db.prepare('DELETE FROM channel_reactions WHERE post_id IN (SELECT id FROM channel_posts WHERE channel_id = ?)').run(channel.id);
-    await db.prepare('DELETE FROM channel_posts WHERE channel_id = ?').run(channel.id);
+    const attached = await db.prepare('DELETE FROM channel_posts WHERE channel_id = ? RETURNING media_id AS "mediaId"').all(channel.id);
     await db.prepare('DELETE FROM channel_followers WHERE channel_id = ?').run(channel.id);
     await db.prepare('DELETE FROM channel_admins WHERE channel_id = ?').run(channel.id);
     await db.prepare('DELETE FROM channels WHERE id = ?').run(channel.id);
+    for (const { mediaId } of attached) if (mediaId) await purgeMedia(mediaId);
+    await notifyFollowers(channel.id, { type: 'channel:deleted', channelId: channel.id });
     response.status(204).end();
   });
 
@@ -252,9 +269,14 @@ export function registerExtras({ verifiedChannels = { has: () => false }, app, d
     const channel = await channelView(request.params.id, request.session.user_id);
     if (!channel?.canPost) return fail(response, channel ? 403 : 404, channel ? 'Only the channel owner and admins can post.' : 'Channel not found.');
     const content = typeof request.body?.content === 'string' ? request.body.content.trim() : '';
-    if (!content || content.length > MAX_CHANNEL_POST || isEnvelope(content)) return fail(response, 400, `Write up to ${MAX_CHANNEL_POST} characters.`);
-    const post = { id: randomUUID(), content, createdAt: Date.now() };
-    await db.prepare('INSERT INTO channel_posts(id, channel_id, author_id, content, created_at) VALUES (?, ?, ?, ?, ?)').run(post.id, channel.id, request.session.user_id, post.content, post.createdAt);
+    const mediaId = typeof request.body?.mediaId === 'string' ? request.body.mediaId : null;
+    // Text, an attachment (with the text as its caption), or both.
+    if ((!content && !mediaId) || content.length > MAX_CHANNEL_POST || isEnvelope(content)) return fail(response, 400, `Write up to ${MAX_CHANNEL_POST} characters, or attach a file.`);
+    const media = mediaId ? await db.prepare('SELECT id, filename, content_type AS "contentType", byte_size AS "size" FROM media WHERE id = ? AND sender_id = ?').get(mediaId, request.session.user_id) : null;
+    if (mediaId && !media) return fail(response, 400, 'Upload the file first.');
+    const poster = media && String(media.contentType ?? '').startsWith('video/') ? cleanPoster(request.body?.poster) : null;
+    const post = { id: randomUUID(), content, createdAt: Date.now(), media: media ? channelMedia({ ...media, poster }) : null };
+    await db.prepare('INSERT INTO channel_posts(id, channel_id, author_id, content, created_at, media_id, poster) VALUES (?, ?, ?, ?, ?, ?, ?)').run(post.id, channel.id, request.session.user_id, post.content, post.createdAt, media?.id ?? null, poster);
     await notifyFollowers(channel.id, { type: 'channel:post', channelId: channel.id, channelName: channel.name, post: { ...post, reactions: {}, myReaction: null } });
     response.status(201).json(post);
   });
@@ -263,8 +285,9 @@ export function registerExtras({ verifiedChannels = { has: () => false }, app, d
     const channel = await channelView(request.params.id, request.session.user_id);
     if (!channel?.canPost) return fail(response, channel ? 403 : 404, channel ? 'Only the channel owner and admins can delete updates.' : 'Channel not found.');
     await db.prepare('DELETE FROM channel_reactions WHERE post_id = ?').run(request.params.postId);
-    const removed = await db.prepare('DELETE FROM channel_posts WHERE id = ? AND channel_id = ? RETURNING id').get(request.params.postId, channel.id);
+    const removed = await db.prepare('DELETE FROM channel_posts WHERE id = ? AND channel_id = ? RETURNING id, media_id AS "mediaId"').get(request.params.postId, channel.id);
     if (!removed) return fail(response, 404, 'Post not found.');
+    if (removed.mediaId) await purgeMedia(removed.mediaId);
     await notifyFollowers(channel.id, { type: 'channel:post-deleted', channelId: channel.id, postId: request.params.postId });
     response.status(204).end();
   });

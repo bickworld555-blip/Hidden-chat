@@ -770,7 +770,7 @@ export function createChatServer({
   // Encrypted group messages (with key distributions), edits and key uploads are larger than ordinary requests.
   const smallJson = express.json({ limit: '16kb' });
   const largeJson = express.json({ limit: '1mb' });
-  const LARGE_JSON_ROUTES = /^\/api\/v1\/(?:groups\/[^/]+\/messages(?:\/[^/]+)?|messages\/[^/]+|e2e\/keys|polls\/[^/]+\/sealed-vote|statuses)$/;
+  const LARGE_JSON_ROUTES = /^\/api\/v1\/(?:groups\/[^/]+\/messages(?:\/[^/]+)?|messages\/[^/]+|e2e\/keys|polls\/[^/]+\/sealed-vote|statuses|channels\/[^/]+\/posts)$/;
   // A linked device's encrypted history has its own, larger limit (server/linking.mjs).
   const OWN_PARSER_ROUTES = /^\/api\/v1\/(link\/requests\/[^/]+\/history|xmpp\/(offline|allow|ops-alert))$/;
   app.use((request, response, next) => (OWN_PARSER_ROUTES.test(request.path) ? next() : (LARGE_JSON_ROUTES.test(request.path) ? largeJson : smallJson)(request, response, next)));
@@ -1254,6 +1254,7 @@ export function createChatServer({
         .get(...exact, ...prefixed, sealed));
     if (referenced) return false;
     if (await db.prepare('SELECT 1 FROM statuses WHERE media_id = ? LIMIT 1').get(mediaId)) return false;
+    if (await db.prepare('SELECT 1 FROM channel_posts WHERE media_id = ? LIMIT 1').get(mediaId)) return false;
     const media = await db.prepare('DELETE FROM media WHERE id = ? RETURNING disk_name AS "diskName", storage').get(mediaId);
     if (!media) return false;
     await removeMediaFile(media.diskName, media.storage);
@@ -1647,6 +1648,7 @@ export function createChatServer({
     verifiedChannels,
     app, db, requireSession, broadcastUser, publicUser, userColumns: USER_COLUMNS, linkUsers: (a, b) => linkUsers(a, b),
     deliverDirectMessage: (message) => deliverDirectMessage(message),
+    purgeMedia: (mediaId) => purgeUnreferencedMedia(`media:${mediaId}`),
   });
   // Group calls through an SFU when one is configured (server/sfu.mjs); mesh otherwise.
   registerSfu({ app, db, requireSession });
@@ -2378,13 +2380,15 @@ export function createChatServer({
     for (const [token, link] of downloadLinks) if (link.expiresAt <= now) downloadLinks.delete(token);
   }
 
-  // Direct attachments are readable by both people; group attachments by the group's current members.
+  // Direct attachments are readable by both people; group attachments by the group's current members; a status's by its
+  // audience while it lasts; a channel update's by anyone (channels are public) while the post names it.
   async function mediaFor(userId, mediaId) {
     return (await db.prepare(`SELECT id, filename, content_type AS "contentType", disk_name AS "diskName", byte_size AS "byteSize", storage
       FROM media WHERE id = ? AND (sender_id = ? OR receiver_id = ?
         OR (group_id IS NOT NULL AND EXISTS (SELECT 1 FROM group_members WHERE group_id = media.group_id AND user_id = ?))
         OR EXISTS (SELECT 1 FROM statuses s JOIN contacts c ON c.owner_id = s.user_id AND c.contact_id = ? AND c.hidden = 0
-          WHERE s.media_id = media.id AND s.user_id = media.sender_id AND s.expires_at > ? AND ${statusAudienceSql('s.user_id', 'c.contact_id')}))`)
+          WHERE s.media_id = media.id AND s.user_id = media.sender_id AND s.expires_at > ? AND ${statusAudienceSql('s.user_id', 'c.contact_id')})
+        OR EXISTS (SELECT 1 FROM channel_posts p WHERE p.media_id = media.id AND p.author_id = media.sender_id))`)
       .get(mediaId, userId, userId, userId, userId, Date.now()));
   }
 

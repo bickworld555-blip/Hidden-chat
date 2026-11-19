@@ -1,6 +1,6 @@
 // Panels for broadcast lists, channels, scheduled messages, call links and status privacy (server/extras.mjs).
-import { useEffect, useMemo, useState } from 'react';
-import { Copy, Link2, Lock, Megaphone, Plus, Send, SmilePlus, Trash2, Users } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { ChevronRight, Copy, Info, Link2, Lock, Megaphone, Paperclip, Pencil, Plus, Send, ShieldCheck, SmilePlus, Trash2, Users, X } from 'lucide-react';
 import Panel, { Notice } from '../parity/Panel.jsx';
 import { request } from '../../parityApi.js';
 import { useChatStore } from '../../store.js';
@@ -10,6 +10,11 @@ import { openContent, sealDirect } from '../../e2e/client.js';
 import { publicOrigin } from '../../api.js';
 import VerifiedBadge from '../VerifiedBadge.jsx';
 import { deviceStorage } from '../../deviceStorage.js';
+import MediaRenderer from '../MediaRenderer.jsx';
+import LinkPreview from '../LinkPreview.jsx';
+import { firstLink } from '../../links.js';
+import { uploadFile } from '../../upload.js';
+import { videoPreview } from '../../mediaThumb.js';
 
 const CHANNEL_REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
 const directContacts = (chats) => chats.filter((chat) => chat.kind !== 'group' && chat.id && chat.username);
@@ -159,6 +164,96 @@ function ChannelAdmins({ token, channel, onBack, onClose, onChanged }) {
   );
 }
 
+// Channel info (tap the channel's name, as on WhatsApp): about the channel, then what the viewer may do with it. The
+// owner edits it, manages admins, asks for verification and deletes it (after a confirmation); admins see the admins;
+// everyone else follows or unfollows.
+function ChannelInfo({ token, channel, onBack, onClose, onAdmins, onChanged, onDeleted }) {
+  const [editing, setEditing] = useState(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+  async function run(task) {
+    setBusy(true); setError(''); setNotice('');
+    try { await task(); } catch (caught) { setError(caught.message); } finally { setBusy(false); }
+  }
+  const save = () => run(async () => {
+    await request(token, `/api/v1/channels/${channel.id}`, { method: 'PUT', body: editing });
+    setEditing(null);
+    setNotice('Channel updated.');
+    await onChanged();
+  });
+  const remove = () => run(async () => {
+    await request(token, `/api/v1/channels/${channel.id}`, { method: 'DELETE' });
+    setConfirmDelete(false);
+    await onDeleted();
+  });
+  const follow = () => run(async () => {
+    await request(token, `/api/v1/channels/${channel.id}/follow`, { method: channel.following ? 'DELETE' : 'POST' });
+    await onChanged();
+  });
+  return (
+    <Panel title="Channel info" onBack={onBack} onClose={onClose}>
+      <Notice error={error} notice={notice} />
+      <section className="hm-channel-info hm-channel-details" aria-label="About this channel">
+        <span className="hm-channel-avatar is-large" aria-hidden="true">{channel.name.slice(0, 1).toUpperCase()}</span>
+        <h2>{channel.name}{channel.verified && <VerifiedBadge size={22} />}</h2>
+        <p className="hm-channel-meta">Channel · {followerCount(channel.followers)}</p>
+        <p className="hm-channel-tags"><span>{CHANNEL_CATEGORY_LABELS[channel.category] ?? 'Other'}</span>{channel.role && <span>{channel.role === 'owner' ? 'Owner' : 'Admin'}</span>}</p>
+        {channel.description ? <p className="hm-channel-description">{channel.description}</p> : channel.mine && <p className="hm-muted">Add a description so people know what this channel is about.</p>}
+        {!channel.mine && <button type="button" className={`hm-channel-follow${channel.following ? ' is-following' : ''}`} disabled={busy} onClick={follow}>{channel.following ? 'Unfollow' : 'Follow'}</button>}
+      </section>
+      {editing ? (
+        <form className="hm-form hm-channel-edit" onSubmit={(event) => { event.preventDefault(); save(); }}>
+          <label className="hm-field">Name<input className="hm-input" maxLength={80} value={editing.name} onChange={(event) => setEditing({ ...editing, name: event.target.value })} /></label>
+          <label className="hm-field">Description<textarea className="hm-input" maxLength={500} value={editing.description} onChange={(event) => setEditing({ ...editing, description: event.target.value })} /></label>
+          <label className="hm-field">Category<select className="hm-input" value={editing.category} onChange={(event) => setEditing({ ...editing, category: event.target.value })}>
+            {Object.entries(CHANNEL_CATEGORY_LABELS).map(([id, label]) => <option key={id} value={id}>{label}</option>)}
+          </select></label>
+          <span className="hm-row-actions">
+            <button type="button" className="groups-secondary" onClick={() => setEditing(null)}>Cancel</button>
+            <button type="submit" className="groups-primary" disabled={busy || !editing.name.trim()}>Save</button>
+          </span>
+        </form>
+      ) : (
+        <div className="hm-channel-actions">
+          {channel.mine && (
+            <button type="button" className="hm-channel-action" onClick={() => setEditing({ name: channel.name, description: channel.description ?? '', category: channel.category ?? 'other' })}>
+              <Pencil size={20} aria-hidden="true" /><span><strong>Edit channel</strong><small>Name, description and category</small></span><ChevronRight size={18} aria-hidden="true" />
+            </button>
+          )}
+          {channel.canPost && (
+            <button type="button" className="hm-channel-action" onClick={onAdmins}>
+              <Users size={20} aria-hidden="true" /><span><strong>Channel admins</strong><small>{channel.mine ? 'Add or remove admins' : 'Who manages this channel'}</small></span><ChevronRight size={18} aria-hidden="true" />
+            </button>
+          )}
+          {channel.mine && !channel.verified && (
+            <div className="hm-channel-action is-static"><ShieldCheck size={20} aria-hidden="true" /><span><strong>Verification</strong><ChannelVerification token={token} channelId={channel.id} /></span></div>
+          )}
+          <div className="hm-channel-action is-static"><Lock size={20} aria-hidden="true" /><span><strong>Public channel</strong><small>Updates are public and not end-to-end encrypted. Followers aren’t shown to anyone.</small></span></div>
+          {channel.mine && (
+            <button type="button" className="hm-channel-action is-danger" onClick={() => setConfirmDelete(true)}>
+              <Trash2 size={20} aria-hidden="true" /><span><strong>Delete channel</strong></span>
+            </button>
+          )}
+        </div>
+      )}
+      {confirmDelete && (
+        <div className="wa-sheet-backdrop" onClick={() => setConfirmDelete(false)} role="presentation">
+          <div className="wa-info-dialog" role="alertdialog" aria-modal="true" aria-labelledby="delete-channel-title" onClick={(event) => event.stopPropagation()}>
+            <h3 id="delete-channel-title">Delete {channel.name}?</h3>
+            <div className="wa-info-dialog-body"><p>The channel, all its updates and their photos, videos and files will be deleted for everyone. This can’t be undone.</p></div>
+            <div className="wa-info-dialog-actions">
+              <button type="button" onClick={() => setConfirmDelete(false)}>Cancel</button>
+              <button type="button" className="wa-info-dialog-confirm danger" disabled={busy} onClick={remove}>Delete channel</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </Panel>
+  );
+}
+
 // The owner asks for the channel's verified badge (reviewed in the admin console; server/verification.mjs).
 function ChannelVerification({ token, channelId }) {
   const [state, setState] = useState(null);
@@ -182,6 +277,12 @@ export function Channels({ token, onClose, initialChannelId = '' }) {
   const viewerId = useChatStore((state) => state.userId);
   const [category, setCategory] = useState('');
   const [managingAdmins, setManagingAdmins] = useState(false);
+  // Channel info, opened from the channel's name.
+  const [showInfo, setShowInfo] = useState(false);
+  // A file picked for the next update: { file, poster } (a video's frame), uploaded when the update is posted.
+  const [attachment, setAttachment] = useState(null);
+  const [posting, setPosting] = useState(false);
+  const fileRef = useRef(null);
   const wallpaper = useWallpaper();
   const [mine, setMine] = useState([]);
   const [found, setFound] = useState([]);
@@ -231,15 +332,53 @@ export function Channels({ token, onClose, initialChannelId = '' }) {
   if (openId && channel && managingAdmins) {
     return <ChannelAdmins token={token} channel={{ ...channel, viewerId }} onBack={() => setManagingAdmins(false)} onClose={onClose} onChanged={() => { loadChannel(channel.id); loadMine(); }} />;
   }
+  if (openId && channel && showInfo) {
+    return (
+      <ChannelInfo token={token} channel={channel} onBack={() => setShowInfo(false)} onClose={onClose}
+        onAdmins={() => { setShowInfo(false); setManagingAdmins(true); }}
+        onChanged={async () => { await loadChannel(channel.id); await loadMine(); }}
+        onDeleted={async () => { setShowInfo(false); setOpenId(''); await loadMine(); }} />
+    );
+  }
   if (openId && channel) {
     const toggleFollow = () => act(async () => {
       await request(token, `/api/v1/channels/${channel.id}/follow`, { method: channel.following ? 'DELETE' : 'POST' });
       await loadChannel(channel.id);
       await loadMine();
     });
+    // An attachment: picked, previewed (a video's own frame), then uploaded to yourself and named by the update, which
+    // makes it readable to the channel's readers (server/extras.mjs).
+    const pick = async (event) => {
+      const file = event.target.files?.[0];
+      event.target.value = '';
+      if (!file) return;
+      setAttachment({ file, poster: '' });
+      if (file.type.startsWith('video/')) {
+        const { poster } = await videoPreview(file);
+        setAttachment((current) => (current?.file === file ? { file, poster } : current));
+      }
+    };
+    const publish = () => act(async () => {
+      setPosting(true);
+      try {
+        let media = {};
+        if (attachment) {
+          const uploaded = await uploadFile(attachment.file, { receiverId: viewerId, sessionToken: token });
+          media = { mediaId: uploaded.id, ...(attachment.poster ? { poster: attachment.poster } : {}) };
+        }
+        await request(token, `/api/v1/channels/${channel.id}/posts`, { method: 'POST', body: { content: post, ...media } });
+        setPost('');
+        setAttachment(null);
+        await loadChannel(channel.id);
+      } finally {
+        setPosting(false);
+      }
+    });
     let lastDay = '';
     return (
-      <Panel title={channel.name} subtitle={`Channel · ${followerCount(channel.followers)}`} onBack={() => setOpenId('')} onClose={onClose}>
+      <Panel title={<button type="button" className="hm-channel-title" onClick={() => setShowInfo(true)} aria-label={`${channel.name}, channel info`}>{channel.name}{channel.verified && <VerifiedBadge size={16} />}</button>}
+        subtitle={`Channel · ${followerCount(channel.followers)}`} label={channel.name} onBack={() => setOpenId('')} onClose={onClose}
+        actions={<button type="button" className="icon-button" onClick={() => setShowInfo(true)} aria-label="Channel info"><Info size={20} /></button>}>
         <Notice error={error} />
         <div className="hm-channel-feed message-scroll" data-chat-theme="default" data-wallpaper={wallpaper}>
           <section className="hm-channel-info" aria-label="About this channel">
@@ -260,8 +399,10 @@ export function Channels({ token, onClose, initialChannelId = '' }) {
             return (
               <div key={item.id} className="hm-channel-item">
                 {showDay && <div className="day-divider"><span>{new Date(item.createdAt).toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })}</span></div>}
-                <article className="hm-channel-bubble">
-                  <p><FormattedText text={item.content} /></p>
+                <article className={`hm-channel-bubble${item.media ? ' has-media' : ''}`}>
+                  {item.media && <MediaRenderer mediaRef={item.media.content} sessionToken={token} poster={item.media.poster ?? ''} />}
+                  {!item.media && firstLink(item.content) && <LinkPreview href={firstLink(item.content)} sessionToken={token} />}
+                  {item.content && <p><FormattedText text={item.content} /></p>}
                   <footer>
                     <time>{new Date(item.createdAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</time>
                     {channel.canPost && <button type="button" className="hm-channel-delete" aria-label="Delete post" onClick={() => act(async () => { await request(token, `/api/v1/channels/${channel.id}/posts/${item.id}`, { method: 'DELETE' }); await loadChannel(channel.id); })}><Trash2 size={13} /></button>}
@@ -290,9 +431,20 @@ export function Channels({ token, onClose, initialChannelId = '' }) {
           {!channel.posts.length && <p className="hm-channel-empty">No updates yet.</p>}
         </div>
         {channel.canPost ? (
-          <form className="hm-compose" onSubmit={(event) => { event.preventDefault(); act(async () => { await request(token, `/api/v1/channels/${channel.id}/posts`, { method: 'POST', body: { content: post } }); setPost(''); await loadChannel(channel.id); }); }}>
-            <input className="hm-input" value={post} maxLength={4000} placeholder="Post an update" onChange={(event) => setPost(event.target.value)} />
-            <button type="submit" className="icon-button" aria-label="Post" disabled={!post.trim()}><Send size={18} /></button>
+          <form className="hm-compose hm-channel-compose" onSubmit={(event) => { event.preventDefault(); publish(); }}>
+            {attachment && (
+              <span className="hm-channel-attached">
+                {attachment.poster ? <img src={attachment.poster} alt="" /> : <Paperclip size={16} aria-hidden="true" />}
+                <span>{attachment.file.name}</span>
+                <button type="button" className="icon-button" onClick={() => setAttachment(null)} aria-label="Remove attachment" disabled={posting}><X size={16} /></button>
+              </span>
+            )}
+            <span className="hm-channel-compose-row">
+              <input ref={fileRef} type="file" hidden onChange={pick} />
+              <button type="button" className="icon-button" onClick={() => fileRef.current?.click()} aria-label="Attach a photo, video or file" disabled={posting}><Paperclip size={18} /></button>
+              <input className="hm-input" value={post} maxLength={4000} placeholder={attachment ? 'Add a caption' : 'Post an update'} onChange={(event) => setPost(event.target.value)} />
+              <button type="submit" className="icon-button" aria-label="Post" disabled={posting || (!post.trim() && !attachment)}><Send size={18} /></button>
+            </span>
           </form>
         ) : !channel.following && (
           <div className="hm-channel-follow-foot">

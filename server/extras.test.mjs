@@ -211,3 +211,78 @@ test('channel directory browses by category; the owner adds admins who can post,
   assert.equal((await api(`/api/v1/channels/${made.id}/admins/${helper.user.id}`, { token: helper.token, method: 'DELETE' })).status, 204);
   assert.equal((await api(`/api/v1/channels/${made.id}/posts`, { token: helper.token, method: 'POST', body: { content: 'again' } })).status, 403);
 });
+
+test('channel updates carry a photo or file: anyone reading the channel opens it, it goes with the post or the channel', async () => {
+  const owner = await user('chm_owner');
+  const reader = await user('chm_reader');
+  const other = await user('chm_other');
+  const channel = (await api('/api/v1/channels', { token: owner.token, method: 'POST', body: { name: 'Media channel' } })).body;
+  const upload = async (by, name) => {
+    const response = await fetch(`${base}/api/v1/media?receiverId=${by.user.id}`, { method: 'POST', headers: { Authorization: `Bearer ${by.token}`, 'Content-Type': 'application/pdf', 'X-File-Name': name }, body: Buffer.from('%PDF-1.4 tiny') });
+    assert.equal(response.status, 201);
+    return (await response.json()).id;
+  };
+  const mediaId = await upload(owner, 'menu.pdf');
+  assert.equal((await fetch(`${base}/api/v1/media/${mediaId}`, { headers: { Authorization: `Bearer ${reader.token}` } })).status, 404, 'not before it is posted');
+  assert.equal((await api(`/api/v1/channels/${channel.id}/posts`, { token: owner.token, method: 'POST', body: { mediaId: await upload(other, 'x.pdf') } })).status, 400, 'only your own upload');
+  const posted = await api(`/api/v1/channels/${channel.id}/posts`, { token: owner.token, method: 'POST', body: { content: 'This week’s menu', mediaId } });
+  assert.equal(posted.status, 201);
+  assert.deepEqual([posted.body.media.id, posted.body.media.filename, posted.body.media.content], [mediaId, 'menu.pdf', `media:${mediaId}:menu.pdf`]);
+  const fileOnly = await api(`/api/v1/channels/${channel.id}/posts`, { token: owner.token, method: 'POST', body: { mediaId: await upload(owner, 'map.pdf') } });
+  assert.equal(fileOnly.status, 201, 'a file without text');
+
+  const feed = (await api(`/api/v1/channels/${channel.id}`, { token: reader.token })).body.posts;
+  assert.deepEqual(feed.map((item) => [item.content, item.media?.filename]), [['This week’s menu', 'menu.pdf'], ['', 'map.pdf']]);
+  const opened = await fetch(`${base}/api/v1/media/${mediaId}`, { headers: { Authorization: `Bearer ${reader.token}` } });
+  assert.equal(opened.status, 200, 'a reader (not even a follower) opens it: channels are public');
+
+  assert.equal((await api(`/api/v1/channels/${channel.id}/posts/${posted.body.id}`, { token: owner.token, method: 'DELETE' })).status, 204);
+  assert.equal((await fetch(`${base}/api/v1/media/${mediaId}`, { headers: { Authorization: `Bearer ${owner.token}` } })).status, 404, 'gone with its post');
+  assert.equal((await api(`/api/v1/channels/${channel.id}`, { token: owner.token, method: 'DELETE' })).status, 204);
+  assert.equal((await fetch(`${base}/api/v1/media/${fileOnly.body.media.id}`, { headers: { Authorization: `Bearer ${owner.token}` } })).status, 404, 'and with the channel');
+});
+
+test('channel screens: the name opens Channel info with Delete channel; updates show attachments and link cards', async () => {
+  const { readFileSync } = await import('node:fs');
+  const panels = readFileSync(new URL('../src/components/extras/ExtrasPanels.jsx', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+  for (const part of [
+    'className="hm-channel-title" onClick={() => setShowInfo(true)}',
+    'aria-label="Channel info"',
+    '<strong>Delete channel</strong>',
+    'role="alertdialog"',
+    "await request(token, `/api/v1/channels/${channel.id}`, { method: 'DELETE' });",
+    '<MediaRenderer mediaRef={item.media.content} sessionToken={token} poster={item.media.poster ?? \'\'} />',
+    '<LinkPreview href={firstLink(item.content)} sessionToken={token} />',
+    'aria-label="Attach a photo, video or file"',
+    "const { poster } = await videoPreview(file);",
+  ]) assert.ok(panels.includes(part), part);
+  const info = panels.slice(panels.indexOf('function ChannelInfo'), panels.indexOf('// The owner asks for the channel'));
+  assert.match(info, /\{channel\.mine && \(\n\s+<button type="button" className="hm-channel-action is-danger"/, 'only the owner is offered Delete channel');
+});
+
+test('a video post keeps its frame (a small JPEG) and refuses anything else as a poster', async () => {
+  const owner = await user('chv_owner');
+  const channel = (await api('/api/v1/channels', { token: owner.token, method: 'POST', body: { name: 'Video channel' } })).body;
+  const upload = async (type, name) => (await (await fetch(`${base}/api/v1/media?receiverId=${owner.user.id}`, { method: 'POST', headers: { Authorization: `Bearer ${owner.token}`, 'Content-Type': type, 'X-File-Name': name }, body: Buffer.from('bytes') })).json()).id;
+  const frame = `data:image/jpeg;base64,${Buffer.alloc(20000, 1).toString('base64')}`;
+  const video = await api(`/api/v1/channels/${channel.id}/posts`, { token: owner.token, method: 'POST', body: { mediaId: await upload('video/mp4', 'clip.mp4'), poster: frame } });
+  assert.equal(video.status, 201, 'a 27 kB frame fits the request');
+  assert.equal(video.body.media.poster, frame);
+  const fake = await api(`/api/v1/channels/${channel.id}/posts`, { token: owner.token, method: 'POST', body: { mediaId: await upload('video/mp4', 'b.mp4'), poster: 'javascript:alert(1)' } });
+  assert.equal(fake.body.media.poster, null);
+  const photo = await api(`/api/v1/channels/${channel.id}/posts`, { token: owner.token, method: 'POST', body: { mediaId: await upload('image/png', 'a.png'), poster: frame } });
+  assert.equal(photo.body.media.poster, null, 'only videos have a frame');
+  assert.equal((await api(`/api/v1/channels/${channel.id}`, { token: owner.token })).body.posts[0].media.poster, frame);
+});
+
+test('a picked video shows its own frame before sending (strip and player), from the one decode the sent bubble reuses', async () => {
+  const { readFileSync } = await import('node:fs');
+  const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+  const composer = read('src/components/MediaComposer.jsx');
+  const thumbs = read('src/mediaThumb.js');
+  assert.ok(composer.includes('poster={frames[item.key]?.image}'), 'the large player shows the frame until played');
+  assert.ok(composer.includes('{frames[entry.key] ? <img src={frames[entry.key].image} alt="" />'), 'the strip shows the frame, not a bare <video>');
+  assert.ok(!composer.includes('<video src={urls[entry.key]} muted playsInline preload="metadata" />'));
+  assert.match(thumbs, /if \(typeof file === 'object' && previews\.has\(file\)\) return previews\.get\(file\);/, 'one decode per file');
+  assert.ok(thumbs.includes('video.requestVideoFrameCallback(() => { clearTimeout(fallback); capture(); });'), 'drawn once the frame is presented');
+});
