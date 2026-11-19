@@ -47,7 +47,7 @@ export default function LinkPreview({ href, sessionToken, preview: given = null,
     loadLinkPreview(href, sessionToken).then((value) => { if (alive) setFetched(value); });
     return () => { alive = false; };
   }, [href, sessionToken, given, fetchAllowed]);
-  const preview = given ? { ...given, image: given.thumbnail || '' } : fetched;
+  const preview = given ? { ...given, image: given.thumbnail || given.image || '' } : fetched;
 
   if (!preview) return null;
   const open = (event) => {

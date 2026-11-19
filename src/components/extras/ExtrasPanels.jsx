@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronRight, Copy, Info, Link2, Lock, Megaphone, Paperclip, Pencil, Plus, Send, ShieldCheck, SmilePlus, Trash2, Users, X } from 'lucide-react';
 import Panel, { Notice } from '../parity/Panel.jsx';
-import { request } from '../../parityApi.js';
+import { CHANNEL_EVENT, request } from '../../parityApi.js';
 import { useChatStore } from '../../store.js';
 import { useWallpaper } from '../../wallpaper.js';
 import FormattedText from '../FormattedText.jsx';
@@ -15,6 +15,7 @@ import LinkPreview from '../LinkPreview.jsx';
 import { firstLink } from '../../links.js';
 import { uploadFile } from '../../upload.js';
 import { videoPreview } from '../../mediaThumb.js';
+import { buildLinkPreview } from '../../linkPreviewSender.js';
 
 const CHANNEL_REACTIONS = ['👍', '❤️', '😂', '😮', '😢', '🙏'];
 const directContacts = (chats) => chats.filter((chat) => chat.kind !== 'group' && chat.id && chat.username);
@@ -304,6 +305,21 @@ export function Channels({ token, onClose, initialChannelId = '' }) {
   }, [token, query, category]);
   const loadChannel = (id) => request(token, `/api/v1/channels/${id}`).then(setChannel).catch((caught) => setError(caught.message));
   useEffect(() => { if (openId) loadChannel(openId); else setChannel(null); }, [openId, token]);
+  // Live: a new, changed or deleted update (or the channel itself) reloads what is on screen.
+  useEffect(() => {
+    const onChannel = (event) => {
+      const { type, channelId } = event.detail ?? {};
+      if (type === 'channel:deleted' && channelId === openId) { setOpenId(''); setChannel(null); }
+      else if (channelId === openId) loadChannel(openId);
+      loadMine();
+    };
+    window.addEventListener(CHANNEL_EVENT, onChannel);
+    return () => window.removeEventListener(CHANNEL_EVENT, onChannel);
+  }, [openId, token]); // eslint-disable-line react-hooks/exhaustive-deps
+  // The newest update in view, as in a chat: on opening the channel and whenever an update arrives.
+  const feedEndRef = useRef(null);
+  const newestId = channel?.posts?.at(-1)?.id ?? '';
+  useEffect(() => { if (newestId) feedEndRef.current?.scrollIntoView({ block: 'end' }); }, [newestId]);
 
   async function act(task) {
     setError('');
@@ -366,7 +382,11 @@ export function Channels({ token, onClose, initialChannelId = '' }) {
           const uploaded = await uploadFile(attachment.file, { receiverId: viewerId, sessionToken: token });
           media = { mediaId: uploaded.id, ...(attachment.poster ? { poster: attachment.poster } : {}) };
         }
-        await request(token, `/api/v1/channels/${channel.id}/posts`, { method: 'POST', body: { content: post, ...media } });
+        // A link's card is made here (the phone reads the page and makes a small thumbnail) and stored with the update,
+        // so every reader sees it; the server makes one when this device can't.
+        const href = attachment ? '' : firstLink(post);
+        const linkPreview = href ? await buildLinkPreview(href, token) : null;
+        await request(token, `/api/v1/channels/${channel.id}/posts`, { method: 'POST', body: { content: post, ...media, ...(linkPreview ? { linkPreview } : {}) } });
         setPost('');
         setAttachment(null);
         await loadChannel(channel.id);
@@ -401,7 +421,7 @@ export function Channels({ token, onClose, initialChannelId = '' }) {
                 {showDay && <div className="day-divider"><span>{new Date(item.createdAt).toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })}</span></div>}
                 <article className={`hm-channel-bubble${item.media ? ' has-media' : ''}`}>
                   {item.media && <MediaRenderer mediaRef={item.media.content} sessionToken={token} poster={item.media.poster ?? ''} />}
-                  {!item.media && firstLink(item.content) && <LinkPreview href={firstLink(item.content)} sessionToken={token} />}
+                  {!item.media && firstLink(item.content) && <LinkPreview href={firstLink(item.content)} sessionToken={token} preview={item.linkPreview ?? null} />}
                   {item.content && <p><FormattedText text={item.content} /></p>}
                   <footer>
                     <time>{new Date(item.createdAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}</time>
@@ -429,6 +449,7 @@ export function Channels({ token, onClose, initialChannelId = '' }) {
             );
           })}
           {!channel.posts.length && <p className="hm-channel-empty">No updates yet.</p>}
+          <span ref={feedEndRef} aria-hidden="true" />
         </div>
         {channel.canPost ? (
           <form className="hm-compose hm-channel-compose" onSubmit={(event) => { event.preventDefault(); publish(); }}>

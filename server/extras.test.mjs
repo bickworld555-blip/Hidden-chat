@@ -19,7 +19,9 @@ let counter = 0;
 
 before(async () => {
   directory = mkdtempSync(join(tmpdir(), 'relay-extras-'));
-  service = createChatServer({ port: 0, host: '127.0.0.1', databasePath: join(directory, 'db.sqlite'), pushSender: null });
+  // Link cards the server makes for channel updates (server/linkPreview.mjs fetches the page; here a stand-in).
+  const linkPreviews = async (href) => (href.includes('example.org') ? { url: href, provider: '', title: 'Made by the server', description: 'From the page', siteName: 'Example', image: 'https://example.org/cover.jpg', video: false, duration: null } : null);
+  service = createChatServer({ port: 0, host: '127.0.0.1', databasePath: join(directory, 'db.sqlite'), pushSender: null, linkPreviews });
   base = `http://127.0.0.1:${(await service.listen()).port}`;
 });
 after(async () => {
@@ -252,7 +254,6 @@ test('channel screens: the name opens Channel info with Delete channel; updates 
     'role="alertdialog"',
     "await request(token, `/api/v1/channels/${channel.id}`, { method: 'DELETE' });",
     '<MediaRenderer mediaRef={item.media.content} sessionToken={token} poster={item.media.poster ?? \'\'} />',
-    '<LinkPreview href={firstLink(item.content)} sessionToken={token} />',
     'aria-label="Attach a photo, video or file"',
     "const { poster } = await videoPreview(file);",
   ]) assert.ok(panels.includes(part), part);
@@ -285,4 +286,61 @@ test('a picked video shows its own frame before sending (strip and player), from
   assert.ok(!composer.includes('<video src={urls[entry.key]} muted playsInline preload="metadata" />'));
   assert.match(thumbs, /if \(typeof file === 'object' && previews\.has\(file\)\) return previews\.get\(file\);/, 'one decode per file');
   assert.ok(thumbs.includes('video.requestVideoFrameCallback(() => { clearTimeout(fallback); capture(); });'), 'drawn once the frame is presented');
+});
+
+test('a link card is stored with the channel update, so every reader sees it; the server makes one when the phone could not', async () => {
+  const owner = await user('chl_owner');
+  const reader = await user('chl_reader');
+  const channel = (await api('/api/v1/channels', { token: owner.token, method: 'POST', body: { name: 'Links channel' } })).body;
+  const readerSocket = await connect(reader.token);
+  await api(`/api/v1/channels/${channel.id}/follow`, { token: reader.token, method: 'POST' });
+  const thumbnail = `data:image/jpeg;base64,${Buffer.alloc(900, 3).toString('base64')}`;
+  const href = 'https://www.youtube.com/watch?v=abc123';
+  const card = { url: href, provider: 'youtube', title: 'A video', description: 'A channel', siteName: 'YouTube', video: true, duration: null, thumbnail, image: 'https://tracker.example/pixel.gif' };
+  const posted = await api(`/api/v1/channels/${channel.id}/posts`, { token: owner.token, method: 'POST', body: { content: `Watch ${href}`, linkPreview: card } });
+  assert.equal(posted.status, 201);
+  const seen = (await api(`/api/v1/channels/${channel.id}`, { token: reader.token })).body.posts.at(-1);
+  assert.deepEqual([seen.linkPreview.title, seen.linkPreview.thumbnail, seen.linkPreview.url], ['A video', thumbnail, href], 'another reader gets the same card, thumbnail included');
+  assert.equal(seen.linkPreview.image, undefined, 'a remote picture from the poster is not kept');
+  const wrong = await api(`/api/v1/channels/${channel.id}/posts`, { token: owner.token, method: 'POST', body: { content: 'no link here', linkPreview: card } });
+  assert.equal((await api(`/api/v1/channels/${channel.id}`, { token: reader.token })).body.posts.find((item) => item.id === wrong.body.id).linkPreview, null, 'only for a link the update contains');
+
+  // The phone sent none: the server makes the card, stores it and tells the readers.
+  const later = await api(`/api/v1/channels/${channel.id}/posts`, { token: owner.token, method: 'POST', body: { content: 'Read https://example.org/news' } });
+  assert.ok(await until(() => readerSocket.events.find((event) => event.type === 'channel:post-updated' && event.postId === later.body.id)), 'readers hear the card is ready');
+  const made = (await api(`/api/v1/channels/${channel.id}`, { token: reader.token })).body.posts.find((item) => item.id === later.body.id).linkPreview;
+  assert.deepEqual([made.title, made.image, made.url], ['Made by the server', 'https://example.org/cover.jpg', 'https://example.org/news']);
+  readerSocket.close();
+});
+
+test('channels list the newest update first, with its preview; the feed keeps time order with the newest last', async () => {
+  const me = await user('cho_me');
+  const quiet = (await api('/api/v1/channels', { token: me.token, method: 'POST', body: { name: 'Quiet' } })).body;
+  const busy = (await api('/api/v1/channels', { token: me.token, method: 'POST', body: { name: 'Busy' } })).body;
+  await api(`/api/v1/channels/${quiet.id}/posts`, { token: me.token, method: 'POST', body: { content: 'first' } });
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  await api(`/api/v1/channels/${busy.id}/posts`, { token: me.token, method: 'POST', body: { content: 'older' } });
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  await api(`/api/v1/channels/${quiet.id}/posts`, { token: me.token, method: 'POST', body: { content: 'newest   news' } });
+  const listed = (await api('/api/v1/channels', { token: me.token })).body.filter((item) => [quiet.id, busy.id].includes(item.id));
+  assert.deepEqual(listed.map((item) => [item.name, item.lastPost.preview]), [['Quiet', 'newest news'], ['Busy', 'older']], 'newest update first, with its text');
+  const feed = (await api(`/api/v1/channels/${quiet.id}`, { token: me.token })).body.posts;
+  assert.deepEqual(feed.map((item) => item.content), ['first', 'newest   news'], 'oldest at the top, newest at the bottom');
+});
+
+test('the channel screen shows the stored card, keeps the newest update in view and refreshes live', async () => {
+  const { readFileSync } = await import('node:fs');
+  const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+  const panels = read('src/components/extras/ExtrasPanels.jsx');
+  const app = read('src/App.jsx');
+  const updates = read('src/components/UpdatesView.jsx');
+  for (const part of [
+    '<LinkPreview href={firstLink(item.content)} sessionToken={token} preview={item.linkPreview ?? null} />',
+    'const linkPreview = href ? await buildLinkPreview(href, token) : null;',
+    "useEffect(() => { if (newestId) feedEndRef.current?.scrollIntoView({ block: 'end' }); }, [newestId]);",
+    'window.addEventListener(CHANNEL_EVENT, onChannel);',
+  ]) assert.ok(panels.includes(part), part);
+  assert.ok(app.includes("event.type.startsWith('channel:') && event.channelId) window.dispatchEvent(new CustomEvent(CHANNEL_EVENT"));
+  assert.ok(updates.includes('channel.lastPost?.preview') && updates.includes('window.addEventListener(CHANNEL_EVENT, bump);'));
+  assert.ok(read('src/components/LinkPreview.jsx').includes("image: given.thumbnail || given.image || ''"));
 });

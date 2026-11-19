@@ -8,6 +8,8 @@
 //   Scheduled        a direct message sealed on the sender's device and held here until its time.
 //   Status privacy   who sees my status: my contacts, my contacts except…, or only share with….
 //   Call links       a link that lets someone call you (and only you) without being a contact; you can revoke it.
+import { sanitizePreview } from '../src/linkPreviewParse.js';
+import { firstLink } from '../src/links.js';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { isEnvelope, MAX_DIRECT_ENVELOPE } from '../src/e2e/envelope.js';
 
@@ -41,6 +43,8 @@ export function ensureExtrasSchema(db) {
   if (!postColumns.has('media_id')) db.exec('ALTER TABLE channel_posts ADD COLUMN media_id TEXT');
   // A video's frame (a small JPEG the poster's phone made), shown before it plays.
   if (!postColumns.has('poster')) db.exec('ALTER TABLE channel_posts ADD COLUMN poster TEXT');
+  // The link card of an update (JSON; Postgres: migration 045), stored with the post so every reader sees the same one.
+  if (!postColumns.has('link_preview')) db.exec('ALTER TABLE channel_posts ADD COLUMN link_preview TEXT');
   db.exec('CREATE INDEX IF NOT EXISTS channel_posts_media ON channel_posts(media_id)');
   const users = new Set(db.prepare('PRAGMA table_info(users)').all().map((column) => column.name));
   if (!users.has('status_audience')) db.exec("ALTER TABLE users ADD COLUMN status_audience TEXT NOT NULL DEFAULT 'contacts'");
@@ -60,9 +64,24 @@ export function statusAudienceSql(owner, viewer) {
 // The same rule as a chat video's poster (src/mediaThumb.js cleanPoster): a JPEG data URL of up to 32,000 characters.
 const POSTER_PATTERN = /^data:image\/jpeg;base64,[A-Za-z0-9+/]+={0,2}$/;
 const cleanPoster = (value) => (typeof value === 'string' && value.length <= 32000 && POSTER_PATTERN.test(value) ? value : null);
+// A channel update's link card, as stored: the fields a chat message's card has (src/linkPreviewParse.js), for the
+// link the update actually contains. The poster's phone sends one with a small thumbnail; otherwise the server makes
+// one, whose picture is the page's own https image.
+export function channelLinkPreview(value, content, { image = false } = {}) {
+  const href = firstLink(content);
+  const clean = href ? sanitizePreview(value) : null;
+  if (!clean || clean.url !== href) return null;
+  const picture = image && typeof value.image === 'string' && /^https:\/\/[^\s]+$/.test(value.image) && value.image.length <= 2048 ? value.image : '';
+  return clean.title || clean.thumbnail || picture ? { ...clean, ...(picture ? { image: picture } : {}) } : null;
+}
+const parsePreview = (text) => { try { return text ? JSON.parse(text) : null; } catch { return null; } };
+// What the channel list shows for an update: its text, else what is attached.
+const postPreview = (content, contentType) => (content ? content.replace(/\s+/g, ' ').slice(0, 120)
+  : contentType?.startsWith('image/') ? '📷 Photo' : contentType?.startsWith('video/') ? '🎥 Video' : contentType ? '📄 File' : '');
+
 const cleanText = (value, limit) => (typeof value === 'string' ? value.trim().slice(0, limit) : '');
 
-export function registerExtras({ verifiedChannels = { has: () => false }, app, db, requireSession, broadcastUser, publicUser, userColumns, deliverDirectMessage, linkUsers, appOrigin = () => '', purgeMedia = async () => {} }) {
+export function registerExtras({ verifiedChannels = { has: () => false }, app, db, requireSession, broadcastUser, publicUser, userColumns, deliverDirectMessage, linkUsers, appOrigin = () => '', purgeMedia = async () => {}, buildLinkPreview = async () => null }) {
   const userRow = db.prepare(`SELECT ${userColumns} FROM users WHERE id = ?`);
   const fail = (response, status, error) => response.status(status).json({ error });
 
@@ -133,21 +152,24 @@ export function registerExtras({ verifiedChannels = { has: () => false }, app, d
     const mine = channel.ownerId === viewerId;
     const admin = !mine && (Boolean(Number(channel.admin)) || channel.admin === true);
     // mine = owner (edits, deletes, manages admins); admins post and delete updates too.
+    const last = await db.prepare(`SELECT p.content, p.created_at AS "createdAt", m.content_type AS "contentType" FROM channel_posts p LEFT JOIN media m ON m.id = p.media_id
+      WHERE p.channel_id = ? ORDER BY p.created_at DESC LIMIT 1`).get(channel.id);
     const { admin: _admin, ...rest } = channel;
     return { ...rest, category: CHANNEL_CATEGORIES.includes(channel.category) ? channel.category : 'other', createdAt: Number(channel.createdAt), followers: Number(channel.followers),
       following: Boolean(Number(channel.following)) || channel.following === true, mine, role: mine ? 'owner' : admin ? 'admin' : null, canPost: mine || admin,
+      lastPost: last ? { preview: postPreview(last.content, last.contentType), createdAt: Number(last.createdAt) } : null,
       ...(verifiedChannels.has(channel.id) ? { verified: true } : {}) };
   }
 
   async function postsOf(channelId, viewerId) {
-    const posts = await db.prepare(`SELECT p.id, p.content, p.created_at AS "createdAt", p.media_id AS "mediaId", p.poster, m.filename, m.content_type AS "contentType", m.byte_size AS "size"
+    const posts = await db.prepare(`SELECT p.id, p.content, p.created_at AS "createdAt", p.media_id AS "mediaId", p.poster, p.link_preview AS "linkPreview", m.filename, m.content_type AS "contentType", m.byte_size AS "size"
       FROM channel_posts p LEFT JOIN media m ON m.id = p.media_id WHERE p.channel_id = ? ORDER BY p.created_at DESC LIMIT 100`).all(channelId);
     const out = [];
     for (const post of posts.reverse()) {
       const reactions = await db.prepare('SELECT emoji, count(*) AS "count" FROM channel_reactions WHERE post_id = ? GROUP BY emoji').all(post.id);
       const mine = await db.prepare('SELECT emoji FROM channel_reactions WHERE post_id = ? AND user_id = ?').get(post.id, viewerId);
-      const { mediaId, filename, contentType, size, poster, ...rest } = post;
-      out.push({ ...rest, media: mediaId ? channelMedia({ id: mediaId, filename, contentType, size, poster }) : null, createdAt: Number(post.createdAt), reactions: Object.fromEntries(reactions.map((row) => [row.emoji, Number(row.count)])), myReaction: mine?.emoji ?? null });
+      const { mediaId, filename, contentType, size, poster, linkPreview, ...rest } = post;
+      out.push({ ...rest, linkPreview: parsePreview(linkPreview), media: mediaId ? channelMedia({ id: mediaId, filename, contentType, size, poster }) : null, createdAt: Number(post.createdAt), reactions: Object.fromEntries(reactions.map((row) => [row.emoji, Number(row.count)])), myReaction: mine?.emoji ?? null });
     }
     return out;
   }
@@ -166,10 +188,12 @@ export function registerExtras({ verifiedChannels = { has: () => false }, app, d
     const userId = request.session.user_id;
     const rows = await db.prepare(`SELECT c.id FROM channels c WHERE c.owner_id = ?
       OR EXISTS (SELECT 1 FROM channel_admins a WHERE a.channel_id = c.id AND a.user_id = ?)
-      OR EXISTS (SELECT 1 FROM channel_followers f WHERE f.channel_id = c.id AND f.user_id = ?) ORDER BY c.created_at DESC`).all(userId, userId, userId);
+      OR EXISTS (SELECT 1 FROM channel_followers f WHERE f.channel_id = c.id AND f.user_id = ?)`).all(userId, userId, userId);
     const out = [];
     for (const row of rows) out.push(await channelView(row.id, userId));
-    response.json(out);
+    // Like chats: the channel with the newest update first (a new channel counts from its creation).
+    const activity = (channel) => channel.lastPost?.createdAt ?? channel.createdAt;
+    response.json(out.sort((left, right) => activity(right) - activity(left)));
   });
 
   app.get('/api/v1/channels/discover', requireSession, async (request, response) => {
@@ -275,10 +299,22 @@ export function registerExtras({ verifiedChannels = { has: () => false }, app, d
     const media = mediaId ? await db.prepare('SELECT id, filename, content_type AS "contentType", byte_size AS "size" FROM media WHERE id = ? AND sender_id = ?').get(mediaId, request.session.user_id) : null;
     if (mediaId && !media) return fail(response, 400, 'Upload the file first.');
     const poster = media && String(media.contentType ?? '').startsWith('video/') ? cleanPoster(request.body?.poster) : null;
-    const post = { id: randomUUID(), content, createdAt: Date.now(), media: media ? channelMedia({ ...media, poster }) : null };
-    await db.prepare('INSERT INTO channel_posts(id, channel_id, author_id, content, created_at, media_id, poster) VALUES (?, ?, ?, ?, ?, ?, ?)').run(post.id, channel.id, request.session.user_id, post.content, post.createdAt, media?.id ?? null, poster);
+    const linkPreview = media ? null : channelLinkPreview(request.body?.linkPreview, content);
+    const post = { id: randomUUID(), content, createdAt: Date.now(), media: media ? channelMedia({ ...media, poster }) : null, linkPreview };
+    await db.prepare('INSERT INTO channel_posts(id, channel_id, author_id, content, created_at, media_id, poster, link_preview) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+      .run(post.id, channel.id, request.session.user_id, post.content, post.createdAt, media?.id ?? null, poster, linkPreview ? JSON.stringify(linkPreview) : null);
     await notifyFollowers(channel.id, { type: 'channel:post', channelId: channel.id, channelName: channel.name, post: { ...post, reactions: {}, myReaction: null } });
     response.status(201).json(post);
+    // A link the poster's phone could not preview: the server makes the card once, stores it and tells the readers.
+    const href = !media && !linkPreview ? firstLink(content) : '';
+    if (href) {
+      Promise.resolve().then(() => buildLinkPreview(href)).then(async (made) => {
+        const card = channelLinkPreview(made ? { ...made, url: href } : null, content, { image: true });
+        if (!card) return;
+        await db.prepare('UPDATE channel_posts SET link_preview = ? WHERE id = ?').run(JSON.stringify(card), post.id);
+        await notifyFollowers(channel.id, { type: 'channel:post-updated', channelId: channel.id, postId: post.id });
+      }).catch((error) => console.error('Channel link preview failed:', error.code ?? error.name));
+    }
   });
 
   app.delete('/api/v1/channels/:id/posts/:postId', requireSession, async (request, response) => {

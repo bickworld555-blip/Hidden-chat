@@ -1649,6 +1649,8 @@ export function createChatServer({
     app, db, requireSession, broadcastUser, publicUser, userColumns: USER_COLUMNS, linkUsers: (a, b) => linkUsers(a, b),
     deliverDirectMessage: (message) => deliverDirectMessage(message),
     purgeMedia: (mediaId) => purgeUnreferencedMedia(`media:${mediaId}`),
+    // The same previews as GET /api/v1/link-preview (set up further down; only called once requests arrive).
+    buildLinkPreview: (href) => linkPreview(href),
   });
   // Group calls through an SFU when one is configured (server/sfu.mjs); mesh otherwise.
   registerSfu({ app, db, requireSession });

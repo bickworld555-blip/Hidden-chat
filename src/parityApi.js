@@ -97,3 +97,7 @@ export const getTwoStep = (token) => request(token, '/api/v1/me/two-step');
 export const enableTwoStep = (token, pin, password) => request(token, '/api/v1/me/two-step', { method: 'PUT', body: { pin, password } });
 export const disableTwoStep = (token, password) => request(token, '/api/v1/me/two-step', { method: 'DELETE', body: { password } });
 export const verifyTwoStep = (token, pin) => request(token, '/api/v1/me/two-step/verify', { method: 'POST', body: { pin } });
+
+// Fired on window for a channel change from the live connection (App.jsx): a new, changed or deleted update, or a
+// deleted channel. `detail` is the server's event ({ type, channelId, … }).
+export const CHANNEL_EVENT = 'hm-channel-event';

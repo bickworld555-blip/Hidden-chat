@@ -6,6 +6,8 @@ import { apiFetch } from '../api.js';
 import Avatar from './Avatar.jsx';
 import TabMenu from './TabMenu.jsx';
 import { loadMediaBlob } from '../media.js';
+import { CHANNEL_EVENT } from '../parityApi.js';
+import { formatChatListTime } from '../time.js';
 import { statusThumbnail } from '../statusThumbs.js';
 import { presentName } from '../profile.js';
 import { useBackHandler } from '../backStack.js';
@@ -77,11 +79,18 @@ export default function UpdatesView({ onOpenChannels, onSheet, onSettings }) {
   const myLast = mine.at(-1);
   // Channels I follow or own, below the statuses.
   const [channels, setChannels] = useState([]);
+  // Bumped by a live channel event (a new update moves its channel up with its preview).
+  const [channelsLive, setChannelsLive] = useState(0);
+  useEffect(() => {
+    const bump = () => setChannelsLive((count) => count + 1);
+    window.addEventListener(CHANNEL_EVENT, bump);
+    return () => window.removeEventListener(CHANNEL_EVENT, bump);
+  }, []);
   useEffect(() => {
     if (!token) return;
     apiFetch('/api/v1/channels', { headers: { Authorization: `Bearer ${token}` } })
       .then((response) => (response.ok ? response.json() : [])).then(setChannels).catch(() => {});
-  }, [token, revision]);
+  }, [token, revision, channelsLive]);
   // Suggested channels to follow (the directory, minus channels already followed and ones hidden here).
   const [suggested, setSuggested] = useState([]);
   const [hiddenSuggestions, setHiddenSuggestions] = useState(() => { try { return JSON.parse(deviceStorage.getItem(HIDDEN_SUGGESTIONS_KEY) ?? '[]'); } catch { return []; } });
@@ -143,7 +152,8 @@ export default function UpdatesView({ onOpenChannels, onSheet, onSettings }) {
           {channels.map((channel) => (
             <button key={channel.id} type="button" className="status-row-main updates-channel" onClick={() => onOpenChannels?.(channel.id)}>
               <span className="updates-channel-icon" aria-hidden="true">{channel.name.slice(0, 1).toUpperCase()}</span>
-              <span className="status-row-text"><strong>{channel.name}{channel.verified && <VerifiedBadge size={14} />}</strong><small>{channel.mine ? 'Your channel' : followerCount(channel.followers)}</small></span>
+              <span className="status-row-text"><strong>{channel.name}{channel.verified && <VerifiedBadge size={14} />}</strong><small>{channel.lastPost?.preview || (channel.mine ? 'Your channel' : followerCount(channel.followers))}</small></span>
+              {channel.lastPost && <time className="updates-channel-time">{formatChatListTime(channel.lastPost.createdAt)}</time>}
             </button>
           ))}
           {!channels.length && <p className="updates-channels-empty">Stay up to date on topics that matter to you. Find channels to follow below.</p>}

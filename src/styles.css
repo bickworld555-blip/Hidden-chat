@@ -5942,3 +5942,5 @@ button.groups-sender { padding: 0; border: 0; background: none; font: inherit; f
 .hm-channel-action.is-danger { color: #d93025; }
 .hm-channel-edit { margin-top: 8px; }
 .hm-channel-compose .hm-channel-attached .icon-button, .hm-channel-compose .hm-channel-compose-row > .icon-button:first-of-type { width: 36px; height: 36px; background: transparent; color: var(--muted, #667781); }
+/* Updates › Channels: the newest update's time on each channel, like a chat row. */
+.updates-channel-time { flex: none; align-self: flex-start; margin-left: auto; padding-top: 4px; color: var(--muted, #667781); font-size: 12px; }

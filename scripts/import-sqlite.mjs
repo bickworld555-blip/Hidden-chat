@@ -67,7 +67,7 @@ export const IMPORT_TABLES = Object.freeze([
   { name: 'token_buckets', columns: ['key', 'tokens', 'updated_at'], users: [], key: ['key'], numeric: ['updated_at'] },
   { name: 'channel_admins', columns: ['channel_id', 'user_id', 'added_at'], users: ['user_id'], key: ['channel_id', 'user_id'] },
   { name: 'channel_followers', columns: ['channel_id', 'user_id', 'followed_at'], users: ['user_id'], key: ['channel_id', 'user_id'] },
-  { name: 'channel_posts', columns: ['id', 'channel_id', 'author_id', 'content', 'created_at', 'media_id', 'poster'], users: ['author_id'] },
+  { name: 'channel_posts', columns: ['id', 'channel_id', 'author_id', 'content', 'created_at', 'media_id', 'poster', 'link_preview'], users: ['author_id'] },
   { name: 'channel_reactions', columns: ['post_id', 'user_id', 'emoji'], users: ['user_id'], key: ['post_id', 'user_id'] },
   { name: 'scheduled_messages', columns: ['id', 'owner_id', 'receiver_id', 'content', 'send_at', 'created_at'], users: ['owner_id', 'receiver_id'] },
   { name: 'status_audience_members', columns: ['owner_id', 'user_id'], users: ['owner_id', 'user_id'], key: ['owner_id', 'user_id'] },
