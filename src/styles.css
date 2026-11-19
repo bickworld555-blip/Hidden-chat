@@ -5909,3 +5909,9 @@ button.groups-sender { padding: 0; border: 0; background: none; font: inherit; f
 .support-file span { display: flex; flex-direction: column; min-width: 0; }
 .support-file strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
 .support-file small { color: #8696a0; font-size: 12px; }
+/* A status that could not be loaded (no network): retried in place (UpdatesView StatusMedia). */
+.status-retry { position: relative; z-index: 3; margin-top: 14px; padding: 8px 22px; border: 1px solid rgba(255, 255, 255, .7); border-radius: 20px; background: transparent; color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
+/* The pinned Hidden Messenger chat when it holds only campaigns: read-only, like a broadcast (HelpCenter SupportChat). */
+.support-readonly { position: sticky; bottom: 0; display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 4px 10px; margin: 0; padding: 14px 12px; background: inherit; color: #667781; font-size: 14px; text-align: center; border-top: 1px solid rgba(134, 150, 160, .2); }
+.support-readonly button { padding: 0; border: 0; background: transparent; color: #005ad1; font: inherit; font-weight: 600; cursor: pointer; }
+.dark-theme .support-readonly button { color: #6ea8ff; }

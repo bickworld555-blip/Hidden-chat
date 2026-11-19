@@ -572,7 +572,7 @@ export default function ChatsList({ onOpenChat, onStartCall, onGroups, groups = 
 
       <div className="wa-rows">
         {!showArchived && !showLocked && !normalizedQuery && !isSelectionMode && !searchFilter && (filterTab === 'all' || (filterTab === 'unread' && supportSummary?.unread > 0)) && (
-          <SupportRow summary={supportSummary} onOpen={() => onSheet?.('support')} />
+          <SupportRow summary={supportSummary} onOpen={() => onSheet?.('official')} />
         )}
         {!showArchived && !showLocked && !normalizedQuery && !isSelectionMode && lockedCount > 0 && (
           <button type="button" className="wa-row wa-archived-row" onClick={openLockedFolder} aria-label={`Locked chats, ${lockedCount}`}>

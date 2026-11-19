@@ -193,3 +193,50 @@ test('the Add status sheet takes taps: no tap-target layer covers its buttons, a
   const view = await readFile(new URL('../src/components/UpdatesView.jsx', import.meta.url), 'utf8');
   assert.ok(view.includes("{adding && createPortal(") && view.includes("document.querySelector('.app-shell') ?? document.body"), 'rendered over the whole app, in its theme');
 });
+
+// A just-posted photo status must open for the author's contacts whatever form its content takes: a plain attachment
+// ("media:"), an encrypted one whose key rides in the status ("emedia:", posted unsealed when someone in the audience
+// has no encryption keys), or a sealed envelope. Regression: an "emedia:" status was never linked to its photo, so
+// contacts got 404 and the viewer showed "This status is no longer available."
+test('a new photo status opens for contacts in every content form, and its photo stays until the status goes', async () => {
+  const author = await register('sma');
+  const friend = await register('smf');
+  const stranger = await register('sms');
+  assert.ok((await api('/api/v1/contacts', { session: author, method: 'POST', body: { userId: friend.user.id } })).status < 300);
+  const uploadPhoto = async () => {
+    const response = await fetch(`${baseUrl}/api/v1/media?receiverId=${author.user.id}`, {
+      method: 'POST', headers: { Authorization: `Bearer ${author.token}`, 'Content-Type': 'application/octet-stream', 'X-File-Name': 'status' }, body: Buffer.from('ciphertext bytes'),
+    });
+    assert.equal(response.status, 201);
+    return (await response.json()).id;
+  };
+  const descriptor = Buffer.from(JSON.stringify({ k: 'a'.repeat(43), iv: 'b'.repeat(16), h: 'c'.repeat(43), type: 'image/jpeg', size: 16 })).toString('base64url');
+  const forms = {
+    encrypted: (id) => `emedia:${id}:${descriptor}:photo.jpg`,
+    sealed: (id) => `e2e2:media:${id}|${JSON.stringify({ v: 2, sd: 'device-1', d: {} })}`,
+  };
+  for (const [form, contentOf] of Object.entries(forms)) {
+    const mediaId = await uploadPhoto();
+    const posted = await api('/api/v1/statuses', { session: author, method: 'POST', body: { content: contentOf(mediaId) } });
+    assert.equal(posted.status, 201, `${form}: posted`);
+    const seen = await api(`/api/v1/media/${mediaId}`, { session: friend });
+    assert.equal(seen.status, 200, `${form}: a contact opens the photo of a status posted just now`);
+    assert.equal(seen.data.toString(), 'ciphertext bytes');
+    assert.equal((await api(`/api/v1/media/${mediaId}`, { session: stranger })).status, 404, `${form}: not a stranger`);
+    // Someone else cannot post your photo in this form either.
+    assert.equal((await api('/api/v1/statuses', { session: friend, method: 'POST', body: { content: contentOf(mediaId) } })).status, 400, `${form}: not someone else's photo`);
+    assert.equal((await api(`/api/v1/statuses/${posted.data.id}`, { session: author, method: 'DELETE' })).status, 204);
+    assert.equal((await api(`/api/v1/media/${mediaId}`, { session: friend })).status, 404, `${form}: gone with its status`);
+  }
+});
+
+test('the status viewer says "no longer available" only when the photo is gone; a failed load can be retried', async () => {
+  const { readFileSync } = await import('node:fs');
+  const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+  const viewer = read('src/components/UpdatesView.jsx');
+  const media = read('src/media.js');
+  assert.match(media, /throw Object\.assign\(new Error\(response\.status === 404 \? 'File is no longer available\.' : 'Download failed\.'\), \{ status: response\.status \}\)/);
+  assert.match(viewer, /setFailed\(error\?\.status === 404 \? 'gone' : 'error'\)/);
+  assert.match(viewer, /if \(failed === 'gone'\) return <div className="status-text-slide"><p>This status is no longer available\.<\/p><\/div>;/);
+  assert.ok(viewer.includes('Couldn’t load this status.') && viewer.includes('setAttempt((count) => count + 1)'), 'anything else offers Retry');
+});

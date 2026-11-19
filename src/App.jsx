@@ -1536,7 +1536,7 @@ export default function App() {
       {sessionToken && paritySheet === 'channels' && <Channels token={sessionToken} initialChannelId={channelToOpen} onClose={() => { setParitySheet(null); setChannelToOpen(''); }} />}
       {sessionToken && paritySheet === 'scheduled' && <ScheduledMessages token={sessionToken} userId={userId} onClose={() => setParitySheet(null)} />}
       {sessionToken && paritySheet === 'lists' && <ListsManager groups={groupRows} onClose={() => setParitySheet(null)} />}
-      {sessionToken && (paritySheet === 'help' || paritySheet === 'support') && <HelpCenter token={sessionToken} initialView={paritySheet} onClose={() => setParitySheet(null)} />}
+      {sessionToken && (paritySheet === 'help' || paritySheet === 'support' || paritySheet === 'official') && <HelpCenter token={sessionToken} initialView={paritySheet} onClose={() => setParitySheet(null)} />}
       {sessionToken && paritySheet === 'invite' && <InviteFriend sessionToken={sessionToken} onClose={() => setParitySheet(null)} />}
       {sessionToken && paritySheet === 'calllinks' && <CallLinks token={sessionToken} onClose={() => setParitySheet(null)} />}
       {sessionToken && paritySheet === 'statusprivacy' && <StatusPrivacy token={sessionToken} onClose={() => setParitySheet(null)} />}

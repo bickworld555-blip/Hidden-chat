@@ -308,18 +308,21 @@ function StatusMedia({ status, token, onReady, videoRef }) {
   const playerRef = useRef(null);
   const attachVideo = useCallback((node) => { if (node) playerRef.current = node; if (videoRef) videoRef.current = node; }, [videoRef]);
   const [url, setUrl] = useState('');
-  const [failed, setFailed] = useState(false);
+  // '' while loading or shown; 'gone' when the server no longer has it (deleted or expired); 'error' for anything else
+  // (no network, server busy), which can be retried.
+  const [failed, setFailed] = useState('');
+  const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     if (!mediaId) return undefined;
     let cancelled = false;
     let objectUrl = '';
     setUrl('');
-    setFailed(false);
+    setFailed('');
     loadMediaBlob(mediaId, token).then((blob) => {
       if (cancelled) return;
       objectUrl = URL.createObjectURL(blob);
       setUrl(objectUrl);
-    }).catch(() => { if (!cancelled) { setFailed(true); onReady?.(IMAGE_SECONDS); } });
+    }).catch((error) => { if (!cancelled) { setFailed(error?.status === 404 ? 'gone' : 'error'); onReady?.(IMAGE_SECONDS); } });
     return () => {
       cancelled = true;
       // Next status or viewer closed: the video lets go of its hardware decoder now, not whenever it is collected.
@@ -328,11 +331,19 @@ function StatusMedia({ status, token, onReady, videoRef }) {
       playerRef.current = null;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [mediaId, token]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [mediaId, token, attempt]); // eslint-disable-line react-hooks/exhaustive-deps
   if (kind === 'text') {
     return <div className="status-text-slide" style={{ background: status.background ?? '#005ad1' }}><p>{statusKind(status.content).text}</p></div>;
   }
-  if (failed) return <div className="status-text-slide"><p>This status is no longer available.</p></div>;
+  if (failed === 'gone') return <div className="status-text-slide"><p>This status is no longer available.</p></div>;
+  if (failed) {
+    return (
+      <div className="status-text-slide">
+        <p>Couldn’t load this status.</p>
+        <button type="button" className="status-retry" onPointerDown={(event) => event.stopPropagation()} onPointerUp={(event) => event.stopPropagation()} onClick={(event) => { event.stopPropagation(); setAttempt((count) => count + 1); }}>Retry</button>
+      </div>
+    );
+  }
   if (!url) return <div className="status-loading" />;
   if (kind === 'video') return <video ref={attachVideo} className="status-media" src={url} autoPlay playsInline onLoadedMetadata={(event) => onReady?.(event.currentTarget.duration || IMAGE_SECONDS)} />;
   return <img className="status-media" src={url} alt="" onLoad={() => onReady?.(IMAGE_SECONDS)} />;

@@ -173,7 +173,8 @@ async function fetchMediaBlob(id, sessionToken, { signal, onProgress } = {}) {
 
 async function fetchMediaBytes(id, sessionToken, { signal, onProgress } = {}) {
   const response = await fetchMediaResponse(id, sessionToken, signal);
-  if (!response.ok) throw new Error(response.status === 404 ? 'File is no longer available.' : 'Download failed.');
+  // `status` lets a caller tell "gone" (404) from a failure worth retrying (network, server busy).
+  if (!response.ok) throw Object.assign(new Error(response.status === 404 ? 'File is no longer available.' : 'Download failed.'), { status: response.status });
   const type = essence(response.headers.get('content-type'));
   const total = Number.parseInt(response.headers.get('content-length') ?? '', 10);
   if (!onProgress || !response.body || !Number.isFinite(total) || total <= 0) return response.blob();

@@ -84,6 +84,9 @@ export function registerSupport({ app, db, requireSession, requireAdmin, notifyU
   mkdirSync(mediaDirectory, { recursive: true });
   const conversation = (userId) => db.prepare(`SELECT * FROM (SELECT ${COLUMNS} FROM support_messages m LEFT JOIN support_media d ON d.id = m.media_id
     WHERE m.user_id = ? ORDER BY m.created_at DESC LIMIT ${PAGE}) AS newest ORDER BY "createdAt" ASC`).all(userId);
+  // A support conversation is open once the person asked for help or support wrote to them directly; campaigns alone
+  // do not open one (they are announcements, and cannot be answered).
+  const conversationOpen = async (userId) => Boolean(await db.prepare('SELECT 1 AS "found" FROM support_messages WHERE user_id = ? AND campaign_id IS NULL LIMIT 1').get(userId));
   const mediaRow = (id) => db.prepare('SELECT id, disk_name AS "diskName", type, name, size FROM support_media WHERE id = ?').get(String(id ?? ''));
 
   function sendMedia(response, media) {
@@ -121,7 +124,7 @@ export function registerSupport({ app, db, requireSession, requireAdmin, notifyU
     const userId = request.session.user_id;
     const rows = await conversation(userId);
     await db.prepare('UPDATE support_messages SET read_by_user_at = ? WHERE user_id = ? AND from_admin = 1 AND read_by_user_at IS NULL').run(Date.now(), userId);
-    response.json({ messages: rows.map((row) => present(row, USER_MEDIA_BASE)) });
+    response.json({ messages: rows.map((row) => present(row, USER_MEDIA_BASE)), replies: rows.some((row) => !row.campaignId) ? 'open' : 'closed' });
   });
 
   // The chat list's pinned Hidden Messenger row: the newest message and how many from support are unread. Reads nothing.
@@ -148,6 +151,10 @@ export function registerSupport({ app, db, requireSession, requireAdmin, notifyU
     const userId = request.session.user_id;
     const body = cleanBody(request.body?.body);
     if (!body || body.length > SUPPORT_MESSAGE_MAX) return fail(response, 400, `Write a message of up to ${SUPPORT_MESSAGE_MAX.toLocaleString('en-US')} characters.`);
+    // Campaigns are read-only: writing needs an open conversation, or an explicit new request (Contact support).
+    if (request.body?.start !== true && !(await conversationOpen(userId))) {
+      return fail(response, 403, 'Only Hidden Messenger can send messages here. To get help, choose Contact support.');
+    }
     const now = Date.now();
     const recent = Number((await db.prepare('SELECT count(*) AS "count" FROM support_messages WHERE user_id = ? AND from_admin = 0 AND created_at >= ?').get(userId, now - 60 * 60 * 1000))?.count ?? 0);
     if (recent >= SUPPORT_HOURLY_LIMIT) return fail(response, 429, 'You’ve sent a lot of messages to support this hour. Please wait for a reply.');

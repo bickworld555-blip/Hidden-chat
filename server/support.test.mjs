@@ -5,6 +5,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, before, test } from 'node:test';
+import { readFileSync } from 'node:fs';
 import WebSocket from 'ws';
 import { createChatServer } from './index.mjs';
 import { SUPPORT_HOURLY_LIMIT, SUPPORT_MESSAGE_MAX } from './support.mjs';
@@ -52,7 +53,7 @@ test('a question reaches the console, the answer reaches the person live, and th
   const ben = await register('support_ben');
   const socket = await listen(ava);
 
-  const sent = await api('/api/v1/support/messages', { token: ava.token, method: 'POST', body: { body: '  My photos won’t send.  ' } });
+  const sent = await api('/api/v1/support/messages', { token: ava.token, method: 'POST', body: { body: '  My photos won’t send.  ', start: true } });
   assert.equal(sent.status, 201);
   assert.equal(sent.body.body, 'My photos won’t send.');
   assert.equal(sent.body.fromSupport, false);
@@ -85,14 +86,14 @@ test('support refuses empty, oversized and flooding messages, strangers and chat
   assert.ok([401, 403, 404].includes((await api('/api/admin/v1/support', { token: cy.token })).status), 'a chat session is not an admin session');
   assert.equal((await api('/api/admin/v1/support/nobody', { admin: true, method: 'POST', body: { body: 'hello' } })).status, 404);
   for (let index = 0; index < SUPPORT_HOURLY_LIMIT; index += 1) {
-    assert.equal((await api('/api/v1/support/messages', { token: cy.token, method: 'POST', body: { body: `message ${index}` } })).status, 201);
+    assert.equal((await api('/api/v1/support/messages', { token: cy.token, method: 'POST', body: { body: `message ${index}`, start: index === 0 } })).status, 201);
   }
   assert.equal((await api('/api/v1/support/messages', { token: cy.token, method: 'POST', body: { body: 'one more' } })).status, 429);
 });
 
 test('deleting the account deletes its support conversation', async () => {
   const dee = await register('support_dee');
-  await api('/api/v1/support/messages', { token: dee.token, method: 'POST', body: { body: 'Please help.' } });
+  assert.equal((await api('/api/v1/support/messages', { token: dee.token, method: 'POST', body: { body: 'Please help.', start: true } })).status, 201);
   assert.equal((await api('/api/v1/me', { token: dee.token, method: 'DELETE', body: { password: PASSWORD, confirm: 'support_dee' } })).status, 204);
   const threads = (await api('/api/admin/v1/support', { admin: true })).body.threads;
   assert.equal(threads.some((thread) => thread.user.id === dee.user.id), false);
@@ -148,4 +149,38 @@ test('a campaign reaches every active account live, stays out of the support inb
   const [campaign] = (await api('/api/admin/v1/support-campaigns', { admin: true })).body.campaigns;
   assert.deepEqual([campaign.body, campaign.recipients, campaign.seen], ['New: group photos are here.', sent.body.recipients, 1]);
   socket.close();
+});
+
+test('campaigns are read-only: no reply where only campaigns arrived, unless the person asks for help; open conversations stay two-way', async () => {
+  const ivy = await register('support_ivy');
+  const jon = await register('support_jon');
+  await api(`/api/v1/support/messages`, { token: jon.token, method: 'POST', body: { body: 'Help with my account', start: true } });
+  assert.equal((await api('/api/admin/v1/support-campaigns', { admin: true, method: 'POST', body: { body: 'Maintenance tonight at 2am.' } })).status, 201);
+
+  const chat = (await api('/api/v1/support/messages', { token: ivy.token })).body;
+  assert.equal(chat.replies, 'closed', 'only a campaign: the app shows no composer');
+  assert.equal(chat.messages.at(-1).campaign, true);
+  const reply = await api('/api/v1/support/messages', { token: ivy.token, method: 'POST', body: { body: 'ok thanks' } });
+  assert.equal(reply.status, 403, 'a reply to a campaign is refused by the server too');
+  assert.equal((await api('/api/admin/v1/support', { admin: true })).body.threads.some((thread) => thread.user.id === ivy.user.id), false);
+
+  // Contact support: an explicit request for help opens a conversation, which is two-way from then on.
+  assert.equal((await api('/api/v1/support/messages', { token: ivy.token, method: 'POST', body: { body: 'I need help with calls', start: true } })).status, 201);
+  assert.equal((await api('/api/v1/support/messages', { token: ivy.token })).body.replies, 'open');
+  assert.equal((await api('/api/v1/support/messages', { token: ivy.token, method: 'POST', body: { body: 'They drop after a minute' } })).status, 201);
+
+  // Someone already talking with support keeps writing after a campaign arrives.
+  assert.equal((await api('/api/v1/support/messages', { token: jon.token })).body.replies, 'open');
+  assert.equal((await api('/api/v1/support/messages', { token: jon.token, method: 'POST', body: { body: 'Any news?' } })).status, 201);
+});
+
+test('the pinned Hidden Messenger chat hides the composer for campaigns; Help Center asks for help', () => {
+  const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+  const help = read('src/components/HelpCenter.jsx');
+  const list = read('src/components/ChatsList.jsx');
+  assert.match(list, /<SupportRow summary=\{supportSummary\} onOpen=\{\(\) => onSheet\?\.\('official'\)\} \/>/, 'the pinned row opens the read-only view');
+  assert.match(help, /const canWrite = replies === 'open' \|\| asking \|\| messages\?\.length === 0;/);
+  assert.match(help, /canWrite \? \(\n\s+<form className="support-composer"/, 'the composer only where writing is allowed');
+  assert.ok(help.includes('Only Hidden Messenger can send messages here.'));
+  assert.match(help, /sendSupportMessage\(token, body, \{ start: replies !== 'open' \}\)/);
 });

@@ -340,6 +340,10 @@ export function createChatServer({
     expires_at INTEGER NOT NULL
   )`);
   db.exec('CREATE INDEX IF NOT EXISTS statuses_user ON statuses(user_id, expires_at)');
+  // The attachment a photo or video status shows, set when it is posted (Postgres: migration 042): who may open it
+  // and when it may be removed are decided from this, never by matching the content's text.
+  if (!new Set(db.prepare('PRAGMA table_info(statuses)').all().map((column) => column.name)).has('media_id')) db.exec('ALTER TABLE statuses ADD COLUMN media_id TEXT');
+  db.exec('CREATE INDEX IF NOT EXISTS statuses_media ON statuses(media_id)');
   db.exec(`CREATE TABLE IF NOT EXISTS status_views (
     status_id TEXT NOT NULL,
     viewer_id TEXT NOT NULL,
@@ -1249,7 +1253,7 @@ export function createChatServer({
       || (await db.prepare(`SELECT 1 FROM messages WHERE deleted_at IS NULL AND (content IN (?, ?) OR content LIKE ? OR content LIKE ? OR content LIKE ? OR content LIKE ? OR content LIKE ?) LIMIT 1`)
         .get(...exact, ...prefixed, sealed));
     if (referenced) return false;
-    if (await db.prepare('SELECT 1 FROM statuses WHERE content IN (?, ?) OR content LIKE ? LIMIT 1').get(exact[0], exact[1], prefixed[0])) return false;
+    if (await db.prepare('SELECT 1 FROM statuses WHERE media_id = ? LIMIT 1').get(mediaId)) return false;
     const media = await db.prepare('DELETE FROM media WHERE id = ? RETURNING disk_name AS "diskName", storage').get(mediaId);
     if (!media) return false;
     await removeMediaFile(media.diskName, media.storage);
@@ -1289,6 +1293,15 @@ export function createChatServer({
       removed += 1;
     }
     return removed;
+  }
+
+  // Statuses posted before statuses.media_id existed (they live a day): linked to their own photo or video once, at start.
+  async function linkStatusMedia(now = Date.now()) {
+    const rows = await db.prepare('SELECT id, content FROM statuses WHERE media_id IS NULL AND expires_at > ?').all(now);
+    for (const row of rows) {
+      const mediaId = /^(?:e?media:|e2e2:media:)/.test(row.content) ? mediaIdOf(row.content) : null;
+      if (mediaId) await db.prepare('UPDATE statuses SET media_id = ? WHERE id = ? AND EXISTS (SELECT 1 FROM media WHERE media.id = ? AND media.sender_id = statuses.user_id)').run(mediaId, row.id, mediaId);
+    }
   }
 
   // Statuses last 24 hours; their photos and videos go with them.
@@ -2371,8 +2384,8 @@ export function createChatServer({
       FROM media WHERE id = ? AND (sender_id = ? OR receiver_id = ?
         OR (group_id IS NOT NULL AND EXISTS (SELECT 1 FROM group_members WHERE group_id = media.group_id AND user_id = ?))
         OR EXISTS (SELECT 1 FROM statuses s JOIN contacts c ON c.owner_id = s.user_id AND c.contact_id = ? AND c.hidden = 0
-          WHERE s.user_id = media.sender_id AND (s.content LIKE ? OR s.content LIKE ?) AND s.expires_at > ? AND ${statusAudienceSql('s.user_id', 'c.contact_id')}))`)
-      .get(mediaId, userId, userId, userId, userId, `media:${mediaId}:%`, `e2e2:media:${mediaId}|%`, Date.now()));
+          WHERE s.media_id = media.id AND s.user_id = media.sender_id AND s.expires_at > ? AND ${statusAudienceSql('s.user_id', 'c.contact_id')}))`)
+      .get(mediaId, userId, userId, userId, userId, Date.now()));
   }
 
   // --- Polls: "poll:{question, options[], multiple}" messages in direct or group chats; votes are per option. ---
@@ -2772,7 +2785,8 @@ export function createChatServer({
     const sealed = isEnvelope(content);
     const route = sealed ? parseRouting(effectiveRouting(content) ?? '') : null;
     if (sealed && (!route || !['text', 'media'].includes(route.kind) || route.once)) return response.status(400).json({ error: 'A status is text, or a photo or video.' });
-    const mediaId = sealed ? route.mediaId ?? null : content.startsWith('media:') ? mediaIdOf(content) : null;
+    // A photo or video status: "media:" or "emedia:" (its key inside), or a sealed envelope routed as media.
+    const mediaId = sealed ? route.mediaId ?? null : /^e?media:/.test(content) ? mediaIdOf(content) : null;
     if (!content || content.length > (sealed ? MAX_STATUS_ENVELOPE : mediaId ? 1200 : 700)) return response.status(400).json({ error: 'A status is up to 700 characters of text, or a photo or video.' });
     if (content.startsWith('voice:')) return response.status(400).json({ error: 'Voice messages cannot be posted as a status.' });
     if (mediaId && !(await db.prepare('SELECT 1 FROM media WHERE id = ? AND sender_id = ?').get(mediaId, userId))) {
@@ -2781,8 +2795,8 @@ export function createChatServer({
     const background = !mediaId && ACCEPTED_STATUS_BACKGROUNDS.has(request.body?.background) ? request.body.background : null;
     const now = Date.now();
     const id = randomUUID();
-    await db.prepare('INSERT INTO statuses(id, user_id, content, background, created_at, expires_at) VALUES (?, ?, ?, ?, ?, ?)')
-      .run(id, userId, content, background, now, now + STATUS_TTL_MS);
+    await db.prepare('INSERT INTO statuses(id, user_id, content, background, created_at, expires_at, media_id) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run(id, userId, content, background, now, now + STATUS_TTL_MS, mediaId);
     const event = { type: 'status:changed', userId };
     for (const viewerId of await statusAudience(userId)) broadcastUser(viewerId, event);
     broadcastUser(userId, event);
@@ -3952,6 +3966,7 @@ export function createChatServer({
         await db.ready?.();
         await seedDemoUsers();
         await backfillAccountNumbers();
+        await linkStatusMedia();
         await discardStaleUploads();
         // History from before the queue (delivered messages, anything past 30 days) leaves the server at start.
         await deliveryQueue.sweep();

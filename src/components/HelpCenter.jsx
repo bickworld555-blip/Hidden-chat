@@ -7,7 +7,7 @@ import FormattedText from './FormattedText.jsx';
 import VerifiedBadge from './VerifiedBadge.jsx';
 import BrandMark from './BrandMark.jsx';
 import { useAvatarSrc } from '../avatar.js';
-import { SUPPORT_EVENT, SUPPORT_MESSAGE_MAX, SUPPORT_NAME, SUPPORT_READ_EVENT, fetchArticle, fetchHelp, fetchSupportMessages, mergeSupportMessage, sendSupportMessage } from '../supportApi.js';
+import { SUPPORT_EVENT, SUPPORT_MESSAGE_MAX, SUPPORT_NAME, SUPPORT_READ_EVENT, fetchArticle, fetchHelp, fetchSupportChat, fetchSupportMessages, mergeSupportMessage, sendSupportMessage } from '../supportApi.js';
 import { formatMessageTime } from '../time.js';
 
 // The server's help categories (server/admin.mjs HELP_CATEGORIES), in the app's words.
@@ -34,8 +34,13 @@ function SupportMedia({ media }) {
   );
 }
 
-export function SupportChat({ token, onBack, onClose }) {
+// `asking`: opened to ask for help (Help Center › Contact us, Send feedback), so the person may write even where only
+// campaigns arrived. Opened from the chat list's pinned row, campaigns are read-only like a broadcast: no composer
+// until a conversation is open or the person chooses Contact support.
+export function SupportChat({ token, onBack, onClose, asking: askingAtStart = true }) {
   const [messages, setMessages] = useState(null);
+  const [replies, setReplies] = useState('closed');
+  const [asking, setAsking] = useState(askingAtStart);
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -44,8 +49,8 @@ export function SupportChat({ token, onBack, onClose }) {
     let live = true;
     let arrived = false;
     const read = () => window.dispatchEvent(new Event(SUPPORT_READ_EVENT));
-    fetchSupportMessages(token).then((list) => { read(); if (live) setMessages(list); }).catch((caught) => { if (live) { setMessages([]); setError(caught.message); } });
-    const onMessage = (event) => { if (event.detail?.fromSupport) arrived = true; setMessages((current) => mergeSupportMessage(current ?? [], event.detail)); };
+    fetchSupportChat(token).then((chat) => { read(); if (live) { setMessages(chat.messages); setReplies(chat.replies === 'open' ? 'open' : 'closed'); } }).catch((caught) => { if (live) { setMessages([]); setError(caught.message); } });
+    const onMessage = (event) => { if (event.detail?.fromSupport) arrived = true; if (!event.detail?.campaign) setReplies('open'); setMessages((current) => mergeSupportMessage(current ?? [], event.detail)); };
     window.addEventListener(SUPPORT_EVENT, onMessage);
     // Replies that arrived while the chat was open were seen: loading the chat once more marks them read.
     return () => { live = false; window.removeEventListener(SUPPORT_EVENT, onMessage); if (arrived) fetchSupportMessages(token).then(read, () => {}); };
@@ -59,7 +64,8 @@ export function SupportChat({ token, onBack, onClose }) {
     setBusy(true);
     setError('');
     try {
-      const message = await sendSupportMessage(token, body);
+      const message = await sendSupportMessage(token, body, { start: replies !== 'open' });
+      setReplies('open');
       setMessages((current) => mergeSupportMessage(current ?? [], message));
       setDraft('');
     } catch (caught) {
@@ -69,6 +75,9 @@ export function SupportChat({ token, onBack, onClose }) {
     }
   }
 
+  // Nothing here yet is a request for help too; only a chat of campaigns alone is read-only.
+  const canWrite = replies === 'open' || asking || messages?.length === 0;
+
   return (
     <Panel title={<span className="support-title"><BrandMark className="support-title-mark" />{SUPPORT_NAME} <VerifiedBadge size={16} /></span>} subtitle="Official account · Support" label={SUPPORT_NAME} onClose={onClose} onBack={onBack}>
       <div className="support-chat">
@@ -77,7 +86,7 @@ export function SupportChat({ token, onBack, onClose }) {
           {messages === null && <p className="hm-muted">Loading…</p>}
           {messages?.length === 0 && <p className="support-empty">Tell us what’s wrong and we’ll reply here. You’ll get a notification when we do.</p>}
           {messages?.map((message) => (
-            <div key={message.id} className={`support-bubble ${message.fromSupport ? 'is-support' : 'is-mine'}`}>
+            <div key={message.id} className={`support-bubble ${message.fromSupport ? 'is-support' : 'is-mine'}${message.campaign ? ' is-campaign' : ''}`}>
               {message.media && <SupportMedia media={message.media} />}
               {message.body && <FormattedText text={message.body} />}
               <time>{formatMessageTime(message.createdAt)}{!message.fromSupport && (message.readBySupport ? ' · Seen' : '')}</time>
@@ -86,17 +95,25 @@ export function SupportChat({ token, onBack, onClose }) {
           <span ref={endRef} />
         </div>
         <Notice error={error} />
-        <form className="support-composer" onSubmit={send}>
-          <textarea value={draft} rows={1} maxLength={SUPPORT_MESSAGE_MAX} onChange={(event) => setDraft(event.target.value)} placeholder="Message" aria-label="Message to support" />
-          <button type="submit" className="support-send" disabled={busy || !draft.trim()} aria-label="Send"><Send size={20} /></button>
-        </form>
+        {messages !== null && (canWrite ? (
+          <form className="support-composer" onSubmit={send}>
+            <textarea value={draft} rows={1} maxLength={SUPPORT_MESSAGE_MAX} onChange={(event) => setDraft(event.target.value)} placeholder="Message" aria-label="Message to support" autoFocus={asking && !askingAtStart} />
+            <button type="submit" className="support-send" disabled={busy || !draft.trim()} aria-label="Send"><Send size={20} /></button>
+          </form>
+        ) : (
+          <p className="support-readonly" role="note">
+            Only Hidden Messenger can send messages here.
+            <button type="button" onClick={() => setAsking(true)}>Contact support</button>
+          </p>
+        ))}
       </div>
     </Panel>
   );
 }
 
 export default function HelpCenter({ token, onClose, initialView = 'home' }) {
-  const [view, setView] = useState(initialView === 'support' ? { kind: 'support' } : { kind: 'home' });
+  // 'official': the chat list's pinned Hidden Messenger chat (campaigns read-only); 'support': asking for help.
+  const [view, setView] = useState(initialView === 'official' ? { kind: 'support', asking: false } : initialView === 'support' ? { kind: 'support' } : { kind: 'home' });
   const [help, setHelp] = useState(null);
   const [query, setQuery] = useState('');
   const [results, setResults] = useState(null);
@@ -120,7 +137,7 @@ export default function HelpCenter({ token, onClose, initialView = 'home' }) {
   const inTopic = view.kind === 'topic' ? (help?.articles ?? []).filter((item) => item.category === view.topic) : [];
   const home = () => { setView({ kind: 'home' }); setError(''); };
 
-  if (view.kind === 'support') return <SupportChat token={token} onClose={onClose} onBack={initialView === 'support' ? undefined : home} />;
+  if (view.kind === 'support') return <SupportChat token={token} onClose={onClose} onBack={initialView === 'support' || initialView === 'official' ? undefined : home} asking={view.asking !== false} />;
 
   const articleRow = (item) => (
     <button type="button" key={item.slug} className="help-row" onClick={() => setView({ kind: 'article', slug: item.slug, from: view })}>

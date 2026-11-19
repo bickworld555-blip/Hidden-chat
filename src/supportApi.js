@@ -23,10 +23,13 @@ async function call(path, { token, method = 'GET', body } = {}) {
 
 export const fetchHelp = (query = '') => call(`/api/v1/help${query ? `?q=${encodeURIComponent(query)}` : ''}`);
 export const fetchArticle = (slug) => call(`/api/v1/help/${encodeURIComponent(slug)}`);
-export const fetchSupportMessages = (token) => call('/api/v1/support/messages', { token }).then((data) => data.messages);
+/** { messages, replies: 'open' | 'closed' } — closed while the chat holds only campaigns (read-only announcements). */
+export const fetchSupportChat = (token) => call('/api/v1/support/messages', { token });
+export const fetchSupportMessages = (token) => fetchSupportChat(token).then((data) => data.messages);
 /** The pinned row: { last: { preview, fromSupport, createdAt } | null, unread }. Marks nothing read. */
 export const fetchSupportSummary = (token) => call('/api/v1/support/summary', { token });
-export const sendSupportMessage = (token, body) => call('/api/v1/support/messages', { token, method: 'POST', body: { body } });
+// `start`: a new request for help (Contact support), which opens a conversation even where only campaigns arrived.
+export const sendSupportMessage = (token, body, { start = false } = {}) => call('/api/v1/support/messages', { token, method: 'POST', body: { body, ...(start ? { start: true } : {}) } });
 
 /** Adds or replaces a message (by id) and keeps the conversation in time order. */
 export function mergeSupportMessage(messages, message) {

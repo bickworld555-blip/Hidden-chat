@@ -24,7 +24,7 @@ export const IMPORT_TABLES = Object.freeze([
   { name: 'group_messages', columns: ['id', 'group_id', 'sender_id', 'created_at', 'content', 'expires_at', 'edited_at'], users: ['sender_id'] },
   { name: 'poll_votes', columns: ['message_id', 'user_id', 'option_index', 'voted_at'], users: ['user_id'], key: ['message_id', 'user_id', 'option_index'], numeric: ['option_index'] },
   { name: 'group_reports', columns: ['id', 'group_id', 'reporter_id', 'reason', 'created_at', 'status'], users: ['reporter_id'] },
-  { name: 'statuses', columns: ['id', 'user_id', 'content', 'background', 'created_at', 'expires_at'], users: ['user_id'] },
+  { name: 'statuses', columns: ['id', 'user_id', 'content', 'background', 'created_at', 'expires_at', 'media_id'], users: ['user_id'] },
   { name: 'status_views', columns: ['status_id', 'viewer_id', 'viewed_at'], users: ['viewer_id'], key: ['status_id', 'viewer_id'] },
   // Phones registered for Firebase push (kept with their sessions, so push keeps working after the move).
   { name: 'identity_keys', columns: ['user_id', 'public_key', 'algorithm', 'updated_at'], users: ['user_id'] },
