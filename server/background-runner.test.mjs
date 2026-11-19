@@ -103,9 +103,10 @@ test('background key opening publishes nothing; the page writes the app database
   // P3: the wake lock never blocks the next push; P4: the hourly check skips when a fetch was recent.
   const pushHandler = readFileSync(new URL('../android/app/src/main/java/io/github/bickworld555/hiddenchat/PushService.java', import.meta.url), 'utf8');
   // The wake-up (from Firebase, or P5's own connection) holds the CPU awake from its first line.
-  assert.match(pushHandler, /static void handleXmppWake\(android\.content\.Context context, RelaySession session, JSONObject body\) \{[\s\S]{0,400}FetchWake\.hold\(context, FetchWake\.FETCH_WAKE_MS\);/);
+  assert.match(pushHandler, /static void handleXmppWake\(android\.content\.Context context, RelaySession session, JSONObject body\) \{[\s\S]{0,1500}FetchWake\.hold\(context, fetchWakeMs\);\s*FetchWake\.started\(\);/);
+  assert.match(pushHandler, /long fetchWakeMs = tuned\(cfg, "w", FetchWake\.FETCH_WAKE_MS, 5_000, 170_000\);/, 'how long: from the server (PUSH_TUNING), within bounds');
   assert.ok(!/CountDownLatch|\.await\(/.test(pushHandler), 'the push handler never waits (a call push behind it would ring late)');
-  assert.match(runner, /FetchWake\.release\(\);/, 'the page lets the CPU sleep once done');
+  assert.match(runner, /FetchWake\.finished\(appContext, "done"\.equals\(reason\)\);/, 'the page lets the CPU sleep once done');
   const job = readFileSync(new URL('../android/app/src/main/java/io/github/bickworld555/hiddenchat/HeartbeatJob.java', import.meta.url), 'utf8');
   assert.match(job, /if \(FetchWake\.fetchedWithin\(this, RECENT_MS\)\)/, 'no fetch when one completed recently');
   assert.match(job, /\.setRequiredNetworkType\(JobInfo\.NETWORK_TYPE_ANY\)[\s\S]*\.setPersisted\(true\)/, 'with a network, kept across restarts');
@@ -127,7 +128,7 @@ test('background key opening publishes nothing; the page writes the app database
   assert.ok(host.includes('FOREGROUND_SERVICE_TYPE_SHORT_SERVICE'), 'a short service on Android 14+');
   // Found on the S23: with the app alive in the background, the dataSync sync was refused and the fetch froze.
   const push = readFileSync(new URL('../android/app/src/main/java/io/github/bickworld555/hiddenchat/PushService.java', import.meta.url), 'utf8');
-  assert.ok(push.includes('if (!WakeKeeper.keep(context, BACKGROUND_FETCH_MS)) MessagingService.startSync(context, BACKGROUND_FETCH_MS);'), 'a short service keeps a living app awake');
+  assert.ok(push.includes('if (!WakeKeeper.keep(context, backgroundFetchMs)) MessagingService.startSync(context, backgroundFetchMs);'), 'a short service keeps a living app awake');
   const keeper = readFileSync(new URL('../android/app/src/main/java/io/github/bickworld555/hiddenchat/WakeKeeper.java', import.meta.url), 'utf8');
   assert.ok(keeper.includes('FOREGROUND_SERVICE_TYPE_SHORT_SERVICE'));
   const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
@@ -142,7 +143,7 @@ test('one message, one notification: the sealed "🔒 Message" fallback never st
   const fetch = readFileSync(new URL(dir + 'FetchWake.java', import.meta.url), 'utf8');
   // Skipped when the conversation was notified since the push, a fetch completed since, or the app is on screen.
   assert.match(push, /Alerts\.postedSince\(tag, pushedAt\) \|\| FetchWake\.completedSince\(pushedAt\) \|\| AppActivity\.isVisible\(\)/);
-  assert.equal(push.match(/postDelayed\(/g).length, 1, 'both fallbacks (app alive, background page) share that check');
+  assert.equal(push.match(/postDelayed\(/g).length, 2, 'both fallbacks (app alive, background page) share that check (and its re-check)');
   // A message already shown (over the connection, before its push) still counts as this conversation's notification.
   assert.ok(alerts.indexOf('postedAt.put(key') < alerts.indexOf('if (!firstNotice(messageId)) return true;'));
   assert.match(fetch, /static void markFetched\(Context context\) \{\s*completedAt = /);
@@ -204,4 +205,33 @@ test('P7: Settings, Notifications says whether Android delivered pushes on time 
   assert.match(stats, /original == RemoteMessage\.PRIORITY_HIGH && delivered != RemoteMessage\.PRIORITY_HIGH/);
   const push = readFileSync(new URL('../android/app/src/main/java/io/github/bickworld555/hiddenchat/PushService.java', import.meta.url), 'utf8');
   assert.match(push, /PushStats\.record\(this, message, type\);/);
+});
+
+// WhatsApp-style push handling (2026-11-20): each push id handled once over every path, no sealed notice while a fetch
+// is still running, and the "Checking for new messages" short service gone as soon as the fetch ends.
+test('push ids are handled once; the sealed notice waits for a running fetch; the short service ends with the fetch', () => {
+  const dir = '../android/app/src/main/java/io/github/bickworld555/hiddenchat/';
+  const read = (file) => readFileSync(new URL(dir + file, import.meta.url), 'utf8');
+  const push = read('PushService.java');
+  const dedup = read('PushDedup.java');
+  const fetch = read('FetchWake.java');
+  const keeper = read('WakeKeeper.java');
+  assert.match(push, /if \(!"xwake"\.equals\(type\) && !PushDedup\.firstTime\(this, body\.optString\("pid"\)\)\)/, 'a repeated push is dropped');
+  assert.match(push, /static void handleXmppWake\([^)]*\) \{\s*\/\/[^\n]*\n\s*if \(!PushDedup\.firstTime\(context, body\.optString\("pid"\)\)\)/, 'the Firebase and socket wake-ups share one check, first thing');
+  assert.match(dedup, /if \(pid == null \|\| pid\.isEmpty\(\)\) return true;/, 'an older server (no ids): always handled');
+  assert.match(dedup, /while \(order\.size\(\) > MAX\) seen\.remove\(order\.removeFirst\(\)\);/, 'bounded');
+  assert.match(push, /if \(FetchWake\.inProgress\(\) && android\.os\.SystemClock\.elapsedRealtime\(\) - pushedAt \+ FALLBACK_RECHECK_MS <= maxMs\) \{\s*main\.postDelayed\(this, FALLBACK_RECHECK_MS\);/,
+    'still fetching: checked again, up to the server-tuned maximum');
+  assert.match(fetch, /static void finished\(Context context, boolean fetched\) \{[\s\S]*?endedAt = [\s\S]*?release\(\);\s*WakeKeeper\.release\(\);/);
+  assert.match(keeper, /static void release\(\) \{[\s\S]*?running\.stop\(\);/);
+  const plugin = read('HiddenNativePlugin.java');
+  assert.ok(plugin.includes('FetchWake.finished(getContext(), "offline-done".equals(reason) || "quiet".equals(reason));'), 'the app\'s fetch ending stops it too');
+});
+
+test('the app takes its relay wake-up timings from the server, clamped, keeping defaults on bad input', async () => {
+  const { applyPushTuning, pushTuning } = await import('../src/pushTuning.js');
+  assert.deepEqual(pushTuning(), { relayWakeQuietMs: 2000, relayWakeMaxMs: 15000 });
+  assert.deepEqual(applyPushTuning({ relayWakeQuietMs: 3000, relayWakeMaxMs: 10 ** 9, other: 1 }), { relayWakeQuietMs: 3000, relayWakeMaxMs: 120000 });
+  assert.deepEqual(applyPushTuning({ relayWakeQuietMs: 'x' }), { relayWakeQuietMs: 3000, relayWakeMaxMs: 120000 }, 'not a number: unchanged');
+  assert.deepEqual(applyPushTuning(null), { relayWakeQuietMs: 3000, relayWakeMaxMs: 120000 });
 });

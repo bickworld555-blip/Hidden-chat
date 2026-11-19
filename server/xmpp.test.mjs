@@ -265,7 +265,7 @@ test('the offline hook wakes exactly the device whose message waits, once per bu
   assert.equal((await woken.json()).pushed, 1);
   assert.deepEqual(pushes.map((push) => push.token), [`fcm-gina-phone-${'y'.repeat(30)}`], 'only that device, not the tablet');
   assert.ok(pushes[0].data.enc && pushes[0].data.iv, 'the wake-up is encrypted for the device like every push');
-  assert.deepEqual(pushes[0].options, { collapseKey: deviceCollapseKey(PUSH_KEY, 'wake'), ttlSeconds: 86_400 });
+  assert.deepEqual(pushes[0].options, { collapseKey: deviceCollapseKey(PUSH_KEY, 'wake'), ttlSeconds: 86_400, priority: 'HIGH' });
 
   const again = await (await hook({ to: localpart, ts })).json();
   assert.deepEqual(again, { pushed: 0, coalesced: true }, 'a second message seconds later does not push again');

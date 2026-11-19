@@ -90,7 +90,9 @@ test('a message to a phone with no app on screen is pushed, encrypted for that p
   const body = decrypt(key, push.data);
   // Content-free: a wake-up with the ids only. The phone shows the name it keeps locally; even our server's push
   // key (known to the server) opens no text, name or photo.
-  assert.deepEqual(body, { t: 'msg', id: 'push-msg-1', from: a.user.id });
+  // `pid`: one id per event, so the phone handles a repeated or second-path push once (PushDedup.java).
+  assert.deepEqual(body, { t: 'msg', pid: 'm:push-msg-1', id: 'push-msg-1', from: a.user.id });
+  assert.equal(push.options.priority, 'HIGH', 'a message the person waits for wakes the phone from Doze');
 
   // Two ticks from the push, over HTTP (no socket needed on the phone).
   const delivered = await api('/api/v1/messages/delivered', { session: b, method: 'POST', body: { messageIds: ['push-msg-1'] } });
@@ -123,7 +125,7 @@ test('a call rings a sleeping phone by push; the phone connecting later still ge
   caller.send(JSON.stringify({ type: 'call:signal', targetId: b.user.id, callId, mode: 'video', signalId: 's2', signal: { type: 'ice', candidate: { candidate: 'c1' } } }));
   const push = await until(() => pushesTo(token).find((item) => decrypt(key, item.data).t === 'call'), 'call push');
   const body = decrypt(key, push.data);
-  assert.deepEqual(body, { t: 'call', callId, from: a.user.id, mode: 'video' }, 'no caller name or photo: the phone names the caller itself');
+  assert.deepEqual(body, { t: 'call', pid: `c:${callId}`, callId, from: a.user.id, mode: 'video' }, 'no caller name or photo: the phone names the caller itself');
   assert.equal(push.options.ttlSeconds, 45, 'a call push is useless after the ring');
   // Firebase accepting the push proves nothing (it queues for phones that are offline): no "Ringing" yet.
   await new Promise((resolve) => setTimeout(resolve, 300));
@@ -164,7 +166,9 @@ test('reactions to my message are pushed; a phone the app is gone from is forgot
   await new Promise((resolve) => setTimeout(resolve, 100));
   reader.send(JSON.stringify({ type: 'message:reaction', messageId: 'push-react-target', emoji: '❤️' }));
   const push = await until(() => pushesTo(token).find((item) => decrypt(key, item.data).t === 'react'), 'reaction push');
-  assert.deepEqual(decrypt(key, push.data), { t: 'react', id: 'push-react-target', from: a.user.id }, 'no emoji, no quoted text');
+  const { pid: reactionPid, ...reaction } = decrypt(key, push.data);
+  assert.deepEqual(reaction, { t: 'react', id: 'push-react-target', from: a.user.id }, 'no emoji, no quoted text');
+  assert.match(reactionPid, /^r:[A-Za-z0-9_-]{12}$/, 'each reaction is its own event');
 
   // An uninstalled app's token is dropped on the first failed send.
   const gone = `gone-${randomBytes(8).toString('hex')}`;
@@ -220,7 +224,7 @@ test('the FCM sender signs in with the service account (RS256 JWT) and sends hig
 
   const key = randomBytes(32).toString('base64');
   const sealed = encryptForDevice(key, pushBody.groupMessage({ id: 'm', groupId: 'g', from: 'u' }));
-  assert.deepEqual(decrypt(key, sealed), { t: 'gmsg', id: 'm', groupId: 'g', from: 'u' });
+  assert.deepEqual(decrypt(key, sealed), { t: 'gmsg', pid: 'g:m', id: 'm', groupId: 'g', from: 'u' });
   assert.throws(() => encryptForDevice(key, { t: 'msg', content: 'x'.repeat(9000) }), /too large/, 'a push never carries a payload');
 });
 
@@ -295,21 +299,25 @@ test('back-to-back messages wake a phone that can open them in the background; o
   await until(() => sender.events.some((event) => event.type === 'connection:ready'), 'ready');
   sender.send(JSON.stringify({ type: 'message:send', message: { id: 'relay-wake-0', receiverId: b.user.id, content: 'before' } }));
   assert.deepEqual(decrypt(key, (await until(() => pushesTo(token).find((item) => decrypt(key, item.data).id === 'relay-wake-0'), 'old push')).data),
-    { t: 'msg', id: 'relay-wake-0', from: a.user.id }, 'an app that has not said so keeps the old push');
+    { t: 'msg', pid: 'm:relay-wake-0', id: 'relay-wake-0', from: a.user.id }, 'an app that has not said so keeps the old push');
 
   assert.deepEqual((await api('/api/v1/push/relay-wake', { session: b, method: 'POST', body: { on: true } })).body, { devices: 1 });
   const before = pushesTo(token).length;
   for (let index = 1; index <= 5; index += 1) sender.send(JSON.stringify({ type: 'message:send', message: { id: `relay-wake-${index}`, receiverId: b.user.id, content: `m${index}` } }));
   await until(() => pushesTo(token).length >= before + 5, 'five pushes');
   const bodies = pushesTo(token).slice(before).map((item) => decrypt(key, item.data));
-  assert.deepEqual(bodies, Array.from({ length: 5 }, () => ({ t: 'xwake', from: a.user.id })), 'one wake-up per message, naming only the sender');
+  const cfg = { f: 8000, h: 12000, x: 25000, b: 20000, w: 15000 };
+  assert.deepEqual(bodies, Array.from({ length: 5 }, (_, index) => ({ t: 'xwake', pid: `w:relay-wake-${index + 1}`, from: a.user.id, cfg })),
+    'one wake-up per message, naming only the sender, with the push id of that message and the phone timings');
 
   // A group message wakes it for that group.
   const group = (await api('/api/v1/groups', { session: a, method: 'POST', body: { name: 'Wake group', memberIds: [b.user.id] } })).body;
   const afterGroup = pushesTo(token).length;
   await api(`/api/v1/groups/${group.id}/messages`, { session: a, method: 'POST', body: { content: 'hello group' } });
   const groupPush = await until(() => pushesTo(token).slice(afterGroup).find((item) => decrypt(key, item.data).groupId === group.id), 'group wake');
-  assert.deepEqual(decrypt(key, groupPush.data), { t: 'xwake', from: a.user.id, groupId: group.id });
+  const groupBody = decrypt(key, groupPush.data);
+  assert.match(groupBody.pid, /^w:/);
+  assert.deepEqual({ ...groupBody, pid: undefined }, { t: 'xwake', pid: undefined, from: a.user.id, groupId: group.id, cfg });
   sender.close();
 });
 
@@ -332,6 +340,9 @@ test('a relay-wake phone: its service connection gets wake-ups, not messages; th
   await until(() => service.events.filter((event) => event.type === 'xmpp:wake').length >= 2, 'a wake-up for the live one');
   assert.ok(!service.events.some((event) => event.type === 'message:new'), 'the service connection never gets the message itself');
   assert.deepEqual(service.events.filter((event) => event.type === 'xmpp:wake').map((event) => event.from), [a.user.id, a.user.id], 'content-free: who it is from');
+  const liveWake = service.events.filter((event) => event.type === 'xmpp:wake').at(-1);
+  assert.equal(liveWake.pid, 'w:native-wake-1', 'the same push id as the Firebase wake-up for that message: the phone handles it once');
+  assert.equal(liveWake.cfg.f, 8000, 'and the same timings');
   assert.ok(fetcher.events.some((event) => event.type === 'message:new' && event.message.id === 'native-wake-0'), 'the fetch gets what waited too');
   for (const socket of [service, fetcher, sender]) socket.close();
 });

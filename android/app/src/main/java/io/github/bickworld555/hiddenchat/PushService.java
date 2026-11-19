@@ -35,6 +35,12 @@ public class PushService extends FirebaseMessagingService {
         String type = body.optString("t");
         // P7: was it delivered at the priority it was sent with?
         PushStats.record(this, message, type);
+        // One event, one handling (a retry, or the same event by another path). A wake-up is checked in
+        // handleXmppWake, which the socket path shares.
+        if (!"xwake".equals(type) && !PushDedup.firstTime(this, body.optString("pid"))) {
+            Log.i(TAG, "repeated push " + type + " dropped");
+            return;
+        }
         try {
             switch (type) {
                 case "msg": onDirectMessage(session, body); break;
@@ -107,9 +113,22 @@ public class PushService extends FirebaseMessagingService {
      * NativeRelay "xmpp:wake"): whichever comes first does the work; the other finds the fetch already running or done.
      */
     static void handleXmppWake(android.content.Context context, RelaySession session, JSONObject body) {
-        // P3: the CPU stays awake until the fetch says it is done (at most FetchWake.FETCH_WAKE_MS), without holding up
-        // the next push (a call arriving meanwhile still rings at once).
-        FetchWake.hold(context, FetchWake.FETCH_WAKE_MS);
+        // The same wake-up over Firebase and the socket (one push id): whichever came first did the work.
+        if (!PushDedup.firstTime(context, body.optString("pid"))) {
+            Log.i(TAG, "repeated wake-up dropped");
+            return;
+        }
+        // Timings from the server (PUSH_TUNING, inside the encrypted push), within safe bounds; defaults otherwise.
+        JSONObject cfg = body.optJSONObject("cfg");
+        long fetchWakeMs = tuned(cfg, "w", FetchWake.FETCH_WAKE_MS, 5_000, 170_000);
+        long backgroundFetchMs = tuned(cfg, "b", BACKGROUND_FETCH_MS, 5_000, 170_000);
+        long fallbackMs = tuned(cfg, "f", FALLBACK_NOTICE_MS, 3_000, 60_000);
+        long headlessFallbackMs = tuned(cfg, "h", HEADLESS_FALLBACK_MS, 5_000, 90_000);
+        long fallbackMaxMs = tuned(cfg, "x", FALLBACK_MAX_MS, 5_000, 120_000);
+        // P3: the CPU stays awake until the fetch says it is done (at most fetchWakeMs), without holding up the next
+        // push (a call arriving meanwhile still rings at once).
+        FetchWake.hold(context, fetchWakeMs);
+        FetchWake.started();
         String from = body.optString("from");
         boolean running = HiddenNativePlugin.emitXmppWake();
         String groupId = body.optString("groupId");
@@ -121,21 +140,35 @@ public class PushService extends FirebaseMessagingService {
             // one for this conversation in time, the sealed notice below appears instead.
             // A short service (WakeKeeper), not MessagingService's dataSync sync: Android 15 refuses dataSync once the
             // app's daily cap is used, which froze the fetch on the S23. The old path only if the short one is refused.
-            if (!WakeKeeper.keep(context, BACKGROUND_FETCH_MS)) MessagingService.startSync(context, BACKGROUND_FETCH_MS);
-            sealedUnlessHandled(context.getApplicationContext(), from, groupId, FALLBACK_NOTICE_MS);
+            // It stops as soon as the fetch ends (FetchWake.finished), at the latest after backgroundFetchMs.
+            if (!WakeKeeper.keep(context, backgroundFetchMs)) MessagingService.startSync(context, backgroundFetchMs);
+            sealedUnlessHandled(context.getApplicationContext(), from, groupId, fallbackMs, fallbackMaxMs);
             return;
         }
         // No app screen: the background page does the same work in a hidden WebView (BackgroundHost). The sealed
         // notice still appears if it has not posted the real one in time (or could not start).
         BackgroundHost.start(context);
         if (BackgroundHost.isRunning() || HeadlessRunner.isRunning()) {
-            sealedUnlessHandled(context.getApplicationContext(), from, groupId, HEADLESS_FALLBACK_MS);
+            sealedUnlessHandled(context.getApplicationContext(), from, groupId, headlessFallbackMs, fallbackMaxMs);
             Log.i(TAG, "xmpp wake-up while the app is closed: background page started");
             return;
         }
+        FetchWake.finished(context, false);
         showSealedWake(context, session, from, groupId);
         Log.i(TAG, "xmpp wake-up while the app is closed: collected when it opens");
     }
+
+    /** A server-tuned duration from the push's `cfg`, clamped to [min, max]; `fallback` when absent. */
+    static long tuned(JSONObject cfg, String key, long fallback, long min, long max) {
+        if (cfg == null || !cfg.has(key)) return fallback;
+        long value = cfg.optLong(key, fallback);
+        return Math.max(min, Math.min(max, value));
+    }
+
+    // The latest the sealed notice waits while a fetch is still running (then it stands in after all).
+    private static final long FALLBACK_MAX_MS = 25_000;
+    // While a fetch runs, the sealed notice checks again this often.
+    private static final long FALLBACK_RECHECK_MS = 2_000;
 
     // A cold start of the background page (process, WebView, connection) takes longer than a living app.
     private static final long HEADLESS_FALLBACK_MS = 12_000;
@@ -150,13 +183,23 @@ public class PushService extends FirebaseMessagingService {
      * since (it opened and notified everything waiting; nothing new means it was already shown, or is in a muted or
      * hidden chat), and the app not on screen (the person sees it arrive). One message, one notification.
      */
-    private static void sealedUnlessHandled(android.content.Context app, String from, String groupId, long delayMs) {
+    private static void sealedUnlessHandled(android.content.Context app, String from, String groupId, long delayMs, long maxMs) {
         final String tag = !groupId.isEmpty() ? "group:" + groupId : from.isEmpty() ? "xmpp-wake" : "chat:" + from;
         final long pushedAt = android.os.SystemClock.elapsedRealtime();
-        new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
-            if (Alerts.postedSince(tag, pushedAt) || FetchWake.completedSince(pushedAt) || AppActivity.isVisible()) return;
-            RelaySession current = RelaySession.read(app);
-            if (current != null) showSealedWake(app, current, from, groupId);
+        final android.os.Handler main = new android.os.Handler(android.os.Looper.getMainLooper());
+        main.postDelayed(new Runnable() {
+            @Override
+            public void run() {
+                if (Alerts.postedSince(tag, pushedAt) || FetchWake.completedSince(pushedAt) || AppActivity.isVisible()) return;
+                // Still fetching and decrypting (a slow network, many messages): no sealed notice yet, it would stand
+                // in for the real one about to be posted. Checked again until the fetch ends or maxMs has passed.
+                if (FetchWake.inProgress() && android.os.SystemClock.elapsedRealtime() - pushedAt + FALLBACK_RECHECK_MS <= maxMs) {
+                    main.postDelayed(this, FALLBACK_RECHECK_MS);
+                    return;
+                }
+                RelaySession current = RelaySession.read(app);
+                if (current != null) showSealedWake(app, current, from, groupId);
+            }
         }, delayMs);
     }
 

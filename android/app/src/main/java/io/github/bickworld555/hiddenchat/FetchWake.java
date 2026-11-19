@@ -34,7 +34,34 @@ final class FetchWake {
         }
     }
 
-    /** The fetch is done (the background page, or the app's own fetch): the CPU may sleep again. */
+    // When the last push-started fetch began and when one last ended (elapsedRealtime), whatever its outcome.
+    private static volatile long startedAt;
+    private static volatile long endedAt;
+
+    /** A push started (or kept going) a fetch: until it ends, the sealed notice waits (PushService). */
+    static void started() {
+        startedAt = android.os.SystemClock.elapsedRealtime();
+    }
+
+    /** A fetch is running: started and not ended since. */
+    static boolean inProgress() {
+        long started = startedAt;
+        return started > 0 && started > endedAt;
+    }
+
+    /**
+     * The fetch has ended (the app's own, or the background page): the CPU may sleep, the short foreground service
+     * ("Checking for new messages") goes at once rather than at its time limit, and `fetched` (everything waiting was
+     * opened and notified) also counts for the sealed notice and the hourly check.
+     */
+    static void finished(Context context, boolean fetched) {
+        if (fetched) markFetched(context);
+        endedAt = android.os.SystemClock.elapsedRealtime();
+        release();
+        WakeKeeper.release();
+    }
+
+    /** The CPU may sleep again. */
     static synchronized void release() {
         try {
             if (lock != null && lock.isHeld()) lock.release();

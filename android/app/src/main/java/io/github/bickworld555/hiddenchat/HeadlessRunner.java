@@ -116,8 +116,8 @@ final class HeadlessRunner {
         try { done.removeJavascriptInterface("HMBackground"); } catch (RuntimeException ignored) { }
         try { done.destroy(); } catch (RuntimeException ignored) { }
         BackgroundSql.close();
-        if (appContext != null && "done".equals(reason)) FetchWake.markFetched(appContext);
-        FetchWake.release();
+        if (appContext != null) FetchWake.finished(appContext, "done".equals(reason));
+        else FetchWake.release();
         Done callback = onDone;
         onDone = null;
         if (callback != null) callback.done(reason);

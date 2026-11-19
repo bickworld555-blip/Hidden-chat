@@ -171,8 +171,7 @@ public class HiddenNativePlugin extends Plugin {
     @PluginMethod
     public void backgroundFetchDone(PluginCall call) {
         String reason = call.getString("reason", "");
-        if ("offline-done".equals(reason) || "quiet".equals(reason)) FetchWake.markFetched(getContext());
-        FetchWake.release();
+        FetchWake.finished(getContext(), "offline-done".equals(reason) || "quiet".equals(reason));
         call.resolve();
     }
 

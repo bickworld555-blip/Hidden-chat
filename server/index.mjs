@@ -24,7 +24,8 @@ import { DEMO_USERS } from './demo.mjs';
 import { createEventPilot } from './eventPilot.mjs';
 import { pdfPageCountOfFile } from './pdfPages.mjs';
 import { createLinkPreviews } from './linkPreview.mjs';
-import { collapseKeys, createPushSender, deviceCollapseKey, encryptForDevice, loadServiceAccount, pushBody, validDeviceKey } from './push.mjs';
+import { collapseKeys, createPushSender, createRecentPushes, deviceCollapseKey, encryptForDevice, loadServiceAccount, pushBody, validDeviceKey } from './push.mjs';
+import { clientTuning, fcmPriority, loadPushTuning, pushCfg } from './pushConfig.mjs';
 import { createObjectStore, MAX_PARTS, OBJECT_KEY_PREFIX, objectStoreConfigFromEnv, PART_BYTES, UPLOAD_URL_TTL_SECONDS } from './objectStore.mjs';
 import { createLoginThrottle, ensureParitySchema, groupAvatarUrl, registerParity } from './parity.mjs';
 import { createVerifiedAccounts, createVerifiedChannels, ensureVerificationSchema, registerVerification } from './verification.mjs';
@@ -179,7 +180,10 @@ export function createChatServer({
   callReconnectGraceMs = process.env.CALL_RECONNECT_GRACE_MS === undefined ? 20_000 : Number(process.env.CALL_RECONNECT_GRACE_MS) || 0,
   callUnreachableMs = CALL_UNREACHABLE_MS,
   groupCallPresenceMs = GROUP_CALL_PRESENCE_MS,
-  deliveryPushMs = DELIVERY_PUSH_MS,
+  // Push and background-delivery timings (server/pushConfig.mjs, env PUSH_TUNING): tunable without a new app.
+  pushTuning = loadPushTuning(process.env),
+  deliveryPushMs = pushTuning.deliveryPushMs,
+  hiddenSettleMs = pushTuning.hiddenSettleMs,
   allowedOrigins = process.env.RELAY_ALLOWED_ORIGINS ?? '',
   webDirectory = join(directory, '..', 'dist'),
   migrate = false,
@@ -708,7 +712,7 @@ export function createChatServer({
     const delivered = await presentMessage(message);
     broadcastUser(receiverId, { type: 'message:new', message: delivered });
     broadcastUser(senderId, { type: 'message:new', message: delivered });
-    pushUnlessDelivered(receiverId, pushBody.message({ id: message.id, from: senderId }), { wakeInstead: pushBody.wake({ from: senderId }) }, directDelivered(message.id));
+    pushUnlessDelivered(receiverId, pushBody.message({ id: message.id, from: senderId }), { wakeInstead: pushBody.wake({ from: senderId, messageId: message.id }) }, directDelivered(message.id));
     return delivered;
   }
 
@@ -1071,7 +1075,8 @@ export function createChatServer({
   function wakeInsteadOf(socket, event) {
     if (!socket.relayWakeOnly || !WAKE_FOR.has(event?.type)) return false;
     const from = event.message?.senderId;
-    if (from && from !== socket.userId) json(socket, { type: 'xmpp:wake', from, ...(event.message?.groupId ? { groupId: event.message.groupId } : {}) });
+    // The same push id as the Firebase wake-up for this message: the phone handles whichever comes first, once.
+    if (from && from !== socket.userId) json(socket, { type: 'xmpp:wake', from, ...(event.message?.groupId ? { groupId: event.message.groupId } : {}), ...pushWakeExtras(event.message?.id) });
     return true;
   }
 
@@ -1200,15 +1205,30 @@ export function createChatServer({
     while (pushFailures.length && at - pushFailures[0] > 5 * 60 * 1000) pushFailures.shift();
     if (pushFailures.length >= PUSH_FAILURE_ALERT) alerts.send('push', `${pushFailures.length} pushes failed in 5 minutes (last: ${String(error ?? 'error').slice(0, 120)}).`).catch(() => {});
   }
-  async function sendPushes(devices, body, options) {
+  // The extras a socket wake-up carries, as the Firebase one does: its push id and the phone's timings.
+  function pushWakeExtras(messageId) {
+    return { pid: pushBody.wake({ messageId }).pid, cfg: pushCfg(pushTuning) };
+  }
+
+  // A retry or a second path for the same event reaches a phone once (server/push.mjs createRecentPushes); the phone
+  // also drops repeats (PushDedup.java).
+  const recentPushes = createRecentPushes(pushTuning.dedupWindowMs);
+
+  async function sendPushes(devices, givenBody, options) {
     let sent = 0;
+    // A wake-up carries the phone's timings (PushService reads `cfg`), so they change with PUSH_TUNING, not an APK.
+    const body = givenBody?.t === 'xwake' && !givenBody.cfg ? { ...givenBody, cfg: pushCfg(pushTuning) } : givenBody;
+    const priority = options?.priority ?? fcmPriority(pushTuning, body);
     await Promise.all(devices.map(async (device) => {
+      if (recentPushes.seen(device.token, body?.pid)) { sent += 1; return; }
       const { enc, iv } = encryptForDevice(device.deviceKey, body);
       // Only the ciphertext travels: the type is inside it, and the collapse key is this device's HMAC of ours.
       const collapseKey = options?.collapseKey ? deviceCollapseKey(device.deviceKey, options.collapseKey) : undefined;
-      const result = await push.send(device.token, { enc, iv }, { ...options, collapseKey });
-      if (result.ok) sent += 1;
-      else if (result.invalidToken) await db.prepare('DELETE FROM push_devices WHERE token = ?').run(device.token);
+      const result = await push.send(device.token, { enc, iv }, { ...options, collapseKey, priority });
+      if (result.ok) { sent += 1; return; }
+      // Not sent: a later retry of the same push may go.
+      recentPushes.forget(device.token, body?.pid);
+      if (result.invalidToken) await db.prepare('DELETE FROM push_devices WHERE token = ?').run(device.token);
       else { console.error('Push not sent:', result.error); notePushFailure(result.error); }
     }));
     return sent;
@@ -1566,7 +1586,7 @@ export function createChatServer({
     if (push) {
       const members = await db.prepare('SELECT user_id AS "userId" FROM group_members WHERE group_id = ? AND user_id <> ?').all(groupId, userId);
       for (const member of members) {
-        pushUnlessDelivered(member.userId, pushBody.groupMessage({ id: row.id, groupId, from: row.senderId }), { wakeInstead: pushBody.wake({ groupId, from: row.senderId }) }, groupDelivered(row.id, member.userId));
+        pushUnlessDelivered(member.userId, pushBody.groupMessage({ id: row.id, groupId, from: row.senderId }), { wakeInstead: pushBody.wake({ groupId, from: row.senderId, messageId: row.id }) }, groupDelivered(row.id, member.userId));
       }
     }
     response.status(201).json(row);
@@ -1736,7 +1756,7 @@ export function createChatServer({
       return;
     }
     if (online === wasOnline) return;
-    const graceMs = dropped ? reconnectGraceMs : HIDDEN_SETTLE_MS;
+    const graceMs = dropped ? reconnectGraceMs : hiddenSettleMs;
     if (!online && graceMs > 0 && !closing) {
       if (pending) return;
       const droppedAt = Date.now();
@@ -2670,6 +2690,11 @@ export function createChatServer({
     const on = request.body?.on !== false;
     const result = await db.prepare('UPDATE push_devices SET relay_wake = ? WHERE session_hash = ?').run(on ? 1 : 0, request.session.token_hash);
     response.json({ devices: Number(result.changes ?? 0) });
+  });
+
+  // The push and background timings the app uses (server/pushConfig.mjs): tunable on the server, no new bundle.
+  app.get('/api/v1/push/config', requireSession, (request, response) => {
+    response.json(clientTuning(pushTuning));
   });
 
   app.delete('/api/v1/push/devices', requireSession, async (request, response) => {
@@ -3917,7 +3942,7 @@ export function createChatServer({
       await acceptChat(userId, receiverId);
       const delivered = (await presentMessage(message));
       broadcastUser(receiverId, { type: 'message:new', message: delivered });
-      pushUnlessDelivered(receiverId, pushBody.message({ id: message.id, from: userId }), { wakeInstead: pushBody.wake({ from: userId }) }, directDelivered(message.id));
+      pushUnlessDelivered(receiverId, pushBody.message({ id: message.id, from: userId }), { wakeInstead: pushBody.wake({ from: userId, messageId: message.id }) }, directDelivered(message.id));
       broadcastUser(userId, { type: 'message:new', message: delivered }, socket);
       json(socket, { type: 'message:ack', message: delivered });
       parity.afterDirectMessage({ senderId: userId, receiverId, messageId: message.id }).catch((error) => {

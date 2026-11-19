@@ -1,6 +1,7 @@
 import { acknowledgeEvents, acknowledgeSaved } from './deliveryAck.js';
 import { getContactDisplayName } from './contactNames.js';
 import { apiFetch, apiUrl, isNetworkFailure } from './api.js';
+import { pushTuning, refreshPushTuning } from './pushTuning.js';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { cachedGroups, prefetchGroupDetails, saveGroups } from './groupCache.js';
 import { activateAccount, addOrActivateAccount, getAccountsState, loadAccounts, removeAccount, sessionFromAccount, updateAccountUser } from './accounts.js';
@@ -158,11 +159,9 @@ async function validateAccount(account) {
   return { token: account.token, deviceId: profile.device?.id ?? account.deviceId, deviceName: profile.device?.name ?? account.deviceName, user: profile.user, device: profile.device };
 }
 
-// A relay wake-up in the background: the app tells Android it is done once nothing has arrived for RELAY_WAKE_QUIET_MS
-// after reconnecting (at most RELAY_WAKE_MAX_MS). Android's sealed notice stands in after PushService
-// FALLBACK_NOTICE_MS (8 s) only if no notification was posted for that chat meanwhile.
-const RELAY_WAKE_QUIET_MS = 2000;
-const RELAY_WAKE_MAX_MS = 15_000;
+// A relay wake-up in the background: the app tells Android it is done once nothing has arrived for relayWakeQuietMs
+// after reconnecting (at most relayWakeMaxMs; both tuned on the server, src/pushTuning.js). Android's sealed notice
+// stands in only if no notification was posted for that chat meanwhile, and not while the fetch is still running.
 
 export default function App() {
   const isMobile = useIsMobile();
@@ -667,6 +666,7 @@ export default function App() {
         // This phone's app opens messages in the background (src/background/relayFetch.js): from now on a new message
         // wakes it to notify with the real text, instead of the sealed "🔒 Message" (server/index.mjs pushToUser).
         if (nativeShell()) {
+          refreshPushTuning(sessionToken);
           apiFetch('/api/v1/push/relay-wake', { method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ on: true }) })
             .catch(() => {});
         }
@@ -891,11 +891,12 @@ export default function App() {
         const client = useChatStore.getState().client;
         const started = Date.now();
         // A fresh connection (the server sends what waited as it opens), then done once nothing has arrived for
-        // RELAY_WAKE_QUIET_MS and everything received has been opened and notified, at most RELAY_WAKE_MAX_MS later.
+        // relayWakeQuietMs and everything received has been opened and notified, at most relayWakeMaxMs later.
+        const { relayWakeQuietMs, relayWakeMaxMs } = pushTuning();
         let connected = false;
         Promise.resolve(client?.reconnectNow?.() ?? client?.wake?.()).then(async (opened) => {
           connected = opened === true;
-          while (Date.now() - started < RELAY_WAKE_MAX_MS && Date.now() - Math.max(lastRealtimeEventRef.current, relayWakeRef.current.extendedAt, started) < RELAY_WAKE_QUIET_MS) {
+          while (Date.now() - started < relayWakeMaxMs && Date.now() - Math.max(lastRealtimeEventRef.current, relayWakeRef.current.extendedAt, started) < relayWakeQuietMs) {
             await new Promise((resolve) => setTimeout(resolve, 250));
           }
           await Promise.resolve(pendingEventsRef.current).catch(() => {});

@@ -37,16 +37,30 @@ export function loadServiceAccount(env = process.env) {
 // itself, as WhatsApp's wake-up pushes leave everything to the app. Every body is built here, and nowhere else.
 const id = (value) => (typeof value === 'string' && value ? value : undefined);
 const compact = (body) => Object.fromEntries(Object.entries(body).filter(([, value]) => value !== undefined));
+
+/**
+ * The push id (`pid`): one event, one id, however many times or ways it reaches the phone (a retried push, the same
+ * wake-up over Firebase and over the always-connected socket). The phone handles each id once (PushDedup.java) and the
+ * server sends each id to a phone once within PUSH_TUNING.dedupWindowMs. Derived from the event's own id where there
+ * is one (so both paths agree), random otherwise. It is inside the encrypted body, like everything else.
+ */
+export function pushId(prefix, eventId) {
+  const own = id(eventId);
+  return `${prefix}:${own ? own.slice(0, 80) : randomBytes(9).toString('base64url')}`;
+}
+
 export const pushBody = Object.freeze({
-  message: ({ id: messageId, from }) => compact({ t: 'msg', id: id(messageId), from: id(from) }),
-  groupMessage: ({ id: messageId, groupId, from }) => compact({ t: 'gmsg', id: id(messageId), groupId: id(groupId), from: id(from) }),
-  reaction: ({ id: messageId, from }) => compact({ t: 'react', id: id(messageId), from: id(from) }),
-  call: ({ callId, from, mode }) => compact({ t: 'call', callId: id(callId), from: id(from), mode: mode === 'video' ? 'video' : 'voice' }),
+  message: ({ id: messageId, from }) => compact({ t: 'msg', pid: pushId('m', messageId), id: id(messageId), from: id(from) }),
+  groupMessage: ({ id: messageId, groupId, from }) => compact({ t: 'gmsg', pid: pushId('g', messageId), id: id(messageId), groupId: id(groupId), from: id(from) }),
+  // Each reaction is its own event (a second emoji on the same message notifies again).
+  reaction: ({ id: messageId, from }) => compact({ t: 'react', pid: pushId('r'), id: id(messageId), from: id(from) }),
+  call: ({ callId, from, mode }) => compact({ t: 'call', pid: pushId('c', callId), callId: id(callId), from: id(from), mode: mode === 'video' ? 'video' : 'voice' }),
   // reason 'declined': the callee declined it on another device (the phone stops ringing without a missed call).
-  callEnd: ({ callId, reason }) => compact({ t: 'call_end', callId: id(callId), reason: reason === 'declined' ? 'declined' : undefined }),
+  callEnd: ({ callId, reason }) => compact({ t: 'call_end', pid: pushId('e', callId), callId: id(callId), reason: reason === 'declined' ? 'declined' : undefined }),
   // A call this phone never rang for (it was offline): shown as a missed call when it reconnects.
-  missedCall: ({ callId, from, mode }) => compact({ t: 'missed', callId: id(callId), from: id(from), mode: mode === 'video' ? 'video' : 'voice' }),
-  wake: ({ from, groupId } = {}) => compact({ t: 'xwake', from: id(from), groupId: id(groupId) }),
+  missedCall: ({ callId, from, mode }) => compact({ t: 'missed', pid: pushId('x', callId), callId: id(callId), from: id(from), mode: mode === 'video' ? 'video' : 'voice' }),
+  // `messageId`: the message that caused it (the same pid over Firebase and the socket); `cfg`: pushCfg(PUSH_TUNING).
+  wake: ({ from, groupId, messageId, cfg } = {}) => compact({ t: 'xwake', pid: pushId('w', messageId), from: id(from), groupId: id(groupId), cfg: cfg && typeof cfg === 'object' ? cfg : undefined }),
 });
 
 /** A device key as registered by the app: 32 random bytes, base64. */
@@ -128,7 +142,7 @@ export function createPushSender({ serviceAccount, fetchImpl = fetch, now = () =
     return pending;
   }
 
-  async function send(token, data, { ttlSeconds = PUSH_TTL_SECONDS, collapseKey } = {}) {
+  async function send(token, data, { ttlSeconds = PUSH_TTL_SECONDS, collapseKey, priority = 'HIGH' } = {}) {
     try {
       const response = await fetchImpl(endpoint, {
         method: 'POST',
@@ -137,8 +151,9 @@ export function createPushSender({ serviceAccount, fetchImpl = fetch, now = () =
           message: {
             token,
             data,
-            // High priority wakes the phone from Doze at once (messages and calls the user is waiting for).
-            android: { priority: 'HIGH', ttl: `${ttlSeconds}s`, ...(collapseKey ? { collapse_key: collapseKey } : {}) },
+            // High priority wakes the phone from Doze at once (messages and calls the user is waiting for); the server
+            // picks it per push type (server/pushConfig.mjs fcmPriority).
+            android: { priority: priority === 'NORMAL' ? 'NORMAL' : 'HIGH', ttl: `${ttlSeconds}s`, ...(collapseKey ? { collapse_key: collapseKey } : {}) },
           },
         }),
         signal: AbortSignal.timeout(10_000),
@@ -156,4 +171,30 @@ export function createPushSender({ serviceAccount, fetchImpl = fetch, now = () =
   }
 
   return { send };
+}
+
+/**
+ * Push ids sent to each phone recently (token + pid -> until when): a retry or a second path for the same event (a
+ * late push after DELIVERY_PUSH_MS, a pending-message wake-up) is sent to a phone once per `windowMs`. `seen` records
+ * and answers whether it was already sent; `forget` lets a push that failed be retried.
+ */
+export function createRecentPushes(windowMs, now = () => Date.now()) {
+  const until = new Map();
+  const keyOf = (token, pid) => `${token}|${pid}`;
+  return {
+    seen(token, pid) {
+      if (!pid) return false;
+      const at = now();
+      // Insertion order is expiry order (one window for all): drop the expired from the front.
+      for (const [key, expires] of until) { if (expires > at) break; until.delete(key); }
+      const key = keyOf(token, pid);
+      if ((until.get(key) ?? 0) > at) return true;
+      until.set(key, at + windowMs);
+      return false;
+    },
+    forget(token, pid) {
+      if (pid) until.delete(keyOf(token, pid));
+    },
+    get size() { return until.size; },
+  };
 }

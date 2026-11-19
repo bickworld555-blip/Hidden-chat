@@ -41,6 +41,15 @@ public class WakeKeeper extends Service {
         }
     }
 
+    /** The fetch it kept awake has ended: stop now (its notification goes). */
+    static void release() {
+        main.post(() -> {
+            until = 0;
+            WakeKeeper running = instance;
+            if (running != null) running.stop();
+        });
+    }
+
     @Override
     public IBinder onBind(Intent intent) {
         return null;

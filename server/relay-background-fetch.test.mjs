@@ -58,7 +58,7 @@ test('the background page uses the relay fetch for relay accounts and acknowledg
   // after 6 s, so the app slept before reconnecting and the sealed notice came instead. Now it reconnects at once and
   // reports done only once what waited has arrived and been handled.
   assert.ok(app.includes('Promise.resolve(client?.reconnectNow?.() ?? client?.wake?.())'), 'a woken app reconnects at once');
-  assert.ok(app.includes('Date.now() - Math.max(lastRealtimeEventRef.current, relayWakeRef.current.extendedAt, started) < RELAY_WAKE_QUIET_MS'), 'and waits until nothing more arrives');
+  assert.ok(app.includes('Date.now() - Math.max(lastRealtimeEventRef.current, relayWakeRef.current.extendedAt, started) < relayWakeQuietMs'), 'and waits until nothing more arrives');
   assert.ok(!app.includes('RELAY_WAKE_SETTLE_MS'));
   const realtime = readFileSync(new URL('../src/realtime.js', import.meta.url), 'utf8');
   assert.ok(realtime.includes('reconnectNow({ timeoutMs = 10_000 } = {}) {') && realtime.includes("old.close(4001, 'push wake')"), 'without first asking a socket Android may have cut');
@@ -67,7 +67,7 @@ test('the background page uses the relay fetch for relay accounts and acknowledg
 test('back-to-back wake-ups make one fetch in the app, kept going by each push; the background fetch is a relay.fetch device', () => {
   const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
   assert.ok(app.includes('relayWakeRef.current.extendedAt = Date.now();\n        if (relayWakeRef.current.running) return;') || app.includes('relayWakeRef.current.extendedAt = Date.now();\r\n        if (relayWakeRef.current.running) return;'), 'a later push extends the running fetch');
-  assert.ok(app.includes('Math.max(lastRealtimeEventRef.current, relayWakeRef.current.extendedAt, started) < RELAY_WAKE_QUIET_MS'));
+  assert.ok(app.includes('Math.max(lastRealtimeEventRef.current, relayWakeRef.current.extendedAt, started) < relayWakeQuietMs'));
   assert.ok(app.includes("nativeBackgroundFetchDone(connected ? 'quiet' : 'relay')"), 'Android hears "done" only when the one fetch ends: quiet after a fresh connection brought everything');
   // Seen in the desktop→S23 run: the app posted the real notification before the push arrived, and 8 s later the sealed
   // notice replaced it (Android counted only notifications after the push). A completed fetch now says "quiet".
