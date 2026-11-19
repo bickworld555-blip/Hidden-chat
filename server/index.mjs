@@ -364,6 +364,9 @@ export function createChatServer({
   db.exec('CREATE INDEX IF NOT EXISTS push_devices_session ON push_devices(session_hash)');
   // The wire version of the app that registered the phone (X-HM-Client): whether its push handler confirms calls.
   if (!db.prepare('PRAGMA table_info(push_devices)').all().some((column) => column.name === 'client_protocol')) db.exec('ALTER TABLE push_devices ADD COLUMN client_protocol INTEGER NOT NULL DEFAULT 0');
+  // Whether this phone's app opens messages from this server in the background (Postgres: migration 046): then a new
+  // message wakes it ("xwake") to fetch, decrypt and notify with the real text, instead of a sealed "🔒 Message".
+  if (!db.prepare('PRAGMA table_info(push_devices)').all().some((column) => column.name === 'relay_wake')) db.exec('ALTER TABLE push_devices ADD COLUMN relay_wake INTEGER NOT NULL DEFAULT 0');
   // Public identity keys for end-to-end encryption (Postgres: migration 008).
   db.exec(`CREATE TABLE IF NOT EXISTS identity_keys (
     user_id TEXT PRIMARY KEY,
@@ -702,7 +705,7 @@ export function createChatServer({
     const delivered = await presentMessage(message);
     broadcastUser(receiverId, { type: 'message:new', message: delivered });
     broadcastUser(senderId, { type: 'message:new', message: delivered });
-    pushUnlessDelivered(receiverId, pushBody.message({ id: message.id, from: senderId }), {}, directDelivered(message.id));
+    pushUnlessDelivered(receiverId, pushBody.message({ id: message.id, from: senderId }), { wakeInstead: pushBody.wake({ from: senderId }) }, directDelivered(message.id));
     return delivered;
   }
 
@@ -1150,9 +1153,18 @@ export function createChatServer({
   };
 
   /** Sends one encrypted push to every phone the person registered; forgets phones the app is gone from. */
-  async function pushToUser(userId, body, options = {}) {
+  /**
+   * `options.wakeInstead`: the wake-up to send, instead of `body`, to phones whose app opens messages in the
+   * background (push_devices.relay_wake, set by the app: POST /api/v1/push/relay-wake). Others get `body` as before.
+   */
+  async function pushToUser(userId, body, { wakeInstead = null, ...options } = {}) {
     if (!push) return 0;
-    return sendPushes(await db.prepare('SELECT token, device_key AS "deviceKey" FROM push_devices WHERE user_id = ?').all(userId), body, options);
+    const devices = await db.prepare('SELECT token, device_key AS "deviceKey", relay_wake AS "relayWake" FROM push_devices WHERE user_id = ?').all(userId);
+    if (!wakeInstead) return sendPushes(devices, body, options);
+    const waking = devices.filter((device) => Number(device.relayWake) === 1);
+    const sealed = devices.filter((device) => Number(device.relayWake) !== 1);
+    const counts = await Promise.all([sendPushes(waking, wakeInstead, options), sendPushes(sealed, body, options)]);
+    return counts[0] + counts[1];
   }
 
   /** One signed-in device's push registrations only (an XMPP wake-up is for the device whose message waits). */
@@ -1538,7 +1550,7 @@ export function createChatServer({
     if (push) {
       const members = await db.prepare('SELECT user_id AS "userId" FROM group_members WHERE group_id = ? AND user_id <> ?').all(groupId, userId);
       for (const member of members) {
-        pushUnlessDelivered(member.userId, pushBody.groupMessage({ id: row.id, groupId, from: row.sender_id }), {}, groupDelivered(row.id, member.userId));
+        pushUnlessDelivered(member.userId, pushBody.groupMessage({ id: row.id, groupId, from: row.senderId }), { wakeInstead: pushBody.wake({ groupId, from: row.senderId }) }, groupDelivered(row.id, member.userId));
       }
     }
     response.status(201).json(row);
@@ -2632,6 +2644,15 @@ export function createChatServer({
       device_key = excluded.device_key, platform = excluded.platform, updated_at = excluded.updated_at, client_protocol = excluded.client_protocol`)
       .run(token, request.session.user_id, request.session.token_hash, key, platform, Date.now(), clientProtocol);
     response.json({ push: Boolean(push) });
+  });
+
+  // The app on this phone opens messages from this server in the background (src/background/main.js relay fetch):
+  // from now on new messages wake it rather than show a sealed notice. Said again at each start (a new push token
+  // registers as a new row).
+  app.post('/api/v1/push/relay-wake', requireSession, async (request, response) => {
+    const on = request.body?.on !== false;
+    const result = await db.prepare('UPDATE push_devices SET relay_wake = ? WHERE session_hash = ?').run(on ? 1 : 0, request.session.token_hash);
+    response.json({ devices: Number(result.changes ?? 0) });
   });
 
   app.delete('/api/v1/push/devices', requireSession, async (request, response) => {
@@ -3865,7 +3886,7 @@ export function createChatServer({
       await acceptChat(userId, receiverId);
       const delivered = (await presentMessage(message));
       broadcastUser(receiverId, { type: 'message:new', message: delivered });
-      pushUnlessDelivered(receiverId, pushBody.message({ id: message.id, from: userId }), {}, directDelivered(message.id));
+      pushUnlessDelivered(receiverId, pushBody.message({ id: message.id, from: userId }), { wakeInstead: pushBody.wake({ from: userId }) }, directDelivered(message.id));
       broadcastUser(userId, { type: 'message:new', message: delivered }, socket);
       json(socket, { type: 'message:ack', message: delivered });
       parity.afterDirectMessage({ senderId: userId, receiverId, messageId: message.id }).catch((error) => {

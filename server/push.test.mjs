@@ -284,3 +284,31 @@ test('notifications name chats from the phone, not from the push', async () => {
   const session = await readFile(new URL('RelaySession.java', root), 'utf8');
   assert.match(session, /SecureStore\.sealOrKeep\(namesJson\)/, 'the names are sealed with the Keystore');
 });
+
+// Seen on the S23 (2026-11-19, a redacted notification dump): five messages back-to-back on the relay showed five
+// "🔒 Message" lines, because a "msg" push only ever posts the sealed notice. A phone whose app opens relay messages in
+// the background now gets the wake-up ("xwake") instead: the app or its background page fetches, decrypts and
+// notifies with the real text (Android shows the sealed notice only if that fails in time).
+test('back-to-back messages wake a phone that can open them in the background; older apps still get the sealed push', async () => {
+  const { a, b, key, token } = await pair();
+  const sender = await connect(a);
+  await until(() => sender.events.some((event) => event.type === 'connection:ready'), 'ready');
+  sender.send(JSON.stringify({ type: 'message:send', message: { id: 'relay-wake-0', receiverId: b.user.id, content: 'before' } }));
+  assert.deepEqual(decrypt(key, (await until(() => pushesTo(token).find((item) => decrypt(key, item.data).id === 'relay-wake-0'), 'old push')).data),
+    { t: 'msg', id: 'relay-wake-0', from: a.user.id }, 'an app that has not said so keeps the old push');
+
+  assert.deepEqual((await api('/api/v1/push/relay-wake', { session: b, method: 'POST', body: { on: true } })).body, { devices: 1 });
+  const before = pushesTo(token).length;
+  for (let index = 1; index <= 5; index += 1) sender.send(JSON.stringify({ type: 'message:send', message: { id: `relay-wake-${index}`, receiverId: b.user.id, content: `m${index}` } }));
+  await until(() => pushesTo(token).length >= before + 5, 'five pushes');
+  const bodies = pushesTo(token).slice(before).map((item) => decrypt(key, item.data));
+  assert.deepEqual(bodies, Array.from({ length: 5 }, () => ({ t: 'xwake', from: a.user.id })), 'one wake-up per message, naming only the sender');
+
+  // A group message wakes it for that group.
+  const group = (await api('/api/v1/groups', { session: a, method: 'POST', body: { name: 'Wake group', memberIds: [b.user.id] } })).body;
+  const afterGroup = pushesTo(token).length;
+  await api(`/api/v1/groups/${group.id}/messages`, { session: a, method: 'POST', body: { content: 'hello group' } });
+  const groupPush = await until(() => pushesTo(token).slice(afterGroup).find((item) => decrypt(key, item.data).groupId === group.id), 'group wake');
+  assert.deepEqual(decrypt(key, groupPush.data), { t: 'xwake', from: a.user.id, groupId: group.id });
+  sender.close();
+});

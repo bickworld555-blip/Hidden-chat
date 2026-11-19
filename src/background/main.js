@@ -5,7 +5,8 @@
 //      app's encrypted database over Android's bridge (BackgroundSql.java), like WhatsApp's native code with
 //      msgstore.db; the app's records are read as they are, and only the outbox is ever written
 //      (backgroundSecureStorage);
-//   3. connects to XMPP and takes what waited; each message is opened, then sealed with the Keystore into the inbox
+//   3. connects to XMPP (or, for an account still on this server's relay, to the relay as a background device:
+//      src/background/relayFetch.js) and takes what waited; each message is opened, then sealed with the Keystore into the inbox
 //      (src/backgroundInbox.js) and written into the app's database (never over a copy already there) BEFORE the
 //      server is told it was handled (the transport's ackAfterHandled) and before its delivery receipt goes;
 //   4. posts the notification with the real text (Android applies mutes and locked chats);
@@ -25,14 +26,18 @@ import { hiddenByBlock } from '../blocking.js';
 import { startXmppSession } from '../xmpp/session.js';
 import { holdsReceipts } from '../messageRequests.js';
 import { E2E_LOCK } from '../e2eLock.js';
+import { relayFetch } from './relayFetch.js';
+import { acknowledgeable, attachmentToKeep } from '../deliveryAck.js';
 
 const bridge = globalThis.HMBackground;
 const log = (text) => { try { bridge?.log(String(text)); } catch { /* nothing to tell */ } };
 
 let stopping = false;
 let stopNow = null;
+// The relay fetch's stop handle (it ends at once when the app opens).
+const relayStop = { onStop: null };
 // Android asks this when the app's screen is being created: finish the message in hand, then stop.
-globalThis.__hmBgStop = () => { stopping = true; stopNow?.(); };
+globalThis.__hmBgStop = () => { stopping = true; stopNow?.(); relayStop.onStop?.(); };
 
 // The app's encrypted database over Android's bridge, with the calls src/sqliteMessageDb.js makes on the plugin's.
 function bridgeDatabase() {
@@ -92,14 +97,18 @@ async function run() {
   // blocked person, or one it could not open, is left to the app (the inbox has it).
   const saveToDatabase = async (opened) => {
     const message = opened?.message;
-    if (!local || !message?.id || message.e2eError) return;
+    if (!local || !message?.id || message.e2eError) return false;
     if (opened.type === 'message:new') {
       const chat = message.senderId === userId ? message.receiverId : message.senderId;
-      if (!chat || hiddenByBlock(message, useChatStore.getState().blockedChats?.[chat], userId)) return;
+      if (!chat || hiddenByBlock(message, useChatStore.getState().blockedChats?.[chat], userId)) return false;
       await local.addIfMissing(userId, [{ chat, message }]);
-    } else if (opened.type === 'group:message' && message.groupId) {
-      await local.addIfMissing(userId, [{ chat: groupChatKey(message.groupId), message: groupMessageForStore(message) }]);
+      return true;
     }
+    if (opened.type === 'group:message' && message.groupId) {
+      await local.addIfMissing(userId, [{ chat: groupChatKey(message.groupId), message: groupMessageForStore(message) }]);
+      return true;
+    }
+    return false;
   };
 
   // P6: the outbox, sent once the server has given everything that waited (backgroundFetch's settle step).
@@ -139,6 +148,8 @@ async function run() {
   // With the app's records: its pinned device lists, so the outbox goes only where the app would send it.
   openE2eForBackground({ userId, deviceId, ...(local ? { token, records: { get: (key) => secureStorage().get(key), set: (key, value) => secureStorage().set(key, value) } } : {}), onIdentityChange: (change) => identityChanges.push({ type: 'identity-changed', ...change }) });
 
+  // Receipts go back over the connection in use: the XMPP session, or the relay socket (relayFetch's `send`).
+  let route = (event) => session?.route(event);
   const deliver = async (event) => {
     // One of the outbox's messages is on its way (src/xmpp/session.js sendMessage): see sendOutbox.
     if (event?.type === 'message:ack') { if (event.message?.id) acked.add(event.message.id); return; }
@@ -147,18 +158,19 @@ async function run() {
     const opened = await openEvent(event);
     // Marked opened: the app applies it as it is (src/App.jsx), never decrypting it a second time.
     await keep({ ...opened, opened: true });
-    await saveToDatabase(opened).catch((error) => log(`not in the database: ${error?.message ?? error}`));
+    const saved = await saveToDatabase(opened).catch((error) => { log(`not in the database: ${error?.message ?? error}`); return false; });
     for (const change of identityChanges.splice(0)) await keep(change);
     const message = opened?.message;
     if (opened?.type === 'message:new' && message && message.senderId !== userId) {
       const body = message.e2eError ? '🔒 Message' : notificationPreview(message.content);
       bridge.notify(JSON.stringify({ kind: 'chat', from: message.senderId, body, messageId: message.id }));
       // Stored: now the sender's two grey ticks, from this phone.
-      session?.route({ type: 'message:delivered', messageIds: [message.id] });
+      route({ type: 'message:delivered', messageIds: [message.id] });
     } else if (opened?.type === 'group:message' && message && message.senderId !== userId) {
       const body = message.e2eError ? '🔒 Message' : notificationPreview(message.content);
       bridge.notify(JSON.stringify({ kind: 'group', from: message.senderId, groupId: message.groupId, body, messageId: message.id }));
     }
+    return { opened, saved };
   };
 
   session = await startXmppSession({
@@ -171,7 +183,23 @@ async function run() {
     holdReceiptsFor: (peerId) => holdsReceipts(peerId, useChatStore.getState().chats),
     transportOptions: { ackAfterHandled: true },
   });
-  if (!session) return 'not-on-xmpp';
+  if (!session) {
+    // On this server's relay: the same opening, storing and notifying, over a background connection. A message is
+    // acknowledged (the server may forget it for this device) only once it is readable and in the app's database,
+    // with no attachment the app must still keep; anything else waits for the app as before.
+    const reason = await relayFetch({
+      token, stop: relayStop, log,
+      handle: async (event, send) => {
+        route = send;
+        const { opened, saved } = await deliver(event);
+        const message = opened?.message;
+        if (saved && acknowledgeable(message) && !attachmentToKeep(event?.message?.content)) send({ type: 'queue:ack', messageIds: [message.id], eventIds: [] });
+      },
+    });
+    if (stopping) return 'stopped-for-app';
+    // "done" lets Android skip the sealed notice: the relay sent what waited and every message was handled.
+    return reason === 'quiet' ? 'done' : `relay: ${reason}`;
+  }
 
   let fetchReason = '';
   await new Promise((resolve) => {

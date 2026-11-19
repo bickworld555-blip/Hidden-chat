@@ -181,8 +181,8 @@ test('P6 and the local database: the background page reads the app records as wr
   assert.match(source, /settle: \(\) => sendOutbox\(\)/);
   assert.match(source, /if \(!\(await session\.transport\.pingServer\(\{ timeoutMs: 5000 \}\)\)\) return;\s*const now = /);
   // Opened messages go into the app's database too, never over a copy, never from a blocked person.
-  assert.match(source, /await keep\(\{ \.\.\.opened, opened: true \}\);\s*await saveToDatabase\(opened\)/);
-  assert.match(source, /hiddenByBlock\(message, useChatStore\.getState\(\)\.blockedChats\?\.\[chat\], userId\)\) return;\s*await local\.addIfMissing/);
+  assert.match(source, /await keep\(\{ \.\.\.opened, opened: true \}\);\s*const saved = await saveToDatabase\(opened\)/);
+  assert.match(source, /hiddenByBlock\(message, useChatStore\.getState\(\)\.blockedChats\?\.\[chat\], userId\)\) return false;\s*await local\.addIfMissing/);
   const job = readFileSync(new URL('../android/app/src/main/java/io/github/bickworld555/hiddenchat/UnsentMessagesJob.java', import.meta.url), 'utf8');
   assert.match(job, /setRequiredNetworkType\(JobInfo\.NETWORK_TYPE_ANY\)/);
   const manifest = readFileSync(new URL('../android/app/src/main/AndroidManifest.xml', import.meta.url), 'utf8');

@@ -157,6 +157,10 @@ async function validateAccount(account) {
   const profile = await response.json();
   return { token: account.token, deviceId: profile.device?.id ?? account.deviceId, deviceName: profile.device?.name ?? account.deviceName, user: profile.user, device: profile.device };
 }
+
+// A relay wake-up in the background: how long the app's connection gets to bring and notify what waited before it
+// tells Android it is done (Android's own sealed-notice timer runs regardless: PushService FALLBACK_NOTICE_MS).
+const RELAY_WAKE_SETTLE_MS = 6000;
 
 export default function App() {
   const isMobile = useIsMobile();
@@ -653,6 +657,12 @@ export default function App() {
         };
         realtime = new RealtimeClient(sessionToken, onRealtimeEvent, (state) => { noteCallEvent('relay', state); setConnection(state); });
         realtime.onRevoked = () => revokedRef.current?.();
+        // This phone's app opens messages in the background (src/background/relayFetch.js): from now on a new message
+        // wakes it to notify with the real text, instead of the sealed "🔒 Message" (server/index.mjs pushToUser).
+        if (nativeShell()) {
+          apiFetch('/api/v1/push/relay-wake', { method: 'POST', headers: { Authorization: `Bearer ${sessionToken}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ on: true }) })
+            .catch(() => {});
+        }
         // Accounts moved over to the XMPP core (src/xmpp/session.js; the server decides, 0% by default) carry device-to-
         // device traffic over XMPP; anything it cannot carry goes on this connection as before. Others never open it.
         const legacySend = realtime.send.bind(realtime);
@@ -861,6 +871,14 @@ export default function App() {
     // A push while off screen in the phone app: fetch now, in the background, like WhatsApp (decrypted, stored,
     // receipts from this phone, notification with the real text), then go quiet again. On screen: the usual check.
     const stopWake = onNative('xmppWake', () => {
+      // On this server's relay (no XMPP session): Android may have frozen the connection while the app was in the
+      // background. Check it now (a dead one reconnects and the server sends what waited); each message is opened and
+      // notified with its real text as usual. Android's sealed notice stands in only if none was posted in time.
+      if (nativeShell() && document.visibilityState !== 'visible' && !xmppRef.current) {
+        useChatStore.getState().client?.wake?.();
+        setTimeout(() => { Promise.resolve(pendingEventsRef.current).catch(() => {}).finally(() => nativeBackgroundFetchDone('relay').catch(() => {})); }, RELAY_WAKE_SETTLE_MS);
+        return;
+      }
       if (nativeShell() && document.visibilityState !== 'visible') {
         // settle: the opening and handling of what arrived (decrypted, stored, notified) finishes before it goes quiet.
         Promise.resolve(xmppRef.current?.backgroundFetch?.({ stayOffline: () => document.visibilityState !== 'visible' && !inCall(), settle: () => pendingEventsRef.current }))
