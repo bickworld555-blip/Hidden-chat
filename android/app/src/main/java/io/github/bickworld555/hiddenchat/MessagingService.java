@@ -131,6 +131,7 @@ public class MessagingService extends Service {
 
     /** Called by the web app when a call starts and ends (HiddenNative.setCallActive). */
     static void setCall(Context context, boolean active, boolean video, String name) {
+        if (active != callActive) android.util.Log.i("CallReturn", "call " + (active ? "started" : "ended") + " (app)");
         if (active && !callActive) callStartedAt = System.currentTimeMillis();
         if (!active && callActive) AppActivity.callEnded();
         // Only a change reaches Android: a stray "not in a call" must not drop a call that is still ringing.

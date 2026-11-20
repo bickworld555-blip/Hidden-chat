@@ -263,7 +263,9 @@ test('call window: the hand-back after a call answered from outside is reset per
   const activity = await source('android/app/src/main/java/io/github/bickworld555/hiddenchat/AppActivity.java');
   assert.match(activity, /static void callRinging\(Context context\) \{[\s\S]*?returnAfterCall = false;/, 'a new call decides afresh');
   assert.match(activity, /forgetUnusedHandBack = \(\) -> \{\s*if \(!MessagingService\.isCallActive\(\)\) returnAfterCall = false;/, 'an answer that never connects forgets it');
-  assert.match(activity, /Intent\.ACTION_MAIN\.equals\(intent\.getAction\(\)\) && intent\.hasCategory\(Intent\.CATEGORY_LAUNCHER\)\) \{\s*returnAfterCall = false;/, 'opening the app during a call keeps it open after');
+  assert.match(activity, /Intent\.ACTION_MAIN\.equals\(intent\.getAction\(\)\) && intent\.hasCategory\(Intent\.CATEGORY_LAUNCHER\)\) \{[^}]*\n\s*returnAfterCall = false;/, 'opening the app during a call keeps it open after');
+  // A second ring during a call (call waiting, a late repeat) must not clear the decision of the call in progress.
+  assert.match(activity, /static void callRinging\(Context context\) \{[\s\S]{0,300}if \(MessagingService\.isCallActive\(\)\) \{/);
 });
 
 test('Phase 3 UI: call store slices, notice queue, own-ticking timer, canvas waves, long chats, inline time', async () => {

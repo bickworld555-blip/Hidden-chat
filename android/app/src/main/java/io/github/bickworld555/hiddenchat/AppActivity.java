@@ -26,12 +26,22 @@ public class AppActivity extends BridgeActivity {
     // whether the user was elsewhere has to be known from before.
     private static volatile boolean ringingWhileAway;
 
+    // Logged decisions of the hand-back (when a call answered from elsewhere ends): `adb logcat -s CallReturn`.
+    private static final String RETURN_TAG = "CallReturn";
+
     /** A call started ringing: remember whether the app was in front (unlocked) at that moment. */
     static void callRinging(Context context) {
+        // A call in progress keeps its own decision: a second ring (a call waiting, a late repeat) must not clear it.
+        if (MessagingService.isCallActive()) {
+            android.util.Log.i(RETURN_TAG, "ring during a call: keep return=" + returnAfterCall);
+            return;
+        }
         android.app.KeyguardManager keyguard = context.getSystemService(android.app.KeyguardManager.class);
-        ringingWhileAway = !visible || (keyguard != null && keyguard.isKeyguardLocked());
+        boolean locked = keyguard != null && keyguard.isKeyguardLocked();
+        ringingWhileAway = !visible || locked;
         // A new call decides afresh: a hand-back left from an earlier call that never connected must not apply.
         returnAfterCall = false;
+        android.util.Log.i(RETURN_TAG, "ringing: visible=" + visible + " locked=" + locked + " away=" + ringingWhileAway);
     }
 
     // An answer that does not become a call within this long (failed to connect) forgets its hand-back.
@@ -44,6 +54,7 @@ public class AppActivity extends BridgeActivity {
         returnAfterCall = ringingWhileAway;
         handler.removeCallbacks(forgetUnusedHandBack);
         if (returnAfterCall) handler.postDelayed(forgetUnusedHandBack, ANSWER_TO_CALL_MS);
+        android.util.Log.i(RETURN_TAG, "answered from outside: return=" + returnAfterCall);
     }
     private static final android.os.Handler handler = new android.os.Handler(android.os.Looper.getMainLooper());
 
@@ -117,6 +128,7 @@ public class AppActivity extends BridgeActivity {
         // Opened from the launcher or recents during a call: the user wants the app, so it stays when the call ends
         // (as with WhatsApp, where opening the main app during a call keeps you there).
         if (Intent.ACTION_MAIN.equals(intent.getAction()) && intent.hasCategory(Intent.CATEGORY_LAUNCHER)) {
+            if (returnAfterCall) android.util.Log.i(RETURN_TAG, "opened from the launcher: stay in the app after the call");
             returnAfterCall = false;
             return;
         }
@@ -129,16 +141,38 @@ public class AppActivity extends BridgeActivity {
     static void callEnded() {
         handler.removeCallbacks(handBack);
         handler.removeCallbacks(forgetUnusedHandBack);
-        handler.postDelayed(handBack, 1500);
+        handBackTries = 0;
+        android.util.Log.i(RETURN_TAG, "call ended: return=" + returnAfterCall);
+        handler.postDelayed(handBack, HAND_BACK_MS);
     }
+
+    // How long "Call ended" shows before the phone goes back, and how long the hand-back waits for the call to be
+    // reported finished (a voice/video switch, a call still marked ringing) before it gives up.
+    private static final long HAND_BACK_MS = 1200;
+    private static final long HAND_BACK_RETRY_MS = 500;
+    private static final int HAND_BACK_TRIES = 8;
+    private static int handBackTries;
 
     private static final Runnable handBack = new Runnable() {
         @Override
         public void run() {
             AppActivity activity = current;
-            if (!returnAfterCall || MessagingService.isCallActive() || Alerts.isRinging() || activity == null) return;
+            if (!returnAfterCall) { android.util.Log.i(RETURN_TAG, "stay: the call was answered in the app"); return; }
+            if (activity == null) { returnAfterCall = false; android.util.Log.i(RETURN_TAG, "stay: no app screen"); return; }
+            if (MessagingService.isCallActive() || Alerts.isRinging()) {
+                // Not finished yet: look again shortly rather than leaving the person in the app for good.
+                if (++handBackTries < HAND_BACK_TRIES) {
+                    android.util.Log.i(RETURN_TAG, "waiting: active=" + MessagingService.isCallActive() + " ringing=" + Alerts.isRinging());
+                    handler.postDelayed(this, HAND_BACK_RETRY_MS);
+                } else {
+                    returnAfterCall = false;
+                    android.util.Log.i(RETURN_TAG, "stay: a call is still on");
+                }
+                return;
+            }
             returnAfterCall = false;
-            activity.moveTaskToBack(true);
+            boolean moved = activity.moveTaskToBack(true);
+            android.util.Log.i(RETURN_TAG, "back to where the person was: moved=" + moved);
         }
     };
 

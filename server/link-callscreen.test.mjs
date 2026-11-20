@@ -75,9 +75,12 @@ test('ringing call screen: swipe up to accept, "Turn off your video", Message wi
 
 test('a call answered from the lock screen or another app hands back there when it ends', async () => {
   const activity = await java('AppActivity.java');
-  assert.match(activity, /static void callRinging\(Context context\) \{[\s\S]*?ringingWhileAway = !visible \|\| \(keyguard != null && keyguard\.isKeyguardLocked\(\)\);/);
-  assert.match(activity, /static void callEnded\(\) \{[\s\S]*?handler\.postDelayed\(handBack, 1500\);/);
-  assert.match(activity, /handBack = new Runnable\(\) \{[\s\S]*?if \(!returnAfterCall \|\| MessagingService\.isCallActive\(\) \|\| Alerts\.isRinging\(\) \|\| activity == null\) return;[\s\S]*?activity\.moveTaskToBack\(true\);/);
+  assert.match(activity, /static void callRinging\(Context context\) \{[\s\S]*?boolean locked = keyguard != null && keyguard\.isKeyguardLocked\(\);\s*ringingWhileAway = !visible \|\| locked;/);
+  assert.match(activity, /static void callEnded\(\) \{[\s\S]*?handler\.postDelayed\(handBack, HAND_BACK_MS\);/);
+  // Answered from elsewhere: back where the person was once the call is reported finished. Still marked active or
+  // ringing (a voice/video switch, a late report): it looks again a few times instead of leaving them in the app.
+  assert.match(activity, /if \(MessagingService\.isCallActive\(\) \|\| Alerts\.isRinging\(\)\) \{[\s\S]*?if \(\+\+handBackTries < HAND_BACK_TRIES\) \{[\s\S]*?handler\.postDelayed\(this, HAND_BACK_RETRY_MS\);/);
+  assert.match(activity, /returnAfterCall = false;\s*boolean moved = activity\.moveTaskToBack\(true\);/);
   const service = await java('MessagingService.java');
   assert.ok(service.includes('if (!active && callActive) AppActivity.callEnded();'));
 });
