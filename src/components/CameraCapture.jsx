@@ -10,7 +10,8 @@ import { cameraVideoType, clockOf } from '../cameraMedia.js';
 const HOLD_MS = 350;
 const MAX_VIDEO_SECONDS = 5 * 60;
 
-export default function CameraCapture({ onClose, onSend, onGallery, onUnavailable }) {
+// `onVideoNote`: the Video note tab (as in WhatsApp's camera), which hands over to the round video note recorder.
+export default function CameraCapture({ onClose, onSend, onGallery, onUnavailable, onVideoNote }) {
   const videoRef = useRef(null);
   const streamRef = useRef(null);
   const recorderRef = useRef(null);
@@ -204,6 +205,7 @@ export default function CameraCapture({ onClose, onSend, onGallery, onUnavailabl
             aria-label={facing === 'user' ? 'Switch to back camera' : 'Switch to front camera'}><RefreshCcw size={24} /></button>
         </div>
         <div className="camera-modes" role="tablist" aria-label="Camera mode">
+          {onVideoNote && <button type="button" role="tab" aria-selected={false} disabled={recording} onClick={() => { stopStream(); onVideoNote(); }}>Video note</button>}
           <button type="button" role="tab" aria-selected={mode === 'video'} disabled={recording} onClick={() => setMode('video')}>Video</button>
           <button type="button" role="tab" aria-selected={mode === 'photo'} disabled={recording} onClick={() => setMode('photo')}>Photo</button>
         </div>

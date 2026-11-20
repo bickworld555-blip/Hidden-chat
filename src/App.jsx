@@ -306,6 +306,15 @@ export default function App() {
     document.addEventListener('visibilitychange', sync);
     return () => document.removeEventListener('visibilitychange', sync);
   }, [call]);
+  // Opening the app clears its message notifications (as WhatsApp Business does, seen on the S23 2026-11-20): the chat
+  // list shows what is new. Missed calls and call notices stay (only message notifications are removed).
+  useEffect(() => {
+    if (!nativeShell()) return undefined;
+    const clear = () => { if (document.visibilityState === 'visible') Promise.resolve(nativeClearMessageNotifications()).catch(() => {}); };
+    clear();
+    document.addEventListener('visibilitychange', clear);
+    return () => document.removeEventListener('visibilitychange', clear);
+  }, []);
   const [callSignals, setCallSignals] = useState([]);
   // L2: the calls running in my groups (groupId -> { roomId, mode, startedAt, participants }), from "group:call".
   const [groupCalls, setGroupCalls] = useState({});

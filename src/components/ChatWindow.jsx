@@ -2171,6 +2171,7 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
       {picker === 'camera' && (
         <CameraCapture onClose={() => setPicker(null)}
           onGallery={() => { setPicker(null); openFilePicker('image/*,video/*'); }}
+          onVideoNote={() => setPicker('videonote')}
           onUnavailable={() => { setPicker(null); setError('The camera isn’t available. Allow camera access for Hidden Messenger, or pick from the gallery.'); }}
           onSend={(file, caption) => {
             setPicker(null);

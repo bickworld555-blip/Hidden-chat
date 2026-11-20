@@ -36,6 +36,8 @@ public class IncomingCallActivity extends Activity {
     };
     private boolean cameraOff;
     private static IncomingCallActivity current;
+    // A video call: the front camera behind this screen while it rings (RingPreview), off when answering camera-off.
+    private RingPreview preview;
 
     static Intent intent(Context context, String callId, String caller, boolean video, String avatar) {
         return new Intent(context, IncomingCallActivity.class)
@@ -82,7 +84,20 @@ public class IncomingCallActivity extends Activity {
     }
 
     @Override
+    protected void onResume() {
+        super.onResume();
+        if (preview != null && !cameraOff) preview.start();
+    }
+
+    @Override
+    protected void onPause() {
+        if (preview != null) preview.stop();
+        super.onPause();
+    }
+
+    @Override
     protected void onDestroy() {
+        if (preview != null) preview.stop();
         if (current == this) current = null;
         super.onDestroy();
     }
@@ -103,6 +118,20 @@ public class IncomingCallActivity extends Activity {
         root.setOrientation(LinearLayout.VERTICAL);
         root.setGravity(Gravity.CENTER_HORIZONTAL);
         root.setBackgroundColor(Color.parseColor("#0b1628"));
+        if (preview != null) preview.stop();
+        preview = null;
+        android.widget.FrameLayout screen = null;
+        if (video && RingPreview.allowed(this)) {
+            // The person's own camera fills the screen behind the caller's name and the buttons, under a dark veil so
+            // they stay readable. Shown on this phone only.
+            screen = new android.widget.FrameLayout(this);
+            screen.setBackgroundColor(Color.parseColor("#0b1628"));
+            android.view.TextureView camera = new android.view.TextureView(this);
+            camera.setContentDescription("Your camera");
+            screen.addView(camera, new android.widget.FrameLayout.LayoutParams(android.widget.FrameLayout.LayoutParams.MATCH_PARENT, android.widget.FrameLayout.LayoutParams.MATCH_PARENT));
+            root.setBackgroundColor(Color.parseColor("#990b1628"));
+            preview = new RingPreview(this, camera);
+        }
         root.setPadding(dp(24), dp(56), dp(24), dp(48));
 
         TextView encrypted = text("🔒 End-to-end encrypted", 13, "#8696a0", false);
@@ -150,7 +179,12 @@ public class IncomingCallActivity extends Activity {
                 camera.setContentDescription(cameraOff ? "Answer with camera on" : "Answer with camera off");
             };
             label.run();
-            camera.setOnClickListener((v) -> { cameraOff = !cameraOff; label.run(); });
+            camera.setOnClickListener((v) -> {
+                cameraOff = !cameraOff;
+                label.run();
+                // Answering camera-off: the preview goes too (and comes back when turned on again).
+                if (preview != null) { if (cameraOff) preview.stop(); else preview.start(); }
+            });
             LinearLayout.LayoutParams cameraSize = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
             cameraSize.bottomMargin = dp(28);
             root.addView(camera, cameraSize);
@@ -166,7 +200,13 @@ public class IncomingCallActivity extends Activity {
         buttons.addView(action("Message", "#22324a", android.R.drawable.sym_action_chat, 0f, "Decline with a message", (v) -> chooseReply(callId)), new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f));
         root.addView(buttons, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT));
 
-        setContentView(root);
+        if (screen != null) {
+            screen.addView(root, new android.widget.FrameLayout.LayoutParams(android.widget.FrameLayout.LayoutParams.MATCH_PARENT, android.widget.FrameLayout.LayoutParams.MATCH_PARENT));
+            setContentView(screen);
+            if (!cameraOff) preview.start();
+        } else {
+            setContentView(root);
+        }
     }
 
     /**
@@ -212,6 +252,8 @@ public class IncomingCallActivity extends Activity {
 
     /** Opens the app straight into the call, still over the lock screen (it shows there while a call is on). */
     private void accept(String callId) {
+        // The call needs the camera: this preview lets go of it first.
+        if (preview != null) preview.stop();
         Intent accept = new Intent(this, AppActivity.class)
             .setAction(Alerts.ACTION_ACCEPT)
             .setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP)
@@ -268,6 +310,7 @@ public class IncomingCallActivity extends Activity {
 
     /** Rejects without opening the app or unlocking, through the same path as the notification's Decline. */
     private void decline(String callId) {
+        if (preview != null) preview.stop();
         sendBroadcast(new Intent(this, CallActionReceiver.class)
             .setAction(CallActionReceiver.ACTION_REJECT)
             .putExtra(Alerts.EXTRA_CALL_ID, callId == null ? "" : callId));

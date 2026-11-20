@@ -2059,12 +2059,14 @@ html, body { overflow-x: hidden; }
 }
 
 /* Floating PiP container (WhatsApp style) */
+/* Your own picture in a video call: 9:16 like the phone's camera, about a fifth of the screen width (WhatsApp's is
+   9:16 and ~22% wide, 12 dp from the edge; seen on the S23 2026-11-20). It was 116 x 174 (2:3). */
 .wa-video-tile.is-pip {
   position: absolute;
-  right: 16px;
+  right: 12px;
   bottom: 100px;
-  width: 116px;
-  height: 174px;
+  width: 96px;
+  height: 170px;
   border-radius: 16px;
   overflow: hidden;
   z-index: 25;
