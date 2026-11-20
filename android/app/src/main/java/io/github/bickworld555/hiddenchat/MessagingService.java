@@ -268,6 +268,8 @@ public class MessagingService extends Service {
         for (int attempt : new int[] { types, withoutPhoneCall, fallback }) {
             try {
                 ServiceCompat.startForeground(this, id, notification, attempt);
+                // The call now keeps its microphone in the background: a call answered quietly can leave the screen.
+                if (callActive && (Build.VERSION.SDK_INT < Build.VERSION_CODES.R || (attempt & ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE) != 0)) AppActivity.callServiceReady();
                 // Back to "Connected": the call notification is deleted, not left behind or reused.
                 if (!callActive) androidx.core.app.NotificationManagerCompat.from(this).cancel(CALL_NOTIFICATION_ID);
                 else androidx.core.app.NotificationManagerCompat.from(this).cancel(NOTIFICATION_ID);

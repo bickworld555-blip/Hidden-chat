@@ -103,7 +103,7 @@ final class CallAudio {
         if (!active) return;
         active = false;
         handler.removeCallbacksAndMessages(null);
-        AudioManager audio = context.getSystemService(AudioManager.class);
+        AudioManager audio = context.getApplicationContext().getSystemService(AudioManager.class);
         if (audio != null) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 if (listener != null) audio.removeOnCommunicationDeviceChangedListener(listener);
@@ -131,7 +131,7 @@ final class CallAudio {
     }
 
     private static void apply(Context context) {
-        AudioManager audio = context.getSystemService(AudioManager.class);
+        AudioManager audio = context.getApplicationContext().getSystemService(AudioManager.class);
         if (audio == null) return;
         audio.setMode(AudioManager.MODE_IN_COMMUNICATION);
         if (TelecomCalls.route(speaker)) {
@@ -174,9 +174,11 @@ final class CallAudio {
         return earpiece != null ? earpiece : loudspeaker;
     }
 
+    // One AudioManager for the whole call (the application's): the listener added here was removed in stop() through
+    // another context's AudioManager, which Android rejects as unregistered and crashed the app (S23, 2026-11-21).
     private static void watch(Context context) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S || listener != null) return;
-        AudioManager audio = context.getSystemService(AudioManager.class);
+        AudioManager audio = context.getApplicationContext().getSystemService(AudioManager.class);
         if (audio == null) return;
         listener = (device) -> {
             synchronized (CallAudio.class) {

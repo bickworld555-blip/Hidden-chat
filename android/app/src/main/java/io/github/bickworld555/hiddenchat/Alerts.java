@@ -169,11 +169,9 @@ final class Alerts {
         // app's web screen to load (which left a black screen over the lock screen while the ringtone played).
         Intent show = IncomingCallActivity.intent(context, id, name, video, avatar);
         lastCallScreen = show;
-        Intent accept = new Intent(context, AppActivity.class)
-            .setAction(ACTION_ACCEPT)
-            .setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP | Intent.FLAG_ACTIVITY_CLEAR_TOP)
-            .putExtra(EXTRA_CALL, true)
-            .putExtra(EXTRA_CALL_ID, id);
+        // Answer: decided at the tap (CallAnswerActivity): over the lock screen, or into the floating call window
+        // while the phone is in use, so answering never brings up the chat list over the app the person is in.
+        Intent accept = CallAnswerActivity.intent(context, id, video);
         Intent reject = new Intent(context, CallActionReceiver.class)
             .setAction(CallActionReceiver.ACTION_REJECT)
             .putExtra(EXTRA_CALL_ID, id);

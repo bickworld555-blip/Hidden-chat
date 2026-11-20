@@ -91,5 +91,5 @@ test('voice calls ring back on the earpiece; Speaker keeps its icon; the PiP win
   assert.equal((overlay.match(/\{speakerIcon\(2[24]\)\}/g) ?? []).length, 1, 'the shared dock uses it');
   const activity = await java('AppActivity.java');
   assert.match(activity, /setActions\(Collections\.singletonList\(new RemoteAction\([\s\S]*"Hang up"/);
-  assert.ok(activity.includes('if (!active && activity.isInPictureInPictureMode()) activity.moveTaskToBack(false);'), 'the floating window closes when the call ends');
+  assert.ok(activity.includes('if (!active && (floating || activity.isInPictureInPictureMode())) { activity.moveTaskToBack(false); floating = false; }'), 'the floating window closes when the call ends');
 });

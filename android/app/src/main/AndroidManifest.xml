@@ -97,6 +97,16 @@
             <meta-data android:name="android.app.shortcuts" android:resource="@xml/shortcuts" />
         </activity-alias>
 
+        <!-- "Answer" on the call notification: no window; opens the call over the lock screen, or (phone in use)
+             straight into the floating call window so the person stays in the app they were using. -->
+        <activity
+            android:name=".CallAnswerActivity"
+            android:theme="@android:style/Theme.NoDisplay"
+            android:taskAffinity=".call_answer"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:exported="false" />
+
         <!-- The ringing call over the lock screen: native, so it shows at once (no waiting for the web screen). -->
         <activity
             android:name=".IncomingCallActivity"
