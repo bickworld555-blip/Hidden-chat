@@ -79,6 +79,8 @@ export const innerFrom = (value) => {
 };
 
 export const DEVICE_LIST_TTL_MS = 5 * 60 * 1000;
+// The longest a cached list is used while a fresh one loads (devicesOf); past it, the send waits for the fetch.
+export const DEVICE_LIST_STALE_MS = 60 * 60 * 1000;
 export const GROUP_DEVICE_TTL_MS = 60 * 1000;
 export const KEY_REFRESH_MS = 6 * 60 * 60 * 1000;
 const PLAIN_MEMORY_LIMIT = 4000;
@@ -231,13 +233,49 @@ export const e2eDeviceId = () => current?.deviceId ?? null;
 
 // --- Device lists ---------------------------------------------------------------------------------------
 
+// A list older than DEVICE_LIST_TTL_MS (but younger than DEVICE_LIST_STALE_MS) is still used for this send while a
+// fresh one loads in the background, so a message after a quiet spell does not wait two HTTPS round trips first. It is
+// safe: the server accepts a message only if it is sealed for exactly the current devices (server/e2e.mjs
+// checkDirectEnvelope) and otherwise answers e2e-devices, after which it is sealed again with a fresh list
+// (messaging.js handleRejected). Older lists are fetched before sending, as before.
 async function devicesOf(userId, { fresh = false } = {}) {
   const cached = deviceLists.get(userId);
-  if (!fresh && cached && Date.now() - cached.at < DEVICE_LIST_TTL_MS) return cached.devices;
-  const { devices, signedList } = await request(`/api/v1/e2e/users/${encodeURIComponent(userId)}/devices`);
-  const trusted = await trustedDevices(userId, devices, signedList);
-  deviceLists.set(userId, { at: Date.now(), devices: trusted });
-  return trusted;
+  const age = cached ? Date.now() - cached.at : Infinity;
+  if (!fresh && age < DEVICE_LIST_TTL_MS) return cached.devices;
+  if (!fresh && age < DEVICE_LIST_STALE_MS) {
+    refreshDevices(userId).catch(() => {});
+    return cached.devices;
+  }
+  return refreshDevices(userId);
+}
+
+// One fetch per person at a time (a send and a pre-warm asking together share it).
+const listRefreshes = new Map();
+function refreshDevices(userId) {
+  const running = listRefreshes.get(userId);
+  if (running) return running;
+  const job = (async () => {
+    const { devices, signedList } = await request(`/api/v1/e2e/users/${encodeURIComponent(userId)}/devices`);
+    const trusted = await trustedDevices(userId, devices, signedList);
+    deviceLists.set(userId, { at: Date.now(), devices: trusted });
+    return trusted;
+  })().finally(() => listRefreshes.delete(userId));
+  listRefreshes.set(userId, job);
+  return job;
+}
+
+/**
+ * Warms what the first message to `peerId` needs, before Send: the encryption session, and both people's device
+ * lists (fetched again once they are past half their lifetime). Failures are ignored: sending fetches again.
+ */
+export function prewarmDirect(peerId) {
+  const session = current;
+  if (!session || !peerId) return;
+  const warm = (userId) => {
+    const cached = deviceLists.get(userId);
+    return cached && Date.now() - cached.at < DEVICE_LIST_TTL_MS / 2 ? cached.devices : refreshDevices(userId);
+  };
+  session.ready.then(() => Promise.all([warm(peerId), warm(session.userId)])).catch(() => {});
 }
 
 // --- Signed device lists (src/e2e/deviceList.js) ----------------------------------------------------------------

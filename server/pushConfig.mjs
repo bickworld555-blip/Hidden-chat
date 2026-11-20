@@ -11,7 +11,7 @@
 
 const RANGES = Object.freeze({
   // A message written to an open screen is pushed anyway when no device confirmed it within this time.
-  deliveryPushMs: [1_000, 60_000, 8_000],
+  deliveryPushMs: [1_000, 60_000, 3_000],
   // Leaving the app announces "offline" once the state has held this long.
   hiddenSettleMs: [0, 30_000, 2_000],
   // The same push (same push id) to the same phone within this window is sent once.

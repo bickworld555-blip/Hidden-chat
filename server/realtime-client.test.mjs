@@ -32,7 +32,7 @@ globalThis.window = Object.assign(new EventTarget(), {
 Object.defineProperty(globalThis, 'navigator', { value: { onLine: true, connection }, configurable: true });
 globalThis.location = { href: 'https://hiddenmessenger.com/' };
 
-const { RealtimeClient, ACK_TIMEOUT_MS, PING_INTERVAL_MS, PONG_TIMEOUT_MS, STATE_DEBOUNCE_MS } = await import('../src/realtime.js');
+const { RealtimeClient, ACK_TIMEOUT_MS, HIDDEN_STALE_MS, PING_INTERVAL_MS, PONG_TIMEOUT_MS, STATE_DEBOUNCE_MS } = await import('../src/realtime.js');
 
 let states;
 let client;
@@ -54,6 +54,8 @@ beforeEach(() => {
   now = 1_000_000;
   mock.timers.reset();
   mock.timers.enable({ apis: ['setTimeout', 'Date'], now });
+  connection.type = 'wifi';
+  document.visibilityState = 'visible';
 });
 
 test('a socket that stops answering is replaced within a ping and a pong timeout, and the outbox replays', () => {
@@ -75,13 +77,35 @@ test('a socket that stops answering is replaced within a ping and a pong timeout
   client.close();
 });
 
-test('a message with no acknowledgement checks the socket at once instead of waiting for the next ping', () => {
+// Before: no ack for 8 s, then a ping and 8 s more for its pong (8-16 s before the message went out again).
+test('a message unanswered for ACK_TIMEOUT_MS on a silent socket is resent on a new socket at once', () => {
   const socket = start();
+  let replays = 0;
+  client.onReady = () => { replays += 1; };
   client.send({ type: 'message:send', message: { id: 'm1', content: 'hi' } });
+  advance(ACK_TIMEOUT_MS - 1);
+  assert.equal(FakeSocket.all.length, 1, 'not before ACK_TIMEOUT_MS');
+  advance(1);
+  assert.equal(socket.closedWith, 4000, 'nothing heard since it was sent: the socket is dead');
+  assert.ok(!socket.sent.some((event) => event.type === 'client:ping'), 'no ping first');
+  assert.equal(FakeSocket.all.length, 2, 'a new socket at once');
+  latest().open();
+  assert.equal(replays, 1, 'the outbox replays the message on it');
+  assert.ok(ACK_TIMEOUT_MS <= 3_000);
+  client.close();
+});
+
+test('a slow socket that still hears frames is only checked, and kept when it answers', () => {
+  const socket = start();
+  client.send({ type: 'message:send', message: { id: 'm3', content: 'hi' } });
+  advance(1_000);
+  socket.receive({ type: 'presence:update' });     // alive, the ack is just late
   advance(ACK_TIMEOUT_MS);
   assert.deepEqual(socket.sent.at(-1), { type: 'client:ping' });
+  socket.receive({ type: 'pong' });
   advance(PONG_TIMEOUT_MS);
-  assert.equal(FakeSocket.all.length, 2, 'no answer: reconnected');
+  assert.equal(FakeSocket.all.length, 1, 'kept');
+  socket.receive({ type: 'message:ack', message: { id: 'm3' } });
   client.close();
 });
 
@@ -94,11 +118,34 @@ test('an acknowledged message needs no check', () => {
   client.close();
 });
 
-test('a network change checks the socket at once and a dead one is replaced', () => {
+test('a switch to another network replaces the socket at once; other network changes only check it', () => {
   const socket = start();
-  connection.dispatchEvent(new Event('change'));      // Wi-Fi -> mobile data
+  connection.dispatchEvent(new Event('change'));      // same Wi-Fi, a new speed estimate
   assert.deepEqual(socket.sent.at(-1), { type: 'client:ping' });
-  advance(PONG_TIMEOUT_MS);
+  socket.receive({ type: 'pong' });
+  assert.equal(FakeSocket.all.length, 1);
+  connection.type = 'cellular';                       // Wi-Fi -> mobile data
+  connection.dispatchEvent(new Event('change'));
+  assert.equal(socket.closedWith, 4000);
+  assert.equal(FakeSocket.all.length, 2, 'no ping and wait: a new socket at once');
+  client.close();
+});
+
+test('back on screen after a while in the background: a new socket at once; after a moment: a check', () => {
+  const socket = start();
+  document.visibilityState = 'hidden';
+  document.dispatchEvent(new Event('visibilitychange'));
+  advance(2_000);
+  document.visibilityState = 'visible';
+  document.dispatchEvent(new Event('visibilitychange'));
+  assert.deepEqual(socket.sent.at(-1), { type: 'client:ping' }, 'a few seconds away: the socket is checked');
+  socket.receive({ type: 'pong' });
+  document.visibilityState = 'hidden';
+  document.dispatchEvent(new Event('visibilitychange'));
+  advance(HIDDEN_STALE_MS + 1);
+  document.visibilityState = 'visible';
+  document.dispatchEvent(new Event('visibilitychange'));
+  assert.equal(socket.closedWith, 4000, 'longer away: not trusted');
   assert.equal(FakeSocket.all.length, 2);
   client.close();
 });

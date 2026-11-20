@@ -2,9 +2,9 @@ import { storeMedia } from '../mediaVault.js';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { isEnvelope, STRUCTURED } from '../e2e/envelope.js';
 import { sendControlFor, transmitDirect, transmitReaction } from '../e2e/messaging.js';
-import { buildLinkPreview } from '../linkPreviewSender.js';
+import { prefetchLinkPreview, previewForSend } from '../linkPreviewSender.js';
 import { translate, useLanguage } from '../i18n.js';
-import { contactEncrypted } from '../e2e/client.js';
+import { contactEncrypted, prewarmDirect } from '../e2e/client.js';
 import { isNotice, noticeText } from '../e2e/notices.js';
 import { isMediaContent, primeMediaBlob } from '../media.js';
 import { LOAD_OLDER_STEP, RENDER_WINDOW, renderCountFor, windowedMessages } from '../messageWindow.js';
@@ -741,6 +741,15 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
   const [text, setText] = useState('');
   // A short link's suggested message (store composerDraft) fills the box once.
   useEffect(() => { const draft = useChatStore.getState().takeComposerDraft(chatId); if (draft) setText(draft); }, [chatId]);
+  // A link being typed gets its preview made now (WhatsApp-style), so Send does not wait for the site.
+  useEffect(() => {
+    const href = text && !STRUCTURED.test(text) ? firstLink(text) : null;
+    if (!href) return undefined;
+    const timer = setTimeout(() => prefetchLinkPreview(href, sessionToken), 400);
+    return () => clearTimeout(timer);
+  }, [text, sessionToken]);
+  // Opening a chat warms what its first message needs (the encryption session, both device lists).
+  useEffect(() => { if (chatId && client) prewarmDirect(chatId); }, [chatId, client]);
   const [menuOpen, setMenuOpen] = useState(false);
   const [picker, setPicker] = useState(null);
   const [error, setError] = useState('');
@@ -1108,9 +1117,10 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
     };
     addMessage(message);
     queueMessage?.(message);
-    // A link gets its preview made here, on the sender's device, and sent inside the encryption (WhatsApp-style).
+    // A link's preview is made on the sender's device while it is typed and sent inside the encryption (WhatsApp-
+    // style); Send takes it if ready within PREVIEW_SEND_WAIT_MS and otherwise goes without it, never waiting longer.
     const href = !extras.forwarded && typeof content === 'string' && !STRUCTURED.test(content) ? firstLink(content) : null;
-    const preview = href ? buildLinkPreview(href, sessionToken).catch(() => null) : Promise.resolve(null);
+    const preview = href ? previewForSend(href, sessionToken).catch(() => null) : Promise.resolve(null);
     preview.then((linkPreview) => {
       if (linkPreview) {
         updateMessage(message.id, { linkPreview });

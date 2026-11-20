@@ -100,7 +100,7 @@ export const GROUP_CALL_PRESENCE_MS = 90_000;
 // A message written to a connection no device of the receiver has confirmed within this long gets its push anyway:
 // a connection that died a moment ago (the phone just lost its network) still looks connected here, and the message
 // written to it reached nobody (like WhatsApp: no delivery receipt, then a push).
-export const DELIVERY_PUSH_MS = 8_000;
+export const DELIVERY_PUSH_MS = 3_000;
 // Leaving the app announces "offline" once the state has held this long: Android reports hidden, visible and hidden
 // again within a second of pressing Home, which showed contacts offline → online → offline. Coming back is at once.
 export const HIDDEN_SETTLE_MS = 2_000;
@@ -3827,17 +3827,20 @@ export function createChatServer({
       const receiverId = payload.receiverId;
       const content = typeof payload.content === 'string' ? payload.content.trim() : '';
       const mediaId = mediaIdOf(content);
-      const receiverRow = typeof receiverId === 'string' ? await userRow(receiverId) : null;
+      // The receiver and both block directions are independent lookups: asked together, answered in the same order.
+      const [receiverRow, iBlocked, blockedMe] = typeof receiverId === 'string'
+        ? await Promise.all([userRow(receiverId), blocks.has(userId, receiverId), blocks.has(receiverId, userId)])
+        : [null, false, false];
       const receiver = receiverRow && { deletedAt: receiverRow.deleted_at };
       const clientMessageId = typeof payload.id === 'string' && payload.id.length > 0 && payload.id.length < 80 ? payload.id : null;
       if (receiver?.deletedAt) {
         return json(socket, { type: 'error', code: 'account_deleted', messageId: clientMessageId, message: 'This account was deleted. Messages can no longer be sent to it.' });
       }
-      if (receiver && await blocks.has(userId, receiverId)) {
+      if (receiver && iBlocked) {
         return json(socket, { type: 'error', code: 'blocked', messageId: clientMessageId, message: 'You blocked this contact. Unblock them to send a message.' });
       }
       // Blocked by the receiver: accepted with one tick, never stored or delivered (as on WhatsApp).
-      if (receiver && clientMessageId && typeof payload.content === 'string' && payload.content.trim() && await blocks.has(receiverId, userId)) {
+      if (receiver && clientMessageId && typeof payload.content === 'string' && payload.content.trim() && blockedMe) {
         return json(socket, { type: 'message:ack', message: { id: clientMessageId, senderId: userId, receiverId, timestamp: new Date().toISOString(), content: payload.content, status: 'sent' } });
       }
       // Media from another conversation the sender can read (a forward) is re-shared to this receiver as its own copy.
@@ -3851,18 +3854,20 @@ export function createChatServer({
         return json(socket, { type: 'error', messageId: clientMessageId, message: PLAINTEXT_REFUSED.error, code: PLAINTEXT_REFUSED.code });
       }
       // End-to-end encrypted: it must be addressed to every device that should get it; if the sender's device list
-      // is out of date it is told the current one and encrypts again (no generic error banner).
-      const sealedProblem = await e2e.checkDirectEnvelope(content, { senderId: userId, senderDeviceId: socket.deviceId, receiverId });
-      if (sealedProblem) {
-        return json(socket, { type: 'message:rejected', messageId: typeof payload.id === 'string' ? payload.id : null, receiverId, ...sealedProblem });
-      }
-
+      // is out of date it is told the current one and encrypts again (no generic error banner). Looked up together
+      // with whether this id is already stored (a resend after a dropped socket); the envelope check still decides first.
       const messageId = typeof payload.id === 'string' && payload.id.length > 0 && payload.id.length < 80
         ? payload.id
         : randomUUID();
-      const existing = (await db.prepare(`SELECT id, sender_id AS "senderId", receiver_id AS "receiverId",
-        created_at AS "timestamp", content, status, reply_to_id AS "replyToId", forwarded, expires_at AS "expiresAt"
-        FROM messages WHERE id = ?`).get(messageId));
+      const [sealedProblem, existing] = await Promise.all([
+        e2e.checkDirectEnvelope(content, { senderId: userId, senderDeviceId: socket.deviceId, receiverId }),
+        db.prepare(`SELECT id, sender_id AS "senderId", receiver_id AS "receiverId",
+          created_at AS "timestamp", content, status, reply_to_id AS "replyToId", forwarded, expires_at AS "expiresAt"
+          FROM messages WHERE id = ?`).get(messageId),
+      ]);
+      if (sealedProblem) {
+        return json(socket, { type: 'message:rejected', messageId: typeof payload.id === 'string' ? payload.id : null, receiverId, ...sealedProblem });
+      }
       if (existing) {
         if (existing.senderId !== userId) return json(socket, { type: 'error', message: 'Message ID is already in use.' });
         return json(socket, { type: 'message:ack', message: (await presentMessage(existing)) });
@@ -3911,7 +3916,7 @@ export function createChatServer({
       }
 
       const disappearSeconds = (await disappearSecondsFor(userId, receiverId));
-      const recipient = await userRow(receiverId);
+      const recipient = receiverRow;
       const message = {
         id: messageId,
         senderId: userId,
@@ -3943,11 +3948,15 @@ export function createChatServer({
         if (stored.senderId !== userId) return json(socket, { type: 'error', message: 'Message ID is already in use.' });
         return json(socket, { type: 'message:ack', message: await presentMessage(stored) });
       }
-      await deliveryQueue.trackDirect({ messageId: message.id, senderId: userId, senderDeviceId: socket.deviceId, receiverId });
-      // A message keeps the thread in both chat lists (and brings a deleted thread back) without saving a contact.
-      (await linkUsers(userId, receiverId));
-      (await linkUsers(receiverId, userId, { request: true }));
-      await acceptChat(userId, receiverId);
+      // Tracked for delivery while the thread is kept in both chat lists (bringing a deleted thread back, without saving
+      // a contact): independent writes, done together before the message is relayed.
+      await Promise.all([
+        deliveryQueue.trackDirect({ messageId: message.id, senderId: userId, senderDeviceId: socket.deviceId, receiverId }),
+        (async () => {
+          await Promise.all([linkUsers(userId, receiverId), linkUsers(receiverId, userId, { request: true })]);
+          await acceptChat(userId, receiverId);
+        })(),
+      ]);
       const delivered = (await presentMessage(message));
       broadcastUser(receiverId, { type: 'message:new', message: delivered });
       pushUnlessDelivered(receiverId, pushBody.message({ id: message.id, from: userId }), { wakeInstead: pushBody.wake({ from: userId, messageId: message.id }) }, directDelivered(message.id));

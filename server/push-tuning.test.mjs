@@ -13,7 +13,7 @@ test('PUSH_TUNING: defaults, valid overrides, clamped values, and bad input neve
   const defaults = loadPushTuning({});
   assert.deepEqual(pushCfg(defaults), { f: 8000, h: 12000, x: 25000, b: 20000, w: 15000 });
   assert.deepEqual(clientTuning(defaults), { relayWakeQuietMs: 2000, relayWakeMaxMs: 15000 });
-  assert.equal(defaults.deliveryPushMs, 8000);
+  assert.equal(defaults.deliveryPushMs, 3000, 'a receiver whose socket only looks open gets its push after 3 s (it was 8 s)');
   assert.equal(defaults.hiddenSettleMs, 2000);
 
   const tuned = loadPushTuning({ PUSH_TUNING: JSON.stringify({ fallbackNoticeMs: 10_000, relayWakeMaxMs: 999_999, backgroundFetchMs: 1, unknown: 5, priority: { react: 'normal', call: 'low', nope: 'normal' } }) });

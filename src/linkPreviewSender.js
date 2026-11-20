@@ -58,3 +58,32 @@ export async function buildLinkPreview(href, sessionToken) {
   const made = await withTimeout((nativeShell() ? onPhone(href) : inBrowser(href, sessionToken)).catch(() => null), PREVIEW_TIMEOUT_MS);
   return made ? sanitizePreview(made) : null;
 }
+
+// Like WhatsApp, the preview is made while the link is being typed (prefetchLinkPreview), so Send never waits for a
+// slow site: it takes the preview if it is ready within PREVIEW_SEND_WAIT_MS, and otherwise the message goes without
+// one. It waited up to PREVIEW_TIMEOUT_MS (4 s) at Send before.
+export const PREVIEW_SEND_WAIT_MS = 300;
+const PREPARED_MS = 10 * 60 * 1000;
+const PREPARED_MAX = 20;
+const prepared = new Map(); // href -> { at, preview: Promise<preview | null> }
+
+function preparedPreview(href, sessionToken) {
+  const now = Date.now();
+  const kept = prepared.get(href);
+  if (kept && now - kept.at < PREPARED_MS) return kept.preview;
+  const preview = buildLinkPreview(href, sessionToken).catch(() => null);
+  prepared.delete(href);
+  prepared.set(href, { at: now, preview });
+  while (prepared.size > PREPARED_MAX) prepared.delete(prepared.keys().next().value);
+  return preview;
+}
+
+/** Starts making the preview for a link being typed (once per link for PREPARED_MS). */
+export function prefetchLinkPreview(href, sessionToken) {
+  if (href) preparedPreview(href, sessionToken);
+}
+
+/** The preview to send with a message: ready now (or within `waitMs`), else null; never holds Send any longer. */
+export function previewForSend(href, sessionToken, waitMs = PREVIEW_SEND_WAIT_MS) {
+  return withTimeout(preparedPreview(href, sessionToken), waitMs);
+}

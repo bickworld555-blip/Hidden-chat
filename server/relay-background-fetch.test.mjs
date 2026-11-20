@@ -61,7 +61,7 @@ test('the background page uses the relay fetch for relay accounts and acknowledg
   assert.ok(app.includes('Date.now() - Math.max(lastRealtimeEventRef.current, relayWakeRef.current.extendedAt, started) < relayWakeQuietMs'), 'and waits until nothing more arrives');
   assert.ok(!app.includes('RELAY_WAKE_SETTLE_MS'));
   const realtime = readFileSync(new URL('../src/realtime.js', import.meta.url), 'utf8');
-  assert.ok(realtime.includes('reconnectNow({ timeoutMs = 10_000 } = {}) {') && realtime.includes("old.close(4001, 'push wake')"), 'without first asking a socket Android may have cut');
+  assert.ok(realtime.includes('reconnectNow({ timeoutMs = 10_000 } = {}) {') && realtime.includes("this.replace('push wake');"), 'without first asking a socket Android may have cut');
 });
 
 test('back-to-back wake-ups make one fetch in the app, kept going by each push; the background fetch is a relay.fetch device', () => {
@@ -76,4 +76,24 @@ test('back-to-back wake-ups make one fetch in the app, kept going by each push; 
   assert.ok(app.includes('if (sessionToken && !targetChat) {'), 'no wait for someone already in the chat list');
   const fetch = readFileSync(new URL('../src/background/relayFetch.js', import.meta.url), 'utf8');
   assert.ok(fetch.includes("'relay.background', 'relay.fetch']"));
+});
+
+// Send-path speed (2026-11-21): a link no longer holds Send for its preview, and a device list past its 5 minutes is
+// used while a fresh one loads (the server refuses a message sealed for the wrong devices, which is then resealed).
+test('Send never waits for a slow link preview or for a device list refresh', () => {
+  const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8').replace(/\r\n/g, '\n');
+  const sender = read('src/linkPreviewSender.js');
+  const chat = read('src/components/ChatWindow.jsx');
+  const e2e = read('src/e2e/client.js');
+  assert.match(sender, /export const PREVIEW_SEND_WAIT_MS = 300;/);
+  assert.match(sender, /export function previewForSend\(href, sessionToken, waitMs = PREVIEW_SEND_WAIT_MS\) \{\s*return withTimeout\(preparedPreview\(href, sessionToken\), waitMs\);/);
+  assert.ok(chat.includes('const preview = href ? previewForSend(href, sessionToken).catch(() => null) : Promise.resolve(null);'), 'Send takes the preview only if ready');
+  assert.ok(chat.includes('const timer = setTimeout(() => prefetchLinkPreview(href, sessionToken), 400);'), 'made while the link is typed');
+  assert.ok(!chat.includes('buildLinkPreview('), 'the 4 s wait at Send is gone');
+  assert.ok(chat.includes('useEffect(() => { if (chatId && client) prewarmDirect(chatId); }, [chatId, client]);'), 'opening a chat warms the encryption state');
+  assert.match(e2e, /if \(!fresh && age < DEVICE_LIST_STALE_MS\) \{\s*refreshDevices\(userId\)\.catch\(\(\) => \{\}\);\s*return cached\.devices;/);
+  // Safe only because the server insists on the exact device set (and the client reseals when told so).
+  const serverE2e = read('server/e2e.mjs');
+  assert.ok(serverE2e.includes('if (expected.sort().join(') && serverE2e.includes('!== presented.join('), 'the server compares the exact device set');
+  assert.ok(read('src/e2e/messaging.js').includes("if (event?.code !== 'e2e-devices' || !event.messageId) return false;"));
 });

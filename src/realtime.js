@@ -6,13 +6,21 @@ import { frameBytes, recordUsage } from './networkUsage.js';
 // gone: nothing arrives, sends vanish, and the browser may not notice for minutes. The app therefore checks for
 // itself (the server's own pings are invisible to JavaScript):
 //   - on screen, a client:ping every PING_INTERVAL_MS; no frame of any kind within PONG_TIMEOUT_MS = dead;
-//   - a sent message with no message:ack within ACK_TIMEOUT_MS triggers the same check at once;
-//   - a network change (navigator.connection), coming back online, or the app returning to screen checks at once.
-// A dead socket is abandoned without waiting for its closing handshake and a new one opens immediately; the
-// outbox is replayed on connect (App.jsx onReady), so what was sent into the dead socket goes out again.
+//   - a sent message with no message:ack within ACK_TIMEOUT_MS, and not a single frame since it was sent: the socket
+//     is replaced at once (a slow but living socket, still sending frames, is only checked);
+//   - coming back online, a change of network type (Wi-Fi <-> mobile), or the app returning to screen after a quiet
+//     spell (STALE_AFTER_MS without a frame, or HIDDEN_STALE_MS in the background): replaced at once; otherwise checked.
+// A replaced socket is abandoned without waiting for its closing handshake and a new one opens immediately; the
+// outbox is replayed on connect (App.jsx onReady), so what was sent into the dead socket goes out again (the server
+// answers a message id it already has with its ack, so nothing is stored or shown twice).
+// Before: an unanswered message waited 8 s, then a ping 8 s more (8-16 s), and a return to screen pinged first.
 export const PING_INTERVAL_MS = 20_000;
-export const PONG_TIMEOUT_MS = 8_000;
-export const ACK_TIMEOUT_MS = 8_000;
+export const PONG_TIMEOUT_MS = 4_000;
+export const ACK_TIMEOUT_MS = 3_000;
+// A socket that has heard nothing for this long is not trusted when the app comes back (on screen it hears a pong
+// every PING_INTERVAL_MS), nor after this long in the background.
+export const STALE_AFTER_MS = PING_INTERVAL_MS + PONG_TIMEOUT_MS + 1_000;
+export const HIDDEN_STALE_MS = 15_000;
 // A drop that heals within this long is not shown as "Connecting…" (a Wi-Fi ↔ mobile data switch).
 export const STATE_DEBOUNCE_MS = 3_000;
 
@@ -43,11 +51,21 @@ export class RealtimeClient {
     this.pongTimer = null;
     this.ackTimer = null;
     this.awaitingAcks = new Map(); // message id -> when it was sent on the current socket
+    this.lastFrameAt = 0; // when the current socket last received anything
+    this.hiddenAt = this.visibility === 'visible' ? 0 : Date.now();
+    this.networkType = navigator.connection?.type ?? null;
     this.listenersAttached = false;
     this.handleVisibility = () => {
       this.visibility = document.visibilityState;
-      this.publishState();
-      if (this.visibility === 'visible') this.wake();
+      if (this.visibility === 'visible') {
+        const hiddenFor = this.hiddenAt ? Date.now() - this.hiddenAt : 0;
+        this.hiddenAt = 0;
+        this.publishState();
+        this.wake({ stale: hiddenFor > HIDDEN_STALE_MS });
+      } else {
+        this.hiddenAt = Date.now();
+        this.publishState();
+      }
       this.schedulePing();
     };
     this.handleActivity = () => {
@@ -59,8 +77,15 @@ export class RealtimeClient {
       this.scheduleIdle();
     };
     this.handleOffline = () => this.abandon('offline');
-    this.handleOnline = () => this.wake();
-    this.handleNetworkChange = () => this.wake();
+    // Back online: whatever socket survived belonged to the network that went away.
+    this.handleOnline = () => this.wake({ stale: true });
+    // A new network (Wi-Fi <-> mobile data): the old socket's route is gone. Other changes (a speed estimate) only check.
+    this.handleNetworkChange = () => {
+      const type = navigator.connection?.type ?? null;
+      const switched = type !== this.networkType;
+      this.networkType = type;
+      this.wake({ stale: switched && type !== null });
+    };
   }
 
   /** online at once; connecting/offline only once it has lasted STATE_DEBOUNCE_MS (or right away when `now`). */
@@ -94,6 +119,7 @@ export class RealtimeClient {
       window.clearTimeout(openTimer);
       if (this.socket !== socket) return;
       this.attempt = 0;
+      this.lastFrameAt = Date.now();
       this.onState('online');
       this.publishState();
       this.schedulePing();
@@ -155,15 +181,31 @@ export class RealtimeClient {
   }
 
   /**
-   * The network may have changed or the app came back: check the socket now and, if none is open, connect now
-   * (backoff starts over: the reason for the earlier failures may be gone).
+   * The network may have changed or the app came back: an open socket that is `stale` (or has heard nothing for
+   * STALE_AFTER_MS) is replaced now, a recent one is checked; with none open, connect now (backoff starts over: the
+   * reason for the earlier failures may be gone).
    */
-  wake() {
+  wake({ stale = false } = {}) {
     if (this.closed) return;
     this.attempt = 0;
-    if (this.socket?.readyState === WebSocket.OPEN) { this.probe(); return; }
+    if (this.socket?.readyState === WebSocket.OPEN) {
+      if (stale || Date.now() - this.lastFrameAt > STALE_AFTER_MS) this.replace('stale');
+      else this.probe();
+      return;
+    }
     if (this.socket?.readyState === WebSocket.CONNECTING) return;
     if (navigator.onLine === false) return;
+    this.connect();
+  }
+
+  /** A new socket now, without asking the current one first; it is closed without waiting for its handshake. */
+  replace(reason) {
+    if (this.closed) return;
+    this.attempt = 0;
+    const old = this.socket;
+    this.socket = null;
+    this.stopChecks();
+    if (old) { try { old.close(4000, String(reason).slice(0, 60)); } catch { /* already closing */ } }
     this.connect();
   }
 
@@ -175,12 +217,7 @@ export class RealtimeClient {
    */
   reconnectNow({ timeoutMs = 10_000 } = {}) {
     if (this.closed) return Promise.resolve(false);
-    this.attempt = 0;
-    const old = this.socket;
-    this.socket = null;
-    this.stopChecks();
-    if (old) { try { old.close(4001, 'push wake'); } catch { /* already closing */ } }
-    this.connect();
+    this.replace('push wake');
     const socket = this.socket;
     return new Promise((resolve) => {
       if (!socket) { resolve(false); return; }
@@ -203,6 +240,7 @@ export class RealtimeClient {
 
   /** Any frame from the server proves the socket works. */
   alive() {
+    this.lastFrameAt = Date.now();
     window.clearTimeout(this.pongTimer);
     this.pongTimer = null;
   }
@@ -218,16 +256,26 @@ export class RealtimeClient {
     }, PING_INTERVAL_MS);
   }
 
-  /** A message the server has not acknowledged for ACK_TIMEOUT_MS: check the socket now. */
+  /**
+   * A message the server has not acknowledged for ACK_TIMEOUT_MS: if the socket has heard nothing at all since that
+   * message left, it is dead (writes into it vanish) and is replaced now; if frames still arrive, it is only slow, and
+   * is checked. Checked again until every message is acknowledged.
+   */
   watchAcks() {
     if (this.ackTimer || !this.awaitingAcks.size) return;
+    const oldest = Math.min(...this.awaitingAcks.values());
+    const wait = Math.max(250, oldest + ACK_TIMEOUT_MS - Date.now());
     this.ackTimer = window.setTimeout(() => {
       this.ackTimer = null;
       const now = Date.now();
       for (const [id, sentAt] of this.awaitingAcks) if (now - sentAt > 5 * 60_000) this.awaitingAcks.delete(id);
-      if ([...this.awaitingAcks.values()].some((sentAt) => now - sentAt >= ACK_TIMEOUT_MS)) this.probe();
+      const overdue = [...this.awaitingAcks.values()].filter((sentAt) => now - sentAt >= ACK_TIMEOUT_MS);
+      if (overdue.length) {
+        if (this.lastFrameAt <= Math.min(...overdue)) { this.replace('no ack'); return; }
+        this.probe();
+      }
       this.watchAcks();
-    }, ACK_TIMEOUT_MS);
+    }, wait);
   }
 
   stopChecks() {
