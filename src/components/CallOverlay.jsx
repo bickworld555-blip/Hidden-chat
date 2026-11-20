@@ -1,4 +1,5 @@
 import { apiFetch } from '../api.js';
+import { pipSnap } from '../callWindow.js';
 import { useContactNames } from '../useContactNames.js';
 import { noteCallEvent } from '../callDiagnostics.js';
 import { endCallOverHttp, ownedCallIds } from '../callEnd.js';
@@ -789,13 +790,15 @@ export default function CallOverlay({
     setTilePosition(null);
     setMinimized(true);
   };
-  // The minimised window drags from anywhere on it (not just its bar) and snaps to the nearest corner on release.
+  // The minimised window drags from anywhere on it (not just its bar). On release it snaps to the nearer side (or the
+  // side it was flung towards) and stays at the height it was left, like Android's own floating window (seen with
+  // WhatsApp's video call on the S23, 2026-11-21: always 45 px from the left or right edge, any height).
   const [pipSnapping, setPipSnapping] = useState(false);
   const onPipPointerDown = (event) => {
     if (!minimized || event.target.closest('button') || (event.button ?? 0) !== 0) return;
     const rect = event.currentTarget.getBoundingClientRect();
     setPipSnapping(false);
-    dragRef.current = { offsetX: event.clientX - rect.left, offsetY: event.clientY - rect.top, width: rect.width, height: rect.height, moved: false, startX: event.clientX, startY: event.clientY };
+    dragRef.current = { offsetX: event.clientX - rect.left, offsetY: event.clientY - rect.top, width: rect.width, height: rect.height, moved: false, startX: event.clientX, startY: event.clientY, lastX: event.clientX, lastAt: Date.now(), velocityX: 0 };
     event.currentTarget.setPointerCapture?.(event.pointerId);
   };
   const onPipPointerMove = (event) => {
@@ -803,6 +806,10 @@ export default function CallOverlay({
     if (!drag) return;
     if (!drag.moved && Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) < 6) return;
     drag.moved = true;
+    const now = Date.now();
+    if (now > drag.lastAt) drag.velocityX = (event.clientX - drag.lastX) / (now - drag.lastAt);
+    drag.lastX = event.clientX;
+    drag.lastAt = now;
     const x = Math.max(0, Math.min(event.clientX - drag.offsetX, window.innerWidth - drag.width));
     const y = Math.max(0, Math.min(event.clientY - drag.offsetY, window.innerHeight - drag.height));
     setPipPosition({ x, y });
@@ -815,7 +822,7 @@ export default function CallOverlay({
     draggedRef.current = Boolean(drag?.moved);
     if (drag?.moved) {
       const rect = event.currentTarget.getBoundingClientRect();
-      setPipPosition(pipCorner(rect));
+      setPipPosition(pipSnap(rect, drag.velocityX, { width: window.innerWidth, height: window.innerHeight }, safeAreaTop()));
       setPipSnapping(true);
       window.setTimeout(() => setPipSnapping(false), 260);
     }
@@ -1135,16 +1142,6 @@ export default function CallOverlay({
 }
 
 // Nearest corner for the minimised call window: clear of the status bar at the top and the tab bar at the bottom.
-export function pipCorner(rect, viewport = { width: window.innerWidth, height: window.innerHeight }, safeTop = safeAreaTop()) {
-  const margin = 12;
-  const left = rect.left + rect.width / 2 < viewport.width / 2;
-  const top = rect.top + rect.height / 2 < viewport.height / 2;
-  return {
-    x: left ? margin : Math.max(margin, viewport.width - rect.width - margin),
-    y: top ? safeTop + 64 : Math.max(safeTop + 64, viewport.height - rect.height - 84),
-  };
-}
-
 function safeAreaTop() {
   if (typeof document === 'undefined') return 0;
   const styles = getComputedStyle(document.documentElement);

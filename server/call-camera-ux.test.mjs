@@ -42,3 +42,18 @@ test('your own picture in a video call is 9:16', () => {
   const [, , width, height] = rule.map(Number);
   assert.ok(Math.abs(width / height - 9 / 16) < 0.02, `9:16, got ${width}x${height}`);
 });
+
+// The minimised call window settles like Android's floating window (WhatsApp video call on the S23, 2026-11-21):
+// against the nearer side or the side it was flung towards, at the height it was left; never into the bars.
+test('the minimised call window snaps to a side and keeps its height; a fling picks the side', async () => {
+  const { pipSnap, PIP_FLING_SPEED } = await import('../src/callWindow.js');
+  const viewport = { width: 400, height: 800 };
+  const box = (left, top) => ({ left, top, width: 120, height: 200 });
+  assert.deepEqual(pipSnap(box(50, 300), 0, viewport), { x: 12, y: 300 }, 'left half: left side, same height');
+  assert.deepEqual(pipSnap(box(230, 300), 0, viewport), { x: 268, y: 300 }, 'right half: right side');
+  assert.deepEqual(pipSnap(box(230, 10), 0, viewport, 24), { x: 268, y: 88 }, 'not under the top bar');
+  assert.deepEqual(pipSnap(box(50, 700), 0, viewport), { x: 12, y: 516 }, 'not over the bottom controls');
+  assert.equal(pipSnap(box(50, 300), PIP_FLING_SPEED, viewport).x, 268, 'flung right from the left half: right side');
+  assert.equal(pipSnap(box(230, 300), -PIP_FLING_SPEED, viewport).x, 12, 'flung left: left side');
+  assert.equal(pipSnap(box(230, 300), PIP_FLING_SPEED / 2, viewport).x, 268, 'a slow drag keeps the nearer side');
+});
