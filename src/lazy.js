@@ -20,11 +20,16 @@ export function lazyComponent(factory, pick = (module) => module.default) {
   return LazyScreen;
 }
 
+const PRELOAD_AFTER_MS = 3000;
 let preloadScheduled = false;
 export function preloadLazyScreens() {
   if (preloadScheduled) return;
   preloadScheduled = true;
   const run = () => { for (const load of loaders) load().catch(() => {}); };
-  if (typeof requestIdleCallback === 'function') requestIdleCallback(run, { timeout: 4000 });
-  else setTimeout(run, 1500);
+  // After the chat list has drawn: on a cold start the first idle moment could fall while the list was still being
+  // built, and compiling some 40 screens then held it back (S23, 2026-11-22). A screen opened sooner loads on demand.
+  setTimeout(() => {
+    if (typeof requestIdleCallback === 'function') requestIdleCallback(run, { timeout: 4000 });
+    else run();
+  }, PRELOAD_AFTER_MS);
 }
