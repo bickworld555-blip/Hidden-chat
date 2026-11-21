@@ -29,76 +29,47 @@ public class AppActivity extends BridgeActivity {
     // Logged decisions of the hand-back (when a call answered from elsewhere ends): `adb logcat -s CallReturn`.
     private static final String RETURN_TAG = "CallReturn";
 
-    // Answered from the notification while the phone was in use (CallAnswerActivity): the app opened in the floating
-    // call window. A voice call then tucks itself away once its service holds the microphone, so the person carries
-    // on in their app; a video call stays in the floating window. Cleared once the person opens the call themselves.
-    static final String EXTRA_QUIET_ANSWER = "hm_quiet_answer";
-    private static volatile boolean quietAnswer;
-    private static final long QUIET_HIDE_MS = 700;
+    // Answered from the notification while the phone was in use (CallAnswerActivity): the call screen opens full size,
+    // like a phone app's in-call screen. Until the web app has drawn it, a native "Connecting…" cover with the caller's
+    // name stands in, so the web view's last picture (the chat list) never shows. Hang-up then hands back (handBack).
+    static final String EXTRA_ANSWERED_AWAY = "hm_answered_away";
+    static final String EXTRA_CALLER_NAME = "hm_caller_name";
 
     // Whether the screen is in the floating window, from Android's own callbacks (isInPictureInPictureMode() was
     // stale on the S23 after the floating task had been sent back).
     private static volatile boolean floating;
 
-    /** The call's service now holds the microphone (it keeps working in the background): tuck a quiet voice call away. */
-    static void callServiceReady() {
-        if (!quietAnswer) return;
-        handler.removeCallbacks(hideQuietCall);
-        micSeenAt = 0;
-        micWaits = 0;
-        handler.postDelayed(hideQuietCall, QUIET_HIDE_MS);
-    }
-
-    // "Call started" only means answering began: the web view still has to open the microphone and send its answer,
-    // which stalled when the screen left that early (S23: the caller never connected). It leaves once the app's own
-    // microphone recording runs, plus a moment for the answer to go out; if the microphone never starts it stays.
-    private static long micSeenAt;
-    private static int micWaits;
-    private static final long MIC_SETTLE_MS = 1500;
-    private static final long MIC_POLL_MS = 250;
-    private static final int MIC_MAX_WAITS = 40;
-
-    private static boolean recordingNow(Context context) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.N) return true;
-        android.media.AudioManager audio = context.getSystemService(android.media.AudioManager.class);
-        return audio != null && !audio.getActiveRecordingConfigurations().isEmpty();
-    }
-
-    private static final Runnable hideQuietCall = new Runnable() {
-        @Override
-        public void run() {
-            AppActivity activity = current;
-            if (!quietAnswer || activity == null || !MessagingService.isCallActive()) return;
-            // A video call stays in the floating window (its camera needs a window on screen).
-            if (MessagingService.isVideoCallActive()) { android.util.Log.i(RETURN_TAG, "quiet answer: video stays floating"); return; }
-            if (!recordingNow(activity)) {
-                if (++micWaits < MIC_MAX_WAITS) { handler.postDelayed(this, MIC_POLL_MS); return; }
-                android.util.Log.i(RETURN_TAG, "quiet answer: the microphone never started, the call stays on screen");
-                return;
-            }
-            long now = android.os.SystemClock.elapsedRealtime();
-            if (micSeenAt == 0) { micSeenAt = now; handler.postDelayed(this, MIC_SETTLE_MS); return; }
-            quietAnswer = false;
-            boolean wasFloating = floating;
-            boolean moved = activity.moveTaskToBack(!wasFloating);
-            // Android does not always report leaving the floating window for a task sent back from it: note it here,
-            // or the next quiet answer would think the screen is still floating (seen on the S23: it stayed full size).
-            floating = false;
-            android.util.Log.i(RETURN_TAG, "quiet answer: voice call tucked away (floating=" + wasFloating + " moved=" + moved + " mic for " + (now - micSeenAt) + " ms)");
-        }
-    };
-
-    // A plain cover over a quietly answered call until its call screen is up: the web view's last picture (the chat
-    // list) never shows. The page underneath stays visible to the web app, so nothing re-rings.
     private android.view.View answerCover;
     private long coveredAt;
     private static final long COVER_MIN_MS = 400;
-    private static final long COVER_MAX_MS = 3000;
+    private static final long COVER_MAX_MS = 5000;
+    private static final long COVER_FADE_MS = 160;
 
-    private void coverUntilCallShows() {
+    /** The call screen's stand-in while the web view wakes: dark, the caller's name, "Connecting…". */
+    private void coverUntilCallShows(String name) {
         if (answerCover == null) {
-            answerCover = new android.view.View(this);
-            answerCover.setBackgroundColor(0xff0b1220);
+            android.widget.LinearLayout column = new android.widget.LinearLayout(this);
+            column.setOrientation(android.widget.LinearLayout.VERTICAL);
+            column.setGravity(android.view.Gravity.CENTER);
+            column.setBackgroundColor(0xff0b1220);
+            android.widget.TextView title = new android.widget.TextView(this);
+            title.setText(name == null || name.trim().isEmpty() ? "Hidden Messenger" : name.trim());
+            title.setTextColor(0xffffffff);
+            title.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 26);
+            title.setSingleLine(true);
+            title.setEllipsize(android.text.TextUtils.TruncateAt.END);
+            title.setGravity(android.view.Gravity.CENTER);
+            int pad = Math.round(24 * getResources().getDisplayMetrics().density);
+            title.setPadding(pad, 0, pad, 0);
+            android.widget.TextView state = new android.widget.TextView(this);
+            state.setText("Connecting…");
+            state.setTextColor(0x99ffffff);
+            state.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 16);
+            state.setGravity(android.view.Gravity.CENTER);
+            state.setPadding(0, pad / 3, 0, 0);
+            column.addView(title);
+            column.addView(state);
+            answerCover = column;
             ((android.view.ViewGroup) getWindow().getDecorView()).addView(answerCover,
                 new android.view.ViewGroup.LayoutParams(android.view.ViewGroup.LayoutParams.MATCH_PARENT, android.view.ViewGroup.LayoutParams.MATCH_PARENT));
         }
@@ -110,14 +81,27 @@ public class AppActivity extends BridgeActivity {
     private final Runnable uncoverCheck = new Runnable() {
         @Override
         public void run() {
-            if (answerCover == null) return;
+            android.view.View cover = answerCover;
+            if (cover == null) return;
             long shown = android.os.SystemClock.elapsedRealtime() - coveredAt;
             if (!MessagingService.isCallActive() && shown < COVER_MAX_MS) { handler.postDelayed(this, 150); return; }
-            ((android.view.ViewGroup) getWindow().getDecorView()).removeView(answerCover);
             answerCover = null;
-            android.util.Log.i(RETURN_TAG, "quiet answer: call screen shown after " + shown + " ms");
+            // A short fade into the call screen instead of a cut.
+            cover.animate().alpha(0f).setDuration(COVER_FADE_MS).withEndAction(() -> {
+                android.view.ViewParent parent = cover.getParent();
+                if (parent instanceof android.view.ViewGroup) ((android.view.ViewGroup) parent).removeView(cover);
+            }).start();
+            android.util.Log.i(RETURN_TAG, "answered away: call screen shown after " + shown + " ms");
         }
     };
+
+    /** Answered from the notification while away: cover the web view's last picture until the call screen is up. */
+    private void coverIfAnsweredAway(Intent intent) {
+        if (intent == null || !intent.getBooleanExtra(EXTRA_ANSWERED_AWAY, false)) return;
+        // Once only: a later recreation of this screen (rotation, theme) must not cover a call already on show.
+        intent.removeExtra(EXTRA_ANSWERED_AWAY);
+        coverUntilCallShows(intent.getStringExtra(EXTRA_CALLER_NAME));
+    }
 
     /** A call started ringing: remember whether the app was in front (unlocked) at that moment. */
     static void callRinging(Context context) {
@@ -200,7 +184,7 @@ public class AppActivity extends BridgeActivity {
         if (getIntent() != null && getIntent().getBooleanExtra(Alerts.EXTRA_CALL, false)) applyCallWindow(true);
         // A fresh screen knows its window: opened straight into the floating window by a quiet answer, or full size.
         floating = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && isInPictureInPictureMode();
-        if (quietAnswer && getIntent() != null && getIntent().getBooleanExtra(EXTRA_QUIET_ANSWER, false)) coverUntilCallShows();
+        coverIfAnsweredAway(getIntent());
         // Back closes the top screen inside the app (chat → chat list, drawers, viewer…); with nothing left to close
         // the app goes to the background instead of being destroyed, like WhatsApp.
         getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
@@ -223,35 +207,6 @@ public class AppActivity extends BridgeActivity {
         super.onStop();
     }
 
-    @Override
-    public void onResume() {
-        super.onResume();
-        if (quietAnswer) android.util.Log.i(RETURN_TAG, "quiet answer: resumed, floating=" + floating + " (Android says " + isInPictureInPictureMode() + ")");
-        // Android brought the existing screen forward full size instead of into the floating window: float it now.
-        if (quietAnswer && !floating) handler.post(() -> {
-            if (quietAnswer && !floating && current == this) {
-                boolean floated = enterFloatingWindow();
-                android.util.Log.i(RETURN_TAG, "quiet answer: opened full size, floating=" + floated);
-            }
-        });
-    }
-
-    private boolean enterFloatingWindow() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false;
-        try {
-            return enterPictureInPictureMode(pipParams(this, false));
-        } catch (IllegalStateException unsupported) {
-            return false;
-        }
-    }
-
-    /** A touch on the full-size screen: the person is using the app, so a quiet answer no longer tucks it away. */
-    @Override
-    public void onUserInteraction() {
-        super.onUserInteraction();
-        if (quietAnswer && !floating) { quietAnswer = false; android.util.Log.i(RETURN_TAG, "quiet answer: the person is using the app"); }
-    }
-
     /** Answered through Android (headset, car, watch): the same hand-back as an answer from the call screen. */
     static void answeredFromOutside() {
         armHandBack();
@@ -264,20 +219,15 @@ public class AppActivity extends BridgeActivity {
         if (Intent.ACTION_MAIN.equals(intent.getAction()) && intent.hasCategory(Intent.CATEGORY_LAUNCHER)) {
             if (returnAfterCall) android.util.Log.i(RETURN_TAG, "opened from the launcher: stay in the app after the call");
             returnAfterCall = false;
-            quietAnswer = false;
             return;
         }
         if (!Alerts.ACTION_ACCEPT.equals(intent.getAction())) return;
         // Captured when it started ringing (with the app closed nothing was visible, so that counts too).
         armHandBack();
-        quietAnswer = intent.getBooleanExtra(EXTRA_QUIET_ANSWER, false);
-        if (quietAnswer) android.util.Log.i(RETURN_TAG, "quiet answer: floating until the call runs");
     }
 
     /** The call ended (still ended a moment later, so a voice/video switch does not count): step back if asked. */
     static void callEnded() {
-        quietAnswer = false;
-        handler.removeCallbacks(hideQuietCall);
         handler.removeCallbacks(handBack);
         handler.removeCallbacks(forgetUnusedHandBack);
         handBackTries = 0;
@@ -321,7 +271,7 @@ public class AppActivity extends BridgeActivity {
         if (intent != null && intent.getBooleanExtra(Alerts.EXTRA_CALL, false)) applyCallWindow(true);
         super.onNewIntent(intent);
         // Before the screen shows again: cover the web view's last picture until the call screen is up.
-        if (quietAnswer && intent != null && intent.getBooleanExtra(EXTRA_QUIET_ANSWER, false)) coverUntilCallShows();
+        coverIfAnsweredAway(intent);
     }
 
     /** While a call rings or is in progress the call screen shows over the lock screen, like the phone app. */
@@ -403,12 +353,7 @@ public class AppActivity extends BridgeActivity {
     @Override
     public void onPictureInPictureModeChanged(boolean active, Configuration newConfig) {
         super.onPictureInPictureModeChanged(active, newConfig);
-        boolean wasFloating = floating;
         floating = active;
-        if (quietAnswer) android.util.Log.i(RETURN_TAG, "quiet answer: floating window " + (active ? "on" : "off"));
-        // Opened from the floating window to full size during the call: the person wants the app, it stays. (A late
-        // "off" for a window already sent back is not that: it was no longer counted as floating.)
-        if (!active && wasFloating && quietAnswer) { quietAnswer = false; android.util.Log.i(RETURN_TAG, "quiet answer: opened to full size"); }
         HiddenNativePlugin.emitPictureInPicture(active);
     }
 

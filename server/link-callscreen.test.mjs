@@ -94,40 +94,31 @@ test('a call answered from the lock screen or another app hands back there when 
 });
 
 // Seen on the S23 (2026-11-21): Answer on the notification over Home brought the whole app up and the chat list showed
-// for ~1.8 s before the call screen. Answering while the phone is in use now opens straight into the floating window.
-test('Answer while the phone is in use opens the floating call window, never the chat list; a voice call then tucks away', async () => {
+// for ~1.8 s before the call screen. WhatsApp Business (observed the same day, system state only) opens its own call
+// screen and returns to the app the person was in. Our own version: the call screen opens full size behind a native
+// "Connecting…" stand-in until the web app has drawn it; Home/Back floats a video call; hang-up hands back.
+test('Answer while the phone is in use opens the call screen (never the chat list) and hangs up back to the other app', async () => {
   const alerts = await java('Alerts.java');
-  assert.ok(alerts.includes('Intent accept = CallAnswerActivity.intent(context, id, video);'), 'the notification answers through CallAnswerActivity');
+  assert.ok(alerts.includes('Intent accept = CallAnswerActivity.intent(context, id, video, name);'), 'the notification answers through CallAnswerActivity');
   const answer = await java('CallAnswerActivity.java');
-  assert.match(answer, /boolean locked = keyguard != null && keyguard\.isKeyguardLocked\(\);[\s\S]*?if \(!locked\) \{\s*accept\.putExtra\(AppActivity\.EXTRA_QUIET_ANSWER, true\);[\s\S]*?ActivityOptions\.makeLaunchIntoPip\(AppActivity\.pipParams\(this, video\)\)/, 'locked: full call screen; in use: into the floating window');
-  assert.match(answer, /catch \(RuntimeException refused\) \{[\s\S]*?startActivity\(accept\);/, 'picture-in-picture refused: still answers');
+  assert.match(answer, /boolean locked = keyguard != null && keyguard\.isKeyguardLocked\(\);\s*if \(!locked\) \{\s*accept\.putExtra\(AppActivity\.EXTRA_ANSWERED_AWAY, true\);/, 'in use: the call screen with its stand-in; locked: over the lock screen');
+  assert.ok(!answer.includes('makeLaunchIntoPip'), 'no floating launch: the call screen opens full size');
   const manifest = await source('android/app/src/main/AndroidManifest.xml');
   assert.match(manifest, /android:name="\.CallAnswerActivity"\s*android:theme="@android:style\/Theme\.NoDisplay"[\s\S]*?android:excludeFromRecents="true"/, 'no window, not in recents');
   const activity = await java('AppActivity.java');
-  assert.ok(activity.includes('quietAnswer = intent.getBooleanExtra(EXTRA_QUIET_ANSWER, false);'));
-  // A voice call leaves the screen only once its service holds the microphone (it keeps working in the background).
-  const service = await java('MessagingService.java');
-  assert.ok(service.includes('if (callActive && (Build.VERSION.SDK_INT < Build.VERSION_CODES.R || (attempt & ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE) != 0)) AppActivity.callServiceReady();'));
-  assert.match(activity, /hideQuietCall = new Runnable\(\) \{[\s\S]*?if \(MessagingService\.isVideoCallActive\(\)\) \{[^}]*return; \}[\s\S]*?quietAnswer = false;[\s\S]*?activity\.moveTaskToBack\(!wasFloating\);\s*[\s\S]*?floating = false;/, 'video stays floating, voice tucks away (and is no longer counted as floating)');
-  // "Call started" is only the start of answering: a voice call leaves once its own microphone recording runs (plus a
-  // moment for the answer to go out). Leaving earlier stalled the answer on the S23 and the caller never connected.
-  assert.match(activity, /if \(!recordingNow\(activity\)\) \{[\s\S]*?handler\.postDelayed\(this, MIC_POLL_MS\);[\s\S]*?if \(micSeenAt == 0\) \{ micSeenAt = now; handler\.postDelayed\(this, MIC_SETTLE_MS\); return; \}/);
-  assert.ok(activity.includes('!audio.getActiveRecordingConfigurations().isEmpty()'));
+  // The stand-in: covers the web view's last picture from before the screen shows until the call is live (or 5 s).
+  assert.match(activity, /super\.onNewIntent\(intent\);[\s\S]*?coverIfAnsweredAway\(intent\);/);
+  assert.ok(activity.includes('coverIfAnsweredAway(getIntent());'));
+  assert.match(activity, /if \(!MessagingService\.isCallActive\(\) && shown < COVER_MAX_MS\)/);
+  assert.match(activity, /intent\.removeExtra\(EXTRA_ANSWERED_AWAY\);/, 'once only');
+  assert.ok(activity.includes('state.setText("Connecting…");'));
+  for (const gone of ['quietAnswer', 'hideQuietCall', 'callServiceReady']) assert.ok(!activity.includes(gone), `no ${gone}: nothing hides the call screen by itself`);
   // Only the current screen closing means the app has no screen (else the call watchdog ended a live call).
   assert.match(activity, /public void onDestroy\(\) \{[\s\S]*?if \(current == this\) \{\s*current = null;\s*alive = false;\s*\}/);
   // The call's AudioManager is the application's, so stop() removes the listener watch() added (it crashed before).
   const audio = await java('CallAudio.java');
   assert.equal((audio.match(/getSystemService\(AudioManager\.class\)/g) ?? []).length, (audio.match(/context\.getApplicationContext\(\)\.getSystemService\(AudioManager\.class\)/g) ?? []).length);
-  // Floating is tracked from Android's callbacks: isInPictureInPictureMode() stayed true on the S23 after the floating
-  // task had been sent back, so the next quiet answer stayed full size.
-  assert.match(activity, /public void onPictureInPictureModeChanged\(boolean active, Configuration newConfig\) \{[\s\S]*?boolean wasFloating = floating;\s*floating = active;/);
-  assert.match(activity, /if \(quietAnswer && !floating\) handler\.post\(/, 'opened full size: float it');
-  // The web view's last picture (the chat list) is covered until the call screen is up.
-  assert.match(activity, /super\.onNewIntent\(intent\);[\s\S]*?if \(quietAnswer && intent != null && intent\.getBooleanExtra\(EXTRA_QUIET_ANSWER, false\)\) coverUntilCallShows\(\);/);
-  assert.match(activity, /if \(!MessagingService\.isCallActive\(\) && shown < COVER_MAX_MS\)/);
-  // The person takes over: a touch on the full screen, opening the floating window, or the launcher keep the app open.
-  assert.match(activity, /public void onUserInteraction\(\) \{[\s\S]*?if \(quietAnswer && !floating\) \{ quietAnswer = false;/);
-  assert.ok(activity.includes('if (!active && wasFloating && quietAnswer) { quietAnswer = false;'));
-  assert.match(activity, /CATEGORY_LAUNCHER\)\) \{[\s\S]*?quietAnswer = false;\s*return;/);
-  assert.match(activity, /static void callEnded\(\) \{\s*quietAnswer = false;\s*handler\.removeCallbacks\(hideQuietCall\);/);
+  // Floating is tracked from Android's callbacks (isInPictureInPictureMode() stayed true on the S23 after the floating
+  // task had been sent back).
+  assert.match(activity, /public void onPictureInPictureModeChanged\(boolean active, Configuration newConfig\) \{[\s\S]*?floating = active;/);
 });
