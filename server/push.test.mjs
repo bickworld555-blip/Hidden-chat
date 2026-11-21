@@ -243,7 +243,16 @@ test('Android: idle with push (no always-on service), woken by Firebase like Wha
   const pushService = await java('PushService.java');
   assert.ok(pushService.includes('PushRegistration.decrypt(this, message.getData().get("enc"), message.getData().get("iv"))'), 'payloads are decrypted on the phone');
   assert.match(pushService, /private void onDirectMessage[\s\S]*?Alerts\.showMessage\([\s\S]*?PushRegistration\.markDelivered\(this, id\);/, 'notify straight from the push, then two ticks over HTTP');
-  assert.match(pushService, /private void onCall[\s\S]*?Alerts\.showIncomingCall\([\s\S]*?MessagingService\.startSync\(this, CALL_SYNC_MS\);/, 'ring at once, then a short sync collects the offer');
+  assert.match(pushService, /private void onCall[\s\S]*?Alerts\.showIncomingCall\([\s\S]*?MessagingService\.startCallSync\(this, CALL_SYNC_MS\);/, 'ring at once, then a short sync collects the offer');
+  // No stray "Connecting to the call…" once the ringing is over (S23, 2026-11-21: it stood ~40 s after a short call).
+  const messaging = await java('MessagingService.java');
+  assert.match(messaging, /static void callRingEnded\(\) \{[\s\S]*?callSyncUntil = tail;/, 'the call sync ends 3 s after the ringing');
+  assert.ok(messaging.includes('return now < syncUntil || now < callSyncUntil || (Alerts.isRinging() && now < callSyncUntil + 60_000);'), 'a message sync keeps its own deadline');
+  assert.match(messaging, /if \(!active && callActive\) callRingEnded\(\);/, 'and when the call ends');
+  assert.ok(messaging.includes('Alerts.isRinging() ? "Connecting to the call…" : "Getting new messages…"'), 'the call text only while a call rings');
+  assert.ok(messaging.includes('.setVisibility(isLegacy(this) ? NotificationCompat.VISIBILITY_PRIVATE : NotificationCompat.VISIBILITY_SECRET)'), 'off the lock screen beside the ringing card');
+  const alertsSource = await java('Alerts.java');
+  assert.match(alertsSource, /static void cancelIncomingCall\(Context context\) \{[\s\S]*?MessagingService\.callRingEnded\(\);/, 'every way the ringing ends');
   assert.ok(pushService.includes('case "call_end": onCallEnd(body); break;'));
   // A push-rung call that ends unanswered is a missed call (notification + call log), unless declined on another device.
   assert.match(pushService, /private void onCallEnd[\s\S]*?"declined"\.equals\(body\.optString\("reason"\)\)\) Alerts\.cancelIncomingCall\(this, body\.optString\("callId"\)\);\s*else Alerts\.missedCall\(this\);/);

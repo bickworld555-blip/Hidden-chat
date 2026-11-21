@@ -244,6 +244,6 @@ public class PushService extends FirebaseMessagingService {
             "video".equals(body.optString("mode")), session.ringtoneSound, from.isEmpty() ? null : Avatars.pathFor(from));
         // It rang here: tell the server, so the caller sees "Ringing" (onMessageReceived runs off the main thread).
         PushRegistration.confirmRinging(this, body.optString("callId"));
-        MessagingService.startSync(this, CALL_SYNC_MS);
+        MessagingService.startCallSync(this, CALL_SYNC_MS);
     }
 }

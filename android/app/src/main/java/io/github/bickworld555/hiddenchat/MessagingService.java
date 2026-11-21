@@ -45,8 +45,14 @@ public class MessagingService extends Service {
     private static volatile long callStartedAt;
 
     private static final String ACTION_SYNC = "io.github.bickworld555.hiddenchat.SYNC";
-    // While a push asks for it (elapsed-realtime deadline): connected long enough to collect a call's offer.
+    // While a push asks for it (elapsed-realtime deadline): connected long enough to collect what waits.
     private static volatile long syncUntil;
+    // An incoming call's push (its own deadline): connected while it rings so Accept / Decline work. It ends shortly
+    // after the ringing does (callRingEnded) instead of running out its full minute: the service then stopped late and
+    // its notification stood as a stray "Connecting to the call…" after the call was over (S23, 2026-11-21).
+    private static volatile long callSyncUntil;
+    // After the ringing ends: long enough for a decline or a quick reply to leave through this connection.
+    private static final long CALL_SYNC_TAIL_MS = 3_000;
     private static final Handler timers = new Handler(Looper.getMainLooper());
 
     static void start(Context context) {
@@ -65,7 +71,7 @@ public class MessagingService extends Service {
     private static boolean syncing() {
         long now = android.os.SystemClock.elapsedRealtime();
         // A call that is still ringing keeps the connection a little longer, so Accept / Decline still work.
-        return now < syncUntil || (Alerts.isRinging() && now < syncUntil + 60_000);
+        return now < syncUntil || now < callSyncUntil || (Alerts.isRinging() && now < callSyncUntil + 60_000);
     }
 
     /** Whether the service has anything to do now. */
@@ -79,8 +85,30 @@ public class MessagingService extends Service {
      * start one from the background.
      */
     static void startSync(Context context, long durationMs) {
-        Context app = context.getApplicationContext();
         syncUntil = Math.max(syncUntil, android.os.SystemClock.elapsedRealtime() + durationMs);
+        beginSync(context, durationMs);
+    }
+
+    /** An incoming call's push: connected while it rings (see callSyncUntil). */
+    static void startCallSync(Context context, long durationMs) {
+        callSyncUntil = Math.max(callSyncUntil, android.os.SystemClock.elapsedRealtime() + durationMs);
+        beginSync(context, durationMs);
+    }
+
+    /**
+     * The ringing ended (answered, declined, missed or given up): the call's sync ends a moment later. An answered call
+     * is held from then on by the call itself (callActive); a message sync keeps its own deadline.
+     */
+    static void callRingEnded() {
+        long tail = android.os.SystemClock.elapsedRealtime() + CALL_SYNC_TAIL_MS;
+        if (callSyncUntil <= tail) return;
+        callSyncUntil = tail;
+        timers.removeCallbacks(syncCheck);
+        timers.postDelayed(syncCheck, CALL_SYNC_TAIL_MS + 500);
+    }
+
+    private static void beginSync(Context context, long durationMs) {
+        Context app = context.getApplicationContext();
         try {
             ContextCompat.startForegroundService(app, new Intent(app, MessagingService.class).setAction(ACTION_SYNC));
         } catch (RuntimeException notAllowed) {
@@ -134,6 +162,8 @@ public class MessagingService extends Service {
         if (active != callActive) android.util.Log.i("CallReturn", "call " + (active ? "started" : "ended") + " (app)");
         if (active && !callActive) callStartedAt = System.currentTimeMillis();
         if (!active && callActive) AppActivity.callEnded();
+        // The call is over: its push sync has nothing left to wait for.
+        if (!active && callActive) callRingEnded();
         // Only a change reaches Android: a stray "not in a call" must not drop a call that is still ringing.
         if (active || callActive) TelecomCalls.live(context, active, video, name);
         callActive = active;
@@ -251,9 +281,13 @@ public class MessagingService extends Service {
         Notification notification = callActive ? callNotification(content) : new NotificationCompat.Builder(this, NotificationChannels.CONNECTION)
             .setSmallIcon(R.drawable.ic_stat_hidden)
             .setContentTitle("Hidden Messenger")
-            .setContentText(isLegacy(this) ? "Connected · receiving messages and calls" : "Connecting to the call…")
+            .setContentText(isLegacy(this) ? "Connected · receiving messages and calls" : Alerts.isRinging() ? "Connecting to the call…" : "Getting new messages…")
             .setContentIntent(content)
             .setOngoing(true)
+            // The ringing call has its own card on the lock screen; this service line stays off it (the always-on
+            // connection keeps its usual lock-screen line).
+            .setVisibility(isLegacy(this) ? NotificationCompat.VISIBILITY_PRIVATE : NotificationCompat.VISIBILITY_SECRET)
+            .setSilent(true)
             .setShowWhen(false)
             .setPriority(NotificationCompat.PRIORITY_MIN)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)

@@ -432,6 +432,8 @@ final class Alerts {
         ringingCaller = null;
         AppActivity.callWindowChanged();
         TelecomCalls.ringingStopped();
+        // Answered, declined, missed or given up: the push's connection for this call ends shortly after.
+        MessagingService.callRingEnded();
     }
 
     private static volatile Intent lastCallScreen;
