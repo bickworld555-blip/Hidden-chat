@@ -79,6 +79,8 @@ final class BackgroundSql {
             sqlite = new CapacitorSQLite(context.getApplicationContext(), config);
         }
         // The app creates and keys the database; before it has, there is nothing to write into.
+        // The same one-time key switch as the app's (whichever opens first in this process does it).
+        DatabaseKey.ensureRaw(context);
         if (!sqlite.isDatabase(DB_NAME) || !sqlite.isSecretStored()) throw new Exception("no-database");
         try { sqlite.closeConnection(DB_NAME, false); } catch (Exception ignored) { }
         sqlite.createConnection(DB_NAME, true, "secret", 1, new Hashtable<>(), false);

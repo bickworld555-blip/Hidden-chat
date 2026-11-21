@@ -168,6 +168,13 @@ public class HiddenNativePlugin extends Plugin {
      * The app's own background fetch has ended (src/App.jsx): the CPU may sleep again (FetchWake, P3); "offline-done"
      * or "quiet" also counts as a completed fetch for the hourly check (HeartbeatJob, P4).
      */
+    /** Before the web app opens its database: the one-time switch to a raw SQLCipher key (DatabaseKey). */
+    @PluginMethod
+    public void prepareDatabase(PluginCall call) {
+        DatabaseKey.ensureRaw(getContext());
+        call.resolve();
+    }
+
     @PluginMethod
     public void backgroundFetchDone(PluginCall call) {
         String reason = call.getString("reason", "");

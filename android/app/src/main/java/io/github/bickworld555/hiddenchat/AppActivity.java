@@ -48,7 +48,7 @@ public class AppActivity extends BridgeActivity {
     private static final long COVER_FADE_MS = 120;
 
     /** The call screen's stand-in while the web view wakes: dark, the caller's name, "Connecting…". */
-    private void coverUntilCallShows(String name) {
+    private void coverUntilCallShows(String name, String callId) {
         if (answerCover == null) {
             android.widget.LinearLayout column = new android.widget.LinearLayout(this);
             column.setOrientation(android.widget.LinearLayout.VERTICAL);
@@ -71,6 +71,28 @@ public class AppActivity extends BridgeActivity {
             state.setPadding(0, pad / 3, 0, 0);
             column.addView(title);
             column.addView(state);
+            // Hang up works from the first frame, even while the web call screen is still loading (a cold start after
+            // an update took 2.4 s on the S23): the call ends on the server and here, as the floating window's button does.
+            android.widget.TextView end = new android.widget.TextView(this);
+            end.setText("End");
+            end.setTextColor(0xffffffff);
+            end.setTextSize(android.util.TypedValue.COMPLEX_UNIT_SP, 16);
+            end.setGravity(android.view.Gravity.CENTER);
+            android.graphics.drawable.GradientDrawable red = new android.graphics.drawable.GradientDrawable();
+            red.setShape(android.graphics.drawable.GradientDrawable.OVAL);
+            red.setColor(0xffd85d56);
+            end.setBackground(red);
+            end.setContentDescription("End call");
+            int size = Math.round(68 * getResources().getDisplayMetrics().density);
+            android.widget.LinearLayout.LayoutParams endParams = new android.widget.LinearLayout.LayoutParams(size, size);
+            endParams.topMargin = pad * 3;
+            final String endCallId = callId;
+            end.setOnClickListener((view) -> {
+                Context app = getApplicationContext();
+                if (endCallId != null && !endCallId.isEmpty()) CallActionReceiver.endOnServer(app, endCallId, "hang-up");
+                CallActionReceiver.hangUp(app);
+            });
+            column.addView(end, endParams);
             answerCover = column;
             ((android.view.ViewGroup) getWindow().getDecorView()).addView(answerCover,
                 new android.view.ViewGroup.LayoutParams(android.view.ViewGroup.LayoutParams.MATCH_PARENT, android.view.ViewGroup.LayoutParams.MATCH_PARENT));
@@ -102,7 +124,7 @@ public class AppActivity extends BridgeActivity {
         if (intent == null || !intent.getBooleanExtra(EXTRA_ANSWERED_AWAY, false)) return;
         // Once only: a later recreation of this screen (rotation, theme) must not cover a call already on show.
         intent.removeExtra(EXTRA_ANSWERED_AWAY);
-        coverUntilCallShows(intent.getStringExtra(EXTRA_CALLER_NAME));
+        coverUntilCallShows(intent.getStringExtra(EXTRA_CALLER_NAME), intent.getStringExtra(Alerts.EXTRA_CALL_ID));
     }
 
     /** A call started ringing: remember whether the app was in front (unlocked) at that moment. */

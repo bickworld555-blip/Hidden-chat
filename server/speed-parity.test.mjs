@@ -56,3 +56,22 @@ test('chats open with their last screenful first; list photos use a small copy',
   assert.match(read('src/components/Avatar.jsx'), /decoding="async"/);
   assert.match(read('src/styles.css'), /@media \(hover: hover\) \{ \.wa-row-wrapper:hover/);
 });
+
+test('the local database opens with a raw SQLCipher key: new phones from the start, older ones switched once, safely', () => {
+  const key = java('DatabaseKey');
+  assert.match(key, /return "x'" \+ hex \+ "'";/, 'the same 256 bits in raw form');
+  assert.match(key, /if \(opens\(db, secret\)\) \{[\s\S]{0,300}copy\(db, backup\);[\s\S]{0,80}rekey\(db, secret, rawKey\);[\s\S]{0,300}if \(!opens\(db, rawKey\)\) \{\s+if \(!opens\(db, secret\)\) copy\(backup, db\);/, 'backed up, checked before the new key is stored, restored if neither key opens it');
+  assert.match(key, /else if \(!opens\(db, rawKey\)\)/, 'an interrupted switch is finished next start');
+  assert.ok(key.indexOf('rekey(db, secret, rawKey)') < key.indexOf('putString(SECRET, rawKey).commit()'), 'the secret changes only after the database');
+  assert.match(java('BackgroundSql'), /DatabaseKey\.ensureRaw\(context\);\s+if \(!sqlite\.isDatabase/);
+  assert.match(java('HiddenNativePlugin'), /public void prepareDatabase\(PluginCall call\) \{\s+DatabaseKey\.ensureRaw\(getContext\(\)\);/);
+  const db = read('src/sqliteMessageDb.js');
+  assert.match(db, /return `x'\$\{Array\.from\(bytes/);
+  assert.match(db, /await prepareKey\(\);\s+const sqlite = new SQLiteConnection\(CapacitorSQLite\);\s+if \(!\(await sqlite\.isSecretStored\(\)\)/);
+});
+
+test('the answer cover can hang up before the web call screen is up', () => {
+  const activity = java('AppActivity');
+  assert.match(activity, /end\.setContentDescription\("End call"\);/);
+  assert.match(activity, /CallActionReceiver\.endOnServer\(app, endCallId, "hang-up"\);\s+CallActionReceiver\.hangUp\(app\);/);
+});

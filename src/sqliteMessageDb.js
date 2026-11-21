@@ -97,9 +97,23 @@ let connectionPromise = null;
 let ftsAvailable = false;
 let schemaState = null;
 
+// A random 256-bit key in SQLCipher's raw-key form (x'…'): opened without the passphrase stretching (256,000
+// PBKDF2 rounds, 0.4 s of every cold start), which a random key does not need. Older phones are switched once by
+// Android (DatabaseKey.java) before the first open.
 async function randomSecret() {
   const bytes = globalThis.crypto.getRandomValues(new Uint8Array(32));
-  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('');
+  return `x'${Array.from(bytes, (byte) => byte.toString(16).padStart(2, '0')).join('')}'`;
+}
+
+// Android: the one-time switch of an older phone's key to the raw form, before anything opens the database. Absent
+// in older APKs (the database then opens as before).
+async function prepareKey() {
+  const capacitor = globalThis.Capacitor;
+  if (!capacitor?.isNativePlatform?.() || !capacitor.isPluginAvailable?.('HiddenNative')) return;
+  try {
+    const { registerPlugin } = await import('@capacitor/core');
+    await registerPlugin('HiddenNative').prepareDatabase();
+  } catch { /* older APK or refused: opens with the stored secret as before */ }
 }
 
 /**
@@ -140,6 +154,7 @@ export function useLocalDatabaseConnector(open) {
 }
 
 async function openWithPlugin() {
+  await prepareKey();
   const sqlite = new SQLiteConnection(CapacitorSQLite);
   if (!(await sqlite.isSecretStored()).result) await sqlite.setEncryptionSecret(await randomSecret());
   const consistent = (await sqlite.checkConnectionsConsistency()).result;

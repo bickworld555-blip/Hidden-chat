@@ -68,7 +68,7 @@ public class CallActionReceiver extends BroadcastReceiver {
     }
 
     /** POST /api/v1/calls/:id/end off the main thread. */
-    private static void endOnServer(Context app, String callId, String why) {
+    static void endOnServer(Context app, String callId, String why) {
         if (callId == null || callId.isEmpty()) return;
         new Thread(() -> {
             boolean ended = PushRegistration.endCall(app, callId);
