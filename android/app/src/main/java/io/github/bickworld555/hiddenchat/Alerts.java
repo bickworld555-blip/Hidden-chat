@@ -73,8 +73,18 @@ final class Alerts {
         final String sender;
         final CharSequence text;
         final long at;
-        Line(String sender, CharSequence text, long at) { this.sender = sender; this.text = text; this.at = at; }
+        // Shown the moment the push came, before the app had opened the sealed message (showArriving).
+        final boolean arriving;
+        Line(String sender, CharSequence text, long at) { this(sender, text, at, false); }
+        Line(String sender, CharSequence text, long at, boolean arriving) { this.sender = sender; this.text = text; this.at = at; this.arriving = arriving; }
     }
+    // How a conversation's notification was last drawn, to draw it again without its arriving lines (settleArriving).
+    private static final class Look {
+        final String channelId, name, open, avatar;
+        Look(String channelId, String name, String open, String avatar) { this.channelId = channelId; this.name = name; this.open = open; this.avatar = avatar; }
+    }
+    private static final java.util.Map<String, Look> looks = new java.util.HashMap<>();
+    static final String ARRIVING_TEXT = "New message";
     private static final java.util.Map<String, java.util.ArrayList<Line>> history = new java.util.HashMap<>();
     private static final int HISTORY_LINES = 7;
 
@@ -106,19 +116,111 @@ final class Alerts {
             if (postedAt.size() > 500) postedAt.clear();
         }
         if (!firstNotice(messageId)) return true;
-        String name = title == null || title.isEmpty() ? "Hidden Messenger" : title;
-        boolean group = channelId.startsWith(NotificationChannels.GROUP_MESSAGES);
+        return post(context, channelId, key, title, body, open, count, sender, avatar, false);
+    }
+
+    /**
+     * A message is on its way (its push came) but still sealed: the conversation's notification shows and sounds at
+     * once with "New message", without waiting for the app to wake, connect and open it (2-3 s with the app closed or
+     * the phone locked, S23 2026-11-21). The real line then takes its place quietly (showMessage); one the app never
+     * delivers is taken away again when its fetch completes (settleArriving).
+     */
+    static boolean showArriving(Context context, String channel, String title, String tag, String open, String sender, String avatar) {
+        synchronized (Alerts.class) {
+            postedAt.put(tag, android.os.SystemClock.elapsedRealtime());
+        }
+        return post(context, channel, tag, title, ARRIVING_TEXT, open, 0, sender, avatar, true);
+    }
+
+    /** Whether a real line (not an arriving one) of this conversation was shown within the last `ms`. */
+    static boolean shownRecently(String tag, long ms) {
+        synchronized (Alerts.class) {
+            java.util.ArrayList<Line> kept = history.get(tag);
+            if (kept == null) return false;
+            long since = System.currentTimeMillis() - ms;
+            for (Line line : kept) if (!line.arriving && line.at >= since) return true;
+            return false;
+        }
+    }
+
+    /**
+     * The app's fetch completed: "New message" lines it did not replace belonged to nothing it shows (an edit, a
+     * reaction, a muted or hidden chat, a message already read elsewhere), so they go. A fetch that failed leaves them:
+     * they stand in for the sealed notice.
+     */
+    static void settleArriving(Context context) {
+        java.util.ArrayList<String> changed = new java.util.ArrayList<>();
+        synchronized (Alerts.class) {
+            for (java.util.Map.Entry<String, java.util.ArrayList<Line>> entry : history.entrySet()) {
+                int removed = 0;
+                for (java.util.Iterator<Line> it = entry.getValue().iterator(); it.hasNext();) {
+                    if (it.next().arriving) { it.remove(); removed++; }
+                }
+                if (removed == 0) continue;
+                Integer count = counts.get(entry.getKey());
+                if (count != null) counts.put(entry.getKey(), Math.max(0, count - removed));
+                changed.add(entry.getKey());
+            }
+        }
+        for (String key : changed) redraw(context, key);
+    }
+
+    private static void redraw(Context context, String key) {
         java.util.ArrayList<Line> lines;
+        Look look;
         int unread;
         synchronized (Alerts.class) {
             java.util.ArrayList<Line> kept = history.get(key);
+            look = looks.get(key);
+            if (kept == null || kept.isEmpty() || look == null) {
+                history.remove(key);
+                counts.remove(key);
+                lines = null;
+                unread = 0;
+            } else {
+                lines = new java.util.ArrayList<>(kept);
+                Integer count = counts.get(key);
+                unread = count == null ? lines.size() : count;
+            }
+        }
+        if (lines == null) {
+            NotificationManagerCompat.from(context).cancel(key, 1);
+            return;
+        }
+        draw(context, look.channelId, key, look.name, lines.get(lines.size() - 1).text, look.open, look.avatar, lines, unread, true);
+    }
+
+    private static boolean post(Context context, String channelId, String key, String title, String body, String open, int count,
+                                String sender, String avatar, boolean arriving) {
+        String name = title == null || title.isEmpty() ? "Hidden Messenger" : title;
+        java.util.ArrayList<Line> lines;
+        int unread;
+        boolean quiet = false;
+        synchronized (Alerts.class) {
+            java.util.ArrayList<Line> kept = history.get(key);
             if (kept == null) { kept = new java.util.ArrayList<>(); history.put(key, kept); }
-            kept.add(new Line(sender, body == null ? "" : body, System.currentTimeMillis()));
+            Line early = null;
+            if (!arriving) for (Line line : kept) if (line.arriving) { early = line; break; }
+            if (early != null) {
+                // The real line of a message already announced: it takes the arriving line's place, without a second
+                // sound, and the unread count stays.
+                kept.remove(early);
+                quiet = true;
+            }
+            kept.add(new Line(sender, body == null ? "" : body, System.currentTimeMillis(), arriving));
             while (kept.size() > HISTORY_LINES) kept.remove(0);
             lines = new java.util.ArrayList<>(kept);
-            unread = count > 0 ? count : nextCount(key);
+            Integer current = counts.get(key);
+            unread = count > 0 ? count : quiet && current != null ? current : nextCount(key);
             counts.put(key, unread);
+            looks.put(key, new Look(channelId, name, open, avatar));
         }
+        return draw(context, channelId, key, name, body, open, avatar, lines, unread, quiet);
+    }
+
+    private static boolean draw(Context context, String channelId, String key, String name, CharSequence body, String open, String avatar,
+                                java.util.List<Line> lines, int unread, boolean quiet) {
+        boolean group = channelId.startsWith(NotificationChannels.GROUP_MESSAGES);
         android.graphics.Bitmap photo = Avatars.circle(context, avatar);
         Person chat = new Person.Builder().setName(name).setKey(key)
             .setIcon(photo == null ? null : androidx.core.graphics.drawable.IconCompat.createWithBitmap(photo)).build();
@@ -141,7 +243,9 @@ final class Alerts {
         builder.setNumber(unread);
         if (photo != null) builder.setLargeIcon(photo);
         addMessageActions(context, builder, key, open);
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+        // Replacing a line already announced (or dropping one): no second sound or heads-up.
+        if (quiet) builder.setOnlyAlertOnce(true);
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O && !quiet) {
             builder.setSound(NotificationChannels.soundOf(context, channelId));
             builder.setDefaults(NotificationCompat.DEFAULT_VIBRATE);
         }

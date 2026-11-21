@@ -41,9 +41,11 @@ public class AppActivity extends BridgeActivity {
 
     private android.view.View answerCover;
     private long coveredAt;
-    private static final long COVER_MIN_MS = 400;
+    // The cover leaves as soon as the web app reports the call live (it has drawn the call screen by then); the 400 ms
+    // minimum used before held the call screen back ~0.3 s longer than WhatsApp Business takes (S23, 2026-11-21).
+    private static final long COVER_MIN_MS = 120;
     private static final long COVER_MAX_MS = 5000;
-    private static final long COVER_FADE_MS = 160;
+    private static final long COVER_FADE_MS = 120;
 
     /** The call screen's stand-in while the web view wakes: dark, the caller's name, "Connecting…". */
     private void coverUntilCallShows(String name) {
@@ -84,7 +86,7 @@ public class AppActivity extends BridgeActivity {
             android.view.View cover = answerCover;
             if (cover == null) return;
             long shown = android.os.SystemClock.elapsedRealtime() - coveredAt;
-            if (!MessagingService.isCallActive() && shown < COVER_MAX_MS) { handler.postDelayed(this, 150); return; }
+            if (!MessagingService.isCallActive() && shown < COVER_MAX_MS) { handler.postDelayed(this, 50); return; }
             answerCover = null;
             // A short fade into the call screen instead of a cut.
             cover.animate().alpha(0f).setDuration(COVER_FADE_MS).withEndAction(() -> {
@@ -235,11 +237,13 @@ public class AppActivity extends BridgeActivity {
         handler.postDelayed(handBack, HAND_BACK_MS);
     }
 
-    // How long "Call ended" shows before the phone goes back, and how long the hand-back waits for the call to be
-    // reported finished (a voice/video switch, a call still marked ringing) before it gives up.
-    private static final long HAND_BACK_MS = 1200;
-    private static final long HAND_BACK_RETRY_MS = 500;
-    private static final int HAND_BACK_TRIES = 8;
+    // How soon the phone goes back after the call ends, and how long the hand-back waits for the call to be reported
+    // finished (a call still marked ringing) before it gives up. A voice/video switch reports "ended" and "started" in
+    // the same web-app tick, so a short first wait is enough to tell it apart; the 1.2 s wait used before left the
+    // person on our "Call ended" screen ten times longer than WhatsApp Business takes to return (S23, 2026-11-21).
+    private static final long HAND_BACK_MS = 200;
+    private static final long HAND_BACK_RETRY_MS = 250;
+    private static final int HAND_BACK_TRIES = 16;
     private static int handBackTries;
 
     private static final Runnable handBack = new Runnable() {

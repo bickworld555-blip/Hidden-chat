@@ -115,7 +115,9 @@ test('calls: the offer leaves sooner, the ring time is split, and a hidden video
   const { readFileSync } = await import('node:fs');
   const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), 'utf8');
   const engine = read('src/callEngine.js');
-  assert.equal((engine.match(/const \[stream\] = await Promise\.all\(\[captureLocal\(state\.mode\), ensureConnection\(\)\]\);/g) ?? []).length, 2, 'camera and connection setup overlap, calling and answering');
+  assert.equal((engine.match(/const \[stream\] = await Promise\.all\(\[captureLocal\(state\.mode\), ensureConnection\(\)\]\);/g) ?? []).length, 1, 'answering: camera and connection setup overlap');
+  // Calling: the offer (what rings the other phone) leaves before the microphone / camera are open; they fill its slots.
+  assert.match(engine, /const capture = captureLocal\(state\.mode\);[\s\S]{0,120}await ensureConnection\(\);[\s\S]{0,200}const slots = openSlots\(state\.mode\);\s+const offered = negotiate\(\);\s+const stream = await capture;\s+await fillSlots\(slots, stream\);/, 'calling: offer first, media after');
   assert.ok(engine.includes('if (signal.ring && !ringDetail) ringDetail = signal.ring;'));
   const overlay = read('src/components/CallOverlay.jsx');
   assert.match(overlay, /if \(iceCache && iceCache\.token === sessionToken && Date\.now\(\) - iceCache\.at < ICE_CACHE_MS\) return iceCache\.servers;/);

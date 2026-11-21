@@ -640,7 +640,9 @@ export function createCallEngine({
     const caps = rtc.RTCRtpSender?.getCapabilities?.('video');
     if (!caps?.codecs) return;
     for (const transceiver of connection.getTransceivers()) {
-      if (transceiver.sender?.track?.kind === 'video' && typeof transceiver.setCodecPreferences === 'function') {
+      // The receiver's track names the slot's kind even before a camera fills it (the first offer, openSlots).
+      const kind = transceiver.sender?.track?.kind ?? transceiver.receiver?.track?.kind;
+      if (kind === 'video' && typeof transceiver.setCodecPreferences === 'function') {
         try { transceiver.setCodecPreferences(orderCodecs(caps.codecs)); } catch {}
       }
     }
@@ -796,6 +798,35 @@ export function createCallEngine({
       tuneSender(sender);
     }
     preferCodecs();
+    localTracksReady = true;
+    const camera = stream.getVideoTracks()[0];
+    if (filterFactory && camera) applyFilter(camera).catch((error) => log('video-filter-start-failed', error));
+  }
+
+  // Outgoing call: the audio (and video) slots of the first offer, before the microphone / camera are open. They are
+  // tied to one stream so the other phone receives the tracks together, as addTrack(track, stream) did.
+  function openSlots(mode) {
+    const streams = [new rtc.MediaStream()];
+    const audio = connection.addTransceiver('audio', { direction: 'sendrecv', streams });
+    const video = mode === 'video' ? connection.addTransceiver('video', { direction: 'sendrecv', streams }) : null;
+    preferCodecs();
+    return { audio, video, stream: streams[0] };
+  }
+
+  async function fillSlots(slots, captured) {
+    if (closed || !connection) return;
+    // The offered stream becomes the call's own: tracks added later (voice to video) join it on both phones.
+    const stream = slots.stream;
+    for (const track of captured.getTracks()) {
+      stream.addTrack(track);
+      const slot = track.kind === 'video' ? slots.video : track.kind === 'audio' ? slots.audio : null;
+      // A track with no slot (should not happen) joins the old way; negotiationneeded sends the update.
+      const sender = slot ? slot.sender : connection.addTrack(track, stream);
+      if (slot) await sender.replaceTrack(track);
+      if (track.kind === 'video') videoSender = sender;
+      tuneSender(sender);
+    }
+    set({ localStream: stream });
     localTracksReady = true;
     const camera = stream.getVideoTracks()[0];
     if (filterFactory && camera) applyFilter(camera).catch((error) => log('video-filter-start-failed', error));
@@ -968,11 +999,22 @@ export function createCallEngine({
       set({ status: 'connecting' });
       armRingTimeout();
       try {
-        // The camera opening (0.5-1.5 s on phones) and the relay settings arriving overlap instead of adding up: the
-        // offer, which is what rings the other phone, leaves as soon as both are ready.
-        const [stream] = await Promise.all([captureLocal(state.mode), ensureConnection()]);
-        addLocalTracks(stream);
-        await negotiate();
+        // The offer is what rings the other phone: it leaves as soon as the connection exists, with empty audio (and
+        // video) slots, and the microphone / camera fill those slots when they open (no second offer). Waiting for
+        // them first held the ring back 1.1-1.9 s on the S23 (2026-11-21 benchmark).
+        const capture = captureLocal(state.mode);
+        capture.catch(() => {});
+        await ensureConnection();
+        if (typeof connection.addTransceiver === 'function' && rtc.MediaStream) {
+          const slots = openSlots(state.mode);
+          const offered = negotiate();
+          const stream = await capture;
+          await fillSlots(slots, stream);
+          await offered;
+        } else {
+          addLocalTracks(await capture);
+          await negotiate();
+        }
       } catch (error) {
         if (!closed) finish('failed', { reason: 'failed', message: error.message || 'Could not start this call.', notify: offerSent });
       }

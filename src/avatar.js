@@ -31,15 +31,52 @@ export function loadAvatar(src, token) {
   return objectUrls.get(key);
 }
 
-export function clearAvatarCache() {
-  for (const pending of objectUrls.values()) pending.then((url) => URL.revokeObjectURL(url)).catch(() => {});
-  objectUrls.clear();
+// List-sized photos (chat rows, call log): a small copy made once per photo. Rows showed the full upload (up to
+// 640 px) at 52 px, and decoding those while a list scrolled skipped frames on the S23 (2026-11-21 benchmark).
+export const AVATAR_THUMB_EDGE = 192;
+const thumbUrls = new Map();
+
+async function shrink(url) {
+  if (typeof createImageBitmap !== 'function' || typeof document === 'undefined') return url;
+  const blob = await (await fetch(url)).blob();
+  const bitmap = await createImageBitmap(blob, { resizeWidth: AVATAR_THUMB_EDGE, resizeHeight: AVATAR_THUMB_EDGE, resizeQuality: 'high' });
+  try {
+    const canvas = document.createElement('canvas');
+    canvas.width = AVATAR_THUMB_EDGE;
+    canvas.height = AVATAR_THUMB_EDGE;
+    canvas.getContext('2d').drawImage(bitmap, 0, 0);
+    const small = await new Promise((resolve) => canvas.toBlob(resolve, 'image/webp', 0.85));
+    return small ? URL.createObjectURL(small) : url;
+  } finally {
+    bitmap.close?.();
+  }
 }
 
-export function useAvatarSrc(src) {
+export function loadAvatarThumb(src, token) {
+  const key = `${token}\n${src}`;
+  if (!thumbUrls.has(key)) {
+    // A photo that cannot be shrunk shows full size, as before.
+    thumbUrls.set(key, loadAvatar(src, token).then((url) => shrink(url).catch(() => url)));
+  }
+  return thumbUrls.get(key);
+}
+
+// Photos already loaded, readable at once: a list drawn again (back from a chat) shows them in its first frame
+// instead of initials for a moment.
+const ready = new Map();
+
+export function clearAvatarCache() {
+  for (const pending of [...objectUrls.values(), ...thumbUrls.values()]) pending.then((url) => URL.revokeObjectURL(url)).catch(() => {});
+  objectUrls.clear();
+  thumbUrls.clear();
+  ready.clear();
+}
+
+export function useAvatarSrc(src, { thumb = false } = {}) {
   const token = useChatStore((state) => state.sessionToken);
   const needsAuth = isApiAvatar(src);
-  const [resolved, setResolved] = useState(needsAuth ? '' : src || '');
+  const key = `${thumb ? 't' : 'f'}\n${token}\n${src}`;
+  const [resolved, setResolved] = useState(needsAuth ? ready.get(key) ?? '' : src || '');
   useEffect(() => {
     if (!needsAuth) {
       setResolved(src || '');
@@ -49,11 +86,15 @@ export function useAvatarSrc(src) {
       setResolved('');
       return undefined;
     }
+    const known = ready.get(key);
+    if (known) { setResolved(known); return undefined; }
     let cancelled = false;
     setResolved('');
-    loadAvatar(src, token).then((url) => { if (!cancelled) setResolved(url); }).catch(() => { if (!cancelled) setResolved(''); });
+    (thumb ? loadAvatarThumb(src, token) : loadAvatar(src, token))
+      .then((url) => { ready.set(key, url); if (!cancelled) setResolved(url); })
+      .catch(() => { if (!cancelled) setResolved(''); });
     return () => { cancelled = true; };
-  }, [src, token, needsAuth]);
+  }, [src, token, needsAuth, thumb, key]);
   return resolved;
 }
 

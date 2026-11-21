@@ -29,6 +29,30 @@ function adminPage() {
   };
 }
 
+// The messenger (src/App.jsx) is imported only once the device's settings are loaded (src/main.jsx), but its code can
+// be fetched and compiled meanwhile: modulepreload does that without running it, so the import that follows finds it
+// ready instead of starting from nothing (the chat list waited for it on every cold start).
+function preloadApp() {
+  return {
+    name: 'hidden-preload-app',
+    apply: 'build',
+    transformIndexHtml: {
+      order: 'post',
+      handler(html, ctx) {
+        if (!ctx.bundle || !/(^|[\\/])index\.html$/.test(ctx.filename ?? '')) return html;
+        // The chunk holding src/App.jsx (merged chunks have no facade module, so its module list is what names it).
+        const isApp = (id) => String(id ?? '').replace(/\\/g, '/').endsWith('/src/App.jsx');
+        const app = Object.values(ctx.bundle).find((chunk) => chunk.type === 'chunk' && (isApp(chunk.facadeModuleId) || (chunk.moduleIds ?? Object.keys(chunk.modules ?? {})).some(isApp)));
+        if (!app) return html;
+        const tags = [app.fileName, ...app.imports]
+          .filter((file) => !html.includes(`/${file}"`))
+          .map((file) => `<link rel="modulepreload" crossorigin href="/${file}">`);
+        return tags.length ? html.replace('</head>', `  ${tags.join('\n    ')}\n  </head>`) : html;
+      },
+    },
+  };
+}
+
 const configuredHosts = (process.env.VITE_ALLOWED_HOSTS ?? '')
   .split(',')
   .map((host) => host.trim().toLowerCase())
@@ -37,7 +61,7 @@ const tunnelHost = process.env.VITE_TUNNEL_HOST?.trim().toLowerCase();
 const allowedHosts = [...new Set(['localhost', '127.0.0.1', '.ngrok-free.app', ...configuredHosts, ...(tunnelHost ? [tunnelHost] : [])])];
 
 export default defineConfig(({ mode }) => ({
-  plugins: [react(), tailwindcss(), androidCsp(mode), adminPage()],
+  plugins: [react(), tailwindcss(), androidCsp(mode), adminPage(), preloadApp()],
   // The web build has two pages: the app and the standalone admin page. The APK bundle has the app and its
   // background page (run on push with no app screen: android BackgroundHost.java, src/background/main.js).
   build: mode === 'android'

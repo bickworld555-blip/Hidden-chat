@@ -1636,7 +1636,10 @@ html, body { overflow-x: hidden; }
 .wa-chips button.active { background: var(--wa-chip-active); color: var(--wa-chip-active-text); font-weight: 600; }
 .wa-rows { flex: 1; min-height: 0; overflow-y: auto; padding-bottom: 96px; overscroll-behavior-y: contain; }
 .wa-row-wrapper { width: 100%; display: flex; align-items: center; position: relative; }
-.wa-row-wrapper:hover, .wa-row-wrapper:active { background: var(--wa-panel); }
+/* Touch screens keep :hover on the last tapped row (it repainted as the list began to scroll): hover tint only where a
+   pointer really hovers; a press still tints. */
+.wa-row-wrapper:active { background: var(--wa-panel); }
+@media (hover: hover) { .wa-row-wrapper:hover { background: var(--wa-panel); } }
 .wa-row { flex: 1; min-width: 0; display: flex; align-items: center; gap: 14px; padding: 10px 16px; border: 0; background: transparent; color: inherit; text-align: left; font: inherit; cursor: pointer; }
 .wa-row-actions { display: flex; align-items: center; gap: 4px; padding-right: 14px; flex: none; }
 .wa-row-call-icon { width: 34px; height: 34px; border-radius: 50%; border: 0; background: transparent; color: var(--wa-sub); display: grid; place-items: center; cursor: pointer; transition: all 0.15s ease; }

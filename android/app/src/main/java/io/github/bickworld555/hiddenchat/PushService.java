@@ -130,8 +130,11 @@ public class PushService extends FirebaseMessagingService {
         FetchWake.hold(context, fetchWakeMs);
         FetchWake.started();
         String from = body.optString("from");
-        boolean running = HiddenNativePlugin.emitXmppWake();
         String groupId = body.optString("groupId");
+        // The notification shows now, like WhatsApp's: "New message" from this person (or group), replaced by the real
+        // line as soon as the app has opened it (2-3 s later with the app closed or the phone locked).
+        announceArriving(context, session, from, groupId);
+        boolean running = HiddenNativePlugin.emitXmppWake();
         if (groupId.isEmpty()) PushRegistration.confirmXmppWake(context);
         if (running) {
             // The app's code is alive (its screen is in the background): like WhatsApp's push service, keep the process
@@ -157,6 +160,33 @@ public class PushService extends FirebaseMessagingService {
         showSealedWake(context, session, from, groupId);
         Log.i(TAG, "xmpp wake-up while the app is closed: collected when it opens");
     }
+
+    /**
+     * "New message" at once for a conversation the person can be told about: not on screen in the app, not muted,
+     * not a locked chat, and one whose name the app has shared (an unknown or hidden sender waits for the app, which
+     * decides). A real line of this conversation shown in the last seconds (it came over the connection first) means
+     * this push's message is probably on show already.
+     */
+    static void announceArriving(android.content.Context context, RelaySession session, String from, String groupId) {
+        if (AppActivity.isVisible()) return;
+        if (!groupId.isEmpty()) {
+            String name = RelaySession.groupName(context, groupId, "");
+            String tag = "group:" + groupId;
+            if (name.isEmpty() || session.mutedGroups.contains(groupId) || Alerts.shownRecently(tag, ARRIVING_RECENT_MS)) return;
+            Alerts.showArriving(context, NotificationChannels.messageChannel(context, true, session.groupSound), name, tag, tag,
+                RelaySession.userName(context, from, ""), null);
+            return;
+        }
+        if (from.isEmpty()) return;
+        String name = RelaySession.userName(context, from, "");
+        String tag = "chat:" + from;
+        if (name.isEmpty() || session.mutedChats.contains(from) || RelaySession.lockedChats(context).contains(from)
+            || Alerts.shownRecently(tag, ARRIVING_RECENT_MS)) return;
+        Alerts.showArriving(context, NotificationChannels.messageChannel(context, false, session.messageSound), name, tag, tag,
+            null, Avatars.pathFor(from));
+    }
+
+    private static final long ARRIVING_RECENT_MS = 5_000;
 
     /** A server-tuned duration from the push's `cfg`, clamped to [min, max]; `fallback` when absent. */
     static long tuned(JSONObject cfg, String key, long fallback, long min, long max) {

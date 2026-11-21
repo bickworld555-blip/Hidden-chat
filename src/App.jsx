@@ -333,6 +333,20 @@ export default function App() {
         const { accounts, activeId } = await loadAccounts();
         const account = accounts.find((item) => item.id === activeId);
         if (!account) return;
+        // Local-first: the saved account opens with its chats from this device at once, and the server check runs
+        // alongside instead of in front (its round trip held the chat list back on every cold start). A token the
+        // server refuses signs out as a revoked one does; a fresh profile replaces the saved one.
+        const saved = account.user?.id && account.token ? sessionFromAccount(account) : null;
+        if (saved) {
+          useChatStore.getState().setUserId(saved.user.id);
+          setSession(saved);
+          validateAccount(account).then((fresh) => {
+            if (!active) return;
+            if (fresh === null) { revokedRef.current?.(); return; }
+            if (fresh && useChatStore.getState().sessionToken === fresh.token) setSession(fresh);
+          }).catch(() => { /* offline: the saved account stays; checked again when the connection is back */ });
+          return;
+        }
         let session;
         try {
           session = await validateAccount(account);
@@ -376,10 +390,10 @@ export default function App() {
       setFatalError('');
       setConnection('connecting');
       try {
-        await hydrateContacts(userId);
-        await hydrateMessages(userId);
-        await hydrateCallLogs(userId);
-        await hydratePreferences(userId);
+        // The chat list draws from the contacts (each with its last message) and the list preferences, read together;
+        // the saved messages and the call log follow together. One after another they added up on every cold start.
+        await Promise.all([hydrateContacts(userId), hydratePreferences(userId)]);
+        await Promise.all([hydrateMessages(userId), hydrateCallLogs(userId)]);
         if (cancelled) return;
         if (cancelled) return;
         let connectedBefore = false;

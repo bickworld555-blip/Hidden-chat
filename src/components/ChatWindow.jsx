@@ -8,6 +8,9 @@ import { contactEncrypted, prewarmDirect } from '../e2e/client.js';
 import { isNotice, noticeText } from '../e2e/notices.js';
 import { isMediaContent, primeMediaBlob } from '../media.js';
 import { LOAD_OLDER_STEP, RENDER_WINDOW, renderCountFor, windowedMessages } from '../messageWindow.js';
+
+// Rows drawn in a chat's first frame: more than a tall phone screen holds.
+const FIRST_PAINT = 30;
 import { attachmentContent, sealForUpload } from '../mediaCrypto.js';
 import { ArrowLeft, Ban, Camera, Check, CheckCheck, ChevronDown, ChevronUp, Clock, CornerUpLeft, FileText, Forward, Image as ImageIcon, Info, Link2, Mic, MoreVertical, Paperclip, Pencil, Phone, Pin, PinOff, Search, Send, Share2, ShoppingCart, Smile, Star, Timer, Trash2, Video, X } from 'lucide-react';
 import { parseVoiceContent, voiceContent, voiceExtension } from '../voice.js';
@@ -829,7 +832,9 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
 
   // Long chats render only their newest messages (WhatsApp's list only has the rows on screen); older ones are
   // added as the user scrolls up, and the view stays exactly where it was while they are added above it.
-  const [renderCount, setRenderCount] = useState(RENDER_WINDOW);
+  // Opening a chat draws only its last screenful first (FIRST_PAINT) and the rest of the window right after that
+  // frame (growRenderWindow): building all 150 rows before the first frame made some chats open in 0.5-1.9 s (S23).
+  const [renderCount, setRenderCount] = useState(FIRST_PAINT);
   const olderAnchorRef = useRef(null);
   const visibleMessages = useMemo(() => windowedMessages(messages, renderCount), [messages, renderCount]);
   const hiddenOlder = messages.length - visibleMessages.length;
@@ -868,6 +873,23 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
     olderAnchorRef.current = container.scrollHeight - container.scrollTop;
     setRenderCount((count) => count + LOAD_OLDER_STEP);
   }, [hiddenOlder, olderOnDevice, chatId]);
+
+  // After the first frame: the rest of the window is added above, the view staying on the same messages.
+  const growRenderWindow = useCallback(() => {
+    let frame = 0;
+    let timer = 0;
+    frame = requestAnimationFrame(() => {
+      timer = setTimeout(() => {
+        const container = messageScrollRef.current;
+        setRenderCount((count) => {
+          if (count >= RENDER_WINDOW) return count;
+          if (container && olderAnchorRef.current === null) olderAnchorRef.current = container.scrollHeight - container.scrollTop;
+          return RENDER_WINDOW;
+        });
+      }, 0);
+    });
+    return () => { cancelAnimationFrame(frame); clearTimeout(timer); };
+  }, []);
 
   useLayoutEffect(() => {
     const container = messageScrollRef.current;
@@ -1056,8 +1078,9 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
   }, []);
 
   useEffect(() => {
-    setRenderCount(RENDER_WINDOW);
+    setRenderCount(FIRST_PAINT);
     olderAnchorRef.current = null;
+    const stopGrowing = growRenderWindow();
     setViewerMessageId(null);
     setHighlightId(null);
     setReplyingTo(null);
@@ -1067,7 +1090,8 @@ export default function ChatWindow({ chat, connection, client, onPair, onBack, o
     setSearchOpen(false);
     setSearchQuery('');
     clearSelection();
-  }, [chatId, clearSelection]);
+    return stopGrowing;
+  }, [chatId, clearSelection, growRenderWindow]);
 
   const modalOpen = Boolean(forwardSource || deleteTarget || infoMessage || viewerMessage || contactInfoOpen);
   // In-chat search steps from the newest match (index 0) towards older ones, like WhatsApp.

@@ -49,13 +49,21 @@ final class FetchWake {
         return started > 0 && started > endedAt;
     }
 
+    // After a completed fetch, how long its own notifications get before unfilled "New message" lines go.
+    private static final long SETTLE_ARRIVING_MS = 1_500;
+
     /**
      * The fetch has ended (the app's own, or the background page): the CPU may sleep, the short foreground service
      * ("Checking for new messages") goes at once rather than at its time limit, and `fetched` (everything waiting was
      * opened and notified) also counts for the sealed notice and the hourly check.
      */
     static void finished(Context context, boolean fetched) {
-        if (fetched) markFetched(context);
+        if (fetched) {
+            markFetched(context);
+            // Its notifications are posted by now; "New message" lines it did not replace go (Alerts.settleArriving).
+            Context app = context.getApplicationContext();
+            new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> Alerts.settleArriving(app), SETTLE_ARRIVING_MS);
+        }
         endedAt = android.os.SystemClock.elapsedRealtime();
         release();
         WakeKeeper.release();
