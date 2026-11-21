@@ -57,3 +57,21 @@ test('the minimised call window snaps to a side and keeps its height; a fling pi
   assert.equal(pipSnap(box(230, 300), -PIP_FLING_SPEED, viewport).x, 12, 'flung left: left side');
   assert.equal(pipSnap(box(230, 300), PIP_FLING_SPEED / 2, viewport).x, 268, 'a slow drag keeps the nearer side');
 });
+
+// The status-bar icon read at about half the size of other apps' icons on the S23 (2026-11-21): it used the launcher
+// icon's 108-unit canvas, so the mark covered only ~54% of the 24dp box. It is framed tightly now.
+test('the status-bar icon fills its box like other status-bar icons, and every notification uses it', () => {
+  const icon = read('android/app/src/main/res/drawable/ic_stat_hidden.xml');
+  const size = Number(icon.match(/android:viewportWidth="(\d+)"/)[1]);
+  assert.equal(size, Number(icon.match(/android:viewportHeight="(\d+)"/)[1]), 'square');
+  const dx = Number(icon.match(/android:translateX="(-?\d+)"/)[1]);
+  const dy = Number(icon.match(/android:translateY="(-?\d+)"/)[1]);
+  // The mark: a bubble of radius 30 centred at (54,53) with its tail ending at (26,82.5).
+  const [left, right, top, bottom] = [24 + dx, 84 + dx, 23 + dy, 83 + dy];
+  assert.ok(left >= 0 && top >= 0 && right <= size && bottom <= size, 'nothing clipped');
+  assert.ok((right - left) / size >= 0.8 && (bottom - top) / size >= 0.8, `fills at least 80% (${((right - left) / size).toFixed(2)})`);
+  for (const file of ['Alerts.java', 'MessagingService.java', 'BackgroundHost.java', 'WakeKeeper.java', 'UploadService.java']) {
+    const smallIcons = java(file).match(/setSmallIcon\([^)]*\)/g) ?? [];
+    assert.ok(smallIcons.every((call) => call === 'setSmallIcon(R.drawable.ic_stat_hidden)'), `${file}: one icon everywhere`);
+  }
+});

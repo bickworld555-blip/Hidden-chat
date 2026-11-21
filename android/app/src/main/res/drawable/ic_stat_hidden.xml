@@ -1,17 +1,24 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Monochrome status-bar icon: the app mark (speech bubble with the H of two people cut out); Android tints it. -->
+<!-- Monochrome status-bar icon: the app mark (speech bubble with the H of two people cut out); Android tints it.
+     Framed tightly for the status bar: the mark (about 60 units across, centred at 54,53) fills ~88% of the 24dp
+     icon, like other status-bar icons. It used the launcher icon's 108-unit canvas before, which left it at about
+     half size next to other apps' icons (S23, 2026-11-21). Same path, only the frame changed. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp"
     android:height="24dp"
-    android:viewportWidth="108"
-    android:viewportHeight="108">
-    <path
-        android:fillColor="#FFFFFFFF"
-        android:fillType="evenOdd"
-        android:pathData="M54,23a30,30 0,1 1,-15.9 55.5L26,82.5l4.2,-11.6A30,30 0,0 1,54 23z
-            M49.8,38.4a5,5 0,1 1,-10 0a5,5 0,1 1,10 0z
-            M68.2,38.4a5,5 0,1 1,-10 0a5,5 0,1 1,10 0z
-            M37.4,50.4a5.6,5.6 0,0 1,11.2 0l-0.9,17.2a4.7,4.7 0,0 1,-9.4 0z
-            M59.4,50.4a5.6,5.6 0,0 1,11.2 0l-0.9,17.2a4.7,4.7 0,0 1,-9.4 0z
-            M48.7,54.4h10.6v5.4h-10.6z" />
+    android:viewportWidth="68"
+    android:viewportHeight="68">
+    <group
+        android:translateX="-20"
+        android:translateY="-19">
+        <path
+            android:fillColor="#FFFFFFFF"
+            android:fillType="evenOdd"
+            android:pathData="M54,23a30,30 0,1 1,-15.9 55.5L26,82.5l4.2,-11.6A30,30 0,0 1,54 23z
+                M49.8,38.4a5,5 0,1 1,-10 0a5,5 0,1 1,10 0z
+                M68.2,38.4a5,5 0,1 1,-10 0a5,5 0,1 1,10 0z
+                M37.4,50.4a5.6,5.6 0,0 1,11.2 0l-0.9,17.2a4.7,4.7 0,0 1,-9.4 0z
+                M59.4,50.4a5.6,5.6 0,0 1,11.2 0l-0.9,17.2a4.7,4.7 0,0 1,-9.4 0z
+                M48.7,54.4h10.6v5.4h-10.6z" />
+    </group>
 </vector>
