@@ -92,7 +92,15 @@ test('Android 14+ calls go through the transactional calling API (no post-call s
   assert.match(calls, /if \(wasRinging\) CallActionReceiver\.decline\(context, id\);\s+else CallActionReceiver\.hangUp\(context\);/);
   assert.match(calls, /public void onMuteStateChanged\(boolean muted\) \{[\s\S]{0,400}emitCallAction\("mute", id, extra\)/);
   // A call that ended while Android was still adding it is ended when it arrives.
-  assert.match(calls, /if \(call != generation \|\| endWhenAdded\) \{\s+\/\/[^\n]*\n\s+added\.disconnect\(/);
+  assert.match(calls, /if \(call != generation \|\| endWhenAdded\) \{\s+\/\/[^\n]*\n[\s\S]{0,200}safely\("late end", \(\) -> added\.disconnect\(/);
   // No orphan left on the status bar.
   assert.match(calls, /dropping a call the app no longer has/);
+});
+
+test('answering a transactional call passes the call type Android accepts, and Telecom refusals never crash the app', () => {
+  const calls = java('TransactionalCalls');
+  assert.match(calls, /int type = video \? CallAttributes\.VIDEO_CALL : CallAttributes\.AUDIO_CALL;\s+safely\("answer", \(\) -> call\.answer\(type,/);
+  assert.ok(!/VideoProfile\.STATE_/.test(calls), 'no VideoProfile states given to CallControl');
+  for (const op of ['route', 'late end', 'set active', 'answer', 'disconnect']) assert.ok(calls.includes(`safely("${op}"`), `${op} is guarded`);
+  assert.match(calls, /private static void safely\(String what, Runnable operation\) \{\s+try \{\s+operation\.run\(\);\s+\} catch \(RuntimeException refused\)/);
 });

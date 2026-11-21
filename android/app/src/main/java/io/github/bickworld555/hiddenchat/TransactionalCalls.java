@@ -16,7 +16,6 @@ import android.telecom.DisconnectCause;
 import android.telecom.PhoneAccount;
 import android.telecom.PhoneAccountHandle;
 import android.telecom.TelecomManager;
-import android.telecom.VideoProfile;
 import android.util.Log;
 
 import androidx.annotation.NonNull;
@@ -109,10 +108,11 @@ final class TransactionalCalls {
         CallEndpoint target = pickEndpoint(endpoints, speaker);
         if (target == null) return false;
         if (target.getEndpointType() == endpointType) return true;
-        control.requestCallEndpointChange(target, executor(), new OutcomeReceiver<Void, CallException>() {
+        CallControl call = control;
+        safely("route", () -> call.requestCallEndpointChange(target, executor(), new OutcomeReceiver<Void, CallException>() {
             @Override public void onResult(Void result) { Log.i("CallAudio", "Telecom route set to " + target.getEndpointName()); }
             @Override public void onError(@NonNull CallException error) { Log.w("CallAudio", "Telecom route refused: " + error.getCode()); }
-        });
+        }));
         return true;
     }
 
@@ -233,7 +233,8 @@ final class TransactionalCalls {
                         pending = false;
                         if (call != generation || endWhenAdded) {
                             // Ended (or replaced) in the app while Android was adding it.
-                            added.disconnect(new DisconnectCause(incoming && ringing ? DisconnectCause.MISSED : DisconnectCause.LOCAL), executor(), ignore("late end"));
+                            DisconnectCause late = new DisconnectCause(incoming && ringing ? DisconnectCause.MISSED : DisconnectCause.LOCAL);
+                            safely("late end", () -> added.disconnect(late, executor(), ignore("late end")));
                             return;
                         }
                         control = added;
@@ -250,7 +251,7 @@ final class TransactionalCalls {
                             end(DisconnectCause.LOCAL);
                             return;
                         } else {
-                            added.setActive(executor(), ignore("set active"));
+                            safely("set active", () -> added.setActive(executor(), ignore("set active")));
                         }
                         CallAudio.telecomReady();
                         MessagingService.refresh();
@@ -275,7 +276,11 @@ final class TransactionalCalls {
     private static void answerCall() {
         if (control == null) return;
         ringing = false;
-        control.answer(video ? VideoProfile.STATE_BIDIRECTIONAL : VideoProfile.STATE_AUDIO_ONLY, executor(), ignore("answer"));
+        // CallControl.answer takes the call type (CallAttributes.AUDIO_CALL / VIDEO_CALL), not a VideoProfile state: a
+        // VideoProfile value (0 for voice) is refused with an exception, which crashed the app on every Answer.
+        CallControl call = control;
+        int type = video ? CallAttributes.VIDEO_CALL : CallAttributes.AUDIO_CALL;
+        safely("answer", () -> call.answer(type, executor(), ignore("answer")));
     }
 
     private static void end(int cause) {
@@ -288,9 +293,19 @@ final class TransactionalCalls {
         endpointType = -1;
         main.removeCallbacks(check);
         if (ending == null) return;
-        ending.disconnect(new DisconnectCause(wasRinging && cause == DisconnectCause.LOCAL ? DisconnectCause.MISSED : cause), executor(), ignore("disconnect"));
+        DisconnectCause why = new DisconnectCause(wasRinging && cause == DisconnectCause.LOCAL ? DisconnectCause.MISSED : cause);
+        safely("disconnect", () -> ending.disconnect(why, executor(), ignore("disconnect")));
         Log.i(TAG, "call " + callId + " ended (" + cause + ")");
         MessagingService.refresh();
+    }
+
+    /** Android refusing a call operation (an argument it does not accept, a call it already dropped) is logged, never a crash. */
+    private static void safely(String what, Runnable operation) {
+        try {
+            operation.run();
+        } catch (RuntimeException refused) {
+            Log.w(TAG, what + " refused by Android", refused);
+        }
     }
 
     private static OutcomeReceiver<Void, CallException> ignore(String what) {
