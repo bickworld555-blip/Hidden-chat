@@ -46,13 +46,12 @@ test('cold start: the saved account opens at once, its data loads together, and 
   assert.match(read('vite.config.js'), /rel="modulepreload" crossorigin href="\/\$\{file\}"/);
 });
 
-test('chats open with their last screenful first; list photos use a small copy', () => {
+test('chats open with their last screenful first; loaded photos show at once', () => {
   const chat = read('src/components/ChatWindow.jsx');
   assert.match(chat, /const FIRST_PAINT = 30;/);
   assert.match(chat, /useState\(FIRST_PAINT\)/);
   assert.match(chat, /olderAnchorRef\.current = container\.scrollHeight - container\.scrollTop;\s+return RENDER_WINDOW;/, 'the view stays on the same messages');
-  const avatar = read('src/avatar.js');
-  assert.match(avatar, /AVATAR_THUMB_EDGE = 192;/);
+  assert.match(read('src/avatar.js'), /const known = ready\.get\(key\);\s+if \(known\) \{ setResolved\(known\); return undefined; \}/, 'loaded photos show in the first frame');
   assert.match(read('src/components/Avatar.jsx'), /decoding="async"/);
   assert.match(read('src/styles.css'), /@media \(hover: hover\) \{ \.wa-row-wrapper:hover/);
 });

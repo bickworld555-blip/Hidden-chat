@@ -206,7 +206,7 @@ test('the UI shows the pencil on the own photo, filled hearts for favourites, an
   assert.ok(profile.includes('accept="image/*" capture="user"') && profile.includes('Choose from gallery') && profile.includes('Remove photo'));
   assert.ok(profile.includes('uploadAvatar(await prepareAvatarBlob(file), sessionToken)'), 'photos are resized before upload');
   assert.ok(tools.includes('<ProfilePhoto size="large" />') && sidebar.includes('<ProfilePhoto size="small"'));
-  assert.ok(avatar.includes('useAvatarSrc(image ?? avatar ?? \'\', { thumb: !FULL_SIZE.has(size) })'), 'server photos load with the session header (a small copy in lists)');
+  assert.ok(avatar.includes('useAvatarSrc(image ?? avatar ?? \'\')'), 'server photos load with the session header');
 
   assert.ok(drawer.includes("iconProps={favourite ? { fill: 'currentColor' } : undefined}"), 'the heart fills when favourited');
   assert.ok(drawer.includes("title={favourite ? 'Remove from favourites' : 'Add to favourites'}"));
