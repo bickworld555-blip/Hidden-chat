@@ -53,6 +53,15 @@ final class TelecomCalls {
         return Build.VERSION.SDK_INT >= Build.VERSION_CODES.O;
     }
 
+    /**
+     * Android 14+: the transactional calling API instead of this ConnectionService ({@link TransactionalCalls}); the
+     * ConnectionService path stays for older phones. Every event below is handed over there.
+     */
+    @androidx.annotation.ChecksSdkIntAtLeast(api = 34)
+    static boolean transactional() {
+        return Build.VERSION.SDK_INT >= 34;
+    }
+
     static PhoneAccountHandle handle(Context context) {
         return new PhoneAccountHandle(new ComponentName(context, CallConnectionService.class), ACCOUNT_ID);
     }
@@ -66,8 +75,16 @@ final class TelecomCalls {
     }
 
     /** Registers the calling account once per process (Android keeps it; registering again only updates it). */
-    static synchronized boolean register(Context context) {
+    static boolean register(Context context) {
         if (!supported()) return false;
+        if (transactional()) {
+            synchronized (TelecomCalls.class) { app = context.getApplicationContext(); }
+            return TransactionalCalls.register(context);
+        }
+        return registerConnectionService(context);
+    }
+
+    private static synchronized boolean registerConnectionService(Context context) {
         app = context.getApplicationContext();
         if (registered) return true;
         TelecomManager telecom = telecom(app);
@@ -89,17 +106,25 @@ final class TelecomCalls {
     }
 
     /** Routes the call's audio through Telecom (it owns the route of a self-managed call); false with no call there. */
-    static synchronized boolean route(boolean speaker) {
-        return connection != null && connection.routeTo(speaker);
+    static boolean route(boolean speaker) {
+        // Handed over outside this class's lock (TransactionalCalls takes its own).
+        if (transactional()) return TransactionalCalls.route(speaker);
+        synchronized (TelecomCalls.class) {
+            return connection != null && connection.routeTo(speaker);
+        }
     }
 
-    static synchronized boolean hasCall() {
-        return connection != null;
+    static boolean hasCall() {
+        if (transactional()) return TransactionalCalls.hasCall();
+        synchronized (TelecomCalls.class) {
+            return connection != null;
+        }
     }
 
     /** An incoming call started ringing (our own notification and screen show it). */
     static void incoming(Context context, String callId, String name, boolean video) {
         if (!register(context)) return;
+        if (transactional()) { TransactionalCalls.incoming(context, callId, name, video); return; }
         main.post(() -> {
             synchronized (TelecomCalls.class) {
                 if (connection != null) {
@@ -137,6 +162,7 @@ final class TelecomCalls {
     /** The call went live (placed or answered) or ended, as the web app reports it (setCallActive). */
     static void live(Context context, boolean active, boolean video, String name) {
         if (!register(context)) return;
+        if (transactional()) { TransactionalCalls.live(context, active, video, name); return; }
         main.post(() -> {
             synchronized (TelecomCalls.class) {
                 if (!active) {
@@ -178,6 +204,7 @@ final class TelecomCalls {
 
     /** Answered on our own call screen or notification: Android hears it before the web app picks up. */
     static void answered() {
+        if (transactional()) { TransactionalCalls.answered(); return; }
         main.post(() -> {
             synchronized (TelecomCalls.class) {
                 if (connection != null && connection.getState() == Connection.STATE_RINGING) connection.setActive();
@@ -187,6 +214,7 @@ final class TelecomCalls {
 
     /** Declined on our own call screen or notification ("Decline", "Message"). */
     static void rejected() {
+        if (transactional()) { TransactionalCalls.rejected(); return; }
         main.post(() -> {
             synchronized (TelecomCalls.class) {
                 if (connection != null && connection.getState() == Connection.STATE_RINGING) end(DisconnectCause.REJECTED);
@@ -199,6 +227,7 @@ final class TelecomCalls {
      * live), so a still-ringing call is only dropped as missed if it has not been answered a moment later.
      */
     static void ringingStopped() {
+        if (transactional()) { TransactionalCalls.ringingStopped(); return; }
         main.postDelayed(() -> {
             synchronized (TelecomCalls.class) {
                 if (connection == null || connection.getState() != Connection.STATE_RINGING) return;
@@ -210,6 +239,7 @@ final class TelecomCalls {
 
     /** Hard reset: Android has no call of ours left (setDisconnected + destroy), now if on the main thread. */
     static void endAll() {
+        if (transactional()) { TransactionalCalls.endAll(); return; }
         Runnable reset = () -> {
             synchronized (TelecomCalls.class) {
                 placing = false;
@@ -302,7 +332,11 @@ final class TelecomCalls {
             if (answered != connection) return;
             answered.setActive();
         }
-        String callId = answered.callId;
+        answerInApp(context, answered.callId);
+    }
+
+    /** Answered through Android (headset, car, watch): answer in the app, opening it over the lock screen. */
+    static void answerInApp(Context context, String callId) {
         AppActivity.answeredFromOutside();
         Alerts.cancelIncomingCall(context);
         Intent open = new Intent(context, AppActivity.class)

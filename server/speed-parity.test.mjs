@@ -74,3 +74,25 @@ test('the answer cover can hang up before the web call screen is up', () => {
   assert.match(activity, /end\.setContentDescription\("End call"\);/);
   assert.match(activity, /CallActionReceiver\.endOnServer\(app, endCallId, "hang-up"\);\s+CallActionReceiver\.hangUp\(app\);/);
 });
+
+test('Android 14+ calls go through the transactional calling API (no post-call screen from the call-screening app)', () => {
+  const telecom = java('TelecomCalls');
+  assert.match(telecom, /@androidx\.annotation\.ChecksSdkIntAtLeast\(api = 34\)\s+static boolean transactional\(\) \{\s+return Build\.VERSION\.SDK_INT >= 34;/);
+  for (const event of ['incoming', 'live', 'answered', 'rejected', 'ringingStopped', 'endAll']) {
+    assert.ok(telecom.includes(`if (transactional()) { TransactionalCalls.${event}(`), `${event} is handed over`);
+  }
+  assert.match(telecom, /if \(transactional\(\)\) return TransactionalCalls\.route\(speaker\);/);
+  assert.match(telecom, /if \(transactional\(\)\) return TransactionalCalls\.hasCall\(\);/);
+  const calls = java('TransactionalCalls');
+  assert.match(calls, /CAPABILITY_SELF_MANAGED \| PhoneAccount\.CAPABILITY_SUPPORTS_TRANSACTIONAL_OPERATIONS/);
+  assert.match(calls, /telecom\.addCall\(attributes, executor\(\),/);
+  assert.match(calls, /unregisterPhoneAccount\(TelecomCalls\.handle\(app\)\)/, 'one calling account');
+  // Headset / car / watch keep working: answer, decline or hang up, mute.
+  assert.match(calls, /public void onAnswer\(int videoState, @NonNull Consumer<Boolean> done\) \{[\s\S]{0,400}TelecomCalls\.answerInApp\(context, id\);/);
+  assert.match(calls, /if \(wasRinging\) CallActionReceiver\.decline\(context, id\);\s+else CallActionReceiver\.hangUp\(context\);/);
+  assert.match(calls, /public void onMuteStateChanged\(boolean muted\) \{[\s\S]{0,400}emitCallAction\("mute", id, extra\)/);
+  // A call that ended while Android was still adding it is ended when it arrives.
+  assert.match(calls, /if \(call != generation \|\| endWhenAdded\) \{\s+\/\/[^\n]*\n\s+added\.disconnect\(/);
+  // No orphan left on the status bar.
+  assert.match(calls, /dropping a call the app no longer has/);
+});
