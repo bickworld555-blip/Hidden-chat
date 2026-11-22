@@ -132,7 +132,10 @@ test('background key opening publishes nothing; the page writes the app database
   const keeper = readFileSync(new URL('../android/app/src/main/java/io/github/bickworld555/hiddenchat/WakeKeeper.java', import.meta.url), 'utf8');
   assert.ok(keeper.includes('FOREGROUND_SERVICE_TYPE_SHORT_SERVICE'));
   const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
-  assert.match(app, /await e2eLockReady\(\);[\s\S]{0,200}importInbox\(/, 'the app imports the inbox only once it holds the lock');
+  // The inbox is imported only after the end-to-end lock is held — the native inbox on the native path, the WebView
+  // page's inbox as the fallback, both inside the same guarded block.
+  assert.match(app, /await e2eLockReady\(\);[\s\S]{0,700}importNativeInbox\(await nativeTakeInbox\(\), applyOpened\)/, 'the native inbox is imported only once it holds the lock');
+  assert.match(app, /nativeE2eActive\(\)[\s\S]{0,400}importInbox\(/, 'otherwise the WebView page inbox, still under the lock');
   assert.match(app, /e2eLockReady\(\)\.then\(\(\) => \{\s*if \(live\) startE2e\(/, 'and starts its own encryption only then');
 });
 

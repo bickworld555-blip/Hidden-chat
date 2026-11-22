@@ -24,9 +24,9 @@ import { applyGroupChange, GROUP_CHANGE_EVENTS } from './groupChanges.js';
 import { cachedGroupDetails } from './groupCache.js';
 import { applyGroupCall, withRunningCall } from './groupCalls.js';
 import { notificationNames } from './notificationNames.js';
-import { nativeClearSession, nativeRequestStartupPermissions, nativeSetSession, nativeShell, nativeStartBackground, nativeState, nativeStopBackground, nativeTakePendingCall, nativeMoveToBackground, nativeClearShare, nativeSetCallActive, nativeClearMessageNotifications, nativeClearMissedCalls, nativeTakeMessageActions, nativeTakeCallEvents, nativeSetSystemBarsTheme, nativeOpenSecret, nativePreviewKey, nativeBackgroundFetchDone, nativeScheduleUnsent, onNative } from './native.js';
+import { nativeClearSession, nativeRequestStartupPermissions, nativeSetSession, nativeShell, nativeStartBackground, nativeState, nativeStopBackground, nativeTakePendingCall, nativeMoveToBackground, nativeClearShare, nativeSetCallActive, nativeClearMessageNotifications, nativeClearMissedCalls, nativeTakeMessageActions, nativeTakeCallEvents, nativeSetSystemBarsTheme, nativeOpenSecret, nativePreviewKey, nativeBackgroundFetchDone, nativeScheduleUnsent, nativeE2eActive, nativeTakeInbox, onNative } from './native.js';
 import { parseShare } from './shareTarget.js';
-import { e2eDeviceId, onE2eEvent, publishPreviewKey, replayE2eEvent, sealDirect, sealToOwnDevices, startE2e, stopE2e, userForXmppAddress, xmppGroupTargetsFor, xmppTargetsFor } from './e2e/client.js';
+import { e2eDeviceId, onE2eEvent, importNativeInbox, publishPreviewKey, replayE2eEvent, sealDirect, sealToOwnDevices, startE2e, stopE2e, userForXmppAddress, xmppGroupTargetsFor, xmppTargetsFor } from './e2e/client.js';
 import { createControlBuffer, expiredIds, resolveControl, roleIn } from './e2e/lifecycle.js';
 import { startXmppSession } from './xmpp/session.js';
 import { setXmppSession } from './xmpp/active.js';
@@ -721,15 +721,22 @@ export default function App() {
         // lock and before XMPP connects: through the usual handler, saved, then removed from its inbox.
         await e2eLockReady();
         if (nativeShell() && !cancelled) {
-          await importInbox({
-            open: async (sealed) => (await nativeOpenSecret(sealed))?.value,
-            handle: async (event) => {
-              if (event?.type === 'identity-changed') { replayE2eEvent(event); return; }
-              onRealtimeEvent(event);
-              await openChain;
-            },
-            commit: () => flushPersistedMessages(),
-          }).catch((error) => console.error('Background inbox import failed:', error));
+          const applyOpened = async (event) => {
+            if (event?.type === 'identity-changed') { replayE2eEvent(event); return; }
+            onRealtimeEvent(event);
+            await openChain;
+          };
+          // The native path (NativeRelayFetch) keeps its own inbox; otherwise the WebView background page's inbox.
+          if (await nativeE2eActive().catch(() => false)) {
+            await importNativeInbox(await nativeTakeInbox(), applyOpened).catch((error) => console.error('Native inbox import failed:', error));
+            await flushPersistedMessages();
+          } else {
+            await importInbox({
+              open: async (sealed) => (await nativeOpenSecret(sealed))?.value,
+              handle: applyOpened,
+              commit: () => flushPersistedMessages(),
+            }).catch((error) => console.error('Background inbox import failed:', error));
+          }
         }
         if (cancelled) return;
         startXmppSession({ sessionToken, userId, deliver: onRealtimeEvent, legacySend, targetsFor: xmppTargetsFor, holdReceiptsFor: (peerId) => holdsReceipts(peerId, useChatStore.getState().chats), groupTargetsFor: xmppGroupTargetsFor, userForAddress: userForXmppAddress, fetchImpl: apiFetch, seal: (peerId, content) => (peerId === userId ? sealToOwnDevices(content) : sealDirect(peerId, content)), signalingRestored, onTransportState: (state) => noteCallEvent('xmpp', state) })

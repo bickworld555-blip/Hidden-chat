@@ -736,6 +736,32 @@ export async function openContent(content, { senderId, groupId = null } = {}) {
 }
 
 /**
+ * What the native background fetch decrypted while the app was closed (NativeRelayFetch): each `entries` item is a
+ * JSON string `{ event, inner }` — the raw server event and the decrypted inner payload. Seeds the remembered-plaintext
+ * cache from `inner` so the app opens the event without decrypting again (the native ratchet already advanced), then
+ * applies it through `handle`. Used instead of importInbox on the native path.
+ */
+export async function importNativeInbox(entries, handle) {
+  let applied = 0;
+  for (const text of entries) {
+    let entry;
+    try { entry = JSON.parse(text); } catch { continue; }
+    try {
+      const content = entry?.event?.message?.content;
+      if (typeof content === 'string' && isEnvelope(content) && typeof entry.inner === 'string') {
+        const inner = innerFrom(JSON.parse(entry.inner));
+        if (inner && current) await remember(await sha256Hex(bodyOf(content)), inner);
+      }
+      await handle(entry.event);
+      applied += 1;
+    } catch (error) {
+      console.error('Native inbox entry failed:', error);
+    }
+  }
+  return applied;
+}
+
+/**
  * A direct message as the store keeps it: plaintext content and an `e2e` / `e2eError` flag. `known` (the copy the
  * store already holds) wins over a failed decryption, so a readable message never turns into "waiting".
  */

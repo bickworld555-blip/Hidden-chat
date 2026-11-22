@@ -21,10 +21,20 @@ object NativeFetchHandler {
         val messageId: String,
         val senderId: String,
         val groupId: String?,
+        /** The decrypted inner payload (JSON `{ c, … }`), kept for the app to parse on import; the ratchet is already advanced. */
         val plaintext: String?,
+        /** A shallow display string for the notification (the inner `c` field), without the app's full parsing. */
+        val displayText: String?,
         val error: String?,
     ) {
         val opened: Boolean get() = plaintext != null
+    }
+
+    /** The inner payload's `c` field for the notification; the whole plaintext when it is not the wrapped form. */
+    private fun display(plaintext: String): String = try {
+        Json.string(Json.map(Json.parse(plaintext))?.get("c")) ?: plaintext
+    } catch (notJson: Exception) {
+        plaintext
     }
 
     /** Null when the event is not a message to open. A decrypt failure comes back as a Delivery with `error` set. */
@@ -38,14 +48,14 @@ object NativeFetchHandler {
         val groupId = Json.string(message["groupId"])
         return try {
             val plaintext = if (type == "group:message") {
-                val gid = groupId ?: return Delivery(type, messageId, senderId, null, null, "no-group")
+                val gid = groupId ?: return Delivery(type, messageId, senderId, null, null, null, "no-group")
                 NativeInbox.openGroup(core, gid, meUserId, meDeviceId, senderId, content)
             } else {
                 NativeInbox.openDirect(core, meUserId, meDeviceId, senderId, content)
             }
-            Delivery(type, messageId, senderId, groupId, plaintext, null)
+            Delivery(type, messageId, senderId, groupId, plaintext, display(plaintext), null)
         } catch (failed: ProtocolError) {
-            Delivery(type, messageId, senderId, groupId, null, failed.code)
+            Delivery(type, messageId, senderId, groupId, null, null, failed.code)
         }
     }
 }

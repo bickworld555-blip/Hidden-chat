@@ -67,14 +67,16 @@ class NativeRelayFetch private constructor(private val context: Context, private
         send(webSocket, Json.obj("type" to "queue:ack", "messageIds" to listOf(delivery.messageId), "eventIds" to emptyList<String>()))
     }
 
-    /** Seals the decrypted event into the native inbox the WebView imports on open. False → do not ack (keep it on the server). */
+    /**
+     * Seals the raw event plus the decrypted inner payload into the native inbox the WebView imports on open. The
+     * WebView seeds its remembered-plaintext cache from `inner` and applies `event` through its normal handler, so the
+     * message is parsed in JS without decrypting again (the ratchet already advanced here). False → do not ack.
+     */
     private fun persist(event: Map<String, Any?>, delivery: NativeFetchHandler.Delivery): Boolean {
         val store = NativeStore.get(context) ?: return false
         return try {
-            val message = (Json.map(event["message"]) ?: return false).toMutableMap()
-            message["content"] = delivery.plaintext
-            val openedEvent = Json.obj("type" to delivery.type, "message" to message, "opened" to true)
-            NativeBackgroundInbox(store).add(SecureStore.seal(Json.stringify(openedEvent)))
+            val entry = Json.obj("event" to event, "inner" to delivery.plaintext)
+            NativeBackgroundInbox(store).add(SecureStore.seal(Json.stringify(entry)))
             true
         } catch (failed: Exception) {
             false
@@ -87,7 +89,7 @@ class NativeRelayFetch private constructor(private val context: Context, private
         val tag = if (group) "group:${delivery.groupId}" else "chat:${delivery.senderId}"
         val title = if (group) RelaySession.groupName(context, delivery.groupId, "Group")
         else RelaySession.userName(context, delivery.senderId, "Hidden Messenger")
-        Alerts.showMessage(context, channel, title, delivery.plaintext ?: "", tag, tag)
+        Alerts.showMessage(context, channel, title, delivery.displayText ?: "", tag, tag)
     }
 
     private fun send(webSocket: WebSocket, event: Map<String, Any?>) {
