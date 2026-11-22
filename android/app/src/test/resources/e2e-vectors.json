@@ -1,0 +1,392 @@
+{
+ "generatedAt": "2026-11-22T13:06:59.971Z",
+ "kdfInfo": {
+  "x3dh": "HiddenMessenger X3DH P-256 v1",
+  "root": "HiddenMessenger DoubleRatchet root v1",
+  "message": "HiddenMessenger DoubleRatchet message v1",
+  "signedPreKey": "HiddenMessenger signed prekey v1"
+ },
+ "ratchet": {
+  "alice": {
+   "identity": {
+    "dh": {
+     "alg": "ECDH",
+     "d": "496d95633110c761c7d50825f454665c7f0f532825e61e1b86ba78d0db361dc2",
+     "pub": "04e716a83ca8c31362592eaf7a00573ce1917ad21f2744787ab43a98ec2a12182183fc151beaf13d5aa226e9874d2f0d829b7845bc820b8f534c3d9aa52a87538b"
+    },
+    "sig": {
+     "alg": "ECDSA",
+     "d": "5504d0a880d4b1aa8da06541036c6993007ba7321120aebbd2847ec0751db827",
+     "pub": "0422efc08c96b00a3c4bd5f69de4cde3a947289c2d6146b5de1b94a4f95e081efee82a2d403bb27454026e78d01eb7681130b3d57f3da2540d08c39a91b34300ea"
+    }
+   },
+   "generated": [
+    {
+     "alg": "ECDH",
+     "d": "9e9c66b354b45cf6f8a115f8e6356295e69620272de369fb0429f37cce8d6dd6",
+     "pub": "04cd911c3073777fa28bb5d623c8c399411add7da7a09ec03fb8fa38d2b41a52be4df0d6cf1aaf6a4356dfe236d994611a4005207ba408d151195ffa02e61cccff"
+    },
+    {
+     "alg": "ECDH",
+     "d": "658434e80d652deca46ec42b6d4397eb66a60f9c233c304899322be76449858b",
+     "pub": "04bb3093fba7deac82061c4557959cd43eb537cce3e92bb3cf366a818f4bb563aeaf00ad699aea4fb8ed5d944233f07413273313c238617c1f74b7618c1f5d9553"
+    },
+    {
+     "alg": "ECDH",
+     "d": "6d2c518ebff00599157db06cb717b5a08ca4389ec88c0f2f8441e3fe33a4e4d0",
+     "pub": "0420572f316e41f2bda01ed7485903ab697b924ff9a59a270021ed73772c739a843ba91e5f91c410faeeda51d69dbe65d4bbb7d1fae2644d8251c32dc76e614d4f"
+    }
+   ],
+   "randoms": []
+  },
+  "bob": {
+   "identity": {
+    "dh": {
+     "alg": "ECDH",
+     "d": "51656d9deb84785a63d7a13614d89eeae2c7b8f4b58e634a8d96dba12d82a4dc",
+     "pub": "040f3f434956dbbeb9a7460e15a1f7eabdae69a58034697159b481ab5e566716239e9d1b3106cc6c5341cf843ccf15b525caae9356a6f5b4030e6f345067e4f5f1"
+    },
+    "sig": {
+     "alg": "ECDSA",
+     "d": "baaef0491ef74eda1e6eecc5a6cd6c5e16285321bcd323880b6824d666f8abb1",
+     "pub": "0410c3e9b923a08a2733d7e65e94c563dfd3c06f407db21ccd2502a826551503986c12c794d38fdbcbedf8ff769cc7ce46b3717b012dd2209ac55c9b8f79a7b68a"
+    }
+   },
+   "signedPreKey": {
+    "id": 7,
+    "alg": "ECDH",
+    "d": "bb9807a64d67ae722a6246b533f49e9ff012c528b90e1db0ed2e2d079443aedc",
+    "pub": "0421a55c5293a6d5f427a70d13e755ba2bf8220bd642ff0ac70975da05446f8a1ec77facbff250f268f63b5dbaeda448499892c997aa8a17a06a6775a99ed6d70f",
+    "signature": "+rJ3EYklTrj2zP7klGaNpStIfDukF+Q/Qm6PD47X1ySmu//uLG6XwMbXI+xZHAr459695GXIGrUm/aYExmofDw=="
+   },
+   "preKey": {
+    "id": 42,
+    "alg": "ECDH",
+    "d": "901e829a725e82184d7d72971f3f817071315230879e844504ac2f79212af531",
+    "pub": "0484b0cf11f2c77694d7e557dea364092da29ae7ab870db2d7f9175f1d8dc02404a9bc1754a290d69f43b539c6ee1701830e1e75504a3ee744a1938f9be3ab1904"
+   },
+   "generated": [
+    {
+     "alg": "ECDH",
+     "d": "e4825810c22f3106a1687b1296d4bf06d08c4f71c7383bf5837ae1c37de6a36a",
+     "pub": "0406081e8e41df1c1316ade7d03a6b3757465cdcafa274e7b0902a1c6e2d1d61c1804ef6d9d5d957757db2b8ce8f0b1d1495eab4a9a6ef718d795be1062bb2db32"
+    },
+    {
+     "alg": "ECDH",
+     "d": "4154197241c4de3a11fe6cb6ca4cdd16d5ad0d8df5ceb811e9574b4e79f1b790",
+     "pub": "044582fd670be892e026677a4be2f59daf6d563326179b670637772ce76862cb48a040c0e8a2ca27beed8813f1c6b14a1a21ae90e45703157bb1c07cfceeaa48ab"
+    }
+   ],
+   "randoms": []
+  },
+  "bundle": {
+   "identity": {
+    "dh": "BA8/Q0lW2765p0YOFaH36r2uaaWANGlxWbSBq15WZxYjnp0bMQbMbFNBz4Q8zxW1Jcquk1am9bQDDm80UGfk9fE=",
+    "sig": "BBDD6bkjoIonM9fmXpTFY9/TwG9AfbIczSUCqCZVFQOYbBLHlNOP28vt+P92nMfORrNxewEt0iCaxVybj3mntoo="
+   },
+   "signedPreKey": {
+    "id": 7,
+    "key": "BCGlXFKTptX0J6cNE+dVuiv4IgvWQv8Kxwl12gVEb4oex3+sv/JQ8mj2O1267aRISZiSyZeqihegamd1qZ7W1w8=",
+    "signature": "+rJ3EYklTrj2zP7klGaNpStIfDukF+Q/Qm6PD47X1ySmu//uLG6XwMbXI+xZHAr459695GXIGrUm/aYExmofDw=="
+   },
+   "preKey": {
+    "id": 42,
+    "key": "BISwzxHyx3aU1+VX3qNkCS2imuerhw2y1/kXXx2NwCQEqbwXVKKQ1p9DtTnG7hcBgw4edVBKPudEoZOPm+OrGQQ="
+   }
+  },
+  "preKeyHeader": {
+   "ik": {
+    "dh": "BOcWqDyowxNiWS6vegBXPOGRetIfJ0R4erQ6mOwqEhghg/wVG+rxPVqiJumHTS8Ngpt4RbyCC49TTD2apSqHU4s=",
+    "sig": "BCLvwIyWsAo8S9X2neTN46lHKJwtYUa13huUpPleCB7+6CotQDuydFQCbnjQHrdoETCz1X89olQNCMOakbNDAOo="
+   },
+   "ek": "BM2RHDBzd3+ii7XWI8jDmUEa3X2noJ7AP7j6ONK0GlK+TfDWzxqvakNW3+I22ZRhGkAFIHukCNFRGV/6AuYczP8=",
+   "spk": 7,
+   "opk": 42
+  },
+  "ad": {
+   "aliceSide": "04e716a83ca8c31362592eaf7a00573ce1917ad21f2744787ab43a98ec2a12182183fc151beaf13d5aa226e9874d2f0d829b7845bc820b8f534c3d9aa52a87538b0422efc08c96b00a3c4bd5f69de4cde3a947289c2d6146b5de1b94a4f95e081efee82a2d403bb27454026e78d01eb7681130b3d57f3da2540d08c39a91b34300ea040f3f434956dbbeb9a7460e15a1f7eabdae69a58034697159b481ab5e566716239e9d1b3106cc6c5341cf843ccf15b525caae9356a6f5b4030e6f345067e4f5f10410c3e9b923a08a2733d7e65e94c563dfd3c06f407db21ccd2502a826551503986c12c794d38fdbcbedf8ff769cc7ce46b3717b012dd2209ac55c9b8f79a7b68a",
+   "bobSide": "04e716a83ca8c31362592eaf7a00573ce1917ad21f2744787ab43a98ec2a12182183fc151beaf13d5aa226e9874d2f0d829b7845bc820b8f534c3d9aa52a87538b0422efc08c96b00a3c4bd5f69de4cde3a947289c2d6146b5de1b94a4f95e081efee82a2d403bb27454026e78d01eb7681130b3d57f3da2540d08c39a91b34300ea040f3f434956dbbeb9a7460e15a1f7eabdae69a58034697159b481ab5e566716239e9d1b3106cc6c5341cf843ccf15b525caae9356a6f5b4030e6f345067e4f5f10410c3e9b923a08a2733d7e65e94c563dfd3c06f407db21ccd2502a826551503986c12c794d38fdbcbedf8ff769cc7ce46b3717b012dd2209ac55c9b8f79a7b68a"
+  },
+  "sharedSecret": "0000000000000000000000000000000000000000000000000000000000000000",
+  "steps": [
+   {
+    "name": "m1",
+    "from": "alice",
+    "plaintext": "hello bob",
+    "header": {
+     "dh": "BLswk/un3qyCBhxFV5Wc1D61N8zj6SuzzzZqgY9LtWOurwCtaZrqT7jtXZRCM/B0EyczE8I4YXwfdLdhjB9dlVM=",
+     "pn": 0,
+     "n": 0
+    },
+    "ciphertext": "EJ4RcbAOIHF975RPDe4GbOnhrrM8W4kgbw=="
+   },
+   {
+    "name": "m2",
+    "from": "alice",
+    "plaintext": "second message, skipped at first",
+    "header": {
+     "dh": "BLswk/un3qyCBhxFV5Wc1D61N8zj6SuzzzZqgY9LtWOurwCtaZrqT7jtXZRCM/B0EyczE8I4YXwfdLdhjB9dlVM=",
+     "pn": 0,
+     "n": 1
+    },
+    "ciphertext": "RWZOuSK6OneZoR/WmDO88TyiKQRnTFfzE3z52YX59FqI/68PBP2DFvhK0OMZLBr9"
+   },
+   {
+    "name": "m3",
+    "from": "alice",
+    "plaintext": "তৃতীয় বার্তা — third, with UTF-8",
+    "header": {
+     "dh": "BLswk/un3qyCBhxFV5Wc1D61N8zj6SuzzzZqgY9LtWOurwCtaZrqT7jtXZRCM/B0EyczE8I4YXwfdLdhjB9dlVM=",
+     "pn": 0,
+     "n": 2
+    },
+    "ciphertext": "6DqO3WNpw+8/zkkwqZwR1SzJ06/NjNeLCRjL91yZBPaJjvnXPeOnyeNzcmNMGeJXixx/sHg40pgZDuJX/j3tC2VaiCEw/4+QVF4R"
+   },
+   {
+    "name": "r1",
+    "from": "bob",
+    "plaintext": "hi alice, got all three",
+    "header": {
+     "dh": "BAYIHo5B3xwTFq3n0DprN1dGXNyvonTnsJAqHG4tHWHBgE722dXZV3V9srjOjwsdFJXqtKmm73GNeVvhBiuy2zI=",
+     "pn": 0,
+     "n": 0
+    },
+    "ciphertext": "JzdGinYtEynO2NJDJBBT4WvcO9T4SMbe6BepDJ7EhrKr+D/PYDD3"
+   },
+   {
+    "name": "r2",
+    "from": "bob",
+    "plaintext": "and one more from bob",
+    "header": {
+     "dh": "BAYIHo5B3xwTFq3n0DprN1dGXNyvonTnsJAqHG4tHWHBgE722dXZV3V9srjOjwsdFJXqtKmm73GNeVvhBiuy2zI=",
+     "pn": 0,
+     "n": 1
+    },
+    "ciphertext": "E6iTx48dZoC5VwJR48rKiWl/EK0BTplCvjzsjtZsU2VNZcZnPQ=="
+   },
+   {
+    "name": "m4",
+    "from": "alice",
+    "plaintext": "new chain after your reply",
+    "header": {
+     "dh": "BCBXLzFuQfK9oB7XSFkDq2l7kk/5pZonACHtc3csc5qEO6keX5HEEPru2lHWnb5l1Lu30friZE2CUcMtx25hTU8=",
+     "pn": 3,
+     "n": 0
+    },
+    "ciphertext": "hvTirPUtCtdtLnPPHtkeP+jctEnrmxOWxDlIuOpzWygiSyu132BHAlJx"
+   }
+  ],
+  "order": [
+   "send m1",
+   "send m2",
+   "send m3",
+   "bob opens m1",
+   "bob opens m3",
+   "bob opens m2",
+   "send r1",
+   "send r2",
+   "alice opens r1",
+   "alice opens r2",
+   "send m4",
+   "bob opens m4"
+  ]
+ },
+ "senderKeys": {
+  "groupId": "group-vector-1",
+  "membersHash": "b488d62968f07803b8a6173bf3331eda",
+  "senderAddress": "1111111111/dev-a",
+  "alice": {
+   "generated": [
+    {
+     "alg": "ECDSA",
+     "d": "a29ef217b216f272e9b5778d53f2960ac7a14c997e85042fbd48bfbcab2fbfec",
+     "pub": "0405d367ff365e0739a4c38dd00b328420c2a218ac7f1a396d8541b2d1a3dcf05cea3882ca8d7a9ee2890b9318ac9d7ffe0610b7324a0b95f9618d8c14718b7d12"
+    }
+   ],
+   "randoms": [
+    "9daf8a550e09b90210793174",
+    "cef01344794e15a277dcc7ce7868da2c5bd92e9dd72feef4777b0bc921b0eb85"
+   ]
+  },
+  "distribution": {
+   "type": "skdm",
+   "g": "group-vector-1",
+   "kid": "na+KVQ4JuQIQeTF0",
+   "ck": "zvATRHlOFaJ33MfOeGjaLFvZLp3XL+70d3sLySGw64U=",
+   "sp": "BAXTZ/82Xgc5pMON0AsyhCDCohisfxo5bYVBstGj3PBc6jiCyo16nuKJC5MYrJ1//gYQtzJKC5X5YY2MFHGLfRI="
+  },
+  "messages": [
+   {
+    "plaintext": "group hello",
+    "message": {
+     "kid": "na+KVQ4JuQIQeTF0",
+     "n": 0,
+     "c": "v4MKZZO1JI2YLDO/lt1XgDufD5UkNExe/i0z",
+     "s": "353713sCVdU8FR26IABlMuxxCxE/NuFGFOjdUnOh+Fx/9s6it92KL2lCcontqztNU/DqXi/HZZhEt1hUfaLRXQ=="
+    }
+   },
+   {
+    "plaintext": "second group line",
+    "message": {
+     "kid": "na+KVQ4JuQIQeTF0",
+     "n": 1,
+     "c": "+pBIlud/jYU0EHGL0pocODsWlbww2NjUmk9vKyBYQqCW",
+     "s": "8Q5iodwtE4AGJDz+vRFtQHZllnsHmBEzcyDFxrxRg+0FvCNEo5/pdkjcSSb6kuwYwG7CTydxFE8vgMVn63eS5w=="
+    }
+   },
+   {
+    "plaintext": "third, opened before the second",
+    "message": {
+     "kid": "na+KVQ4JuQIQeTF0",
+     "n": 2,
+     "c": "Hj1zDNBpVT2qyXYnxgT4DR7pEIEWPPfsNY7xrLN1dOTvL6Eztu/vIebntL16nfI=",
+     "s": "+bTtvDJGow5JxuwbB6UZ6LUfeioAVQ51AmHM86VLSOTfwB/ldmlioyIjmbbkZqh253YFjTghCbJIs0ZuVl34ng=="
+    }
+   }
+  ],
+  "bobOrder": [
+   0,
+   2,
+   1
+  ]
+ },
+ "preview": {
+  "info": "hm-preview-v1",
+  "recipient": {
+   "alg": "ECDH",
+   "d": "3fc94310ef945d4615a24900ce28b8ce641b16eeb8e75e23b3d97f0cc09ec9ac",
+   "pub": "04706d147517aaa7390111b1ffc6cb92fef5b853b2c1d935015f92b582b306ad3aea493b166a318cb183da02b47d5c03ccbdc01813574456d4ba74ac8e345e51d3"
+  },
+  "sender": {
+   "generated": [
+    {
+     "alg": "ECDH",
+     "d": "1be53faa6ef03ff501e54cd95817d00b4c3a663af2dec4c80db1b1403f937260",
+     "pub": "04b2a32a267676361c6057d5404d5ecf305b4cb2caf97e3dc4720a31ba05b25fa80a265348d7349349608718f50571b588008716072cb7033c05fbb092a384ba8a"
+    }
+   ],
+   "randoms": [
+    "4c3e517ee08173b7b6ed026c"
+   ]
+  },
+  "text": "  Hello   there,\n preview  ",
+  "previewText": "Hello there, preview",
+  "longText": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+  "longPreview": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA…",
+  "senderId": "3333333333",
+  "now": 1700000000000,
+  "sealed": "BLKjKiZ2djYcYFfVQE1ezzBbTLLK+X49xHIKMboFsl+oCiZTSNc0k0lghxj1BXG1iACHFgcstwM8BfuwkqOEuopMPlF+4IFzt7btAmxdRDYJtXGWbEEJO4/j5djAT8ot+v7RNL1IEM4NOWA8RXpd8Z5LEcrWPz8/UgrH13csBPj8ZAWJsUhIEcMn+qI=",
+  "opened": {
+   "text": "Hello there, preview",
+   "at": 1700000000000
+  }
+ },
+ "deviceList": {
+  "context": "HiddenMessenger device list v1",
+  "linkClaimContext": "HiddenMessenger link claim v1",
+  "accountKey": {
+   "alg": "ECDSA",
+   "d": "6d41f8023dae9108b9c18a957790e6c12d3087255efd53225d80cc4c69850fd0",
+   "pub": "04052acf9ce44d45081f1e2100a013e6ad4343e714cca18da36da4361d213840d61da332a6c35ef07f38eaacec0d6537c7c6db37ae2dc2529109fe27d0b91699c3"
+  },
+  "userId": "2222222222",
+  "counter": 3,
+  "at": 1700000000123,
+  "devices": [
+   {
+    "deviceId": "dev-b",
+    "identity": {
+     "dh": "BA8/Q0lW2765p0YOFaH36r2uaaWANGlxWbSBq15WZxYjnp0bMQbMbFNBz4Q8zxW1Jcquk1am9bQDDm80UGfk9fE=",
+     "sig": "BBDD6bkjoIonM9fmXpTFY9/TwG9AfbIczSUCqCZVFQOYbBLHlNOP28vt+P92nMfORrNxewEt0iCaxVybj3mntoo="
+    }
+   },
+   {
+    "deviceId": "dev-a",
+    "identity": {
+     "dh": "BOcWqDyowxNiWS6vegBXPOGRetIfJ0R4erQ6mOwqEhghg/wVG+rxPVqiJumHTS8Ngpt4RbyCC49TTD2apSqHU4s=",
+     "sig": "BCLvwIyWsAo8S9X2neTN46lHKJwtYUa13huUpPleCB7+6CotQDuydFQCbnjQHrdoETCz1X89olQNCMOakbNDAOo="
+    }
+   }
+  ],
+  "list": "{\"v\":1,\"u\":\"2222222222\",\"ak\":\"BAUqz5zkTUUIHx4hAKAT5q1DQ+cUzKGNo22kNh0hOEDWHaMypsNe8H846qzsDWU3x8bbN64twlKRCf4n0LkWmcM=\",\"n\":3,\"at\":1700000000123,\"d\":[{\"id\":\"dev-a\",\"dh\":\"BOcWqDyowxNiWS6vegBXPOGRetIfJ0R4erQ6mOwqEhghg/wVG+rxPVqiJumHTS8Ngpt4RbyCC49TTD2apSqHU4s=\",\"sig\":\"BCLvwIyWsAo8S9X2neTN46lHKJwtYUa13huUpPleCB7+6CotQDuydFQCbnjQHrdoETCz1X89olQNCMOakbNDAOo=\"},{\"id\":\"dev-b\",\"dh\":\"BA8/Q0lW2765p0YOFaH36r2uaaWANGlxWbSBq15WZxYjnp0bMQbMbFNBz4Q8zxW1Jcquk1am9bQDDm80UGfk9fE=\",\"sig\":\"BBDD6bkjoIonM9fmXpTFY9/TwG9AfbIczSUCqCZVFQOYbBLHlNOP28vt+P92nMfORrNxewEt0iCaxVybj3mntoo=\"}]}",
+  "signature": "mP1I2J+h4SiuOzXPCq0Pj48I1rYYCG2y8Ko4yZASKJt3cV68+8Y828ByhHL0iUs152B/T7JaQdM1x0GKWebM5Q==",
+  "linkClaim": {
+   "shared": "00070e151c232a31383f464d545b626970777e858c939aa1a8afb6bdc4cbd2d9",
+   "userId": "2222222222",
+   "deviceId": "dev-a",
+   "identity": {
+    "dh": "BOcWqDyowxNiWS6vegBXPOGRetIfJ0R4erQ6mOwqEhghg/wVG+rxPVqiJumHTS8Ngpt4RbyCC49TTD2apSqHU4s=",
+    "sig": "BCLvwIyWsAo8S9X2neTN46lHKJwtYUa13huUpPleCB7+6CotQDuydFQCbnjQHrdoETCz1X89olQNCMOakbNDAOo="
+   },
+   "mac": "zPUCTgIZp3OT9bytfUL4uI8yp44KdN8JfYjhbTxZi54="
+  }
+ },
+ "safetyNumber": {
+  "mine": [
+   {
+    "dh": "BOcWqDyowxNiWS6vegBXPOGRetIfJ0R4erQ6mOwqEhghg/wVG+rxPVqiJumHTS8Ngpt4RbyCC49TTD2apSqHU4s=",
+    "sig": "BCLvwIyWsAo8S9X2neTN46lHKJwtYUa13huUpPleCB7+6CotQDuydFQCbnjQHrdoETCz1X89olQNCMOakbNDAOo="
+   }
+  ],
+  "theirs": [
+   {
+    "dh": "BA8/Q0lW2765p0YOFaH36r2uaaWANGlxWbSBq15WZxYjnp0bMQbMbFNBz4Q8zxW1Jcquk1am9bQDDm80UGfk9fE=",
+    "sig": "BBDD6bkjoIonM9fmXpTFY9/TwG9AfbIczSUCqCZVFQOYbBLHlNOP28vt+P92nMfORrNxewEt0iCaxVybj3mntoo="
+   },
+   {
+    "dh": "BOcWqDyowxNiWS6vegBXPOGRetIfJ0R4erQ6mOwqEhghg/wVG+rxPVqiJumHTS8Ngpt4RbyCC49TTD2apSqHU4s=",
+    "sig": "BCLvwIyWsAo8S9X2neTN46lHKJwtYUa13huUpPleCB7+6CotQDuydFQCbnjQHrdoETCz1X89olQNCMOakbNDAOo="
+   }
+  ],
+  "expected": "66952 35082 87776 83420 22932 02948 87239 04744 20585 21225 85343 12000",
+  "reversed": "66952 35082 87776 83420 22932 02948 87239 04744 20585 21225 85343 12000"
+ },
+ "envelope": {
+  "routing": [
+   [
+    "hello",
+    "text"
+   ],
+   [
+    "media:abc123:photo",
+    "media:abc123"
+   ],
+   [
+    "viewonce:emedia:xyz_9:1",
+    "media:xyz_9:once"
+   ],
+   [
+    "voice:v1:12.5:once",
+    "voice:v1:0:once"
+   ],
+   [
+    "vnote:media:n1",
+    "media:n1"
+   ],
+   [
+    "poll:{\"options\":[\"a\",\"b\"]}",
+    "poll:12:1"
+   ],
+   [
+    "location:1,2",
+    "other"
+   ],
+   [
+    "reaction:👍",
+    "other"
+   ],
+   [
+    "call:ended",
+    "other"
+   ]
+  ],
+  "built": "e2e2:text|{\"v\":2,\"sd\":\"dev-a\",\"d\":{\"2222222222\":{\"dev-b\":{\"p\":{\"ik\":{\"dh\":\"BOcWqDyowxNiWS6vegBXPOGRetIfJ0R4erQ6mOwqEhghg/wVG+rxPVqiJumHTS8Ngpt4RbyCC49TTD2apSqHU4s=\",\"sig\":\"BCLvwIyWsAo8S9X2neTN46lHKJwtYUa13huUpPleCB7+6CotQDuydFQCbnjQHrdoETCz1X89olQNCMOakbNDAOo=\"},\"ek\":\"BM2RHDBzd3+ii7XWI8jDmUEa3X2noJ7AP7j6ONK0GlK+TfDWzxqvakNW3+I22ZRhGkAFIHukCNFRGV/6AuYczP8=\",\"spk\":7,\"opk\":42},\"h\":{\"dh\":\"BLswk/un3qyCBhxFV5Wc1D61N8zj6SuzzzZqgY9LtWOurwCtaZrqT7jtXZRCM/B0EyczE8I4YXwfdLdhjB9dlVM=\",\"pn\":0,\"n\":0},\"c\":\"EJ4RcbAOIHF975RPDe4GbOnhrrM8W4kgbw==\"}}}}",
+  "parsed": {
+   "routing": "text",
+   "route": {
+    "kind": "text"
+   },
+   "sd": "dev-a"
+  }
+ }
+}

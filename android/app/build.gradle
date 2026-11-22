@@ -1,4 +1,5 @@
 apply plugin: 'com.android.application'
+apply plugin: 'kotlin-android'
 
 def signingValues = [
     path: System.getenv('ANDROID_KEYSTORE_PATH'),
@@ -25,6 +26,17 @@ android {
             path = file("src/main/cpp/CMakeLists.txt")
             version = "3.22.1"
         }
+    }
+    // The JVM unit tests run in a forked VM; keep it small so the build fits beside the Kotlin compiler on low-RAM machines.
+    testOptions {
+        unitTests.all {
+            maxHeapSize = "200m"
+            jvmArgs "-XX:+UseSerialGC", "-XX:MaxMetaspaceSize=160m"
+        }
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_21
+        targetCompatibility JavaVersion.VERSION_21
     }
     defaultConfig {
         applicationId "io.github.bickworld555.hiddenchat"
@@ -136,4 +148,11 @@ try {
     }
 } catch(Exception e) {
     logger.info("google-services.json not found, google-services plugin not applied. Push Notifications won't work")
+}
+
+// The native core is Kotlin; JVM unit tests (app/src/test) run it on the computer without Android.
+kotlin {
+    compilerOptions {
+        jvmTarget = org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_21
+    }
 }

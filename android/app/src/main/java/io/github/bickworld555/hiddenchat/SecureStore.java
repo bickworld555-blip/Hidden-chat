@@ -19,7 +19,7 @@ import javax.crypto.spec.GCMParameterSpec;
  * Used for the session token and push key in this app's preferences, and to wrap the web app's local data key
  * (src/secureStorage.js), so nothing readable is left on disk if the app's files are copied off the phone.
  */
-final class SecureStore {
+public final class SecureStore {
     private static final String TAG = "SecureStore";
     private static final String KEYSTORE = "AndroidKeyStore";
     private static final String ALIAS = "hm-secure-store-v1";
@@ -43,12 +43,12 @@ final class SecureStore {
         return generator.generateKey();
     }
 
-    static boolean isSealed(String value) {
+    public static boolean isSealed(String value) {
         return value != null && value.startsWith(PREFIX);
     }
 
     /** Seals a value; null in, null out. Throws if the Keystore is unusable (callers decide the fallback). */
-    static String seal(String plain) throws Exception {
+    public static String seal(String plain) throws Exception {
         if (plain == null) return null;
         Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
         cipher.init(Cipher.ENCRYPT_MODE, key());
@@ -61,7 +61,7 @@ final class SecureStore {
     }
 
     /** Opens a sealed value; a value that was never sealed (stored by an older version) is returned as it is. */
-    static String open(String stored) throws Exception {
+    public static String open(String stored) throws Exception {
         if (stored == null || !isSealed(stored)) return stored;
         byte[] all = Base64.decode(stored.substring(PREFIX.length()), Base64.NO_WRAP);
         Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
