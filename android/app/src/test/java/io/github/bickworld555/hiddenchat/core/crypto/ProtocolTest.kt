@@ -90,17 +90,19 @@ class ProtocolTest {
         val g4bad = SenderKeyMessage(g4.kid, g4.n, g4.c.copyOf().also { it[0] = (it[0].toInt() xor 1).toByte() }, g4.s)
         assertTrue("tampered group ciphertext rejected", fails { SenderKeys.decrypt(inb, sender, g4bad) })
         assertEquals("wire round trip + open g4", "g4", gDec(SenderKeyMessage.fromMap(g4.toMap())))
+        assertTrue("kid is base64(12 bytes): 16 chars", Regex("^[A-Za-z0-9+/]{16}$").matches(g4.kid))
         assertTrue("unknown kid -> no-sender-key", runCatching {
-            SenderKeys.decrypt(inb, sender, SenderKeyMessage(g4.kid + 1, 9, g4.c, g4.s))
+            SenderKeys.decrypt(inb, sender, SenderKeyMessage("AAAAAAAAAAAAAAAA", 9, g4.c, g4.s))
         }.exceptionOrNull().let { it is ProtocolError && it.code == "no-sender-key" })
         assertTrue("confirm drops initial chain key", fails { own.confirmed().distribution() })
     }
 
     @Test
     fun jsonEscapesMatchJavaScript() {
+        // kid is a string in the AD now (JS parity): JSON.stringify(["hm-sk-v1", groupId, senderAddress, keyId, n]).
         assertEquals(
-            "[\"hm-sk-v1\",\"g\\\"\\n\\u0001\",\"a/1\",5,2]",
-            String(SenderKeys.ad("g\"\n\u0001", "a/1", 5, 2)),
+            "[\"hm-sk-v1\",\"g\\\"\\n\\u0001\",\"a/1\",\"kid0000000000000\",2]",
+            String(SenderKeys.ad("g\"\n\u0001", "a/1", "kid0000000000000", 2)),
         )
     }
 }

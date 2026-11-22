@@ -102,4 +102,36 @@ class RatchetConformanceTest {
         assertTrue("all of Alice's recorded keys were consumed in the recorded order", aliceRng.keysConsumed == aliceRng.keyCount)
         assertTrue("all of Bob's recorded keys were consumed in the recorded order", bobRng.keysConsumed == bobRng.keyCount)
     }
+
+    @Test
+    fun senderKeysMatchWebProtocolByteForByte() {
+        val sk = m(vectors["senderKeys"])
+        val groupId = s(sk["groupId"]); val memberHash = s(sk["membersHash"]); val sender = s(sk["senderAddress"])
+        val dist = m(sk["distribution"])
+        val messages = (Json.list(sk["messages"]) ?: emptyList()).map { m(it) }
+
+        // Encrypt direction: the distribution and each ciphertext come out byte-for-byte (the per-message signature is
+        // randomized ECDSA, so it is verified on decrypt below, not equated here).
+        val aliceRng = ReplayRng(m(sk["alice"]))
+        var own = SenderKeys.create(groupId, memberHash, aliceRng)
+        val producedDist = own.distribution()
+        assertEquals("recorded kid (base64 of 12 bytes)", s(dist["kid"]), producedDist.kid)
+        assertEquals("recorded chain key", s(dist["ck"]), P.b64(producedDist.chainKey))
+        assertEquals("recorded signing public key", s(dist["sp"]), P.b64(producedDist.signingPub))
+        for (mm in messages) {
+            val msgV = m(mm["message"])
+            val r = SenderKeys.encrypt(own, sender, P.utf8(s(mm["plaintext"]))); own = r.first
+            assertEquals("kid on the wire", s(msgV["kid"]), r.second.kid)
+            assertEquals("group ciphertext byte-for-byte (n=${r.second.n})", s(msgV["c"]), P.b64(r.second.c))
+        }
+
+        // Decrypt direction: the web-sealed group messages (real JS signatures) open here in the recorded
+        // out-of-order sequence — proof a native client reads web/desktop group messages.
+        var inb = SenderKeys.accept(SenderKeyDistribution.fromMap(dist))
+        for (idx in (Json.list(sk["bobOrder"]) ?: emptyList()).map { i(it) }) {
+            val mm = messages[idx]
+            val r = SenderKeys.decrypt(inb, sender, SenderKeyMessage.fromMap(m(mm["message"]))); inb = r.first
+            assertEquals("web group message opens (index $idx)", s(mm["plaintext"]), String(r.second, Charsets.UTF_8))
+        }
+    }
 }
