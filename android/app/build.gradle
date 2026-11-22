@@ -37,6 +37,9 @@ android {
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_21
         targetCompatibility JavaVersion.VERSION_21
+        // Back-ports java.time, java.util.Base64 etc. to minSdk 24, so the native core's java.util.Base64
+        // (core/crypto/Primitives.kt) is safe on API 24-25 while the JVM unit tests keep running on real java.util.
+        coreLibraryDesugaringEnabled true
     }
     defaultConfig {
         applicationId "io.github.bickworld555.hiddenchat"
@@ -127,6 +130,7 @@ dependencies {
     implementation 'com.google.firebase:firebase-messaging'
     // Voice message translation on the phone (VoiceTranslator): Google ML Kit on-device translation.
     implementation 'com.google.mlkit:translate:17.0.3'
+    coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.4'
     testImplementation "junit:junit:$junitVersion"
     androidTestImplementation "androidx.test.ext:junit:$androidxJunitVersion"
     androidTestImplementation "androidx.test.espresso:espresso-core:$androidxEspressoCoreVersion"
