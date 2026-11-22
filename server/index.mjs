@@ -37,6 +37,7 @@ import { clientGate, clientProtocolOf, minimumClientProtocol, phoneOnlySignIn, s
 import { registerBackups } from './backups.mjs';
 import { registerBilling } from './billing.mjs';
 import { ensureE2eSchema, registerE2e } from './e2e.mjs';
+import { securityHeaders } from './securityHeaders.mjs';
 import { createXmpp, ensureXmppSchema, xmppConfigFromEnv } from './xmpp.mjs';
 import { registerSfu } from './sfu.mjs';
 import { gifConfigFromEnv, registerGifs } from './gifs.mjs';
@@ -762,6 +763,8 @@ export function createChatServer({
   const eventPilot = createEventPilot();
   const app = express();
   app.disable('x-powered-by');
+  // What pages may load, no framing, no sniffing (server/securityHeaders.mjs); a route may set stricter ones after.
+  app.use(securityHeaders());
   // Operations (server/monitoring.mjs): a burst of server errors sends an alert.
   app.use(serverErrorWatch(alerts));
   const configuredOrigins = (Array.isArray(allowedOrigins) ? allowedOrigins : String(allowedOrigins).split(','))

@@ -57,9 +57,14 @@ export const DEFAULT_XMPP_ORIGIN = 'wss://chat.hiddenmessenger.com';
  * face tracker), network only to the app's server, the XMPP core, the map/place services it uses and the group-call media server,
  * no frames or plugins.
  */
-export function bundledCsp(rawUrl) {
-  const api = apiOrigin(rawUrl);
-  const socket = api.replace(/^https:/, 'wss:');
+/**
+ * The app's Content-Security-Policy. `own`: the server's origins when they are not the page's own (the APK is served
+ * from https://localhost, so its API and socket are named; the website's are 'self'). `extra`: more directives
+ * (the website adds frame-ancestors and manifest-src, server/securityHeaders.mjs).
+ */
+export function appCsp({ own = [], extra = [] } = {}) {
+  const api = own.filter((origin) => origin.startsWith('https:')).join(' ');
+  const socket = own.filter((origin) => origin.startsWith('wss:')).join(' ');
   const services = ['https://nominatim.openstreetmap.org', 'https://overpass-api.de', 'https://overpass.kumi.systems', 'https://overpass.private.coffee', 'https://storage.googleapis.com'];
   // Group calls through the media server (server/sfu.mjs): LiveKit Cloud and its region servers, plus a self-hosted
   // server named in ANDROID_SFU_ORIGINS (space-separated https:// and wss:// origins). Media stays end-to-end encrypted.
@@ -82,7 +87,13 @@ export function bundledCsp(rawUrl) {
     "frame-src 'none'",
     "base-uri 'self'",
     "form-action 'none'",
-  ].join('; ');
+    ...extra,
+  ].map((directive) => directive.replace(/ {2,}/g, ' ').trim()).join('; ');
+}
+
+export function bundledCsp(rawUrl) {
+  const api = apiOrigin(rawUrl);
+  return appCsp({ own: [api, api.replace(/^https:/, 'wss:')] });
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
