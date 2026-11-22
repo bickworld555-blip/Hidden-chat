@@ -70,6 +70,8 @@ interface KeyRecords {
     fun get(name: String): String?
     fun set(name: String, json: String)
     fun delete(name: String)
+    /** Removes every record (sign-out). */
+    fun clear()
     /** Runs [work] with no other core operation interleaved (sessions are read, advanced and written back as one step). */
     fun <T> exclusive(work: () -> T): T
 }

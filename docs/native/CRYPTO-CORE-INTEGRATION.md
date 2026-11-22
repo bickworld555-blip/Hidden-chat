@@ -131,11 +131,16 @@ The X3DH / Double Ratchet / Sender Keys state machines are in `core/crypto/` (`S
   distribution and each ciphertext come out identical to the recording, and the web-sealed group messages (with their
   real randomized-ECDSA signatures) open here in the recorded out-of-order sequence.
 
-Still to build for Step 3 (native background path): the **`CryptoCore` interface implementation** itself —
-`encryptForDevices` / `decryptFromDevice` / `encryptGroup` / `decryptGroup` / `prepareUpload` / `safetyNumber` /
-`signPreviewKey` over `KeyRecords`, with session storage, trust-on-first-use, prekey management and envelope
-assembly, driving the state machines above. The provided files are the low-level protocol; this orchestration layer
-is not yet present.
+- **`CryptoCore` interface — implemented and conformant.** `HmCryptoCore` (core/crypto/HmCryptoCore.kt) implements
+  the whole interface over `KeyRecords`, following `src/e2e/protocol.js`: identity/prekey management, sessions
+  (current + previous), trust-on-first-use, X3DH session set-up, the `{p,h,c}` envelope entries, groups (sender keys
+  with the distribution sealed over the direct sessions), `safetyNumber`, `signPreviewKey`, `identityAgreement`,
+  `wipe`. `CryptoCoreConformanceTest` replays the recorded `directInterface` transcript through two cores and the
+  per-device entries come out byte-for-byte; a full group round trip, the recorded safety number, and the preview
+  signature all pass. `core.*` is 26/26.
+  - One production note: `HmCryptoCore` nests `records.exclusive {}` (e.g. `encryptGroup` → `encryptForDevices`). The
+    test `MapRecords` uses a reentrant lock, but `NativeStore.exclusive` opens a real SQLite transaction — confirm
+    nested `beginTransaction()` is acceptable (Android flattens them) or make the core take the lock once at the top.
 
 Minor cleanup (non-blocking): `Support.kt` duplicates the KDF strings (`Ctx`) and a JSON stringifier (`JsJson`) that
 already exist as `ProtocolConstants` and `core/Json`. The values are proven equal by the passing conformance test;

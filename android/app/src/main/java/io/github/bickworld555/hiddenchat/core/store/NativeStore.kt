@@ -56,7 +56,7 @@ class NativeStore private constructor(private val db: SQLiteDatabase) : KeyRecor
     }
 
     /** Forgets every record (sign-out): the core's identity, sessions and keys all go. */
-    fun wipe() = exclusive { db.execSQL("DELETE FROM records") }
+    override fun clear() { exclusive { db.execSQL("DELETE FROM records") } }
 
     fun close() = db.close()
 
