@@ -176,6 +176,23 @@ public class HiddenNativePlugin extends Plugin {
         call.resolve(result);
     }
 
+    /**
+     * The picture of the chat list for the next cold start (LaunchSnapshot): { onShow: the plain chat list is on
+     * show, allowed: a picture may be kept (no app lock) }.
+     */
+    @PluginMethod
+    public void setLaunchSnapshot(PluginCall call) {
+        LaunchSnapshot.setState(getContext(), Boolean.TRUE.equals(call.getBoolean("onShow", false)), Boolean.TRUE.equals(call.getBoolean("allowed", false)));
+        call.resolve();
+    }
+
+    /** The live screen has drawn: the saved picture shown since the cold start goes away. */
+    @PluginMethod
+    public void launchReady(PluginCall call) {
+        LaunchSnapshot.ready();
+        call.resolve();
+    }
+
     /** Before the web app opens its database: the one-time switch to a raw SQLCipher key (DatabaseKey). */
     @PluginMethod
     public void prepareDatabase(PluginCall call) {
@@ -1179,6 +1196,8 @@ public class HiddenNativePlugin extends Plugin {
         AlwaysConnected.set(getContext(), false);
         // Signed out: this account's chats must not stay in the share sheet or on the app icon.
         ShareShortcuts.clear(getContext());
+        // Nor a picture of its chat list.
+        LaunchSnapshot.delete(getContext());
         NativeRelay.stop();
         call.resolve();
     }

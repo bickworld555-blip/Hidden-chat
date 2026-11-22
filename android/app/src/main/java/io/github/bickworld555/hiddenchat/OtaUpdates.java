@@ -47,6 +47,7 @@ final class OtaUpdates {
 
     // Must equal NATIVE_API in src/otaConfig.js (a test checks): bump both when web code starts needing new native code.
     static final int NATIVE_API = 2;
+    private static final String BUILD_STAMP = "build.json";
     // Must equal OTA_PUBLIC_KEY in src/otaConfig.js.
     static final String PUBLIC_KEY = "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE9D5SrYnL+4D42UU1pHh0kmcGxT/Rjq6mhtbZUWeaIzFUXcFSgBht7WFLYKPYfyuy7yYY0Ld9hU4eRm8/BZyoxg==";
 
@@ -172,6 +173,9 @@ final class OtaUpdates {
             if (version.equals(p.getString("active", null)) || version.equals(p.getString("trial", null))) return "current";
             if (p.getStringSet("bad", new HashSet<>()).contains(version)) return "failed-before";
             if (payload.getInt("nativeApi") > NATIVE_API) return "needs-app-update";
+            // Made before this APK's own web code was built: taking it would put older code over newer (a bundle
+            // published on 20 Nov 2026 replaced the web code of every later APK from its second start).
+            if (payload.optLong("createdAt", 0) <= bundledBuiltAt(context)) return "older-than-app";
             JSONArray files = payload.getJSONArray("files");
             if (files.length() == 0 || files.length() > MAX_FILES) throw new SecurityException("Bad update file list.");
 
@@ -239,6 +243,19 @@ final class OtaUpdates {
             return file.isFile() ? new FileInputStream(file) : null;
         } catch (IOException e) {
             return null;
+        }
+    }
+
+    /** When the web code inside this APK was built (scripts/build-android-web.mjs writes build.json); 0 if unknown. */
+    private static long bundledBuiltAt(Context context) {
+        try (InputStream in = openAsset(context, BUILD_STAMP)) {
+            if (in == null) return 0;
+            java.io.ByteArrayOutputStream text = new java.io.ByteArrayOutputStream();
+            byte[] buffer = new byte[256];
+            for (int count; (count = in.read(buffer)) > 0 && text.size() < 4096; ) text.write(buffer, 0, count);
+            return new JSONObject(text.toString("UTF-8")).optLong("builtAt", 0);
+        } catch (Exception unreadable) {
+            return 0;
         }
     }
 

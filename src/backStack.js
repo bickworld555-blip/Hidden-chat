@@ -3,6 +3,15 @@
 import { useEffect, useRef } from 'react';
 
 const stack = [];
+const listeners = new Set();
+const changed = () => { for (const listener of listeners) listener(stack.length); };
+
+/** How many closable screens are open, and a subscription to changes (returns the unsubscribe). */
+export const backStackDepth = () => stack.length;
+export function onBackStackChange(listener) {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+}
 
 export function useBackHandler(active, handler) {
   const ref = useRef(handler);
@@ -11,9 +20,11 @@ export function useBackHandler(active, handler) {
     if (!active) return undefined;
     const entry = { run: () => ref.current?.() };
     stack.push(entry);
+    changed();
     return () => {
       const index = stack.lastIndexOf(entry);
       if (index >= 0) stack.splice(index, 1);
+      changed();
     };
   }, [active]);
 }
@@ -24,8 +35,4 @@ export function handleBack() {
   if (!top) return false;
   top.run();
   return true;
-}
-
-export function backStackDepthForTests() {
-  return stack.length;
 }

@@ -103,3 +103,15 @@ test('the app confirms its start, checks for updates later, and never during a c
   const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
   assert.match(app, /startOtaUpdates\(\{ busy: \(\) => Boolean\(callRef\.current && !TERMINAL_STATUSES\.includes\(callRef\.current\.status\)\) \}\)/);
 });
+
+test('the app shell refuses a bundle made before the web code built into the APK', () => {
+  // A bundle published on 20 Nov 2026 stayed on the server; every APK built after it downloaded it 20 s after its
+  // first start and ran that older web code from the second start on.
+  const shell = readFileSync(new URL('../android/app/src/main/java/io/github/bickworld555/hiddenchat/OtaUpdates.java', import.meta.url), 'utf8');
+  assert.match(shell, /if \(payload\.optLong\("createdAt", 0\) <= bundledBuiltAt\(context\)\) return "older-than-app";/);
+  assert.ok(shell.indexOf('return "older-than-app"') < shell.indexOf('File part = new File'), 'decided before anything is downloaded');
+  assert.match(shell, /BUILD_STAMP = "build\.json"/);
+  const build = readFileSync(new URL('../scripts/build-android-web.mjs', import.meta.url), 'utf8');
+  assert.match(build, /export const BUILD_STAMP = 'build\.json';/);
+  assert.match(build, /writeFileSync\(join\(outDir, BUILD_STAMP\), JSON\.stringify\(\{ builtAt: Date\.now\(\) \}\)/);
+});

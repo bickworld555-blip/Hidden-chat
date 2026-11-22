@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 import { chatPreview, unreadFrom } from '../src/store.js';
 import { savableMedia } from '../src/mediaSave.js';
-import { backStackDepthForTests, handleBack } from '../src/backStack.js';
+import { backStackDepth, handleBack } from '../src/backStack.js';
 import { phoneSoundFor, phoneSoundSession, usesPhoneSound } from '../src/phoneSounds.js';
 import { parsePhoneToneChoice, phoneToneChoice, toneChoiceLabel } from '../src/tones.js';
 import { DEFAULT_SETTINGS } from '../src/notificationSettings.js';
@@ -46,7 +46,7 @@ test('Media Save saves photos, files and voice notes, but never view once audio'
 
 test('Back closes the newest screen first and reports when nothing is left', () => {
   // The stack is driven by a React hook; here the module contract: empty means "go to the background".
-  assert.equal(backStackDepthForTests(), 0);
+  assert.equal(backStackDepth(), 0);
   assert.equal(handleBack(), false);
 });
 

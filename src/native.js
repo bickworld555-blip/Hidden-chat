@@ -139,7 +139,7 @@ export const nativeSetCallRinging = (ringing) => invoke('setCallRinging', { ring
 // System settings page for 'fullScreen' (ringing calls on the lock screen, Android 14+) or 'pictureInPicture'.
 export const nativeOpenCallSettings = (which) => invoke('openCallSettings', { which });
 // Over-the-air web updates (OtaUpdates.java, src/otaUpdates.js): check prepares a newer signed bundle for the next start
-// ('ready', 'current', 'none', 'needs-app-update', 'failed-before'; null on error or outside the app); ready confirms
+// ('ready', 'current', 'none', 'needs-app-update', 'older-than-app', 'failed-before'; null on error or outside the app); ready confirms
 // that this copy started properly.
 // Sync phone contacts (DeviceContacts.java, src/deviceContacts.js). Outside the Android app: null.
 export const nativeContactsPermission = async () => (await invoke('contactsPermission'))?.state ?? null;
@@ -226,6 +226,9 @@ export function resetNativeStateForTests() {
 export const nativeSecurityStatus = () => invoke('securityStatus');
 // This phone's notification preview public key (PreviewKey.java; base64), or '' (browsers, older APKs).
 export const nativePreviewKey = async () => { const result = await invoke('previewKey'); return typeof result?.key === 'string' ? result.key : ''; };
+// The chat list's picture for the next cold start (LaunchSnapshot.java; src/launchSnapshot.js decides the state).
+export const nativeSetLaunchSnapshot = (state) => invoke('setLaunchSnapshot', state);
+export const nativeLaunchReady = () => invoke('launchReady');
 // The phone's own unlock (fingerprint / face / screen-lock PIN): resolves { ok, error? } (null outside the app).
 export const nativeAuthenticate = (title, subtitle = '') => invoke('authenticate', { title, subtitle });
 export const nativeSetSecureScreen = (enabled) => invoke('setSecureScreen', { enabled: Boolean(enabled) });

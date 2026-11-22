@@ -2,12 +2,13 @@
 // ANDROID_APP_URL, with a strict Content-Security-Policy, and checked to be self-contained (every script and
 // stylesheet is a local file, nothing points at a website, no service worker).
 import { execFileSync } from 'node:child_process';
-import { existsSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ANDROID_WEB_DIR, apiOrigin } from './configure-android.mjs';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
+export const BUILD_STAMP = 'build.json';
 
 /** Throws unless the built folder is self-contained: index.html loads only local scripts and styles. */
 export function verifyBundle(directory) {
@@ -46,6 +47,8 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     env: { ...process.env, VITE_API_BASE_URL: origin, ANDROID_APP_URL: origin },
   });
   rmSync(join(outDir, 'sw.js'), { force: true });
+  // When this web code was built: the app shell refuses an over-the-air bundle made before it (OtaUpdates.java).
+  writeFileSync(join(outDir, BUILD_STAMP), JSON.stringify({ builtAt: Date.now() }) + '\n');
   const { scripts, bytes } = verifyBundle(outDir);
   console.log(`Bundled app ready in ${ANDROID_WEB_DIR}/ (${scripts} local scripts/styles, ${(bytes / 1024 / 1024).toFixed(1)} MB), API ${origin}.`);
 }

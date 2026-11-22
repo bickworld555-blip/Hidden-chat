@@ -37,6 +37,8 @@ final class AppSecurity {
 
     static void setSecureScreen(Activity activity, boolean enabled) {
         prefs(activity).edit().putBoolean(SECURE_SCREEN, enabled).apply();
+        // Screen security on: no picture of the chat list stays on the phone either (LaunchSnapshot).
+        if (enabled) LaunchSnapshot.delete(activity);
         activity.runOnUiThread(() -> apply(activity));
     }
 

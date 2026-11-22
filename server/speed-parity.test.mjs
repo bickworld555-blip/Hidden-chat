@@ -42,7 +42,7 @@ test('cold start: the saved account opens at once, its data loads together, and 
   const restore = app.slice(app.indexOf('async function restoreSession()'));
   assert.ok(restore.indexOf('setSession(saved);') < restore.indexOf('validateAccount(account).then('), 'server check alongside, not in front');
   assert.match(restore, /if \(fresh === null\) \{ revokedRef\.current\?\.\(\); return; \}/, 'a refused token signs out');
-  assert.match(app, /await Promise\.all\(\[hydrateContacts\(userId\), hydratePreferences\(userId\)\]\);\s+await Promise\.all\(\[hydrateMessages\(userId\), hydrateCallLogs\(userId\)\]\);/);
+  assert.match(app, /await Promise\.all\(\[hydrateContacts\(userId\), hydratePreferences\(userId\)\]\);\s+(?:\/\/[^\n]*\s+launchScreenReady\(\);\s+)?await Promise\.all\(\[hydrateMessages\(userId\), hydrateCallLogs\(userId\)\]\);/);
   assert.match(read('vite.config.js'), /rel="modulepreload" crossorigin href="\/\$\{file\}"/);
 });
 

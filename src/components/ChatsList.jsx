@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { reportChatListPlain } from '../launchSnapshot.js';
 import { Archive, ArchiveRestore, ArrowLeft, BellOff, Camera, Check, Heart, FileText, Image as ImageIcon, Lock, MessageSquarePlus, Mic, MoreVertical, Phone, PhoneMissed, Pin, Plus, Search, Tag, Trash2, Users, Video, Volume2, VolumeX, X } from 'lucide-react';
 import { setChatArchived, toggleChatLabel, useAccountData } from '../accountData.js';
 import { chatLockMethod, unlockLockedChats } from '../chatLock.js';
@@ -189,6 +190,15 @@ export default function ChatsList({ onOpenChat, onStartCall, onGroups, groups = 
   const [addingId, setAddingId] = useState('');
   const [filterTab, setFilterTab] = useState('all');
   const [menuOpen, setMenuOpen] = useState(false);
+  // The picture kept for the next cold start (src/launchSnapshot.js) is taken only of the plain list: never the
+  // locked folder, and not the archive, a search, a filter, a menu or a selection either.
+  const plainList = !showLocked && !lockPrompt && !showArchived && !searchQuery && !searchFocus && filterTab === 'all'
+    && !headerMenu && !menuOpen && !actionChat && !pendingDelete && !contactModalOpen && !capturedPhoto && !labelTarget
+    && !listTarget && !listEditor && selectedChatIds.length === 0;
+  useEffect(() => {
+    reportChatListPlain(plainList);
+    return () => reportChatListPlain(false);
+  }, [plainList]);
   const searchRef = useRef(null);
 
   const isSelectionMode = selectedChatIds.length > 0;

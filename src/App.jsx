@@ -34,7 +34,7 @@ import { fetchGroupMessages } from './groupHistory.js';
 import { SECURITY_NOTICE } from './e2e/notices.js';
 import { LOCKED_NOTIFICATION } from './chatLock.js';
 import { answerResendRequest, applyResealed, handleReactionError, handleRejected, needsOpening, openEvent, openHistory, openRows, requestResend, storedMessage, transmitDirect } from './e2e/messaging.js';
-import { appSettings, connectAccountSettings } from './settings.js';
+import { appLockDelayMs, appSettings, connectAccountSettings, useSetting } from './settings.js';
 import { getPrivacy, setPrivacy } from './accountApi.js';
 import ShareSheet from './components/ShareSheet.jsx';
 import { publishShareShortcuts } from './shareShortcuts.js';
@@ -92,7 +92,8 @@ const JoinGroupSheet = lazyComponent(() => import('./components/parity/GroupAdmi
 const TwoStepReminder = lazyComponent(() => import('./components/parity/SecurityViews.jsx'), (module) => module.TwoStepReminder);
 import { AppLockGate } from './components/parity/SecurityViews.jsx';
 import { connectAccountData, groupChatKey, handleAccountEvent, unarchiveOnMessage } from './accountData.js';
-import { applyScreenSecurity, startAppLock } from './appLock.js';
+import { applyScreenSecurity, startAppLock, useAppLock } from './appLock.js';
+import { launchScreenReady, reportLaunchSnapshotApp } from './launchSnapshot.js';
 import { mentionsUser } from './mentions.js';
 
 // A call link opened in the app: /call/<code>.
@@ -388,6 +389,8 @@ export default function App() {
       if (!authReady) return;
       if (!userId || !sessionToken) {
         setConnection('offline');
+        // Nobody signed in: the sign-in screen is the live screen.
+        launchScreenReady();
         return;
       }
       setFatalError('');
@@ -396,6 +399,8 @@ export default function App() {
         // The chat list draws from the contacts (each with its last message) and the list preferences, read together;
         // the saved messages and the call log follow together. One after another they added up on every cold start.
         await Promise.all([hydrateContacts(userId), hydratePreferences(userId)]);
+        // The chat list has its rows: the picture shown since the cold start (src/launchSnapshot.js) can go.
+        launchScreenReady();
         await Promise.all([hydrateMessages(userId), hydrateCallLogs(userId)]);
         if (cancelled) return;
         if (cancelled) return;
@@ -1267,6 +1272,22 @@ export default function App() {
   const [channelToOpen, setChannelToOpen] = useState('');
   const showMobileList = isMobile && activeTab === 'chats' && (mobileListOpen || !chat);
   const chatOpenOnMobile = isMobile && activeTab === 'chats' && !showMobileList;
+  // The chat list's picture for the next cold start (src/launchSnapshot.js): kept only of the plain list, never
+  // with app lock or screen security on.
+  const appLocked = useAppLock((state) => state.locked);
+  const appLockSetting = useSetting('security.appLock');
+  const screenSecuritySetting = useSetting('security.screenSecurity');
+  useEffect(() => {
+    if (!authReady) return;
+    reportLaunchSnapshotApp({
+      signedIn: Boolean(userId && sessionToken) && !authOpen,
+      listScreen: showMobileList,
+      inCall: Boolean(call),
+      locked: appLocked,
+      appLock: appLockDelayMs(appLockSetting) !== null,
+      screenSecurity: Boolean(screenSecuritySetting),
+    });
+  }, [authReady, userId, sessionToken, authOpen, showMobileList, call, appLocked, appLockSetting, screenSecuritySetting]);
   // Android Back: close the top screen (newest registered first); a chat goes back to the list, another tab to
   // Chats; with nothing left the app goes to the background instead of quitting.
   useBackHandler(isMobile && activeTab !== 'chats', () => setMobileActiveTab('chats'));

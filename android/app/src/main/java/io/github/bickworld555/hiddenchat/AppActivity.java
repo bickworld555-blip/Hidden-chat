@@ -198,11 +198,15 @@ public class AppActivity extends BridgeActivity {
         // Over-the-air web updates: roll back an update that never confirmed it started, before the bridge picks
         // which copy of the web app to load (OtaUpdates).
         OtaUpdates.beforeBridge(this);
+        // The saved picture of the chat list (LaunchSnapshot) is read while the bridge and web view start.
+        LaunchSnapshot.preload(this);
         super.onCreate(savedInstanceState);
         // Remember what the file chooser returns, so picked videos are read natively (PickedFiles).
         if (getBridge() != null) PickedFiles.install(getBridge());
         // Screen security (FLAG_SECURE) from the first frame, before the web app has loaded.
         AppSecurity.apply(this);
+        // Started from the app icon: the chat list as it was last left, until the live one has drawn.
+        LaunchSnapshot.attach(this);
         // Opened by a ringing call's full-screen notification: show over the lock screen and light the screen at
         // once, before the web app has loaded (otherwise the call would wait behind the lock screen).
         if (getIntent() != null && getIntent().getBooleanExtra(Alerts.EXTRA_CALL, false)) applyCallWindow(true);
@@ -223,6 +227,13 @@ public class AppActivity extends BridgeActivity {
     public void onStart() {
         super.onStart();
         visible = true;
+    }
+
+    @Override
+    public void onPause() {
+        // Leaving with the plain chat list on show: its picture is kept (encrypted) for the next cold start.
+        LaunchSnapshot.capture(this);
+        super.onPause();
     }
 
     @Override
@@ -412,6 +423,8 @@ public class AppActivity extends BridgeActivity {
             current = null;
             alive = false;
         }
+        // The cold-start picture lives in this screen's window.
+        LaunchSnapshot.detach(this);
         // Screen gone (swiped away) but the service still runs: keep the phone reachable.
         if (!isChangingConfigurations() && MessagingService.isRunning() && MessagingService.isLegacy(this)) NativeRelay.start(this);
         // The call lived in this screen's WebView: without it there is no call any more.
