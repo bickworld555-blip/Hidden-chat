@@ -53,11 +53,15 @@ object NativeRegistration {
         val needKeys = !published || (Json.list(upload["preKeys"])?.isNotEmpty() == true) || Json.safeInteger(status?.get("signedPreKeyId")) != newSpkId
         if (needKeys) transport.putJson("/api/v1/e2e/keys", upload)
 
-        val account = accountKey(store)
-        val identity = core.publicIdentity()
-        val entry = DeviceList.Entry(deviceId, Json.string(identity["dh"])!!, Json.string(identity["sig"])!!)
-        val signed = DeviceList.signList(account, userId, nextCounter(store), now, listOf(entry))
-        transport.putJson("/api/v1/e2e/device-list?create=1", signed)
+        // The signed device list is published once per install (a single account key naming this device). Prekey
+        // refreshes do not re-sign it; a sign-out (clear) resets this so a fresh identity re-registers.
+        if (store.get("list-published") != "done") {
+            val account = accountKey(store)
+            val identity = core.publicIdentity()
+            val entry = DeviceList.Entry(deviceId, Json.string(identity["dh"])!!, Json.string(identity["sig"])!!)
+            val signed = DeviceList.signList(account, userId, nextCounter(store), now, listOf(entry))
+            if (transport.putJson("/api/v1/e2e/device-list?create=1", signed) != null) store.set("list-published", "done")
+        }
         return true
     }
 }

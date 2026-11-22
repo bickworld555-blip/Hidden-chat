@@ -15,6 +15,8 @@ import { companionOnly } from '../companion.js';
 import { createAccountKey, linkClaimMac, listedDevices, MAX_LISTED_DEVICES, pinDecision, signDeviceList, verifyDeviceList } from './deviceList.js';
 import { dh as agreeDh, equalBytes, fromBase64 as decodeBase64 } from './primitives.js';
 import { createProtocol } from './protocol.js';
+import { createBridgeProtocol } from './bridgeProtocol.js';
+import { nativeCrypto, nativeRegister } from '../native.js';
 import { sealPreview, validPreviewKey } from './preview.js';
 import { resolveSecurityCode } from './securityCode.js';
 import { buildEnvelope, ENVELOPE_PREFIX, isEnvelope, parseEnvelope, routingFor, withRoutedMedia } from './envelope.js';
@@ -158,7 +160,7 @@ async function publishKeys() {
 // `records` keeps pins and pending link approvals (encrypted store); `linkStore` the pending link claim of a device
 // linked by QR (written by src/linking.js); `canHoldAccountKey`: phones create and rotate the account key, linked
 // browsers and desktops never do. All three are injectable for tests.
-export function startE2e({ token, userId, deviceId, storage, fetchImpl = apiFetch, api, records = { get: secureGet, set: secureSet }, linkStore = { get: (key) => idbGet(key), del: (key) => idbDel(key) }, canHoldAccountKey = !companionOnly() } = {}) {
+export function startE2e({ token, userId, deviceId, storage, useNativeCore = false, fetchImpl = apiFetch, api, records = { get: secureGet, set: secureSet }, linkStore = { get: (key) => idbGet(key), del: (key) => idbDel(key) }, canHoldAccountKey = !companionOnly() } = {}) {
   if (!token || !userId || !deviceId) return Promise.resolve(false);
   if (current?.deviceId === deviceId && current.userId === userId) {
     current.token = token;
@@ -174,18 +176,31 @@ export function startE2e({ token, userId, deviceId, storage, fetchImpl = apiFetc
     records,
     linkStore,
     canHoldAccountKey,
-    protocol: createProtocol({
-      storage: storage ?? browserKeyStorage(deviceId),
-      api,
-      onIdentityChange: (changedUser, changedDevice) => notify({ type: 'identity-changed', userId: changedUser, deviceId: changedDevice }),
-    }),
+    // The native app runs every operation in the native core over the bridge (one identity/ratchet per device);
+    // otherwise the web protocol with its own key storage.
+    protocol: useNativeCore
+      ? createBridgeProtocol((method, args) => nativeCrypto(method, args))
+      : createProtocol({
+        storage: storage ?? browserKeyStorage(deviceId),
+        api,
+        onIdentityChange: (changedUser, changedDevice) => notify({ type: 'identity-changed', userId: changedUser, deviceId: changedDevice }),
+      }),
   };
   current = session;
-  session.ready = publishKeys().then(() => true);
-  session.ready.catch(() => {});
-  // The signed device list follows the keys; a failure there never stops sending.
-  session.listSync = session.ready.then(() => syncDeviceList()).catch(() => 'failed');
-  session.timer = setInterval(() => { publishKeys().then(() => syncDeviceList()).catch(() => {}); }, KEY_REFRESH_MS);
+  if (useNativeCore) {
+    // Native owns key publishing and the single account key's device list (NativeRegistration): no duplicate web
+    // publishing or device-list signing. The refresh tops up prekeys; the list is published once per install.
+    session.ready = Promise.resolve(nativeRegister()).then(() => true);
+    session.ready.catch(() => {});
+    session.listSync = session.ready;
+    session.timer = setInterval(() => { Promise.resolve(nativeRegister()).catch(() => {}); }, KEY_REFRESH_MS);
+  } else {
+    session.ready = publishKeys().then(() => true);
+    session.ready.catch(() => {});
+    // The signed device list follows the keys; a failure there never stops sending.
+    session.listSync = session.ready.then(() => syncDeviceList()).catch(() => 'failed');
+    session.timer = setInterval(() => { publishKeys().then(() => syncDeviceList()).catch(() => {}); }, KEY_REFRESH_MS);
+  }
   return session.ready;
 }
 

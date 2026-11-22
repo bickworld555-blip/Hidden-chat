@@ -260,8 +260,11 @@ export default function App() {
     }
     // In the phone app, only once this app holds the end-to-end lock (a background page may be finishing a message).
     let live = true;
-    e2eLockReady().then(() => {
-      if (live) startE2e({ token: sessionToken, userId, deviceId })
+    e2eLockReady().then(async () => {
+      if (!live) return;
+      // The native app runs encryption in the native core (one identity/ratchet per device); the browser/web path otherwise.
+      const useNativeCore = await nativeE2eActive().catch(() => false);
+      startE2e({ token: sessionToken, userId, deviceId, useNativeCore })
         // The phone's notification preview key, signed by this device and published once (src/e2e/preview.js).
         .then(() => nativePreviewKey()).then((key) => (live && key ? publishPreviewKey(key) : false))
         .catch(() => { /* retried on the next refresh */ });

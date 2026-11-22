@@ -176,6 +176,28 @@ public class HiddenNativePlugin extends Plugin {
      * The app's own background fetch has ended (src/App.jsx): the CPU may sleep again (FetchWake, P3); "offline-done"
      * or "quiet" also counts as a completed fetch for the hourly check (HeartbeatJob, P4).
      */
+    /** Publishes this device's native keys and signed device list (NativeRegistration): the web app's key publishing on the native path. */
+    @PluginMethod
+    public void nativeRegister(PluginCall call) {
+        io.github.bickworld555.hiddenchat.core.crypto.CryptoCore core = CryptoCores.INSTANCE.current();
+        if (core == null) { call.reject("native-core-missing"); return; }
+        new Thread(() -> {
+            try {
+                io.github.bickworld555.hiddenchat.core.store.NativeStore store = io.github.bickworld555.hiddenchat.core.store.NativeStore.Companion.get(getContext());
+                NativeServer server = NativeServer.Companion.from(getContext());
+                RelaySession session = RelaySession.read(getContext());
+                String deviceId = RelaySession.deviceId(getContext());
+                if (store == null || server == null || session == null || session.userId == null || deviceId == null) { call.reject("native-register-unavailable"); return; }
+                io.github.bickworld555.hiddenchat.core.NativeRegistration.INSTANCE.register(core, store, session.userId, deviceId, server, System.currentTimeMillis());
+                JSObject result = new JSObject();
+                result.put("ok", true);
+                call.resolve(result);
+            } catch (Exception failed) {
+                call.reject("native-register-failed");
+            }
+        }, "native-register").start();
+    }
+
     /** Whether the native end-to-end path is active (flag on and the core installed): the web app then uses the bridge. */
     @PluginMethod
     public void nativeE2eActive(PluginCall call) {

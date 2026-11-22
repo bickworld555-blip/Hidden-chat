@@ -136,7 +136,7 @@ test('background key opening publishes nothing; the page writes the app database
   // page's inbox as the fallback, both inside the same guarded block.
   assert.match(app, /await e2eLockReady\(\);[\s\S]{0,700}importNativeInbox\(await nativeTakeInbox\(\), applyOpened\)/, 'the native inbox is imported only once it holds the lock');
   assert.match(app, /nativeE2eActive\(\)[\s\S]{0,400}importInbox\(/, 'otherwise the WebView page inbox, still under the lock');
-  assert.match(app, /e2eLockReady\(\)\.then\(\(\) => \{\s*if \(live\) startE2e\(/, 'and starts its own encryption only then');
+  assert.match(app, /e2eLockReady\(\)\.then\(async \(\) => \{[\s\S]{0,300}startE2e\(\{ token: sessionToken, userId, deviceId, useNativeCore \}\)/, 'and starts its own encryption only then, native core when active');
 });
 
 test('one message, one notification: the sealed "🔒 Message" fallback never stacks under the real one', () => {

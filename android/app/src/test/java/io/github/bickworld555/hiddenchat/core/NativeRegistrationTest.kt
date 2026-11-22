@@ -49,10 +49,12 @@ class NativeRegistrationTest {
         val first = FakeTransport(status = null)
         NativeRegistration.register(core, store, "2222222222", "bob-dev", first, 1700000000000L)
         val spkId = Json.safeInteger(Json.map(first.puts.first { it.first == "/api/v1/e2e/keys" }.second["signedPreKey"])!!["id"])
-        // Second run: server reports published, plenty of prekeys, same signed prekey → no key upload, list still re-published.
+        assertEquals("device list published once on the first run", 1, first.puts.count { it.first.startsWith("/api/v1/e2e/device-list") })
+        // Second run: server reports published, plenty of prekeys, same signed prekey → no key upload, and the device
+        // list is not re-signed (already published once).
         val second = FakeTransport(status = Json.obj("published" to true, "preKeys" to 100L, "signedPreKeyId" to spkId))
         NativeRegistration.register(core, store, "2222222222", "bob-dev", second, 1700000100000L)
         assertEquals("no key upload when already stocked", 0, second.puts.count { it.first == "/api/v1/e2e/keys" })
-        assertEquals("device list re-published", 1, second.puts.count { it.first.startsWith("/api/v1/e2e/device-list") })
+        assertEquals("device list not re-published", 0, second.puts.count { it.first.startsWith("/api/v1/e2e/device-list") })
     }
 }
