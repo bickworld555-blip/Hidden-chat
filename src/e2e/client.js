@@ -16,6 +16,7 @@ import { createAccountKey, linkClaimMac, listedDevices, MAX_LISTED_DEVICES, pinD
 import { dh as agreeDh, equalBytes, fromBase64 as decodeBase64 } from './primitives.js';
 import { createProtocol } from './protocol.js';
 import { sealPreview, validPreviewKey } from './preview.js';
+import { resolveSecurityCode } from './securityCode.js';
 import { buildEnvelope, ENVELOPE_PREFIX, isEnvelope, parseEnvelope, routingFor, withRoutedMedia } from './envelope.js';
 import { sha256Hex } from './primitives.js';
 import { sanitizePreview } from '../linkPreviewParse.js';
@@ -258,7 +259,8 @@ function refreshDevices(userId) {
   const job = (async () => {
     const { devices, signedList } = await request(`/api/v1/e2e/users/${encodeURIComponent(userId)}/devices`);
     const trusted = await trustedDevices(userId, devices, signedList);
-    deviceLists.set(userId, { at: Date.now(), devices: trusted });
+    // `listed`: how many the server named, before this device's own checks (the Encryption screen tells them apart).
+    deviceLists.set(userId, { at: Date.now(), devices: trusted, listed: Array.isArray(devices) ? devices.length : 0 });
     return trusted;
   })().finally(() => listRefreshes.delete(userId));
   listRefreshes.set(userId, job);
@@ -780,6 +782,25 @@ export async function openGroupMessages(groupId, messages) {
 }
 
 // --- Verification -------------------------------------------------------------------------------------
+
+/**
+ * The Encryption screen's state for a chat (src/e2e/securityCode.js): the code, or exactly why there is none. Both
+ * device lists are fetched fresh; a failed fetch is "offline", never "the contact has no keys".
+ */
+export async function securityCodeState(peerId) {
+  const session = current;
+  if (session) await session.ready.catch(() => {});
+  return resolveSecurityCode({
+    hasSession: Boolean(session) && current === session,
+    ownId: session?.userId,
+    peerId,
+    report: async (userId) => {
+      const devices = await refreshDevices(userId);
+      return { devices, listed: deviceLists.get(userId)?.listed ?? devices.length };
+    },
+    safetyNumber: (mine, theirs) => session.protocol.safetyNumber(mine, theirs),
+  });
+}
 
 /** The safety number with a contact: over every device identity of both accounts (60 digits, like WhatsApp). */
 export async function safetyNumberWith(peerId) {

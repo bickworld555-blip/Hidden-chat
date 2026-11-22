@@ -3384,6 +3384,7 @@ html, body { overflow-x: hidden; }
 .wa-info-subview .wa-info-row { background: var(--wa-bg); }
 .wa-info-empty, .wa-info-note { margin: 0; padding: 22px 24px; color: var(--wa-sub); font-size: 14px; line-height: 1.5; text-align: center; }
 .wa-info-note { text-align: left; padding: 10px 24px; }
+.wa-info-retry { margin: 4px 24px 12px; padding: 8px 18px; border: 0; border-radius: 18px; background: var(--wa-green); color: #fff; font: inherit; font-size: 14px; font-weight: 600; cursor: pointer; }
 .wa-info-hero-icon { display: grid; place-items: center; padding: 28px 0 10px; color: var(--wa-green); }
 .wa-info-radio { display: flex; align-items: center; gap: 20px; min-height: 52px; padding: 0 22px; font-size: 16px; cursor: pointer; }
 .wa-info-radio input { width: 20px; height: 20px; margin: 0; accent-color: var(--wa-green); }

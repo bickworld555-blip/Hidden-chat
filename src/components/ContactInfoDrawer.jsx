@@ -8,6 +8,7 @@ import {
   FileText,
   Heart,
   Link as LinkIcon,
+  Lock,
   LockOpen,
   MessageSquareLock,
   Palette,
@@ -31,7 +32,8 @@ import { formatViewerTimestamp } from '../time.js';
 import { hasCustomDisplayName, presentName } from '../profile.js';
 import Avatar from './Avatar.jsx';
 import BusinessInfoCard from './BusinessInfoCard.jsx';
-import { safetyNumberWith } from '../e2e/client.js';
+import { securityCodeState } from '../e2e/client.js';
+import { securityCodeMessage } from '../e2e/securityCode.js';
 import { apiFetch } from '../api.js';
 import { fetchAbout } from '../aboutApi.js';
 import { GalleryTile } from './MediaViewer.jsx';
@@ -91,28 +93,45 @@ function ConfirmDialog({ title, children, confirmLabel, danger = true, busy, onC
 
 // The 60-digit security code for this chat (the same on both phones), over every device key of both accounts:
 // comparing it in person proves no one substituted a key, so the end-to-end encryption reaches the right devices.
+// The screen says which case it is (src/e2e/securityCode.js): encrypted with its code, or exactly why there is no code
+// (the contact has no keys yet, a list that failed its check, this device not on its own account's list, the server
+// not reached, encryption still starting). It used to open with a fixed text saying the app had no end-to-end encryption,
+// from before encryption existed, and one line that blamed the contact's app for every other case.
 function SecurityCode({ peerId, peerName, sessionToken }) {
-  const [code, setCode] = useState(null);
+  const [state, setState] = useState(null);
+  const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     let cancelled = false;
-    (async () => {
-      try {
-        const next = await safetyNumberWith(peerId);
-        if (!cancelled) setCode(next);
-      } catch {
-        if (!cancelled) setCode('');
-      }
-    })();
+    setState(null);
+    securityCodeState(peerId)
+      .then((next) => { if (!cancelled) setState(next); })
+      .catch(() => { if (!cancelled) setState({ status: 'offline' }); });
     return () => { cancelled = true; };
-  }, [peerId, sessionToken]);
-  if (code === null) return <p className="wa-info-note">Loading the security code…</p>;
-  if (!code) return <p className="wa-info-note">A security code appears once {peerName} opens an updated Hidden Messenger.</p>;
+  }, [peerId, sessionToken, attempt]);
+  if (state === null) {
+    return (
+      <>
+        <div className="wa-info-hero-icon"><Lock size={48} /></div>
+        <p className="wa-info-note">Loading the security code…</p>
+      </>
+    );
+  }
+  const message = securityCodeMessage(state.status, peerName);
   return (
-    <div className="wa-security-code">
-      <strong>Security code</strong>
-      <code aria-label={`Security code ${code}`}>{code}</code>
-      <small>The same 60 digits show on {peerName}'s phone. Compare them in person to check your keys. Messages and calls in this chat are end-to-end encrypted.</small>
-    </div>
+    <>
+      <div className="wa-info-hero-icon">{message.encrypted ? <Lock size={48} /> : <LockOpen size={48} />}</div>
+      <p className="wa-info-note" data-encryption-state={state.status}>{message.text}</p>
+      {state.status === 'ok' && (
+        <div className="wa-security-code">
+          <strong>Security code</strong>
+          <code aria-label={`Security code ${state.code}`}>{state.code}</code>
+          <small>The same 60 digits show on {peerName}'s phone. Compare them in person to check your keys.</small>
+        </div>
+      )}
+      {(state.status === 'offline' || state.status === 'starting') && (
+        <button type="button" className="wa-info-retry" onClick={() => setAttempt((count) => count + 1)}>Try again</button>
+      )}
+    </>
   );
 }
 
@@ -364,12 +383,6 @@ export default function ContactInfoDrawer({
   } else if (view === 'encryption') {
     body = (
       <SubView title="Encryption" onBack={() => setView('main')}>
-        <div className="wa-info-hero-icon"><LockOpen size={48} /></div>
-        <p className="wa-info-note">
-          Hidden Messenger does not use end-to-end encryption. Messages, media and call setup are sent over your connection to
-          your Hidden Messenger server and stored there, so anyone who runs or can read that server can read this chat.
-        </p>
-        <p className="wa-info-note">Use HTTPS to protect messages in transit, and only use Hidden Messenger servers you trust.</p>
         <SecurityCode peerId={chatId} peerName={name} sessionToken={sessionToken} />
       </SubView>
     );
@@ -435,7 +448,7 @@ export default function ContactInfoDrawer({
             <Row icon={Palette} title="Chat theme" subtitle={chatThemeLabel(theme)} onClick={() => setView('theme')}><ChevronRight size={18} className="wa-info-chevron" /></Row>
             <Row icon={MessageSquareLock} title="Restricted chat" subtitle="Not available yet" disabled />
             <button type="button" className="wa-info-encryption" onClick={() => setView('encryption')}>
-              <LockOpen size={20} aria-hidden="true" />
+              <Lock size={20} aria-hidden="true" />
               <span>
                 <strong>Encryption</strong>
                 <small>Messages are end-to-end encrypted on your devices. The server stores only ciphertext it cannot read.</small>
