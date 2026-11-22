@@ -77,11 +77,35 @@ class E2eVectorsTest {
     }
 
     @Test
+    fun replayDriverFeedsRecordedMaterial() {
+        // The replay plumbing (ReplayRng) is exercised before any core exists: it must hand back every recorded key
+        // pair and random draw, and each recorded public point must be a valid on-curve P-256 point (via Primitives,
+        // the author-provided primitives). This is the driver a completed core replay will use, proven to parse.
+        val direct = Json.map(vectors["directInterface"])!!
+        for (name in listOf("alice", "bob")) {
+            val rng = ReplayRng(Json.map(direct[name])!!)
+            assertTrue("$name has recorded key material", rng.keyCount > 0)
+            for (i in 0 until rng.keyCount) {
+                val key = rng.nextKey()
+                assertEquals("private scalar is 32 bytes", 32, key.privateScalar.size)
+                assertEquals("public point is a 65-byte uncompressed point", 65, key.publicPoint.size)
+                // On-curve check through the author-provided Primitives; throws if off-curve.
+                Primitives.decodePublic(key.publicPoint)
+            }
+            assertEquals("all recorded keys consumed", rng.keyCount, rng.keysConsumed)
+            repeat(rng.randomCount) { rng.nextRandom() }
+            assertEquals("all recorded randoms consumed", rng.randomCount, rng.randomsConsumed)
+        }
+    }
+
+    @Test
     fun coreConformanceWhenInstalled() {
         val core = CryptoCores.current()
         if (core == null) {
-            // No implementation wired in yet: the replay harness compiles and is ready. See the Phase 1 report.
-            println("E2eVectorsTest: no CryptoCore installed — ratchet/sender-key replay skipped (scaffold).")
+            // No implementation wired in yet. The driver (ReplayRng) and vectors are ready; completing this is:
+            // build a ReplayRng per party, drive the recorded step order through the core, assert every header,
+            // ciphertext and plaintext byte-for-byte. See docs/native/CRYPTO-CORE-INTEGRATION.md.
+            println("E2eVectorsTest: no CryptoCore installed — byte-for-byte replay skipped (driver is ready).")
             return
         }
         // When a core exists, feed it the recorded randomness and assert every step. Fail loudly until then so this
