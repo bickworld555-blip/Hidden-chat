@@ -168,6 +168,14 @@ public class HiddenNativePlugin extends Plugin {
      * The app's own background fetch has ended (src/App.jsx): the CPU may sleep again (FetchWake, P3); "offline-done"
      * or "quiet" also counts as a completed fetch for the hourly check (HeartbeatJob, P4).
      */
+    /** This phone's notification preview public key (PreviewKey), for the web app to sign and publish. */
+    @PluginMethod
+    public void previewKey(PluginCall call) {
+        JSObject result = new JSObject();
+        result.put("key", PreviewKey.publicKey(getContext()));
+        call.resolve(result);
+    }
+
     /** Before the web app opens its database: the one-time switch to a raw SQLCipher key (DatabaseKey). */
     @PluginMethod
     public void prepareDatabase(PluginCall call) {
@@ -239,6 +247,9 @@ public class HiddenNativePlugin extends Plugin {
         JSObject data = new JSObject();
         data.put("action", action);
         data.put("callId", callId);
+        // When it was asked for: the event is kept until a call screen listens, and one kept from an earlier call must
+        // not answer or end the next one (the web app drops old ones, CallOverlay).
+        data.put("at", System.currentTimeMillis());
         if (extra != null) for (java.util.Iterator<String> keys = extra.keys(); keys.hasNext();) {
             String key = keys.next();
             data.put(key, extra.opt(key));

@@ -15,6 +15,7 @@ import { companionOnly } from '../companion.js';
 import { createAccountKey, linkClaimMac, listedDevices, MAX_LISTED_DEVICES, pinDecision, signDeviceList, verifyDeviceList } from './deviceList.js';
 import { dh as agreeDh, equalBytes, fromBase64 as decodeBase64 } from './primitives.js';
 import { createProtocol } from './protocol.js';
+import { sealPreview, validPreviewKey } from './preview.js';
 import { buildEnvelope, ENVELOPE_PREFIX, isEnvelope, parseEnvelope, routingFor, withRoutedMedia } from './envelope.js';
 import { sha256Hex } from './primitives.js';
 import { sanitizePreview } from '../linkPreviewParse.js';
@@ -551,7 +552,10 @@ export class PeerKeysMissing extends Error {
 }
 
 // fresh: ask the server for the contact's devices now (retrying a message that waited for their keys).
-export async function sealDirect(peerId, content, extra = {}, { fresh = false } = {}) {
+// preview: the notification text of this message (already formatted, src/store.js notificationPreview). It is sealed
+// for each of the contact's phones that published a preview key (src/e2e/preview.js) and travels as `pv`, so the
+// phone can show it from the push itself. Left out for messages that do not notify with their text (reactions).
+export async function sealDirect(peerId, content, extra = {}, { fresh = false, preview = '' } = {}) {
   const session = current;
   if (!session || typeof content !== 'string' || isEnvelope(content)) return content;
   await session.ready.catch(() => {});
@@ -562,9 +566,40 @@ export async function sealDirect(peerId, content, extra = {}, { fresh = false } 
   if (others.length) targets[session.userId] = others;
   const inner = innerOf(content, extra);
   const d = await session.protocol.encryptForDevices(targets, JSON.stringify(inner), { claimBundles });
-  const envelope = buildEnvelope(routingFor(content), { sd: session.deviceId, d });
+  const pv = preview ? await previewsFor(session, peer, preview) : null;
+  const envelope = buildEnvelope(routingFor(content), { sd: session.deviceId, d, ...(pv ? { pv } : {}) });
   await remember(await sha256Hex(bodyOf(envelope)), inner);
   return envelope;
+}
+
+/** { deviceId: sealed preview } for the devices whose preview key is signed by their identity; null when none. */
+async function previewsFor(session, devices, text) {
+  const sealed = {};
+  await Promise.all(devices.map(async (device) => {
+    if (!device.preview || !(await validPreviewKey(device.identity?.sig, device.preview, session.api))) return;
+    try { sealed[device.deviceId] = await sealPreview(device.preview.key, text, session.userId, { api: session.api }); } catch { /* no preview for this phone */ }
+  }));
+  return Object.keys(sealed).length ? sealed : null;
+}
+
+/**
+ * This phone's preview public key (from Android, PreviewKey.java), signed by this device's identity and published,
+ * once per key. `previewKey`: base64, or empty where there is none (browsers, the desktop app, older APKs).
+ */
+export async function publishPreviewKey(previewKey) {
+  const session = current;
+  if (!session || typeof previewKey !== 'string' || !previewKey) return false;
+  await session.ready.catch(() => {});
+  const mark = `e2e:preview-key:${session.userId}:${session.deviceId}`;
+  // Published for this identity: a new identity (wiped keys) signs and publishes it again.
+  const identity = await session.protocol.publicIdentity();
+  const published = `${previewKey}|${identity?.sig ?? ''}`;
+  if ((await session.records.get(mark).catch(() => null)) === published) return true;
+  const signature = await session.protocol.signPreviewKey(previewKey);
+  if (current !== session) return false;
+  await request('/api/v1/e2e/preview-key', { method: 'PUT', body: { key: previewKey, signature } });
+  await session.records.set(mark, published).catch(() => {});
+  return true;
 }
 
 /** Seals `content` for this account's other devices only (call log sync). Throws when there are none. */

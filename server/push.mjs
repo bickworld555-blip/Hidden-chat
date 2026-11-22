@@ -49,8 +49,28 @@ export function pushId(prefix, eventId) {
   return `${prefix}:${own ? own.slice(0, 80) : randomBytes(9).toString('base64url')}`;
 }
 
+// Sealed previews by device id: only well-formed base64 of a plausible size (an FCM payload is at most 4 KB).
+export const MAX_PREVIEW_CHARS = 1400;
+export function previews(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const kept = {};
+  for (const [deviceId, sealed] of Object.entries(value).slice(0, 20)) {
+    if (typeof deviceId === 'string' && deviceId.length <= 80 && typeof sealed === 'string' && sealed.length <= MAX_PREVIEW_CHARS && /^[A-Za-z0-9+/]+={0,2}$/.test(sealed)) kept[deviceId] = sealed;
+  }
+  return Object.keys(kept).length ? kept : undefined;
+}
+
+/** The body one phone receives: its own sealed preview as `pv` (if any), never the others'. */
+export function bodyForDevice(body, deviceId) {
+  if (!body || !body.pvs) return body;
+  const { pvs, ...rest } = body;
+  const own = deviceId ? pvs[deviceId] : undefined;
+  return own ? { ...rest, pv: own } : rest;
+}
+
 export const pushBody = Object.freeze({
-  message: ({ id: messageId, from }) => compact({ t: 'msg', pid: pushId('m', messageId), id: id(messageId), from: id(from) }),
+  // `pvs`: { deviceId: sealed preview } from the sender (src/e2e/preview.js); each phone gets only its own, as `pv`.
+  message: ({ id: messageId, from, pvs }) => compact({ t: 'msg', pid: pushId('m', messageId), id: id(messageId), from: id(from), pvs: previews(pvs) }),
   groupMessage: ({ id: messageId, groupId, from }) => compact({ t: 'gmsg', pid: pushId('g', messageId), id: id(messageId), groupId: id(groupId), from: id(from) }),
   // Each reaction is its own event (a second emoji on the same message notifies again).
   reaction: ({ id: messageId, from }) => compact({ t: 'react', pid: pushId('r'), id: id(messageId), from: id(from) }),
@@ -60,7 +80,7 @@ export const pushBody = Object.freeze({
   // A call this phone never rang for (it was offline): shown as a missed call when it reconnects.
   missedCall: ({ callId, from, mode }) => compact({ t: 'missed', pid: pushId('x', callId), callId: id(callId), from: id(from), mode: mode === 'video' ? 'video' : 'voice' }),
   // `messageId`: the message that caused it (the same pid over Firebase and the socket); `cfg`: pushCfg(PUSH_TUNING).
-  wake: ({ from, groupId, messageId, cfg } = {}) => compact({ t: 'xwake', pid: pushId('w', messageId), from: id(from), groupId: id(groupId), cfg: cfg && typeof cfg === 'object' ? cfg : undefined }),
+  wake: ({ from, groupId, messageId, cfg, pvs } = {}) => compact({ t: 'xwake', pid: pushId('w', messageId), id: id(messageId), from: id(from), groupId: id(groupId), cfg: cfg && typeof cfg === 'object' ? cfg : undefined, pvs: previews(pvs) }),
 });
 
 /** A device key as registered by the app: 32 random bytes, base64. */

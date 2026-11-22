@@ -88,6 +88,11 @@ public class PushService extends FirebaseMessagingService {
     private void onDirectMessage(RelaySession session, JSONObject body) {
         String id = body.optString("id");
         String from = body.optString("from");
+        // The sender's sealed preview, if there is one: the real text, at once.
+        if (showPreview(this, session, from, id, body.optString("pv"))) {
+            PushRegistration.markDelivered(this, id);
+            return;
+        }
         if (!session.mutedChats.contains(from)) {
             String tag = "chat:" + from;
             Alerts.showMessage(this, NotificationChannels.messageChannel(this, false, session.messageSound),
@@ -131,9 +136,10 @@ public class PushService extends FirebaseMessagingService {
         FetchWake.started();
         String from = body.optString("from");
         String groupId = body.optString("groupId");
-        // The notification shows now, like WhatsApp's: "New message" from this person (or group), replaced by the real
-        // line as soon as the app has opened it (2-3 s later with the app closed or the phone locked).
-        announceArriving(context, session, from, groupId);
+        // The notification shows now, like WhatsApp's: the real text when the sender sealed a preview for this phone
+        // (PreviewKey), else "New message" from this person (or group), replaced by the real line as soon as the app
+        // has opened it (1-3 s later with the app closed or the phone locked).
+        if (!groupId.isEmpty() || !showPreview(context, session, from, body.optString("id"), body.optString("pv"))) announceArriving(context, session, from, groupId);
         boolean running = HiddenNativePlugin.emitXmppWake();
         if (groupId.isEmpty()) PushRegistration.confirmXmppWake(context);
         if (running) {
@@ -187,6 +193,26 @@ public class PushService extends FirebaseMessagingService {
     }
 
     private static final long ARRIVING_RECENT_MS = 5_000;
+
+    /**
+     * The real first words of a direct message, from the preview its sender sealed for this phone (src/e2e/preview.js),
+     * under the same rules as "New message": not while the app is on screen, not for a muted or locked chat, and only
+     * for a sender whose name the app has shared. The message id makes the app's own notification for the same message
+     * (posted once it has opened it) a no-op, so it sounds once. False when nothing was shown.
+     */
+    static boolean showPreview(android.content.Context context, RelaySession session, String from, String messageId, String sealed) {
+        if (sealed == null || sealed.isEmpty() || from == null || from.isEmpty() || messageId == null || messageId.isEmpty()) return false;
+        if (AppActivity.isVisible()) return false;
+        String name = RelaySession.userName(context, from, "");
+        if (name.isEmpty() || session.mutedChats.contains(from) || RelaySession.lockedChats(context).contains(from)) return false;
+        String text = PreviewKey.open(context, sealed, from);
+        if (text == null) return false;
+        String tag = "chat:" + from;
+        Alerts.showMessage(context, NotificationChannels.messageChannel(context, false, session.messageSound), name, text, tag, tag, 0, messageId,
+            null, Avatars.pathFor(from));
+        Log.i(TAG, "preview shown from the push");
+        return true;
+    }
 
     /** A server-tuned duration from the push's `cfg`, clamped to [min, max]; `fallback` when absent. */
     static long tuned(JSONObject cfg, String key, long fallback, long min, long max) {

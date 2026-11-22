@@ -2,7 +2,8 @@
 // through transmitDirect (sealed for each device) and every server copy of a message is opened before the store
 // sees it (live events, history, catch-up sync). Group messages are sealed and opened in GroupsView through
 // client.js, with the same plaintext memory.
-import { useChatStore } from '../store.js';
+import { notificationPreview, useChatStore } from '../store.js';
+import { plainText } from '../textFormat.js';
 import { forgetDeviceLists, e2eActive, isEnvelope, openContent, openDirectMessage, openDirectMessages, openGroupMessage, resealForDevice, sealDirect, sendGroupContent } from './client.js';
 import { isUserContent } from './envelope.js';
 import { controlContent, parseControl } from './lifecycle.js';
@@ -36,7 +37,7 @@ export async function transmitDirect(client, message, { fresh = false } = {}) {
     const disappearSeconds = useChatStore.getState().chats.find((chat) => chat.id === message.receiverId)?.disappearSeconds ?? 0;
     content = await sealDirect(message.receiverId, message.content, {
       linkPreview: message.linkPreview, statusReply: message.statusReply, replyToId: message.replyTo?.id, forwarded: message.forwarded === true, caption: message.caption, album: message.album, thumb: message.thumb, poster: message.poster, duration: message.duration, disappearSeconds,
-    }, { fresh: fresh || Boolean(message.awaitingKeys) });
+    }, { fresh: fresh || Boolean(message.awaitingKeys), preview: plainText(notificationPreview(message.content)) });
   } catch (error) {
     // Strict end-to-end encryption: nothing people write is ever sent readable. When the contact has no keys yet
     // (an old app), the message waits in the outbox and goes out encrypted once they update.

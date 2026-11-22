@@ -5,7 +5,8 @@
 // Storage holds structured-clone values (IndexedDB in the app): private keys and chain keys are non-extractable
 // CryptoKeys. Every operation runs one at a time (a session must never be used by two operations at once), and
 // state is saved only after an operation fully succeeded.
-import { dh, fromUtf8, generateDhPair, generateSigningPair, sha256Hex, toBase64, utf8 } from './primitives.js';
+import { dh, fromBase64, fromUtf8, generateDhPair, generateSigningPair, sha256Hex, sign, toBase64, utf8 } from './primitives.js';
+import { previewKeyStatement } from './preview.js';
 import { identityBytes, initInitiator, initResponder, parseIdentity, publicIdentity, ratchetDecrypt, ratchetEncrypt, signPreKey, x3dhInitiate, x3dhRespond } from './ratchet.js';
 import { acceptDistribution, createSenderKey, senderKeyDecrypt, senderKeyEncrypt } from './senderKeys.js';
 import { membersHash } from './envelope.js';
@@ -317,8 +318,17 @@ export function createProtocol({ storage, api, onIdentityChange = null } = {}) {
     return exclusive(async () => publicIdentity(await identity()));
   }
 
+  /** This device's identity signature over its phone's preview public key (src/e2e/preview.js), base64. */
+  function signPreviewKey(previewKey) {
+    return exclusive(async () => {
+      const own = await identity();
+      return toBase64(await sign(own.sig.privateKey, previewKeyStatement(fromBase64(previewKey)), api));
+    });
+  }
+
   return {
     prepareUpload,
+    signPreviewKey,
     identityAgreement,
     storage,
     encryptForDevices,

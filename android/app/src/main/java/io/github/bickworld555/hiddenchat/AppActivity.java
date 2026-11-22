@@ -333,7 +333,28 @@ public class AppActivity extends BridgeActivity {
         builder.setActions(Collections.singletonList(new RemoteAction(
             Icon.createWithResource(context, android.R.drawable.ic_menu_close_clear_cancel), "Hang up", "End the call", hangUpIntent)));
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) builder.setAutoEnterEnabled(autoEnter).setSeamlessResizeEnabled(true);
+        // Closing the floating window keeps the call, like WhatsApp Business: Android's own close removes the whole
+        // screen, and the call lives in this screen's WebView, so the call ended with it. Our close action only puts the
+        // window away (hideFloatingWindow); the call goes on and its notification brings the call screen back.
+        if (Build.VERSION.SDK_INT >= 33) {
+            Intent hide = new Intent(context, CallActionReceiver.class).setAction(CallActionReceiver.ACTION_HIDE_WINDOW);
+            PendingIntent hideIntent = PendingIntent.getBroadcast(context, 5, hide, PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT);
+            builder.setCloseAction(new RemoteAction(
+                Icon.createWithResource(context, android.R.drawable.ic_menu_close_clear_cancel), "Close", "Hide the call window", hideIntent));
+        }
         return builder.build();
+    }
+
+    /** The floating window's close button: the window goes to the background with the call still running. */
+    static void hideFloatingWindow() {
+        AppActivity activity = current;
+        if (activity == null) return;
+        activity.runOnUiThread(() -> {
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O || !(floating || activity.isInPictureInPictureMode())) return;
+            boolean moved = activity.moveTaskToBack(true);
+            floating = false;
+            android.util.Log.i(RETURN_TAG, "floating window closed, call kept: moved=" + moved);
+        });
     }
 
     /** A video call started or ended: Android 12+ then enters picture-in-picture by itself on Home / app switch. */

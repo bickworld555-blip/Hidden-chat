@@ -24,9 +24,9 @@ import { applyGroupChange, GROUP_CHANGE_EVENTS } from './groupChanges.js';
 import { cachedGroupDetails } from './groupCache.js';
 import { applyGroupCall, withRunningCall } from './groupCalls.js';
 import { notificationNames } from './notificationNames.js';
-import { nativeClearSession, nativeRequestStartupPermissions, nativeSetSession, nativeShell, nativeStartBackground, nativeState, nativeStopBackground, nativeTakePendingCall, nativeMoveToBackground, nativeClearShare, nativeSetCallActive, nativeClearMessageNotifications, nativeClearMissedCalls, nativeTakeMessageActions, nativeTakeCallEvents, nativeSetSystemBarsTheme, nativeOpenSecret, nativeBackgroundFetchDone, nativeScheduleUnsent, onNative } from './native.js';
+import { nativeClearSession, nativeRequestStartupPermissions, nativeSetSession, nativeShell, nativeStartBackground, nativeState, nativeStopBackground, nativeTakePendingCall, nativeMoveToBackground, nativeClearShare, nativeSetCallActive, nativeClearMessageNotifications, nativeClearMissedCalls, nativeTakeMessageActions, nativeTakeCallEvents, nativeSetSystemBarsTheme, nativeOpenSecret, nativePreviewKey, nativeBackgroundFetchDone, nativeScheduleUnsent, onNative } from './native.js';
 import { parseShare } from './shareTarget.js';
-import { e2eDeviceId, onE2eEvent, replayE2eEvent, sealDirect, sealToOwnDevices, startE2e, stopE2e, userForXmppAddress, xmppGroupTargetsFor, xmppTargetsFor } from './e2e/client.js';
+import { e2eDeviceId, onE2eEvent, publishPreviewKey, replayE2eEvent, sealDirect, sealToOwnDevices, startE2e, stopE2e, userForXmppAddress, xmppGroupTargetsFor, xmppTargetsFor } from './e2e/client.js';
 import { createControlBuffer, expiredIds, resolveControl, roleIn } from './e2e/lifecycle.js';
 import { startXmppSession } from './xmpp/session.js';
 import { setXmppSession } from './xmpp/active.js';
@@ -260,7 +260,10 @@ export default function App() {
     // In the phone app, only once this app holds the end-to-end lock (a background page may be finishing a message).
     let live = true;
     e2eLockReady().then(() => {
-      if (live) startE2e({ token: sessionToken, userId, deviceId }).catch(() => { /* retried on the next refresh */ });
+      if (live) startE2e({ token: sessionToken, userId, deviceId })
+        // The phone's notification preview key, signed by this device and published once (src/e2e/preview.js).
+        .then(() => nativePreviewKey()).then((key) => (live && key ? publishPreviewKey(key) : false))
+        .catch(() => { /* retried on the next refresh */ });
     });
     return () => { live = false; };
   }, [sessionToken, userId, deviceId]);

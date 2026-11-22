@@ -37,6 +37,7 @@ import { useChatStore } from '../store.js';
 import { playStoredTone, stopTone } from '../sounds.js';
 import { stopVibration, vibrateFor } from '../notify.js';
 import { CALL_REACTIONS, createCallEngine, TERMINAL_STATUSES } from '../callEngine.js';
+import { staleCallAction } from '../callActions.js';
 import { MAX_CALL_PARTICIPANTS, PeerRegistry, canInvite, matchesContact, peersToConnect, rankCallContacts } from '../callRoom.js';
 import { DEFAULT_ICE_SERVERS, normalizeIceServers } from '../rtc.js';
 import { setAvatarCallsEnabled, useAvatarCallsEnabled } from '../appearance.js';
@@ -70,6 +71,7 @@ const CallMoreSheet = lazyComponent(() => import('./call/CallMoreSheet.jsx'));
 const NO_POSTER = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
 
 const ICE_CONFIG_TIMEOUT_MS = 3000;
+
 const CLOSE_DELAY_MS = { failed: 5000, busy: 4000, default: 2500 };
 
 // Fetches the server's ICE policy with a short deadline so a slow API never delays the call. Kept ICE_CACHE_MS per
@@ -241,6 +243,8 @@ export default function CallOverlay({
       enumerateDevices: () => navigator.mediaDevices?.enumerateDevices?.() ?? Promise.resolve([]),
       getDisplayMedia: navigator.mediaDevices?.getDisplayMedia ? sharedDisplayMedia : null,
       fetchIceServers: () => loadIceServers(latest.current.sessionToken),
+      // A call request nothing answered: have the connection checked (a frozen one is replaced) before it is resent.
+      checkSignaling: () => latest.current.client?.probe?.(),
       // A group call's pairs name the group (L2), so the person rung directly also counts as in the group's call.
       send: (payload) => latest.current.client?.send({ ...payload, targetId: peerId, roomId: latest.current.call.roomId ?? latest.current.call.id, ...(latest.current.call.groupId ? { groupId: latest.current.call.groupId } : {}), signalId: crypto.randomUUID() }),
       onSnapshot,
@@ -600,8 +604,12 @@ export default function CallOverlay({
   }, [pageHidden, pipActive, isVideo, callLive]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const callActionsRef = useRef(null);
-  useEffect(() => onNative('callAction', ({ action, callId, cameraOff: answerWithCameraOff, text, muted: mutedBySystem }) => {
+  useEffect(() => onNative('callAction', ({ action, callId, at, cameraOff: answerWithCameraOff, text, muted: mutedBySystem }) => {
     if (callId && callId !== latest.current.call.id) return;
+    // Android keeps the last action until a call screen listens. One left from an earlier call (an Answer whose call
+    // never opened here, a Hang up after the screen had closed) must not answer or end this call: seen as "call
+    // started" while a later call was still ringing. An Answer may wait for a cold start; nothing else may wait long.
+    if (staleCallAction(action, at)) return;
     if (action === 'accept') callActionsRef.current?.accept({ cameraOff: Boolean(answerWithCameraOff) });
     else if (action === 'reject' || action === 'hangup') callActionsRef.current?.reject();
     // "Message" on the lock-screen call: decline and send the chosen quick reply to the caller.

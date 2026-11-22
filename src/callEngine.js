@@ -108,6 +108,11 @@ export function createCallEngine({
   onSnapshot = () => {},
   setTimer = (fn, ms) => setTimeout(fn, ms),
   clearTimer = (id) => clearTimeout(id),
+  // The call request's resend timer (its own, so deadline tests see only deadlines) and a way to have the signalling
+  // connection checked (src/realtime.js probe): see armOfferResend.
+  setSignalTimer = (fn, ms) => { const id = setTimeout(fn, ms); id?.unref?.(); return id; },
+  clearSignalTimer = (id) => clearTimeout(id),
+  checkSignaling = () => {},
   // The network-health sampler's repeating timer (separate from setTimer so deadline tests see only deadlines).
   setRepeat = (fn, ms) => { const id = setInterval(fn, ms); id?.unref?.(); return id; },
   clearRepeat = (id) => clearInterval(id),
@@ -204,6 +209,13 @@ export function createCallEngine({
   let makingOffer = false;
   let ignoreOffer = false;
   let offerSent = false;
+  // Outgoing call: whether anything about this call has come back (ringing, an answer, a candidate, an end), the
+  // candidates sent so far, and the resends done (armOfferResend). Incoming: the last offer applied (a repeat is ignored).
+  let peerHeard = false;
+  let offerResends = 0;
+  let offerResendTimer = null;
+  const sentCandidates = [];
+  let lastOfferSdp = readDescription(offer)?.sdp ?? null;
   let remoteDescriptionSet = false;
   let localTracksReady = false;
   const pendingCandidates = [];
@@ -250,6 +262,7 @@ export function createCallEngine({
   }
 
   function clearAllTimers() {
+    if (offerResendTimer != null) { clearSignalTimer(offerResendTimer); offerResendTimer = null; }
     for (const key of Object.keys(timers)) {
       if (timers[key] != null) clearTimer(timers[key]);
       timers[key] = null;
@@ -342,6 +355,28 @@ export function createCallEngine({
       if (direction === 'outgoing') finish('no-answer', { reason: 'no-answer', message: 'No answer.' });
       else if (state.status === 'idle') finish('no-answer', { reason: 'no-answer', message: '', notify: false });
     }, RING_TIMEOUT_MS);
+  }
+
+  /**
+   * An outgoing call's request (the offer) must never vanish silently: a connection Android froze still reads as
+   * open, and what is written to it goes nowhere (one request in about fifteen never arrived on the S23, 2026-11-22).
+   * Until something comes back about this call, the connection is checked and the request and its candidates are
+   * sent again, a few times; the other phone ignores an exact repeat.
+   */
+  const OFFER_RESEND_MS = [2000, 3000, 5000];
+  function armOfferResend() {
+    if (offerResendTimer != null) clearSignalTimer(offerResendTimer);
+    if (offerResends >= OFFER_RESEND_MS.length) return;
+    offerResendTimer = setSignalTimer(() => {
+      offerResendTimer = null;
+      if (closed || peerHeard || state.answered || !connection?.localDescription || connection.localDescription.type !== 'offer') return;
+      offerResends += 1;
+      log('offer-resend', offerResends);
+      try { checkSignaling(); } catch { /* the resend still goes */ }
+      sendSignal(describeForPeer(connection.localDescription));
+      for (const candidate of sentCandidates) sendSignal(candidate);
+      armOfferResend();
+    }, OFFER_RESEND_MS[offerResends]);
   }
 
   function stopRinging() {
@@ -667,9 +702,11 @@ export function createCallEngine({
       makingOffer = true;
       await connection.setLocalDescription(await connection.createOffer());
       if (closed || !connection.localDescription) return;
+      const first = !offerSent;
       if (!offerSent) offerSentAt = Date.now();
       offerSent = true;
       sendSignal(describeForPeer(connection.localDescription));
+      if (first && direction === 'outgoing') armOfferResend();
     } catch (error) {
       log('negotiate-error', error);
     } finally {
@@ -679,7 +716,10 @@ export function createCallEngine({
 
   function wireConnection(pc) {
     pc.onicecandidate = (event) => {
-      if (event.candidate) sendSignal({ type: 'ice', candidate: candidateToJson(event.candidate) });
+      if (!event.candidate) return;
+      const signal = { type: 'ice', candidate: candidateToJson(event.candidate) };
+      if (!peerHeard && sentCandidates.length < 64) sentCandidates.push(signal);
+      sendSignal(signal);
     };
     pc.ontrack = attachRemoteTrack;
     pc.onnegotiationneeded = () => {
@@ -883,6 +923,8 @@ export function createCallEngine({
 
   async function handleSignal(signal) {
     if (closed || !signal || typeof signal !== 'object') return;
+    // Anything back about this call proves the request arrived: no more resends.
+    peerHeard = true;
     switch (signal.type) {
       case 'ringing':
         if (offerSentAt && !ringMs) ringMs = Date.now() - offerSentAt;
@@ -899,6 +941,11 @@ export function createCallEngine({
       case 'answer': {
         const description = readDescription(signal);
         if (!description) return;
+        // The caller's request sent again because nothing had come back (armOfferResend): already in hand.
+        if (description.type === 'offer') {
+          if (description.sdp === lastOfferSdp) { log('offer-repeat-ignored'); return; }
+          lastOfferSdp = description.sdp;
+        }
         renegotiatedAt = Date.now();
         await handleDescription(description);
         return;

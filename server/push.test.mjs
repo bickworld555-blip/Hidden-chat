@@ -316,8 +316,8 @@ test('back-to-back messages wake a phone that can open them in the background; o
   await until(() => pushesTo(token).length >= before + 5, 'five pushes');
   const bodies = pushesTo(token).slice(before).map((item) => decrypt(key, item.data));
   const cfg = { f: 8000, h: 12000, x: 25000, b: 20000, w: 15000 };
-  assert.deepEqual(bodies, Array.from({ length: 5 }, (_, index) => ({ t: 'xwake', pid: `w:relay-wake-${index + 1}`, from: a.user.id, cfg })),
-    'one wake-up per message, naming only the sender, with the push id of that message and the phone timings');
+  assert.deepEqual(bodies, Array.from({ length: 5 }, (_, index) => ({ t: 'xwake', pid: `w:relay-wake-${index + 1}`, id: `relay-wake-${index + 1}`, from: a.user.id, cfg })),
+    'one wake-up per message, naming only the sender and the message (its id, for a sealed preview shown once), with its push id and the phone timings');
 
   // A group message wakes it for that group.
   const group = (await api('/api/v1/groups', { session: a, method: 'POST', body: { name: 'Wake group', memberIds: [b.user.id] } })).body;
@@ -326,7 +326,8 @@ test('back-to-back messages wake a phone that can open them in the background; o
   const groupPush = await until(() => pushesTo(token).slice(afterGroup).find((item) => decrypt(key, item.data).groupId === group.id), 'group wake');
   const groupBody = decrypt(key, groupPush.data);
   assert.match(groupBody.pid, /^w:/);
-  assert.deepEqual({ ...groupBody, pid: undefined }, { t: 'xwake', pid: undefined, from: a.user.id, groupId: group.id, cfg });
+  assert.deepEqual({ ...groupBody, pid: undefined, id: undefined }, { t: 'xwake', pid: undefined, id: undefined, from: a.user.id, groupId: group.id, cfg });
+  assert.equal(typeof groupBody.id, 'string', 'the wake-up names its message');
   sender.close();
 });
 

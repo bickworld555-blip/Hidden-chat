@@ -8,6 +8,7 @@
 // (sessions.device_id); signing out removes its keys.
 import { createHash } from 'node:crypto';
 import { verifyDeviceList } from '../src/e2e/deviceList.js';
+import { validPreviewKey } from '../src/e2e/preview.js';
 import express from 'express';
 import { addressesOf, MAX_DIRECT_ENVELOPE, MAX_GROUP_ENVELOPE, parseEnvelope } from '../src/e2e/envelope.js';
 
@@ -56,6 +57,15 @@ export function ensureE2eSchema(db) {
     device_id TEXT NOT NULL,
     claim TEXT NOT NULL,
     created_at INTEGER NOT NULL,
+    PRIMARY KEY (user_id, device_id)
+  )`);
+  // Notification preview keys (src/e2e/preview.js; Postgres: migration 048).
+  db.exec(`CREATE TABLE IF NOT EXISTS e2e_preview_keys (
+    user_id TEXT NOT NULL,
+    device_id TEXT NOT NULL,
+    public_key TEXT NOT NULL,
+    signature TEXT NOT NULL,
+    updated_at INTEGER NOT NULL,
     PRIMARY KEY (user_id, device_id)
   )`);
   db.exec(`CREATE TABLE IF NOT EXISTS e2e_prekeys (
@@ -107,9 +117,10 @@ export function registerE2e({ app, db, requireSession, xmppAddress = () => null,
   const json = express.json({ limit: '64kb' });
 
   // Devices that can receive end-to-end messages: they published keys and are still signed in.
-  const keyDevicesOf = db.prepare(`SELECT d.device_id AS "deviceId", d.identity_dh AS "dh", d.identity_sig AS "sig", x.localpart AS "xmpp",
+  const keyDevicesOf = db.prepare(`SELECT d.device_id AS "deviceId", d.identity_dh AS "dh", d.identity_sig AS "sig", x.localpart AS "xmpp", k.public_key AS "previewKey", k.signature AS "previewSignature",
       (SELECT MAX(COALESCE(s.last_active_at, s.created_at)) FROM sessions s WHERE s.user_id = d.user_id AND s.device_id = d.device_id) AS "lastActive"
     FROM e2e_devices d LEFT JOIN xmpp_accounts x ON x.user_id = d.user_id AND x.device_id = d.device_id
+      LEFT JOIN e2e_preview_keys k ON k.user_id = d.user_id AND k.device_id = d.device_id
     WHERE d.user_id = ? AND EXISTS (SELECT 1 FROM sessions s WHERE s.user_id = d.user_id AND s.device_id = d.device_id)
     ORDER BY d.device_id`);
 
@@ -137,7 +148,9 @@ export function registerE2e({ app, db, requireSession, xmppAddress = () => null,
       .filter((row) => !isRetiredDevice({ lastActive: row.lastActive, hasXmpp: Boolean(row.xmpp), onXmpp: moved, now: at, connected: connected.has(row.deviceId) }))
       .map((row) => {
         const xmpp = xmppAddress(userId, row.xmpp);
-        return { deviceId: row.deviceId, identity: { dh: row.dh, sig: row.sig }, ...(xmpp ? { xmpp } : {}) };
+        // The phone's notification preview key, signed by this identity (senders check the signature themselves).
+        const preview = row.previewKey ? { preview: { key: row.previewKey, signature: row.previewSignature } } : {};
+        return { deviceId: row.deviceId, identity: { dh: row.dh, sig: row.sig }, ...(xmpp ? { xmpp } : {}), ...preview };
       });
   }
 
@@ -150,8 +163,23 @@ export function registerE2e({ app, db, requireSession, xmppAddress = () => null,
   async function forgetDevice(userId, deviceId) {
     await db.prepare('DELETE FROM e2e_link_claims WHERE user_id = ? AND device_id = ?').run(userId, deviceId);
     await db.prepare('DELETE FROM e2e_prekeys WHERE user_id = ? AND device_id = ?').run(userId, deviceId);
+    await db.prepare('DELETE FROM e2e_preview_keys WHERE user_id = ? AND device_id = ?').run(userId, deviceId);
     await db.prepare('DELETE FROM e2e_devices WHERE user_id = ? AND device_id = ?').run(userId, deviceId);
   }
+
+  // A phone publishes its notification preview key, signed by its identity key (src/e2e/preview.js). Refused unless
+  // the signature is by the identity this device has published, so a stored key is always one its senders accept.
+  app.put('/api/v1/e2e/preview-key', requireSession, json, async (request, response) => {
+    const { user_id: userId, device_id: deviceId } = request.session;
+    const { key, signature } = request.body ?? {};
+    if (!KEY.test(key ?? '') || !SIGNATURE.test(signature ?? '')) return response.status(400).json({ error: 'Invalid preview key.' });
+    const device = await db.prepare('SELECT identity_sig AS "sig" FROM e2e_devices WHERE user_id = ? AND device_id = ?').get(userId, deviceId);
+    if (!device) return response.status(409).json({ error: 'Publish encryption keys first.' });
+    if (!(await validPreviewKey(device.sig, { key, signature }))) return response.status(400).json({ error: 'Invalid preview key signature.' });
+    await db.prepare(`INSERT INTO e2e_preview_keys(user_id, device_id, public_key, signature, updated_at) VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT (user_id, device_id) DO UPDATE SET public_key = excluded.public_key, signature = excluded.signature, updated_at = excluded.updated_at`).run(userId, deviceId, key, signature, Date.now());
+    response.status(204).end();
+  });
 
   app.put('/api/v1/e2e/keys', requireSession, json, async (request, response) => {
     const { user_id: userId, device_id: deviceId } = request.session;

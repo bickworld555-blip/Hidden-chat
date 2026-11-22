@@ -9,12 +9,18 @@ public class CallActionReceiver extends BroadcastReceiver {
     static final String ACTION_REJECT = "io.github.bickworld555.hiddenchat.CALL_REJECT";
     static final String ACTION_HANGUP = "io.github.bickworld555.hiddenchat.CALL_HANGUP";
     static final String ACTION_REPLY = "io.github.bickworld555.hiddenchat.CALL_REPLY";
+    // The floating call window's close button: the window goes, the call stays (AppActivity.pipParams).
+    static final String ACTION_HIDE_WINDOW = "io.github.bickworld555.hiddenchat.CALL_HIDE_WINDOW";
     static final String EXTRA_TEXT = "hm_text";
 
     @Override
     public void onReceive(Context context, Intent intent) {
         if (ACTION_HANGUP.equals(intent.getAction())) {
             hangUp(context);
+            return;
+        }
+        if (ACTION_HIDE_WINDOW.equals(intent.getAction())) {
+            AppActivity.hideFloatingWindow();
             return;
         }
         if (ACTION_REPLY.equals(intent.getAction())) {

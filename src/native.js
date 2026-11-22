@@ -224,6 +224,8 @@ export function resetNativeStateForTests() {
 }
 // App lock and screen security (AppSecurity.java): { biometric: 'available'|'none'|'unsupported', secureScreen, transcription }.
 export const nativeSecurityStatus = () => invoke('securityStatus');
+// This phone's notification preview public key (PreviewKey.java; base64), or '' (browsers, older APKs).
+export const nativePreviewKey = async () => { const result = await invoke('previewKey'); return typeof result?.key === 'string' ? result.key : ''; };
 // The phone's own unlock (fingerprint / face / screen-lock PIN): resolves { ok, error? } (null outside the app).
 export const nativeAuthenticate = (title, subtitle = '') => invoke('authenticate', { title, subtitle });
 export const nativeSetSecureScreen = (enabled) => invoke('setSecureScreen', { enabled: Boolean(enabled) });

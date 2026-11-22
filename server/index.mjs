@@ -24,7 +24,8 @@ import { DEMO_USERS } from './demo.mjs';
 import { createEventPilot } from './eventPilot.mjs';
 import { pdfPageCountOfFile } from './pdfPages.mjs';
 import { createLinkPreviews } from './linkPreview.mjs';
-import { collapseKeys, createPushSender, createRecentPushes, deviceCollapseKey, encryptForDevice, loadServiceAccount, pushBody, validDeviceKey } from './push.mjs';
+import { bodyForDevice, collapseKeys, createPushSender, createRecentPushes, deviceCollapseKey, encryptForDevice, loadServiceAccount, pushBody, validDeviceKey } from './push.mjs';
+import { parseEnvelope as parseE2eEnvelope } from '../src/e2e/envelope.js';
 import { clientTuning, fcmPriority, loadPushTuning, pushCfg } from './pushConfig.mjs';
 import { createObjectStore, MAX_PARTS, OBJECT_KEY_PREFIX, objectStoreConfigFromEnv, PART_BYTES, UPLOAD_URL_TTL_SECONDS } from './objectStore.mjs';
 import { createLoginThrottle, ensureParitySchema, groupAvatarUrl, registerParity } from './parity.mjs';
@@ -252,6 +253,7 @@ export function createChatServer({
     users: { caches: [sessionCache, userCache, xmppVerdictCache], ignore: [/UPDATEs+(?:relay.)?userss+SETs+(?:last_seen_at|country)/i] },
     blocks: { caches: [blockCache, xmppVerdictCache] },
     e2e_devices: { caches: [devicesCache] },
+    e2e_preview_keys: { caches: [devicesCache] },
     chat_settings: { caches: [chatSettingCache] },
     contacts: { caches: [linkCache, acceptCache] },
     group_members: { caches: [groupMemberCache, xmppVerdictCache], ignore: [/UPDATEs+(?:relay.)?group_memberss+SETs+(?:last_read_at|cleared_at|auto_delete)/i] },
@@ -718,7 +720,7 @@ export function createChatServer({
     const delivered = await presentMessage(message);
     broadcastUser(receiverId, { type: 'message:new', message: delivered });
     broadcastUser(senderId, { type: 'message:new', message: delivered });
-    pushUnlessDelivered(receiverId, pushBody.message({ id: message.id, from: senderId }), { wakeInstead: pushBody.wake({ from: senderId, messageId: message.id }) }, directDelivered(message.id));
+    pushUnlessDelivered(receiverId, pushBody.message({ id: message.id, from: senderId, pvs: sealedPreviews(message.content) }), { wakeInstead: pushBody.wake({ from: senderId, messageId: message.id, pvs: sealedPreviews(message.content) }) }, directDelivered(message.id));
     return delivered;
   }
 
@@ -1078,11 +1080,19 @@ export function createChatServer({
   // the real text). Given the message, that connection could only post a sealed "🔒 Message", which then kept the real
   // notification from showing. Its own messages from another device need nothing. True when handled here.
   const WAKE_FOR = new Set(['message:new', 'group:message']);
+  /** The sealed notification previews a direct envelope carries ({ deviceId: sealed }, src/e2e/preview.js), if any. */
+  function sealedPreviews(content) {
+    if (typeof content !== 'string' || !content.startsWith('e2e2:') || !content.includes('"pv"')) return undefined;
+    const pv = parseE2eEnvelope(content)?.body?.pv;
+    return pv && typeof pv === 'object' ? pv : undefined;
+  }
   function wakeInsteadOf(socket, event) {
     if (!socket.relayWakeOnly || !WAKE_FOR.has(event?.type)) return false;
     const from = event.message?.senderId;
     // The same push id as the Firebase wake-up for this message: the phone handles whichever comes first, once.
-    if (from && from !== socket.userId) json(socket, { type: 'xmpp:wake', from, ...(event.message?.groupId ? { groupId: event.message.groupId } : {}), ...pushWakeExtras(event.message?.id) });
+    // With this phone's sealed notification preview, if the sender made one (as the Firebase wake-up carries it).
+    const pv = event.message?.groupId ? undefined : sealedPreviews(event.message?.content)?.[socket.deviceId];
+    if (from && from !== socket.userId) json(socket, { type: 'xmpp:wake', from, ...(event.message?.groupId ? { groupId: event.message.groupId } : {}), ...(event.message?.id ? { id: event.message.id } : {}), ...(pv ? { pv } : {}), ...pushWakeExtras(event.message?.id) });
     return true;
   }
 
@@ -1186,7 +1196,7 @@ export function createChatServer({
    */
   async function pushToUser(userId, body, { wakeInstead = null, ...options } = {}) {
     if (!push) return 0;
-    const devices = await db.prepare(`SELECT p.token, p.device_key AS "deviceKey", COALESCE(s.relay_wake, 0) AS "relayWake"
+    const devices = await db.prepare(`SELECT p.token, p.device_key AS "deviceKey", s.device_id AS "deviceId", COALESCE(s.relay_wake, 0) AS "relayWake"
       FROM push_devices p LEFT JOIN sessions s ON s.token_hash = p.session_hash WHERE p.user_id = ?`).all(userId);
     if (!wakeInstead) return sendPushes(devices, body, options);
     const waking = devices.filter((device) => Number(device.relayWake) === 1);
@@ -1198,7 +1208,7 @@ export function createChatServer({
   /** One signed-in device's push registrations only (an XMPP wake-up is for the device whose message waits). */
   async function pushToDevice(userId, deviceId, body, options = {}) {
     if (!push) return 0;
-    return sendPushes(await db.prepare(`SELECT p.token, p.device_key AS "deviceKey" FROM push_devices p
+    return sendPushes(await db.prepare(`SELECT p.token, p.device_key AS "deviceKey", s.device_id AS "deviceId" FROM push_devices p
       JOIN sessions s ON s.token_hash = p.session_hash WHERE s.user_id = ? AND s.device_id = ?`).all(userId, deviceId), body, options);
   }
 
@@ -1228,7 +1238,8 @@ export function createChatServer({
     const priority = options?.priority ?? fcmPriority(pushTuning, body);
     await Promise.all(devices.map(async (device) => {
       if (recentPushes.seen(device.token, body?.pid)) { sent += 1; return; }
-      const { enc, iv } = encryptForDevice(device.deviceKey, body);
+      // A sealed notification preview goes only to the phone it was sealed for (server/push.mjs bodyForDevice).
+      const { enc, iv } = encryptForDevice(device.deviceKey, bodyForDevice(body, device.deviceId));
       // Only the ciphertext travels: the type is inside it, and the collapse key is this device's HMAC of ours.
       const collapseKey = options?.collapseKey ? deviceCollapseKey(device.deviceKey, options.collapseKey) : undefined;
       const result = await push.send(device.token, { enc, iv }, { ...options, collapseKey, priority });
@@ -3959,7 +3970,7 @@ export function createChatServer({
       ]);
       const delivered = (await presentMessage(message));
       broadcastUser(receiverId, { type: 'message:new', message: delivered });
-      pushUnlessDelivered(receiverId, pushBody.message({ id: message.id, from: userId }), { wakeInstead: pushBody.wake({ from: userId, messageId: message.id }) }, directDelivered(message.id));
+      pushUnlessDelivered(receiverId, pushBody.message({ id: message.id, from: userId, pvs: sealedPreviews(message.content) }), { wakeInstead: pushBody.wake({ from: userId, messageId: message.id, pvs: sealedPreviews(message.content) }) }, directDelivered(message.id));
       broadcastUser(userId, { type: 'message:new', message: delivered }, socket);
       json(socket, { type: 'message:ack', message: delivered });
       parity.afterDirectMessage({ senderId: userId, receiverId, messageId: message.id }).catch((error) => {
