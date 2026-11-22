@@ -115,3 +115,32 @@ Throw `ProtocolError(code, message)` with the codes the app already handles
    [native-migration notes] in the repo for the memory-safe Gradle recipe).
 4. Only once green does the core go near a phone. Then Phase 2's integration (native `relay.fetch` decrypt-on-push,
    switching `BackgroundHost`/`PushService` off the WebView `background.html`) can proceed.
+
+## Implementation status (2026-11-22)
+
+The X3DH / Double Ratchet / Sender Keys state machines are in `core/crypto/` (`Support.kt`, `X3dh.kt`,
+`DoubleRatchet.kt`, `SenderKeys.kt`), with the author-provided `Primitives.kt`. Test status (`core.*`, 21/21):
+
+- **1:1 messaging — conformant byte-for-byte.** `RatchetConformanceTest` replays the recorded web-protocol
+  transcript (shared secret, associated data, every header and ciphertext across the 12-step X3DH + Double Ratchet
+  scenario) through `ReplayRng` and they match exactly. `ProtocolTest` additionally proves self-consistency
+  (out-of-order delivery, DH turn, replay/tamper rejection, persistence, skip limit).
+- **Groups (Sender Keys) — NOT yet conformant.** `SenderKeys.kt` models `kid` as a numeric `Long` (uint32 from 4
+  random bytes, chain-then-kid order). The web protocol (`src/e2e/senderKeys.js`) uses
+  `kid = toBase64(randomBytes(12))` — a **16-char base64 string**, drawn **before** the 32-byte chain key, and
+  embedded as that string in the Sender Key AD (`JSON.stringify(["hm-sk-v1", groupId, senderAddress, keyId, n])`).
+  Consequences until fixed: a group message from a web/desktop client (`kid` is a string) is rejected by
+  `SenderKeyMessage.fromMap`; and even with matching values the AD/signature would differ. **To fix:** change `kid`
+  to a `String` throughout `SenderKeys.kt`, generate it as base64 of 12 random bytes drawn first, and pass the string
+  through `ad(...)`/the wire. Then add a byte-for-byte group conformance test (the `senderKeys` vector is recorded and
+  `ReplayRng` is ready). Note the generator records `kid`/`chain` randomness in JS order (kid, then chain).
+
+Still to build for Step 3 (native background path): the **`CryptoCore` interface implementation** itself —
+`encryptForDevices` / `decryptFromDevice` / `encryptGroup` / `decryptGroup` / `prepareUpload` / `safetyNumber` /
+`signPreviewKey` over `KeyRecords`, with session storage, trust-on-first-use, prekey management and envelope
+assembly, driving the state machines above. The provided files are the low-level protocol; this orchestration layer
+is not yet present.
+
+Minor cleanup (non-blocking): `Support.kt` duplicates the KDF strings (`Ctx`) and a JSON stringifier (`JsJson`) that
+already exist as `ProtocolConstants` and `core/Json`. The values are proven equal by the passing conformance test;
+de-duplicating later avoids drift.

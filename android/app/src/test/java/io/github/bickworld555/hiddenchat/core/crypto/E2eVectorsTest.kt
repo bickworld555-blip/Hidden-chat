@@ -86,15 +86,14 @@ class E2eVectorsTest {
             val rng = ReplayRng(Json.map(direct[name])!!)
             assertTrue("$name has recorded key material", rng.keyCount > 0)
             for (i in 0 until rng.keyCount) {
-                val key = rng.nextKey()
-                assertEquals("private scalar is 32 bytes", 32, key.privateScalar.size)
-                assertEquals("public point is a 65-byte uncompressed point", 65, key.publicPoint.size)
-                // On-curve check through the author-provided Primitives; throws if off-curve.
-                Primitives.decodePublic(key.publicPoint)
+                // keyPair() builds via EcKeyPair.fromRaw → Primitives.decodePublic, so each recorded point is
+                // validated on-curve; a 65-byte uncompressed public point comes back.
+                val key = rng.keyPair()
+                assertEquals("public point is a 65-byte uncompressed point", 65, key.pub.size)
             }
             assertEquals("all recorded keys consumed", rng.keyCount, rng.keysConsumed)
-            repeat(rng.randomCount) { rng.nextRandom() }
-            assertEquals("all recorded randoms consumed", rng.randomCount, rng.randomsConsumed)
+            // The direct (1:1) path draws no random bytes (AEAD nonces are HKDF-derived), so none to consume here.
+            assertEquals("direct path records no random draws", 0, rng.randomCount)
         }
     }
 

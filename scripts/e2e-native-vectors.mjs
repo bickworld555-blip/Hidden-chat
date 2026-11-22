@@ -62,6 +62,10 @@ async function ratchetTranscript() {
   // key); Bob replies r1, r2 (a DH turn for Alice); Alice opens r1, r2; Alice sends m4 (a DH turn for Bob); Bob opens m4.
   const steps = [];
   const agreed = await x3dhInitiate(aliceIdentity, bundle, alice.api);
+  // Record the shared secret and ad now: initInitiator/initResponder wipe the secret buffer in place (hmacKey), so
+  // reading it afterwards would record zeros.
+  const sharedSecretHex = hex(agreed.secret);
+  const adHex = { aliceSide: hex(agreed.ad), bobSide: null };
   let a = await initInitiator(agreed.secret, agreed.remoteSignedPreKey, agreed.ad, alice.api);
   const send = async (who, state, name, plaintext) => {
     const sealed = await ratchetEncrypt(state, text(plaintext), who === 'alice' ? alice.api : bob.api);
@@ -73,6 +77,7 @@ async function ratchetTranscript() {
   a = await send('alice', a, 'm2', 'second message, skipped at first');
   a = await send('alice', a, 'm3', 'তৃতীয় বার্তা — third, with UTF-8');
   const responded = await x3dhRespond(bobIdentity, agreed.preKeyHeader, spk, opk, bob.api);
+  adHex.bobSide = hex(responded.ad);
   let b = await initResponder(responded.secret, spk, responded.ad, bob.api);
   const open = async (who, state, name) => {
     const step = byName(name);
@@ -95,8 +100,8 @@ async function ratchetTranscript() {
     bob: { identity: { dh: bob.generated[0], sig: bob.generated[1] }, signedPreKey: { id: 7, ...bob.generated[2], signature: b64(spkSignature) }, preKey: { id: 42, ...bob.generated[3] }, generated: bob.generated.slice(4), randoms: bob.randoms },
     bundle,
     preKeyHeader: agreed.preKeyHeader,
-    ad: { aliceSide: hex(agreed.ad), bobSide: hex(responded.ad) },
-    sharedSecret: hex(agreed.secret),
+    ad: adHex,
+    sharedSecret: sharedSecretHex,
     steps,
     order,
   };
