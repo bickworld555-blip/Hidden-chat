@@ -178,6 +178,57 @@ function envelopeVectors(ratchet) {
   return { routing: contents.map((content) => [content, routingFor(content)]), built, parsed: { routing: parsed.routing, route: parsed.route, sd: parsed.body.sd } };
 }
 
+// An in-memory key store for a createProtocol instance (the records the native KeyRecords keeps), deep-cloned so the
+// protocol never shares mutable state with the recorder.
+function memStore() {
+  // By reference: the stored records hold non-extractable CryptoKey objects (the protocol treats state as immutable
+  // and returns new objects, so sharing references is safe), which a JSON clone would destroy.
+  const map = new Map();
+  return { get: async (key) => map.get(key), set: async (key, value) => { map.set(key, value); }, del: async (key) => { map.delete(key); } };
+}
+
+/**
+ * Interface-level conformance: the whole CryptoCore.encryptForDevices → decryptFromDevice path (session set-up from a
+ * prekey bundle, trust-on-first-use pinning, the ratchet, the per-device { p, h, c } entries), recorded from the web
+ * protocol object the Kotlin interface mirrors. A native core fed Alice's recorded randomness, encrypting the same
+ * plaintext for Bob's device with the same bundle, must produce byte-identical entries; Bob's core must decrypt them.
+ */
+async function directInterfaceVector() {
+  const alice = party();
+  const bob = party();
+  const aliceUser = '1111111111';
+  const aliceDev = 'alice-dev';
+  const bobUser = '2222222222';
+  const bobDev = 'bob-dev';
+  const aliceProto = createProtocol({ storage: memStore(), api: alice.api, onIdentityChange: () => {} });
+  const bobProto = createProtocol({ storage: memStore(), api: bob.api, onIdentityChange: () => {} });
+  // Bob publishes keys (one signed prekey + exactly one one-time prekey, so the recorded key list stays small).
+  const bobUpload = await bobProto.prepareUpload({ serverPreKeyCount: 99, now: 1700000000000 });
+  const devices = { [bobUser]: [{ deviceId: bobDev, identity: bobUpload.identity }] };
+  const claimBundles = async (userId, ids) => ids.map((deviceId) => ({
+    deviceId, identity: bobUpload.identity, signedPreKey: bobUpload.signedPreKey, preKey: bobUpload.preKeys[0],
+  }));
+  const sealed = await aliceProto.encryptForDevices(devices, 'interface-level hello — বাংলা', { claimBundles });
+  const entry = sealed[bobUser][bobDev];
+  const plain = await bobProto.decryptFromDevice(aliceUser, aliceDev, entry);
+  if (plain !== 'interface-level hello — বাংলা') throw new Error('interface round trip broke');
+  // A second message exercises the established session (no prekey header on the reply path check: Alice→Bob again).
+  const sealed2 = await aliceProto.encryptForDevices(devices, 'second over the same session', { claimBundles });
+  const entry2 = sealed2[bobUser][bobDev];
+  const plain2 = await bobProto.decryptFromDevice(aliceUser, aliceDev, entry2);
+  if (plain2 !== 'second over the same session') throw new Error('interface second message broke');
+  return {
+    aliceUser, aliceDev, bobUser, bobDev,
+    alice: { identity: { dh: alice.generated[0], sig: alice.generated[1] }, generated: alice.generated.slice(2), randoms: alice.randoms },
+    bob: { identity: { dh: bob.generated[0], sig: bob.generated[1] }, generated: bob.generated.slice(2), randoms: bob.randoms, upload: bobUpload },
+    devices,
+    messages: [
+      { plaintext: 'interface-level hello — বাংলা', entry, hasPreKeyHeader: Boolean(entry.p) },
+      { plaintext: 'second over the same session', entry: entry2, hasPreKeyHeader: Boolean(entry2.p) },
+    ],
+  };
+}
+
 const ratchet = await ratchetTranscript();
 const vectors = {
   generatedAt: new Date().toISOString(),
@@ -188,6 +239,7 @@ const vectors = {
   deviceList: await deviceListVector(ratchet),
   safetyNumber: await safetyNumberVector(ratchet),
   envelope: envelopeVectors(ratchet),
+  directInterface: await directInterfaceVector(),
 };
 const out = fileURLToPath(new URL('../android/app/src/test/resources/e2e-vectors.json', import.meta.url));
 writeFileSync(out, JSON.stringify(vectors, null, 1) + '\n');

@@ -57,6 +57,26 @@ class E2eVectorsTest {
     }
 
     @Test
+    fun directInterfaceVectorIsWellFormed() {
+        // The recorded encryptForDevices → decryptFromDevice round trip: the shape a native CryptoCore must produce
+        // and consume (the per-device { p, h, c } entry). Pins the interface boundary, not just the primitives.
+        val direct = Json.map(vectors["directInterface"])!!
+        val messages = Json.list(direct["messages"])!!
+        assertEquals("two recorded interface messages", 2, messages.size)
+        for (m in messages) {
+            val entry = Json.map(Json.map(m)!!["entry"])!!
+            assertTrue("entry has a Double Ratchet header", Json.map(entry["h"]) != null)
+            assertTrue("entry has ciphertext", Json.string(entry["c"]) != null)
+            // Both messages carry the X3DH prekey header until the responder replies (the web protocol's behaviour).
+            assertTrue("first-contact messages carry the prekey header", Json.map(entry["p"]) != null)
+        }
+        // The device map the core is handed is { userId: [ { deviceId, identity: { dh, sig } } ] }.
+        val devices = Json.map(direct["devices"])!!
+        val list = Json.list(devices[Json.string(direct["bobUser"])])!!
+        assertEquals("bob-dev", Json.string(Json.map(list[0])!!["deviceId"]))
+    }
+
+    @Test
     fun coreConformanceWhenInstalled() {
         val core = CryptoCores.current()
         if (core == null) {
