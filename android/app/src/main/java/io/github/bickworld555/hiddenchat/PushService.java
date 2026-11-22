@@ -1,4 +1,5 @@
 package io.github.bickworld555.hiddenchat;
+import io.github.bickworld555.hiddenchat.core.NativeBackground;
 
 import android.util.Log;
 import androidx.annotation.NonNull;
@@ -155,7 +156,16 @@ public class PushService extends FirebaseMessagingService {
             return;
         }
         // No app screen: the background page does the same work in a hidden WebView (BackgroundHost). The sealed
-        // notice still appears if it has not posted the real one in time (or could not start).
+        // notice still appears if it has not posted the real one in time (or could not start). When the native path
+        // is on (NativeBackground flag), the native service does this instead; the WebView page stays the fallback.
+        if (NativeBackground.enabled(context)) {
+            NativeBackgroundService.start(context);
+            if (NativeBackgroundService.isRunning()) {
+                sealedUnlessHandled(context.getApplicationContext(), from, groupId, headlessFallbackMs, fallbackMaxMs);
+                Log.i(TAG, "xmpp wake-up while the app is closed: native background started");
+                return;
+            }
+        }
         BackgroundHost.start(context);
         if (BackgroundHost.isRunning() || HeadlessRunner.isRunning()) {
             sealedUnlessHandled(context.getApplicationContext(), from, groupId, headlessFallbackMs, fallbackMaxMs);

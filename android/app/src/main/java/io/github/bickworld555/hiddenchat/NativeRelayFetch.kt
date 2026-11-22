@@ -5,8 +5,10 @@ import android.os.Handler
 import android.os.Looper
 import io.github.bickworld555.hiddenchat.core.Json
 import io.github.bickworld555.hiddenchat.core.NativeBackground
+import io.github.bickworld555.hiddenchat.core.NativeBackgroundInbox
 import io.github.bickworld555.hiddenchat.core.NativeFetchHandler
 import io.github.bickworld555.hiddenchat.core.crypto.CryptoCores
+import io.github.bickworld555.hiddenchat.core.store.NativeStore
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -58,9 +60,25 @@ class NativeRelayFetch private constructor(private val context: Context, private
         val core = CryptoCores.current() ?: return
         val delivery = NativeFetchHandler.handle(core, meUser, meDevice, event) ?: return
         if (!delivery.opened) return // left for the app; the sealed "🔒 Message" notice already covers it, not acked
+        // Store the decrypted message for the app to display BEFORE acking — never ack what was not durably kept.
+        if (!persist(event, delivery)) return
         notify(delivery)
         send(webSocket, Json.obj("type" to "message:delivered", "messageIds" to listOf(delivery.messageId)))
         send(webSocket, Json.obj("type" to "queue:ack", "messageIds" to listOf(delivery.messageId), "eventIds" to emptyList<String>()))
+    }
+
+    /** Seals the decrypted event into the native inbox the WebView imports on open. False → do not ack (keep it on the server). */
+    private fun persist(event: Map<String, Any?>, delivery: NativeFetchHandler.Delivery): Boolean {
+        val store = NativeStore.get(context) ?: return false
+        return try {
+            val message = (Json.map(event["message"]) ?: return false).toMutableMap()
+            message["content"] = delivery.plaintext
+            val openedEvent = Json.obj("type" to delivery.type, "message" to message, "opened" to true)
+            NativeBackgroundInbox(store).add(SecureStore.seal(Json.stringify(openedEvent)))
+            true
+        } catch (failed: Exception) {
+            false
+        }
     }
 
     private fun notify(delivery: NativeFetchHandler.Delivery) {

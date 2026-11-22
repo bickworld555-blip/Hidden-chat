@@ -1,4 +1,5 @@
 package io.github.bickworld555.hiddenchat;
+import io.github.bickworld555.hiddenchat.core.NativeBackground;
 
 import android.app.PendingIntent;
 import android.app.PictureInPictureParams;
@@ -205,6 +206,9 @@ public class AppActivity extends BridgeActivity {
         if (getBridge() != null) PickedFiles.install(getBridge());
         // Screen security (FLAG_SECURE) from the first frame, before the web app has loaded.
         AppSecurity.apply(this);
+        // The native end-to-end core, so the foreground web app routes its crypto through it (bridge). No-op when the
+        // native path flag is off; the web app then keeps its own protocol.
+        NativeBackground.install(this);
         // Started from the app icon: the chat list as it was last left, until the live one has drawn.
         LaunchSnapshot.attach(this);
         // Opened by a ringing call's full-screen notification: show over the lock screen and light the screen at

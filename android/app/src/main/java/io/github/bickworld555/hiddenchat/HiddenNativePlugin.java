@@ -26,6 +26,13 @@ import java.util.Set;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import io.github.bickworld555.hiddenchat.core.Json;
+import io.github.bickworld555.hiddenchat.core.NativeBridge;
+import io.github.bickworld555.hiddenchat.core.crypto.CryptoCore;
+import io.github.bickworld555.hiddenchat.core.crypto.CryptoCores;
+import java.util.HashMap;
+import java.util.Map;
+
 /**
  * Native side of the Hidden Messenger shell: runtime permissions, the background connection service,
  * channel notifications for direct and group messages, and the incoming-call notification with
@@ -168,6 +175,56 @@ public class HiddenNativePlugin extends Plugin {
      * The app's own background fetch has ended (src/App.jsx): the CPU may sleep again (FetchWake, P3); "offline-done"
      * or "quiet" also counts as a completed fetch for the hourly check (HeartbeatJob, P4).
      */
+    /**
+     * Every end-to-end crypto operation for the native app runs in the native core (NativeBridge): the web app's
+     * protocol is bridged here so there is one identity and one ratchet per device, shared with background delivery.
+     * Request { method, args }; reply { result } / { ok } / { error: <code> }. Rejected when the native path is not
+     * installed (flag off), so the web app keeps its own protocol.
+     */
+    @PluginMethod
+    public void crypto(PluginCall call) {
+        CryptoCore core = CryptoCores.INSTANCE.current();
+        if (core == null) {
+            call.reject("native-core-missing");
+            return;
+        }
+        String method = call.getString("method", "");
+        JSObject argsObject = call.getObject("args");
+        try {
+            Object parsed = Json.INSTANCE.parse(argsObject == null ? "{}" : argsObject.toString());
+            @SuppressWarnings("unchecked")
+            Map<String, Object> args = (Map<String, Object>) (Map<?, ?>) Json.INSTANCE.map(parsed);
+            @SuppressWarnings("unchecked")
+            Map<String, Object> reply = (Map<String, Object>) (Map<?, ?>) NativeBridge.INSTANCE.call(core, method, args == null ? new HashMap<>() : args);
+            call.resolve(JSObject.fromJSONObject(new JSONObject(Json.INSTANCE.stringify(reply))));
+        } catch (Exception failed) {
+            call.reject("bridge-failed");
+        }
+    }
+
+    /**
+     * What the native background fetch decrypted while the app had no screen: opened event JSON strings for the web
+     * app to apply through its normal handler (like importInbox), taken once and cleared. Empty when the native path
+     * is off or there is nothing.
+     */
+    @PluginMethod
+    public void takeNativeInbox(PluginCall call) {
+        JSObject result = new JSObject();
+        JSArray events = new JSArray();
+        io.github.bickworld555.hiddenchat.core.store.NativeStore store = io.github.bickworld555.hiddenchat.core.store.NativeStore.Companion.get(getContext());
+        if (store != null) {
+            for (String sealed : new io.github.bickworld555.hiddenchat.core.NativeBackgroundInbox(store).takeAll()) {
+                try {
+                    events.put(SecureStore.open(sealed));
+                } catch (Exception unreadable) {
+                    // A record this phone can no longer open (Keystore key changed): dropped.
+                }
+            }
+        }
+        result.put("events", events);
+        call.resolve(result);
+    }
+
     /** This phone's notification preview public key (PreviewKey), for the web app to sign and publish. */
     @PluginMethod
     public void previewKey(PluginCall call) {
