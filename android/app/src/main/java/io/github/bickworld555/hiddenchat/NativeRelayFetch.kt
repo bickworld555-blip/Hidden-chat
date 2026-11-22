@@ -122,7 +122,7 @@ class NativeRelayFetch private constructor(private val context: Context, private
          * otherwise, so the caller falls back to the WebView page. `onDone(reason)` fires once when the fetch ends.
          */
         fun start(context: Context, onDone: (String) -> Unit): Boolean {
-            if (!NativeBackground.enabled(context)) return false
+            if (!NativeFlag.active(context)) return false
             if (CryptoCores.current() == null) return false
             val session = RelaySession.read(context) ?: return false
             return NativeRelayFetch(context.applicationContext, onDone).connect(session, RelaySession.deviceId(context))

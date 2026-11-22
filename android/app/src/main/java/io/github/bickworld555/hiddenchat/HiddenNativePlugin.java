@@ -202,7 +202,7 @@ public class HiddenNativePlugin extends Plugin {
     @PluginMethod
     public void nativeE2eActive(PluginCall call) {
         JSObject result = new JSObject();
-        result.put("active", NativeBackground.enabled(getContext()) && CryptoCores.INSTANCE.current() != null);
+        result.put("active", NativeFlag.active(getContext()) && CryptoCores.INSTANCE.current() != null);
         call.resolve(result);
     }
 

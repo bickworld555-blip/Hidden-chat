@@ -158,7 +158,7 @@ public class PushService extends FirebaseMessagingService {
         // No app screen: the background page does the same work in a hidden WebView (BackgroundHost). The sealed
         // notice still appears if it has not posted the real one in time (or could not start). When the native path
         // is on (NativeBackground flag), the native service does this instead; the WebView page stays the fallback.
-        if (NativeBackground.enabled(context)) {
+        if (NativeFlag.active(context)) {
             NativeBackgroundService.start(context);
             if (NativeBackgroundService.isRunning()) {
                 sealedUnlessHandled(context.getApplicationContext(), from, groupId, headlessFallbackMs, fallbackMaxMs);

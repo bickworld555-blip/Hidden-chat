@@ -107,7 +107,7 @@ class NativeBackgroundService : Service() {
         /** Starts the native fetch when the flag is on and no screen exists. No-op otherwise. */
         @JvmStatic
         fun start(context: Context) {
-            if (!NativeBackground.enabled(context) || AppActivity.isAlive() || running) return
+            if (!NativeFlag.active(context) || AppActivity.isAlive() || running) return
             val app = context.applicationContext
             try {
                 ContextCompat.startForegroundService(app, Intent(app, NativeBackgroundService::class.java))
