@@ -27,6 +27,7 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import io.github.bickworld555.hiddenchat.core.Json;
+import io.github.bickworld555.hiddenchat.core.NativeBackground;
 import io.github.bickworld555.hiddenchat.core.NativeBridge;
 import io.github.bickworld555.hiddenchat.core.crypto.CryptoCore;
 import io.github.bickworld555.hiddenchat.core.crypto.CryptoCores;
@@ -175,6 +176,14 @@ public class HiddenNativePlugin extends Plugin {
      * The app's own background fetch has ended (src/App.jsx): the CPU may sleep again (FetchWake, P3); "offline-done"
      * or "quiet" also counts as a completed fetch for the hourly check (HeartbeatJob, P4).
      */
+    /** Whether the native end-to-end path is active (flag on and the core installed): the web app then uses the bridge. */
+    @PluginMethod
+    public void nativeE2eActive(PluginCall call) {
+        JSObject result = new JSObject();
+        result.put("active", NativeBackground.enabled(getContext()) && CryptoCores.INSTANCE.current() != null);
+        call.resolve(result);
+    }
+
     /**
      * Every end-to-end crypto operation for the native app runs in the native core (NativeBridge): the web app's
      * protocol is bridged here so there is one identity and one ratchet per device, shared with background delivery.

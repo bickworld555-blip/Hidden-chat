@@ -27,6 +27,9 @@ interface CryptoCore {
     /** This device's public identity { dh, sig }. */
     fun publicIdentity(): Map<String, Any?>
 
+    /** Of these devices (`{ userId: [ {deviceId} ] }`), which have no current session — so the caller must claim their prekey bundles. */
+    fun missingSessions(devices: Map<String, Any?>): Map<String, List<String>>
+
     /** Encrypts [plaintext] for every device in [devices]; [claimBundles] fetches prekey bundles for devices without a session. */
     fun encryptForDevices(devices: Map<String, Any?>, plaintext: String, claimBundles: (userId: String, deviceIds: List<String>) -> List<Any?>): Map<String, Any?>
 

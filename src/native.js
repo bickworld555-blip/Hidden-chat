@@ -229,6 +229,14 @@ export const nativePreviewKey = async () => { const result = await invoke('previ
 // The chat list's picture for the next cold start (LaunchSnapshot.java; src/launchSnapshot.js decides the state).
 export const nativeSetLaunchSnapshot = (state) => invoke('setLaunchSnapshot', state);
 export const nativeLaunchReady = () => invoke('launchReady');
+
+// The native end-to-end core (NativeBridge): every crypto op for the native app runs here. Resolves the reply
+// ({ result } / { ok } / { error }) or null outside the app; src/e2e/bridgeProtocol.js wraps it.
+export const nativeCrypto = (method, args = {}) => invoke('crypto', { method, args });
+// Whether the native path is active (flag on + core installed); false in a browser / older app.
+export async function nativeE2eActive() { const result = await invoke('nativeE2eActive'); return Boolean(result?.active); }
+// Opened event JSON strings the native background fetch decrypted while the app was closed (for the web app to apply).
+export async function nativeTakeInbox() { const result = await invoke('takeNativeInbox'); return Array.isArray(result?.events) ? result.events : []; }
 // The phone's own unlock (fingerprint / face / screen-lock PIN): resolves { ok, error? } (null outside the app).
 export const nativeAuthenticate = (title, subtitle = '') => invoke('authenticate', { title, subtitle });
 export const nativeSetSecureScreen = (enabled) => invoke('setSecureScreen', { enabled: Boolean(enabled) });

@@ -146,6 +146,16 @@ class HmCryptoCore(private val records: KeyRecords, private val rng: Rng = Secur
         return m
     }
 
+    override fun missingSessions(devices: Map<String, Any?>): Map<String, List<String>> = records.exclusive {
+        val out = linkedMapOf<String, List<String>>()
+        for ((userId, listAny) in devices) {
+            val ids = (Json.list(listAny) ?: emptyList()).mapNotNull { Json.string(Json.map(it)?.get("deviceId")) }
+            val missing = ids.filter { loadSessions(address(userId, it)).current == null }
+            if (missing.isNotEmpty()) out[userId] = missing
+        }
+        out
+    }
+
     override fun encryptForDevices(devices: Map<String, Any?>, plaintext: String, claimBundles: (String, List<String>) -> List<Any?>): Map<String, Any?> = records.exclusive {
         val own = identity()
         val bytes = P.utf8(plaintext)

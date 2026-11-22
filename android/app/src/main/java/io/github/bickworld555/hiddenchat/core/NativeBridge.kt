@@ -31,6 +31,7 @@ object NativeBridge {
             when (method) {
                 "prepareUpload" -> result(core.prepareUpload(i(args, "serverPreKeyCount"), Json.safeInteger(args["now"]) ?: System.currentTimeMillis()))
                 "publicIdentity" -> result(core.publicIdentity())
+                "missingSessions" -> result(core.missingSessions(Json.map(args["devices"]) ?: emptyMap()))
                 "encryptForDevices" -> result(core.encryptForDevices(Json.map(args["devices"]) ?: emptyMap(), s(args, "plaintext"), bundleClaim(args)))
                 "decryptFromDevice" -> result(core.decryptFromDevice(s(args, "userId"), s(args, "deviceId"), Json.map(args["entry"]) ?: throw ProtocolError("not-addressed", "no entry")))
                 "forgetSession" -> { core.forgetSession(s(args, "userId"), s(args, "deviceId")); ok() }
