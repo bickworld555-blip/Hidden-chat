@@ -39,16 +39,23 @@ class NativeStore private constructor(private val db: SQLiteDatabase) : KeyRecor
         db.execSQL("DELETE FROM records WHERE k = ?", arrayOf(name))
     }
 
+    private var depth = 0
+
     override fun <T> exclusive(work: () -> T): T {
+        // Reentrant: the core nests exclusive{} (encryptGroup → encryptForDevices). The lock is reentrant, and only
+        // the outermost call drives the SQLite transaction, so nested calls never open a second transaction.
         lock.lock()
         try {
-            db.beginTransaction()
+            val outer = depth == 0
+            if (outer) db.beginTransaction()
+            depth++
             try {
                 val result = work()
-                db.setTransactionSuccessful()
+                if (outer) db.setTransactionSuccessful()
                 return result
             } finally {
-                db.endTransaction()
+                depth--
+                if (outer) db.endTransaction()
             }
         } finally {
             lock.unlock()
