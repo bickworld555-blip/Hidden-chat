@@ -58,15 +58,34 @@ class NativeBackgroundService : Service() {
             val core = CryptoCores.current()
             if (core == null) { stop(); return }
             ensureRegistered(core)
+            // The socket drains direct messages; group messages are not replayed there, so after it ends we drain the
+            // REST group queue (NativeGroupFetch) before stopping. onDone fires on the main looper, so the blocking
+            // HTTP runs on its own thread.
             val started = NativeRelayFetch.start(applicationContext) { reason ->
                 Log.i(TAG, "native fetch done: $reason")
-                stop()
+                groupFetchThenStop(core)
             }
-            if (!started) stop()
+            if (!started) groupFetchThenStop(core)
         } catch (failed: Exception) {
             Log.w(TAG, "native background failed", failed)
             stop()
         }
+    }
+
+    /** Drains the REST group-message queue (off the main thread), then stops the service. */
+    private fun groupFetchThenStop(core: CryptoCore) {
+        Thread({
+            try {
+                val session = RelaySession.read(applicationContext)
+                val userId = session?.userId
+                val deviceId = RelaySession.deviceId(applicationContext)
+                if (userId != null && deviceId != null) NativeGroupFetch.run(applicationContext, core, userId, deviceId)
+            } catch (failed: Throwable) {
+                Log.w(TAG, "native group fetch failed", failed)
+            } finally {
+                stop()
+            }
+        }, "native-grp").start()
     }
 
     /** Publishes keys + a signed device list the first time (the "security code changed" re-registration). */

@@ -23,6 +23,26 @@ class NativeServer private constructor(private val origin: String, private val t
     override fun putJson(path: String, body: Map<String, Any?>): Map<String, Any?>? =
         request(Request.Builder().url(origin + path).put(Json.stringify(body).toRequestBody(jsonType)))
 
+    /** A JSON POST (e.g. /api/v1/queue/ack), used by the native background group fetch. */
+    fun postJson(path: String, body: Map<String, Any?>): Map<String, Any?>? =
+        request(Request.Builder().url(origin + path).post(Json.stringify(body).toRequestBody(jsonType)))
+
+    /** A GET whose body is a JSON array (e.g. a group's message history), not an object. */
+    fun getArray(path: String): List<Any?>? {
+        val request = Request.Builder().url(origin + path).get()
+            .header("Authorization", "Bearer $token")
+            .header(ClientVersion.HEADER, ClientVersion.PROTOCOL.toString())
+            .build()
+        return try {
+            client.newCall(request).execute().use { response ->
+                val body = response.body
+                if (!response.isSuccessful || body == null) null else Json.list(Json.parse(body.string()))
+            }
+        } catch (failed: Exception) {
+            null
+        }
+    }
+
     private fun request(builder: Request.Builder): Map<String, Any?>? {
         val request = builder
             .header("Authorization", "Bearer $token")
