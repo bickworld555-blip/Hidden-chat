@@ -62,6 +62,7 @@ import SpeakingIndicator from './call/SpeakingIndicator.jsx';
 import { CallStatusLabel } from './call/CallTimer.jsx';
 import { restartCallMediaOutput, useMediaElement } from './call/useMediaElement.js';
 import { CALL_TELEMETRY_INTERVAL_MS, callTelemetry, sendCallTelemetry } from '../callTelemetry.js';
+import { createNativeRtc, nativeCallsAvailable } from '../nativeRtc.js';
 const AvatarStudio = lazyComponent(() => import('./AvatarStudio.jsx'));
 // Rare panels load on first use, so the call screen opens without them (WhatsApp's ViewStub pattern).
 const AddParticipantPicker = lazyComponent(() => import('./call/AddParticipantPicker.jsx'));
@@ -233,13 +234,17 @@ export default function CallOverlay({
 
   // Builds one pair engine. The primary peer uses the call's own id; room peers get their own pair ids.
   function buildEngine({ peerId, callId, direction, mode, offer, onSnapshot }) {
+    // When the native-call path is on, the media runs in the native libwebrtc engine (src/nativeRtc.js) instead of
+    // the WebView's RTCPeerConnection; callEngine keeps the signaling and state machine. Off by default, so this is
+    // the unchanged WebView path until a 2nd-device test turns native calls on.
+    const native = nativeCallsAvailable() ? createNativeRtc(callId, { video: mode === 'video' }) : null;
     const engine = createCallEngine({
       callId,
       direction,
       mode,
       offer: offer ?? null,
-      rtc: { RTCPeerConnection, RTCIceCandidate, RTCRtpSender: globalThis.RTCRtpSender, MediaStream },
-      getUserMedia: (constraints) => mediaSource().get(constraints),
+      rtc: native ? native.rtc : { RTCPeerConnection, RTCIceCandidate, RTCRtpSender: globalThis.RTCRtpSender, MediaStream },
+      getUserMedia: native ? native.getUserMedia : (constraints) => mediaSource().get(constraints),
       enumerateDevices: () => navigator.mediaDevices?.enumerateDevices?.() ?? Promise.resolve([]),
       getDisplayMedia: navigator.mediaDevices?.getDisplayMedia ? sharedDisplayMedia : null,
       fetchIceServers: () => loadIceServers(latest.current.sessionToken),
