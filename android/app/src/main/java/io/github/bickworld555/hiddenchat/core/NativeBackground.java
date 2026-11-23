@@ -45,9 +45,14 @@ public final class NativeBackground {
      * NativeFlag (app package); callers gate with it before using the core.
      */
     public static boolean install(Context context) {
-        if (enabledForAccount(context) == null) return false;
+        String account = enabledForAccount(context);
+        if (account == null) return false;
         NativeStore store = NativeStore.Companion.get(context);
         if (store == null) return false;
+        // The native store belongs to one account at a time: if it still holds another account's data (a missed
+        // sign-out wipe), start it fresh for this account so nothing — identity, sessions, the published-keys flag —
+        // is inherited across accounts.
+        store.adoptOwner(account);
         CryptoCores.INSTANCE.install(new HmCryptoCore(store, SecureRng.INSTANCE));
         return true;
     }

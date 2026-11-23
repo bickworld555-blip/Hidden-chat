@@ -65,12 +65,27 @@ class NativeStore private constructor(private val db: SQLiteDatabase) : KeyRecor
     /** Forgets every record (sign-out): the core's identity, sessions and keys all go. */
     override fun clear() { exclusive { db.execSQL("DELETE FROM records") } }
 
+    /**
+     * Makes sure this store belongs to [account]. If it holds another account's data (or none yet), every record is
+     * wiped first so the new owner starts from a fresh identity — the native store is never shared across accounts,
+     * even if a sign-out wipe was missed (which would otherwise let the new account inherit the old one's identity,
+     * sessions and the `native-keys-published` flag). Idempotent for the same owner.
+     */
+    fun adoptOwner(account: String) = exclusive {
+        if (get(OWNER) != account) {
+            db.execSQL("DELETE FROM records")
+            set(OWNER, account)
+        }
+    }
+
     fun close() = db.close()
 
     companion object {
         private const val DB_NAME = "hm-core.db"
         private const val KEY_PREF = "hm-core-store"
         private const val KEY_NAME = "db-key"
+        // The account this store's data belongs to (adoptOwner); a different owner means a fresh start.
+        private const val OWNER = "owner-account"
 
         @Volatile
         private var instance: NativeStore? = null
@@ -95,18 +110,45 @@ class NativeStore private constructor(private val db: SQLiteDatabase) : KeyRecor
             // path, but the native background service runs in a process where that path never ran, so without this the
             // first openDatabase throws UnsatisfiedLinkError and the native fetch dies. System.loadLibrary is idempotent.
             System.loadLibrary("sqlcipher")
-            val key = rawKey(app)
             val file = File(app.noBackupFilesDir, DB_NAME)
+            return try {
+                openWith(file, rawKey(app))
+            } catch (broken: Throwable) {
+                // The database could not be opened with its key: a corrupt file, or a Keystore key that no longer
+                // matches (device credentials reset, or app data restored to another phone). Rather than leave the
+                // native path permanently off, discard the unreadable database and its sealed key and start fresh —
+                // the native stack re-registers a fresh identity ("security code changed" to contacts).
+                android.util.Log.w("NativeStore", "native key store unopenable; recreating fresh", broken)
+                deleteStore(app, file)
+                openWith(file, rawKey(app))
+            }
+        }
+
+        /** Opens (or creates) the database at [file] with [key]; a wrong key fails on the first query, not openDatabase. */
+        private fun openWith(file: File, key: String): NativeStore {
             // The same call style as DatabaseKey.java (net.zetetic:sqlcipher-android), with create flags.
             val db = SQLiteDatabase.openDatabase(
                 file.absolutePath, key, null,
                 SQLiteDatabase.OPEN_READWRITE or SQLiteDatabase.CREATE_IF_NECESSARY, null,
             )
-            // PRAGMA journal_mode returns the new mode, so net.zetetic's SQLCipher requires rawQuery, not execSQL
-            // (execSQL rejects result-returning statements). CREATE TABLE returns nothing, so execSQL is fine there.
-            db.rawQuery("PRAGMA journal_mode = WAL", null).use { it.moveToFirst() }
-            db.execSQL("CREATE TABLE IF NOT EXISTS records (k TEXT PRIMARY KEY, v TEXT NOT NULL)")
+            try {
+                // PRAGMA journal_mode returns the new mode, so net.zetetic's SQLCipher requires rawQuery, not execSQL
+                // (execSQL rejects result-returning statements). A wrong key throws here; CREATE TABLE returns nothing.
+                db.rawQuery("PRAGMA journal_mode = WAL", null).use { it.moveToFirst() }
+                db.execSQL("CREATE TABLE IF NOT EXISTS records (k TEXT PRIMARY KEY, v TEXT NOT NULL)")
+            } catch (bad: Throwable) {
+                try { db.close() } catch (ignored: Throwable) { /* already unusable */ }
+                throw bad
+            }
             return NativeStore(db)
+        }
+
+        /** Removes the database (and its WAL/SHM side files) and its sealed key, so the next open starts clean. */
+        private fun deleteStore(app: Context, file: File) {
+            file.delete()
+            File(file.absolutePath + "-wal").delete()
+            File(file.absolutePath + "-shm").delete()
+            app.getSharedPreferences(KEY_PREF, Context.MODE_PRIVATE).edit().remove(KEY_NAME).apply()
         }
 
         /** The database's raw SQLCipher passphrase ("x'<64 hex>'"), made and Keystore-sealed on first use. */
@@ -114,7 +156,9 @@ class NativeStore private constructor(private val db: SQLiteDatabase) : KeyRecor
             val prefs = app.getSharedPreferences(KEY_PREF, Context.MODE_PRIVATE)
             val sealed = prefs.getString(KEY_NAME, null)
             if (sealed != null && SecureStore.isSealed(sealed)) {
-                val hex = SecureStore.open(sealed)
+                // open() throws if the Keystore key changed (reset/restored); treat that as "no usable key" and make a
+                // fresh one — open()'s caller then recreates the database, which the old key could not have opened.
+                val hex = try { SecureStore.open(sealed) } catch (changed: Throwable) { null }
                 if (hex != null && hex.length == 64) return "x'$hex'"
             }
             val bytes = ByteArray(32).also { SecureRandom().nextBytes(it) }
