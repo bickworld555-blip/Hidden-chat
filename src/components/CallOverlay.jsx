@@ -62,7 +62,7 @@ import SpeakingIndicator from './call/SpeakingIndicator.jsx';
 import { CallStatusLabel } from './call/CallTimer.jsx';
 import { restartCallMediaOutput, useMediaElement } from './call/useMediaElement.js';
 import { CALL_TELEMETRY_INTERVAL_MS, callTelemetry, sendCallTelemetry } from '../callTelemetry.js';
-import { createNativeRtc, nativeCallsAvailable } from '../nativeRtc.js';
+import { createNativeRtc, nativeCallsAvailable, nativeRemoteAudioLevel } from '../nativeRtc.js';
 const AvatarStudio = lazyComponent(() => import('./AvatarStudio.jsx'));
 // Rare panels load on first use, so the call screen opens without them (WhatsApp's ViewStub pattern).
 const AddParticipantPicker = lazyComponent(() => import('./call/AddParticipantPicker.jsx'));
@@ -1074,8 +1074,9 @@ export default function CallOverlay({
                 image={peer?.avatar}
                 size="large"
               />
-              {/* Grows with the other person's voice, drawn on a canvas (no re-renders). */}
-              {status === 'connected' && <SpeakingIndicator stream={remoteStream} />}
+              {/* Grows with the other person's voice, drawn on a canvas (no re-renders). The native call path has no JS
+                  audio stream to meter, so it feeds the ring from the native engine's reported level instead. */}
+              {status === 'connected' && <SpeakingIndicator stream={remoteStream} level={nativeCallsAvailable() ? () => nativeRemoteAudioLevel(call.id) : undefined} />}
             </div>
           </div>
         )}

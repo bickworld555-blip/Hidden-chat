@@ -24,7 +24,8 @@ import { applyGroupChange, GROUP_CHANGE_EVENTS } from './groupChanges.js';
 import { cachedGroupDetails } from './groupCache.js';
 import { applyGroupCall, withRunningCall } from './groupCalls.js';
 import { notificationNames } from './notificationNames.js';
-import { nativeClearSession, nativeWipeE2e, nativeEnableE2e, nativeRequestStartupPermissions, nativeSetSession, nativeShell, nativeStartBackground, nativeState, nativeStopBackground, nativeTakePendingCall, nativeMoveToBackground, nativeClearShare, nativeSetCallActive, nativeClearMessageNotifications, nativeClearMissedCalls, nativeTakeMessageActions, nativeTakeCallEvents, nativeSetSystemBarsTheme, nativeOpenSecret, nativePreviewKey, nativeBackgroundFetchDone, nativeScheduleUnsent, nativeE2eActive, nativeTakeInbox, onNative } from './native.js';
+import { nativeClearSession, nativeWipeE2e, nativeEnableE2e, nativeRequestStartupPermissions, nativeSetSession, nativeShell, nativeStartBackground, nativeState, nativeStopBackground, nativeTakePendingCall, nativeMoveToBackground, nativeClearShare, nativeSetCallActive, nativeClearMessageNotifications, nativeClearMissedCalls, nativeTakeMessageActions, nativeTakeCallEvents, nativeSetSystemBarsTheme, nativeOpenSecret, nativePreviewKey, nativeBackgroundFetchDone, nativeScheduleUnsent, nativeE2eActive, nativeCallsAllowed, nativeTakeInbox, onNative } from './native.js';
+import { setNativeCallsEnabled } from './nativeRtc.js';
 import { parseShare } from './shareTarget.js';
 import { e2eDeviceId, onE2eEvent, importNativeInbox, publishPreviewKey, replayE2eEvent, sealDirect, sealToOwnDevices, startE2e, stopE2e, userForXmppAddress, xmppGroupTargetsFor, xmppTargetsFor } from './e2e/client.js';
 import { createControlBuffer, expiredIds, resolveControl, roleIn } from './e2e/lifecycle.js';
@@ -264,6 +265,9 @@ export default function App() {
       if (!live) return;
       // The native app runs encryption in the native core (one identity/ratchet per device); the browser/web path otherwise.
       const useNativeCore = await nativeE2eActive().catch(() => false);
+      // Per-account rollout gate for native call media: enable the native libwebrtc call path only for an account the
+      // server put on the native path (NativeFlag). Off for everyone else, so calls keep running on the WebView stack.
+      nativeCallsAllowed().then(setNativeCallsEnabled).catch(() => {});
       startE2e({ token: sessionToken, userId, deviceId, useNativeCore })
         // The phone's notification preview key, signed by this device and published once (src/e2e/preview.js).
         .then(() => nativePreviewKey()).then((key) => (live && key ? publishPreviewKey(key) : false))

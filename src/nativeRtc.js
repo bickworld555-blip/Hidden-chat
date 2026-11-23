@@ -19,8 +19,17 @@
 //    controls work, but the pixels are native. getStats and transceivers remain TODO.
 import {
   nativeCallStart, nativeCallAcceptOffer, nativeCallAcceptAnswer, nativeCallRemoteIce, nativeCallMic, nativeCallEnd,
-  nativeCallVideoShow, nativeCallSwitchCamera, nativeCallCamera, onNative,
+  nativeCallVideoShow, nativeCallSwitchCamera, nativeCallCamera, nativeCallTorch, nativeCallAddVideo,
+  nativeCallRenegotiate, nativeCallRollback, nativeCallStats, onNative,
 } from './native.js';
+
+// Latest remote audio level (0..1) per native call, fed by the bridge's `callRemoteLevel` sampler, for the speaking
+// indicator (the native engine plays remote audio itself, so there is no JS MediaStream to meter). One module-level
+// listener keeps the map in step; NativeRtcPeerConnection.close clears its entry.
+const remoteAudioLevels = new Map();
+try { onNative('callRemoteLevel', (e) => { if (e?.callId) remoteAudioLevels.set(e.callId, Number(e.level) || 0); }); } catch { /* no bridge */ }
+/** The latest remote speaking level (0..1) for a native call, for SpeakingIndicator's `level` prop. */
+export function nativeRemoteAudioLevel(callId) { return remoteAudioLevels.get(callId) || 0; }
 
 // Off by default — flipped on only for an on-device 2nd-device test. Until then the injection seam is inert and the
 // WebView WebRTC stack runs every call. TODO: tie to a per-account native-call flag once verified on two devices.
@@ -41,14 +50,24 @@ function setNativeVideoVisible(callId, on) {
 // in the native engine). It must answer addEventListener/stop/getSettings/clone without throwing — a bare object made
 // the call view crash. `onEnabled` lets the audio/video track's `.enabled` toggle reach the native mic/camera, since
 // callEngine mutes and turns the camera off by setting `track.enabled` rather than renegotiating.
-function fakeMediaTrack(kind, id, onEnabled) {
+function fakeMediaTrack(kind, id, { onEnabled, onTorch } = {}) {
   let enabled = true;
+  // A camera track advertises a controllable flash so callEngine's torchAvailable()/setTorch() work (best-effort: the
+  // native side no-ops if the current camera has no flash). applyConstraints routes the torch toggle natively.
+  const capabilities = onTorch ? { torch: true } : {};
   const track = {
     kind, id, readyState: 'live', muted: false, contentHint: '',
-    stop() {}, getSettings: () => ({}), getCapabilities: () => ({}), getConstraints: () => ({}),
-    applyConstraints: () => Promise.resolve(),
+    stop() {}, getSettings: () => ({}), getCapabilities: () => capabilities, getConstraints: () => ({}),
+    applyConstraints: (constraints) => {
+      const advanced = constraints?.advanced;
+      if (onTorch && Array.isArray(advanced)) {
+        const entry = advanced.find((item) => item && 'torch' in item);
+        if (entry) { try { onTorch(Boolean(entry.torch)); } catch { /* ignore */ } }
+      }
+      return Promise.resolve();
+    },
     addEventListener() {}, removeEventListener() {}, dispatchEvent: () => false,
-    clone() { return fakeMediaTrack(kind, id, onEnabled); },
+    clone() { return fakeMediaTrack(kind, id, { onEnabled, onTorch }); },
   };
   Object.defineProperty(track, 'enabled', {
     get() { return enabled; },
@@ -92,6 +111,8 @@ class NativeRtcPeerConnection {
     this._callId = callId;
     this._video = video;
     this._localSet = false;         // native sets the local description itself during createOffer/acceptOffer
+    this._started = false;          // the first createOffer builds the native call; later ones renegotiate it
+    this._iceRestart = false;       // a pending ICE restart, applied to the next renegotiation offer
     this._pendingLocal = null;      // resolves with the locally produced offer/answer from the native event
     this.connectionState = 'new';
     this.iceConnectionState = 'new';
@@ -135,7 +156,16 @@ class NativeRtcPeerConnection {
   // --- offer/answer ---
   async createOffer() {
     this._pendingLocal = deferred();
-    await nativeCallStart(this._callId, this._video);   // native: fetch ICE, build, make+set+emit the offer
+    if (!this._started) {
+      this._started = true;
+      await nativeCallStart(this._callId, this._video);   // native: fetch ICE, build, make+set+emit the offer
+    } else {
+      // A later offer on the SAME connection — callEngine's negotiate() for an ICE restart (network switch) or a
+      // voice→video upgrade. The native engine re-offers on the existing peer connection.
+      const iceRestart = this._iceRestart;
+      this._iceRestart = false;
+      await nativeCallRenegotiate(this._callId, iceRestart);
+    }
     const local = await this._pendingLocal.promise;
     this._localSet = true;
     this.localDescription = local;            // so callEngine can read + send the offer
@@ -159,7 +189,11 @@ class NativeRtcPeerConnection {
   async setLocalDescription(description) {
     // Native applied its own local description during createOffer/acceptOffer; keep our copy in step so callEngine
     // reads the right SDP, and handle rollback.
-    if (description?.type === 'rollback') { this.signalingState = 'stable'; return; }
+    if (description?.type === 'rollback') {
+      this.signalingState = 'stable';
+      try { await nativeCallRollback(this._callId); } catch { /* best-effort glare recovery */ }
+      return;
+    }
     if (description?.sdp) {
       this.localDescription = description;
       this.signalingState = description.type === 'offer' ? 'have-local-offer' : 'stable';
@@ -205,7 +239,15 @@ class NativeRtcPeerConnection {
   }
 
   addTrack(track) {
-    const sender = this._nativeSender(track?.kind === 'video' ? 'video' : 'audio');
+    const kind = track?.kind === 'video' ? 'video' : 'audio';
+    // callEngine's voice→video upgrade adds a camera track to the live connection (addVideo). Publish a native camera
+    // track, show the renderer, and let the subsequent negotiate() renegotiate (see createOffer's renegotiate path).
+    if (kind === 'video' && !this._video) {
+      this._video = true;
+      nativeCallAddVideo(this._callId).catch(() => { /* best-effort */ });
+      setNativeVideoVisible(this._callId, true);
+    }
+    const sender = this._nativeSender(kind);
     sender.track = track ?? null;
     this._senders.push(sender);
     return sender;
@@ -222,16 +264,40 @@ class NativeRtcPeerConnection {
   }
   getSenders() { return this._senders; }
   getTransceivers() { return []; }   // native owns the transceivers; callEngine's preferCodecs loops this harmlessly
-  async getStats() { return new Map(); }   // TODO: surface native getStats for the call-quality indicator
+
+  // The native PeerConnection's WebRTC stats, shaped as the RTCStatsReport callEngine's quality monitor and telemetry
+  // read (forEach + get over flat stat rows: inbound-rtp / outbound-rtp / transport / candidate-pair, with kind).
+  async getStats() {
+    try {
+      const result = await nativeCallStats(this._callId);
+      const list = Array.isArray(result?.stats) ? result.stats : [];
+      const byId = new Map(list.map((stat) => [stat.id, stat]));
+      return {
+        forEach: (callback) => { for (const stat of list) callback(stat, stat.id); },
+        get: (id) => byId.get(id),
+        values: () => list.values(),
+        [Symbol.iterator]: () => list[Symbol.iterator](),
+      };
+    } catch {
+      return new Map();
+    }
+  }
 
   // --- config / lifecycle ---
   getConfiguration() { return {}; }
   setConfiguration() { /* ICE config is owned natively; no-op */ }
-  restartIce() { /* TODO: native ICE restart for a network switch */ }
+
+  // Network switch / media stall: callEngine asks for an ICE restart. Flag it and drive a fresh offer on this same
+  // connection (createOffer's renegotiate path sends it with the IceRestart constraint).
+  restartIce() {
+    this._iceRestart = true;
+    Promise.resolve().then(() => { try { this.onnegotiationneeded?.(); } catch { /* ignore */ } });
+  }
 
   close() {
     for (const sub of this._subs) { try { sub?.remove?.(); } catch { /* already gone */ } }
     this._subs = [];
+    remoteAudioLevels.delete(this._callId);
     if (this._video) setNativeVideoVisible(this._callId, false);
     try { nativeCallEnd(this._callId); } catch { /* best-effort */ }
     this.connectionState = 'closed';
@@ -244,13 +310,19 @@ class NativeRtcPeerConnection {
  * camera is being switched (flipCamera asks getUserMedia again with `switchCamera`), it flips the native camera.
  */
 function makeNativeGetUserMedia(callId) {
+  const audioTrack = () => fakeMediaTrack('audio', 'hm-local-audio', { onEnabled: (enabled) => { nativeCallMic(callId, enabled).catch(() => {}); } });
   return (constraints = {}) => {
     if (constraints.switchCamera) nativeCallSwitchCamera(callId).catch(() => { /* best-effort */ });
     const tracks = [];
-    if (constraints.audio) tracks.push(fakeMediaTrack('audio', 'hm-local-audio', (enabled) => { nativeCallMic(callId, enabled).catch(() => {}); }));
-    if (constraints.video) tracks.push(fakeMediaTrack('video', 'hm-local-video', (enabled) => { nativeCallCamera(callId, enabled).catch(() => {}); }));
+    if (constraints.audio) tracks.push(audioTrack());
+    if (constraints.video) {
+      tracks.push(fakeMediaTrack('video', 'hm-local-video', {
+        onEnabled: (enabled) => { nativeCallCamera(callId, enabled).catch(() => {}); },
+        onTorch: (on) => { nativeCallTorch(callId, on).catch(() => {}); },
+      }));
+    }
     // A call always needs at least one local track for callEngine's slot filling; default to the microphone.
-    if (tracks.length === 0) tracks.push(fakeMediaTrack('audio', 'hm-local-audio', (enabled) => { nativeCallMic(callId, enabled).catch(() => {}); }));
+    if (tracks.length === 0) tracks.push(audioTrack());
     return Promise.resolve(new FakeMediaStream(tracks));
   };
 }

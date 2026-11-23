@@ -4,12 +4,14 @@ import { meterStream, smoothLevel } from '../../audioLevel.js';
 // A soft ring around a participant's photo that grows with their voice (WhatsApp's VoiceParticipantAudioWave):
 // drawn on a canvas every animation frame straight from the audio analyser. No React state is touched while it
 // animates, so speaking never re-renders the call screen.
-export default memo(function SpeakingIndicator({ stream, color = '#2674d9' }) {
+export default memo(function SpeakingIndicator({ stream, color = '#2674d9', level: levelFn = null }) {
   const canvasRef = useRef(null);
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    const meter = meterStream(stream);
+    // Native calls play remote audio themselves (no JS stream to meter), so a `level` function feeds the ring from the
+    // native engine's reported audio level instead of a Web Audio analyser.
+    const meter = levelFn ? { level: levelFn, stop: () => {} } : meterStream(stream);
     if (!canvas || !meter) return undefined;
     const context = canvas.getContext('2d');
     let level = 0;
@@ -36,7 +38,7 @@ export default memo(function SpeakingIndicator({ stream, color = '#2674d9' }) {
       cancelAnimationFrame(frame);
       meter.stop();
     };
-  }, [stream, color]);
+  }, [stream, color, levelFn]);
 
   return <canvas ref={canvasRef} className="wa-speaking-ring" aria-hidden="true" />;
 });

@@ -30,6 +30,27 @@ object NativeCallBridge {
     private class Holder(val call: NativeCall, val video: Boolean)
     private val calls = HashMap<String, Holder>()
 
+    // Periodic remote-audio-level sampler for the speaking indicator (the native engine plays remote audio itself, so
+    // the WebView has no stream to meter). One daemon scheduler; a per-call task polls getStats and emits callRemoteLevel.
+    private val levelSamplers = java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.ScheduledFuture<*>>()
+    private val sampler: java.util.concurrent.ScheduledExecutorService by lazy {
+        java.util.concurrent.Executors.newSingleThreadScheduledExecutor { r -> Thread(r, "native-call-levels").apply { isDaemon = true } }
+    }
+
+    private fun startLevelSampler(callId: String) {
+        stopLevelSampler(callId)
+        levelSamplers[callId] = sampler.scheduleWithFixedDelay({
+            val call = get(callId)?.call ?: return@scheduleWithFixedDelay
+            call.getStats { rows ->
+                val audio = rows.firstOrNull { it["type"] == "inbound-rtp" && it["kind"] == "audio" }
+                val level = (audio?.get("audioLevel") as? Number)?.toDouble() ?: 0.0
+                emit("callRemoteLevel", mapOf("callId" to callId, "level" to level))
+            }
+        }, 300, 200, java.util.concurrent.TimeUnit.MILLISECONDS)
+    }
+
+    private fun stopLevelSampler(callId: String) { levelSamplers.remove(callId)?.cancel(false) }
+
     @Synchronized private fun put(callId: String, holder: Holder) { calls[callId] = holder }
     @Synchronized private fun get(callId: String): Holder? = calls[callId]
     @Synchronized private fun take(callId: String): Holder? = calls.remove(callId)
@@ -37,11 +58,35 @@ object NativeCallBridge {
     /** The live native call, for the UI overlay to bind its video renderers to (null once the call is gone). */
     fun call(callId: String): NativeCall? = get(callId)?.call
 
-    /** Front/back camera flip for a video call. */
-    fun switchCamera(callId: String) { get(callId)?.call?.switchCamera() }
+    /** Front/back camera flip for a video call; reports the new facing (front=true) through [onDone]. */
+    fun switchCamera(callId: String, onDone: (Boolean) -> Unit) {
+        val call = get(callId)?.call
+        if (call == null) onDone(true) else call.switchCamera(onDone)
+    }
 
     /** Turn the local camera off/on (camera button), mirroring the WebView path's `track.enabled`. */
     fun setCamera(callId: String, enabled: Boolean) { get(callId)?.call?.setCameraEnabled(enabled) }
+
+    /** Flash/torch toggle for a native video call (best-effort; usually back camera only). */
+    fun setTorch(callId: String, on: Boolean): Boolean = get(callId)?.call?.setTorch(on) ?: false
+
+    /** Whether the live call's current camera has a controllable flash. */
+    fun torchAvailable(callId: String): Boolean = get(callId)?.call?.torchAvailable() ?: false
+
+    /** Voice → video upgrade: publish a camera track on the existing call (caller then renegotiates). */
+    fun addVideo(callId: String) { get(callId)?.call?.addVideoTrack() }
+
+    /** A later offer on the same connection: ICE restart (network switch) or a voice→video upgrade. */
+    fun renegotiate(callId: String, iceRestart: Boolean) { get(callId)?.call?.renegotiate(iceRestart) }
+
+    /** Glare: roll back our just-made local offer so the other side's offer applies. */
+    fun rollback(callId: String) { get(callId)?.call?.rollback() }
+
+    /** A WebRTC stats snapshot (quality/telemetry), flattened to plain maps; empty list once the call is gone. */
+    fun stats(callId: String, onReport: (List<Map<String, Any?>>) -> Unit) {
+        val call = get(callId)?.call
+        if (call == null) onReport(emptyList()) else call.getStats(onReport)
+    }
 
     private fun emit(event: String, data: Map<String, Any?>) {
         emitter?.emit(event, data)
@@ -79,6 +124,7 @@ object NativeCallBridge {
 
     /** End a call (hang up, decline, the other side left, a system hang-up relayed through the WebView). */
     fun end(context: Context, callId: String) {
+        stopLevelSampler(callId)
         take(callId)?.let { holder ->
             holder.call.close()
             try { CallAudio.stop(context.applicationContext) } catch (ignored: Throwable) { /* nothing to release */ }
@@ -95,10 +141,12 @@ object NativeCallBridge {
         override fun onConnected() {
             // Media is flowing: put the call on the earpiece (voice) or loudspeaker (video), like the WebView path.
             try { CallAudio.start(app, video) } catch (ignored: Throwable) { /* route stays as-is */ }
+            startLevelSampler(callId)
             emit("callState", mapOf("callId" to callId, "state" to "connected"))
         }
 
         override fun onClosed(reason: String) {
+            stopLevelSampler(callId)
             if (take(callId) != null) try { CallAudio.stop(app) } catch (ignored: Throwable) { /* already released */ }
             emit("callState", mapOf("callId" to callId, "state" to "closed", "reason" to reason))
         }

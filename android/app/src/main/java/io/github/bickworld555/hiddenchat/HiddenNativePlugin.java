@@ -1394,8 +1394,20 @@ public class HiddenNativePlugin extends Plugin {
         io.github.bickworld555.hiddenchat.call.NativeCall nativeCall = NativeCallBridge.INSTANCE.call(callId);
         if (nativeCall != null) nativeCall.setRemoteVideoSink(null);
         io.github.bickworld555.hiddenchat.call.NativeCallVideoView view;
-        synchronized (callVideoViews) { view = callVideoViews.remove(callId); }
-        if (view != null) view.detach();
+        boolean none;
+        synchronized (callVideoViews) { view = callVideoViews.remove(callId); none = callVideoViews.isEmpty(); }
+        if (view == null) return;
+        view.detach();
+        // The last overlay is gone: give the WebView its opaque background back (it was made transparent to reveal the
+        // native surface). Harmless if it was already opaque; the HTML stays opaque outside a native video call.
+        final android.app.Activity activity = getActivity();
+        if (none && activity != null) {
+            activity.runOnUiThread(() -> {
+                if (getBridge() != null && getBridge().getWebView() != null) {
+                    getBridge().getWebView().setBackgroundColor(android.graphics.Color.WHITE);
+                }
+            });
+        }
     }
 
     /** Show or hide the native video overlay (remote full-screen + local corner preview) over the WebView. */
@@ -1427,16 +1439,18 @@ public class HiddenNativePlugin extends Plugin {
         call.resolve();
     }
 
-    /** Front/back camera flip for a native video call. */
+    /** Front/back camera flip for a native video call; mirrors the self preview for the front camera only. */
     @PluginMethod
     public void callSwitchCamera(PluginCall call) {
         if (nativeCallsOff(call)) return;
         String callId = call.getString("callId", "");
         if (callId == null || callId.isEmpty()) { call.reject("no-call"); return; }
-        NativeCallBridge.INSTANCE.switchCamera(callId);
-        io.github.bickworld555.hiddenchat.call.NativeCallVideoView view;
-        synchronized (callVideoViews) { view = callVideoViews.get(callId); }
-        if (view != null) view.toggleLocalMirror();
+        NativeCallBridge.INSTANCE.switchCamera(callId, (isFront) -> {
+            io.github.bickworld555.hiddenchat.call.NativeCallVideoView view;
+            synchronized (callVideoViews) { view = callVideoViews.get(callId); }
+            if (view != null) view.setLocalMirror(Boolean.TRUE.equals(isFront));
+            return kotlin.Unit.INSTANCE;
+        });
         call.resolve();
     }
 
@@ -1447,6 +1461,82 @@ public class HiddenNativePlugin extends Plugin {
         String callId = call.getString("callId", "");
         if (callId == null || callId.isEmpty()) { call.reject("no-call"); return; }
         NativeCallBridge.INSTANCE.setCamera(callId, Boolean.TRUE.equals(call.getBoolean("enabled", true)));
+        call.resolve();
+    }
+
+    /** Flash/torch toggle for a native video call (best-effort; usually the back camera only). */
+    @PluginMethod
+    public void callTorch(PluginCall call) {
+        if (nativeCallsOff(call)) return;
+        String callId = call.getString("callId", "");
+        if (callId == null || callId.isEmpty()) { call.reject("no-call"); return; }
+        boolean applied = NativeCallBridge.INSTANCE.setTorch(callId, Boolean.TRUE.equals(call.getBoolean("on", false)));
+        call.resolve(new JSObject().put("applied", applied));
+    }
+
+    /** Voice → video upgrade: publish a camera track on the existing native call (JS then renegotiates). */
+    @PluginMethod
+    public void callAddVideo(PluginCall call) {
+        if (nativeCallsOff(call)) return;
+        String callId = call.getString("callId", "");
+        if (callId == null || callId.isEmpty()) { call.reject("no-call"); return; }
+        NativeCallBridge.INSTANCE.addVideo(callId);
+        call.resolve();
+    }
+
+    /** A later offer on the same connection: ICE restart (network switch) or a voice→video upgrade's new m-line. */
+    @PluginMethod
+    public void callRenegotiate(PluginCall call) {
+        if (nativeCallsOff(call)) return;
+        String callId = call.getString("callId", "");
+        if (callId == null || callId.isEmpty()) { call.reject("no-call"); return; }
+        NativeCallBridge.INSTANCE.renegotiate(callId, Boolean.TRUE.equals(call.getBoolean("iceRestart", false)));
+        call.resolve();
+    }
+
+    /** Glare: roll back our just-made local offer so the other side's crossing offer can be applied. */
+    @PluginMethod
+    public void callRollback(PluginCall call) {
+        if (nativeCallsOff(call)) return;
+        String callId = call.getString("callId", "");
+        if (callId == null || callId.isEmpty()) { call.reject("no-call"); return; }
+        NativeCallBridge.INSTANCE.rollback(callId);
+        call.resolve();
+    }
+
+    /** A WebRTC stats snapshot for the call-quality monitor / telemetry (flattened rows). */
+    @PluginMethod
+    public void callStats(PluginCall call) {
+        if (nativeCallsOff(call)) return;
+        String callId = call.getString("callId", "");
+        if (callId == null || callId.isEmpty()) { call.reject("no-call"); return; }
+        NativeCallBridge.INSTANCE.stats(callId, (rows) -> {
+            org.json.JSONArray arr = new org.json.JSONArray();
+            for (Object row : rows) {
+                try { arr.put(new org.json.JSONObject((java.util.Map) row)); } catch (Exception ignored) { /* skip a bad row */ }
+            }
+            call.resolve(new JSObject().put("stats", arr));
+            return kotlin.Unit.INSTANCE;
+        });
+    }
+
+    /**
+     * The per-account rollout gate for native call media: the native path must be active for this account AND native
+     * calls must be switched on for this install. Default OFF (separate from the E2E native flag), so an account on the
+     * native E2E path does not silently get the still-unverified native call path — the WebView call stack runs until a
+     * rollout (or a device test) turns native calls on with {@link #setNativeCallsRollout}.
+     */
+    @PluginMethod
+    public void nativeCallsAllowed(PluginCall call) {
+        boolean on = getContext().getSharedPreferences("hm_native_calls", Context.MODE_PRIVATE).getBoolean("enabled", false);
+        call.resolve(new JSObject().put("allowed", NativeFlag.active(getContext()) && on));
+    }
+
+    /** Turn the native call path on/off for this install (a server rollout driver or a device test sets it). Default off. */
+    @PluginMethod
+    public void setNativeCallsRollout(PluginCall call) {
+        boolean enabled = Boolean.TRUE.equals(call.getBoolean("enabled", false));
+        getContext().getSharedPreferences("hm_native_calls", Context.MODE_PRIVATE).edit().putBoolean("enabled", enabled).apply();
         call.resolve();
     }
 

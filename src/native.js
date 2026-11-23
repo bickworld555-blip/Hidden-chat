@@ -89,6 +89,18 @@ export const nativeCallEnd = (callId) => invoke('callEnd', { callId });
 export const nativeCallVideoShow = (callId, show) => invoke('callVideoShow', { callId, show: Boolean(show) });
 export const nativeCallSwitchCamera = (callId) => invoke('callSwitchCamera', { callId });
 export const nativeCallCamera = (callId, enabled) => invoke('callCamera', { callId, enabled: Boolean(enabled) });
+export const nativeCallTorch = (callId, on) => invoke('callTorch', { callId, on: Boolean(on) });
+// Voice→video upgrade (publish a camera track), a later offer on the same connection (ICE restart / upgrade), and
+// glare rollback — the native equivalents of callEngine's addVideo / negotiate(iceRestart) / setLocalDescription(rollback).
+export const nativeCallAddVideo = (callId) => invoke('callAddVideo', { callId });
+export const nativeCallRenegotiate = (callId, iceRestart = false) => invoke('callRenegotiate', { callId, iceRestart: Boolean(iceRestart) });
+export const nativeCallRollback = (callId) => invoke('callRollback', { callId });
+// A WebRTC stats snapshot for the call-quality monitor / telemetry: { stats: [ { id, type, kind, ... } ] }.
+export const nativeCallStats = (callId) => invoke('callStats', { callId });
+// Per-account rollout gate: whether the native call path is enabled for the signed-in account (native path active AND
+// native calls switched on for this install — default off). A rollout driver / device test flips the switch.
+export async function nativeCallsAllowed() { const result = await invoke('nativeCallsAllowed'); return Boolean(result?.allowed); }
+export const nativeSetCallsRollout = (enabled) => invoke('setNativeCallsRollout', { enabled: Boolean(enabled) });
 // Uploads in progress: { count, label, progress (0-100) }; count 0 ends the "Sending…" foreground service.
 export const nativeSetUploads = (state) => invoke('setUploads', state);
 // Android Keystore sealing for the local data key (src/secureStorage.js): { sealed } / { value }, null outside the app.

@@ -56,13 +56,9 @@ class NativeCallVideoView private constructor(
         if (track != null) try { track.addSink(remoteRenderer) } catch (ignored: Throwable) {}
     }
 
-    @Volatile private var mirrored = true  // starts on the front camera
-
-    /** Camera flipped front/back: the local preview mirrors only the front camera, like the WebView self-view. */
-    fun toggleLocalMirror() = activity.runOnUiThread {
-        if (released) return@runOnUiThread
-        mirrored = !mirrored
-        localRenderer.setMirror(mirrored)
+    /** The local preview mirrors only the front camera, like the WebView self-view. */
+    fun setLocalMirror(front: Boolean) = activity.runOnUiThread {
+        if (!released) localRenderer.setMirror(front)
     }
 
     /** Take the overlay down and release both GL surfaces (idempotent). */

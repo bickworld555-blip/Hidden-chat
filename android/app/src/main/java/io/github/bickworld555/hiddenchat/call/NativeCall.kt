@@ -31,7 +31,10 @@ class NativeCall(
     // The remote camera track, kept so a renderer that attaches AFTER the track arrives (the UI overlay is built when
     // the call connects, which can be after onAddTrack) still gets the picture.
     @Volatile private var remoteVideoTrack: VideoTrack? = null
-    private var videoCapture: VideoCapture? = null
+    // The camera is shared across every peer of a group (mesh) call ([SharedCapture]); this call only holds a reference
+    // to it while it is a video call, and releases that on close. `videoCapture` is the shared instance while held.
+    private var holdsVideo = false
+    private val videoCapture: VideoCapture? get() = if (holdsVideo) SharedCapture.current() else null
 
     /**
      * A UI renderer for the remote video (a native SurfaceView overlay over the WebView). Setting it binds the remote
@@ -111,22 +114,42 @@ class NativeCall(
         val track = factory.createAudioTrack("hm-audio", source)
         localAudio = track
         connection?.addTrack(track, listOf("hm-stream"))
-        if (video) {
-            videoCapture = VideoCapture.create(appContext, factory)?.also { capture ->
-                capture.start()
-                connection?.addTrack(capture.track, listOf("hm-stream"))
-            }
-        }
+        if (video) acquireVideo()
+    }
+
+    // Acquire the shared camera and publish its track on this connection once. Used both for an initial video call and
+    // for a voice→video upgrade; a group call's peers all add the SAME shared track.
+    private fun acquireVideo(): VideoCapture? {
+        if (holdsVideo) return SharedCapture.current()
+        val capture = SharedCapture.acquire(appContext, factory) ?: return null
+        holdsVideo = true
+        connection?.addTrack(capture.track, listOf("hm-stream"))
+        return capture
     }
 
     /** The local camera track (video calls only), for a local-preview renderer. */
     fun localVideoTrack(): VideoTrack? = videoCapture?.track
 
-    /** Front/back camera flip. */
-    fun switchCamera() { videoCapture?.switchCamera() }
+    /** Front/back camera flip; reports the new facing (front=true) through [onDone] once it completes. */
+    fun switchCamera(onDone: (Boolean) -> Unit) {
+        val capture = videoCapture
+        if (capture == null) onDone(true) else capture.switchCamera(onDone)
+    }
 
     /** Turn the camera off/on (the track stays, so no renegotiation), like the WebView path's `track.enabled`. */
     fun setCameraEnabled(enabled: Boolean) { videoCapture?.track?.setEnabled(enabled) }
+
+    /** Best-effort flash/torch toggle on the current camera (usually only the back camera). */
+    fun setTorch(on: Boolean): Boolean = videoCapture?.setTorch(on) ?: false
+
+    /** Whether the current camera advertises a controllable flash. */
+    fun torchAvailable(): Boolean = videoCapture?.hasTorch() ?: false
+
+    /**
+     * Voice → video upgrade: create and publish a camera track on the existing connection if there is none yet. The
+     * caller then [renegotiate]s so the new m-line reaches the other side. Returns the local track for the preview.
+     */
+    fun addVideoTrack(): VideoTrack? = acquireVideo()?.track
 
     /** Mute/unmute the microphone (the track stays, so no renegotiation). */
     fun setMicrophoneEnabled(enabled: Boolean) {
@@ -173,9 +196,53 @@ class NativeCall(
         if (remoteReady) connection?.addIceCandidate(ice) else pendingRemote.add(ice)
     }
 
+    /** A later offer on the SAME connection: ICE restart (network switch) or a voice→video upgrade's new m-line. */
+    fun renegotiate(iceRestart: Boolean) {
+        val pc = connection ?: return
+        val constraints = MediaConstraints().apply {
+            if (iceRestart) mandatory.add(MediaConstraints.KeyValuePair("IceRestart", "true"))
+        }
+        pc.createOffer(object : SimpleSdpObserver() {
+            override fun onCreateSuccess(description: SessionDescription) {
+                pc.setLocalDescription(SimpleSdpObserver(), description)
+                signaling.onLocalDescription(description.type.canonicalForm(), description.description)
+            }
+        }, constraints)
+    }
+
+    /** Glare: drop our just-made local offer so the other side's crossing offer can be applied instead. */
+    fun rollback() {
+        connection?.setLocalDescription(SimpleSdpObserver(), SessionDescription(SessionDescription.Type.ROLLBACK, ""))
+    }
+
+    /** A snapshot of the connection's WebRTC stats, flattened to plain maps for the JS quality/telemetry readers. */
+    fun getStats(onReport: (List<Map<String, Any?>>) -> Unit) {
+        val pc = connection
+        if (pc == null) { onReport(emptyList()); return }
+        pc.getStats { report ->
+            val out = ArrayList<Map<String, Any?>>(report.statsMap.size)
+            for ((id, stat) in report.statsMap) {
+                val row = HashMap<String, Any?>()
+                row["id"] = id
+                row["type"] = stat.type
+                row["timestamp"] = stat.timestampUs / 1000.0
+                for ((key, value) in stat.members) row[key] = statValue(value)
+                out.add(row)
+            }
+            onReport(out)
+        }
+    }
+
+    // WebRTC stat members include BigInteger counters and arrays; coerce to JSON-safe primitives for the bridge.
+    private fun statValue(value: Any?): Any? = when (value) {
+        is java.math.BigInteger -> value.toLong()
+        is java.math.BigDecimal -> value.toDouble()
+        is Number, is String, is Boolean, null -> value
+        else -> value.toString()
+    }
+
     fun close() {
-        try { videoCapture?.stop() } catch (ignored: Throwable) { /* already gone */ }
-        videoCapture = null
+        if (holdsVideo) { try { SharedCapture.release() } catch (ignored: Throwable) { /* already gone */ }; holdsVideo = false }
         try { connection?.close() } catch (ignored: Throwable) { /* already gone */ }
         try { connection?.dispose() } catch (ignored: Throwable) { /* already gone */ }
         localAudio = null
