@@ -16,7 +16,7 @@ import { clearMediaCache } from './media.js';
 import { clearAvatarCache } from './avatar.js';
 import { RealtimeClient } from './realtime.js';
 import { initialTabFromUrl } from './pwa.js';
-import { countUnreadConversations, groupRow } from './groupRows.js';
+import { countUnreadConversations, groupRow, withLocalPreview } from './groupRows.js';
 import { getViewingGroup, readMutedGroups, setGroupMuted, useMutedGroups } from './groupPrefs.js';
 import { classifyIncoming, groupNotificationText, parseConversationOpenParam, shouldAlertGroup } from './notificationChannels.js';
 import { companionOnly } from './companion.js';
@@ -1370,7 +1370,18 @@ export default function App() {
     return () => controller.abort();
   }, [sessionToken, userId, groupRevision]);
   const mutedGroupIds = useMutedGroups(userId);
-  const groupRows = useMemo(() => groupSummaries.map((group) => withRunningCall(groupRow(group, userId, mutedGroupIds), groupCalls, userId)), [groupSummaries, userId, mutedGroupIds, groupCalls]);
+  // The chat-list group preview uses the newest locally decrypted message (the server's copy is sealed), so a group
+  // row reads like a direct chat instead of "🔒 Message" / "No messages yet".
+  const groupMessagesMap = useChatStore((state) => state.messages);
+  const groupRows = useMemo(() => groupSummaries.map((group) => {
+    const list = groupMessagesMap[groupChatKey(group.id)] ?? [];
+    let lastLocal = null;
+    for (let i = list.length - 1; i >= 0; i--) {
+      const message = list[i];
+      if (message && !message.e2eError && !message.pending && typeof message.content === 'string' && message.content) { lastLocal = message; break; }
+    }
+    return withRunningCall(groupRow(withLocalPreview(group, lastLocal), userId, mutedGroupIds), groupCalls, userId);
+  }), [groupSummaries, userId, mutedGroupIds, groupCalls, groupMessagesMap]);
   const unreadChats = countUnreadConversations(chats, groupRows);
   const callLogs = useChatStore((state) => state.callLogs);
   const notificationSettings = useNotificationSettings();

@@ -11,6 +11,26 @@ export function groupPreviewText(group, userId) {
   return group.lastSenderName ? `${group.lastSenderName}: ${text}` : text;
 }
 
+/**
+ * The server's group listing carries the latest message's content as the stored envelope, which is end-to-end
+ * encrypted — so the chat-list preview could only ever show "🔒 Message" (or "No messages yet" before the listing
+ * caught up), never the real text, even though this device has already decrypted it. Overlay the newest locally
+ * decrypted message so the group preview reads like a direct chat's. Ordering and unread stay the server's; the name
+ * is kept only when the local last message is from the same sender the server named (the stored message has no name).
+ */
+export function withLocalPreview(group, lastLocal) {
+  if (!group || !lastLocal || typeof lastLocal.content !== 'string' || !lastLocal.content) return group;
+  const at = Number(lastLocal.createdAt);
+  if (!Number.isFinite(at) || at < Number(group.lastMessageAt ?? 0)) return group;
+  return {
+    ...group,
+    lastContent: lastLocal.content,
+    lastSenderId: lastLocal.senderId,
+    lastSenderName: lastLocal.senderId === group.lastSenderId ? group.lastSenderName : null,
+    lastMessageAt: at,
+  };
+}
+
 export function groupRow(group, userId, mutedIds = []) {
   const lastActivity = group.lastMessageAt ?? group.createdAt ?? null;
   return {
