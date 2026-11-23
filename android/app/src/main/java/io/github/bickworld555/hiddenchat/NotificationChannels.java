@@ -52,14 +52,14 @@ final class NotificationChannels {
     /** The channel for a message alert with a SoundChoice (app tone, phone default or a picked phone sound). */
     static String messageChannel(Context context, boolean group, String sound) {
         String base = group ? GROUP_MESSAGES : DIRECT_MESSAGES;
-        if (sound.isEmpty()) return base;
+        if (sound == null || sound.isEmpty()) return base;
         if (SoundChoice.PHONE_DEFAULT.equals(sound)) return group ? GROUP_MESSAGES_PHONE : DIRECT_MESSAGES_PHONE;
         return pickedChannel(context, base, sound, group ? "Group Messages" : "Direct Messages", false);
     }
 
     /** The channel for a ringing call with a SoundChoice. */
     static String callChannel(Context context, String sound) {
-        if (sound.isEmpty()) return INCOMING_CALLS;
+        if (sound == null || sound.isEmpty()) return INCOMING_CALLS;
         if (SoundChoice.PHONE_DEFAULT.equals(sound)) return INCOMING_CALLS_PHONE;
         return pickedChannel(context, INCOMING_CALLS, sound, "Incoming Calls", true);
     }

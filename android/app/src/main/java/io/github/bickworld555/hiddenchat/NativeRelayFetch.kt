@@ -59,10 +59,13 @@ class NativeRelayFetch private constructor(private val context: Context, private
     private fun handle(webSocket: WebSocket, event: Map<String, Any?>) {
         val core = CryptoCores.current() ?: return
         val delivery = NativeFetchHandler.handle(core, meUser, meDevice, event) ?: return
+        android.util.Log.i("NRF", "handled id=${delivery.messageId} opened=${delivery.opened} error=${delivery.error}")
         if (!delivery.opened) return // left for the app; the sealed "🔒 Message" notice already covers it, not acked
         // Store the decrypted message for the app to display BEFORE acking — never ack what was not durably kept.
         if (!persist(event, delivery)) return
-        notify(delivery)
+        // The message is durably kept; the notification is presentation, so a failure there must not skip the ack and
+        // leave it queued (and the ratchet already advanced). Best-effort, logged.
+        try { notify(delivery) } catch (shown: Throwable) { android.util.Log.w("NRF", "notify failed", shown) }
         send(webSocket, Json.obj("type" to "message:delivered", "messageIds" to listOf(delivery.messageId)))
         send(webSocket, Json.obj("type" to "queue:ack", "messageIds" to listOf(delivery.messageId), "eventIds" to emptyList<String>()))
     }
@@ -73,23 +76,30 @@ class NativeRelayFetch private constructor(private val context: Context, private
      * message is parsed in JS without decrypting again (the ratchet already advanced here). False → do not ack.
      */
     private fun persist(event: Map<String, Any?>, delivery: NativeFetchHandler.Delivery): Boolean {
-        val store = NativeStore.get(context) ?: return false
+        val store = NativeStore.get(context)
+        if (store == null) { android.util.Log.w("NRF", "persist: store null"); return false }
         return try {
             val entry = Json.obj("event" to event, "inner" to delivery.plaintext)
             NativeBackgroundInbox(store).add(SecureStore.seal(Json.stringify(entry)))
             true
-        } catch (failed: Exception) {
+        } catch (failed: Throwable) {
+            android.util.Log.w("NRF", "persist failed", failed)
             false
         }
     }
 
     private fun notify(delivery: NativeFetchHandler.Delivery) {
         val group = delivery.groupId != null
-        val channel = NotificationChannels.messageChannel(context, group, null)
+        // Use the account's chosen alert tone, exactly like the WebView/PushService paths; never a null sound (which
+        // NotificationChannels.messageChannel would have dereferenced — the cause of the "quiet" background delivery).
+        val session = RelaySession.read(context)
+        val sound = if (group) session?.groupSound ?: "" else session?.messageSound ?: ""
+        val channel = NotificationChannels.messageChannel(context, group, sound)
         val tag = if (group) "group:${delivery.groupId}" else "chat:${delivery.senderId}"
         val title = if (group) RelaySession.groupName(context, delivery.groupId, "Group")
         else RelaySession.userName(context, delivery.senderId, "Hidden Messenger")
-        Alerts.showMessage(context, channel, title, delivery.displayText ?: "", tag, tag)
+        // Pass the message id so a copy delivered another way (a later WebView fetch) does not notify twice.
+        Alerts.showMessage(context, channel, title, delivery.displayText ?: "", tag, tag, 0, delivery.messageId, null, null)
     }
 
     private fun send(webSocket: WebSocket, event: Map<String, Any?>) {
