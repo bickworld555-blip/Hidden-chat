@@ -1289,6 +1289,20 @@ public class HiddenNativePlugin extends Plugin {
         call.resolve();
     }
 
+    /**
+     * Turn the native end-to-end path on for this account (the server's rollout said it is eligible). Sets the gate
+     * only; it takes effect on the next launch (AppActivity installs the native core when NativeFlag is active), so
+     * the WebView path stays the live path for the rest of this session. Idempotent — naming the same account again
+     * does nothing new. A forward-only migration: turning the rollout down later does not un-set an account already on.
+     */
+    @PluginMethod
+    public void enableNativeE2e(PluginCall call) {
+        String userId = call.getString("userId", "");
+        if (userId == null || userId.isEmpty()) { call.reject("no-user"); return; }
+        io.github.bickworld555.hiddenchat.core.NativeBackground.setEnabledForAccount(getContext(), userId);
+        call.resolve();
+    }
+
     /** Signing out: forget the account and stop the background connection. */
     @PluginMethod
     public void clearSession(PluginCall call) {

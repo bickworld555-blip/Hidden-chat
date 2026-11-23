@@ -39,6 +39,7 @@ import { registerBilling } from './billing.mjs';
 import { ensureE2eSchema, registerE2e } from './e2e.mjs';
 import { securityHeaders } from './securityHeaders.mjs';
 import { createXmpp, ensureXmppSchema, xmppConfigFromEnv } from './xmpp.mjs';
+import { nativeEnabledFor, nativeRolloutFromEnv } from './nativeRollout.mjs';
 import { registerSfu } from './sfu.mjs';
 import { gifConfigFromEnv, registerGifs } from './gifs.mjs';
 import { alertWebhookFromEnv, createAlerts, serverErrorWatch } from './monitoring.mjs';
@@ -204,6 +205,8 @@ export function createChatServer({
   gifFetch = globalThis.fetch,
   // The XMPP core (server/xmpp.mjs): XMPP_JWT_SECRET, XMPP_ADMIN_PASSWORD; `xmppFetch` reaches its admin API.
   xmppConfig = xmppConfigFromEnv(process.env),
+  // Native Android E2E rollout (server/nativeRollout.mjs): NATIVE_E2E_ROLLOUT_PERCENT + NATIVE_E2E_ROLLOUT_USER_IDS.
+  nativeRollout = nativeRolloutFromEnv(process.env),
   // Attachments in S3-compatible storage (server/objectStore.mjs) when MEDIA_STORAGE=r2; local disk otherwise.
   objectStore: objectStoreOption = undefined,
   xmppFetch = globalThis.fetch,
@@ -3286,7 +3289,9 @@ export function createChatServer({
       if (socket.relayBackground && !socket.relayFetch) {
         socket.relayWakeOnly = Boolean(await db.prepare('SELECT 1 AS "on" FROM sessions WHERE token_hash = ? AND relay_wake = 1').get(socket.sessionHash));
       }
-      json(socket, { type: 'connection:ready', user: request.session.user, presence: await presenceSnapshot(userId) });
+      // Whether this account should use the native Android E2E path (server/nativeRollout.mjs). The app flips once,
+      // on sign-in, when true; a forward-only migration, so turning the rollout down only stops NEW accounts.
+      json(socket, { type: 'connection:ready', user: request.session.user, presence: await presenceSnapshot(userId), nativeE2e: nativeEnabledFor(userId, nativeRollout) });
       // Group-call invites a push rang this phone for (C1): to the background connection, or the app it opened.
       for (const invite of heldInvitesFor(userId)) json(socket, invite);
       // The calls running in this person's groups (L2), so a group shows "Join" as soon as the app connects.

@@ -65,6 +65,9 @@ export function nativeSetSession({ origin, token, userId, deviceId = '', lockedC
 export const nativeClearSession = () => invoke('clearSession');
 // Explicit sign-out only (not the transient userId-null on startup): wipe this device's native end-to-end keys.
 export const nativeWipeE2e = () => invoke('wipeE2e');
+// Turn the native end-to-end path on for this account (the server's rollout says it is eligible). A forward-only
+// migration: it takes effect on the next launch (the WebView path stays live this session). Idempotent.
+export const nativeEnableE2e = (userId) => invoke('enableNativeE2e', { userId });
 // Uploads in progress: { count, label, progress (0-100) }; count 0 ends the "Sending…" foreground service.
 export const nativeSetUploads = (state) => invoke('setUploads', state);
 // Android Keystore sealing for the local data key (src/secureStorage.js): { sealed } / { value }, null outside the app.

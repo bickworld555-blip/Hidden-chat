@@ -24,7 +24,7 @@ import { applyGroupChange, GROUP_CHANGE_EVENTS } from './groupChanges.js';
 import { cachedGroupDetails } from './groupCache.js';
 import { applyGroupCall, withRunningCall } from './groupCalls.js';
 import { notificationNames } from './notificationNames.js';
-import { nativeClearSession, nativeWipeE2e, nativeRequestStartupPermissions, nativeSetSession, nativeShell, nativeStartBackground, nativeState, nativeStopBackground, nativeTakePendingCall, nativeMoveToBackground, nativeClearShare, nativeSetCallActive, nativeClearMessageNotifications, nativeClearMissedCalls, nativeTakeMessageActions, nativeTakeCallEvents, nativeSetSystemBarsTheme, nativeOpenSecret, nativePreviewKey, nativeBackgroundFetchDone, nativeScheduleUnsent, nativeE2eActive, nativeTakeInbox, onNative } from './native.js';
+import { nativeClearSession, nativeWipeE2e, nativeEnableE2e, nativeRequestStartupPermissions, nativeSetSession, nativeShell, nativeStartBackground, nativeState, nativeStopBackground, nativeTakePendingCall, nativeMoveToBackground, nativeClearShare, nativeSetCallActive, nativeClearMessageNotifications, nativeClearMissedCalls, nativeTakeMessageActions, nativeTakeCallEvents, nativeSetSystemBarsTheme, nativeOpenSecret, nativePreviewKey, nativeBackgroundFetchDone, nativeScheduleUnsent, nativeE2eActive, nativeTakeInbox, onNative } from './native.js';
 import { parseShare } from './shareTarget.js';
 import { e2eDeviceId, onE2eEvent, importNativeInbox, publishPreviewKey, replayE2eEvent, sealDirect, sealToOwnDevices, startE2e, stopE2e, userForXmppAddress, xmppGroupTargetsFor, xmppTargetsFor } from './e2e/client.js';
 import { createControlBuffer, expiredIds, resolveControl, roleIn } from './e2e/lifecycle.js';
@@ -480,6 +480,9 @@ export default function App() {
                 realtime?.onEvent(pending.event);
                 for (const ice of pending.ice ?? []) realtime?.onEvent(ice);
               }).catch(() => {});
+              // The server's rollout says this account should use the native end-to-end path: flip it on once
+              // (forward-only migration; it takes effect next launch). Off by default, so normally a no-op.
+              if (event.nativeE2e === true && nativeShell() && userId) nativeEnableE2e(userId).catch(() => {});
             }
             if (connectedBefore) {
               syncMissedMessages({ sessionToken, userId, open: openRows, acknowledge: (ids) => realtime?.send({ type: 'message:delivered', messageIds: ids }) })
