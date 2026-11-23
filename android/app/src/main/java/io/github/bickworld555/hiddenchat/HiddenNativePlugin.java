@@ -66,6 +66,14 @@ public class HiddenNativePlugin extends Plugin {
     public void load() {
         instance = this;
         NotificationChannels.ensure(getContext());
+        // The native call media engine (NativeCallBridge) hands its SDP/ICE and state back to the web app as events.
+        NativeCallBridge.INSTANCE.setEmitter((event, data) -> {
+            try {
+                notifyListeners(event, JSObject.fromJSONObject(new JSONObject(Json.INSTANCE.stringify(data))), true);
+            } catch (Exception ignored) {
+                // The web app is gone or the payload would not serialize: the call event is simply not delivered.
+            }
+        });
         // A page that (re)loads starts without a call: one still marked live belonged to the page that went away.
         getBridge().addWebViewListener(new com.getcapacitor.WebViewListener() {
             @Override
@@ -1300,6 +1308,79 @@ public class HiddenNativePlugin extends Plugin {
         String userId = call.getString("userId", "");
         if (userId == null || userId.isEmpty()) { call.reject("no-user"); return; }
         io.github.bickworld555.hiddenchat.core.NativeBackground.setEnabledForAccount(getContext(), userId);
+        call.resolve();
+    }
+
+    // ---- Native WebRTC call media (NativeCallBridge). The web app runs the signaling + Telecom; this owns the media.
+    // Reached only when the native path is on for this account; otherwise the WebView's own WebRTC stack is used. ----
+
+    private boolean nativeCallsOff(PluginCall call) {
+        if (NativeFlag.active(getContext())) return false;
+        call.reject("native-calls-off");
+        return true;
+    }
+
+    /** Outgoing call: build the native peer connection and make the offer (returned later as the callLocalDescription event). */
+    @PluginMethod
+    public void callStart(PluginCall call) {
+        if (nativeCallsOff(call)) return;
+        String callId = call.getString("callId", "");
+        if (callId == null || callId.isEmpty()) { call.reject("no-call"); return; }
+        NativeCallBridge.INSTANCE.start(getContext(), callId, Boolean.TRUE.equals(call.getBoolean("video", false)));
+        call.resolve();
+    }
+
+    /** Incoming call: apply the remote offer and answer it (returned as the callLocalDescription event). */
+    @PluginMethod
+    public void callAcceptOffer(PluginCall call) {
+        if (nativeCallsOff(call)) return;
+        String callId = call.getString("callId", "");
+        String sdp = call.getString("sdp", "");
+        if (callId == null || callId.isEmpty() || sdp == null || sdp.isEmpty()) { call.reject("bad-args"); return; }
+        NativeCallBridge.INSTANCE.acceptOffer(getContext(), callId, Boolean.TRUE.equals(call.getBoolean("video", false)), sdp);
+        call.resolve();
+    }
+
+    /** The other side answered our offer. */
+    @PluginMethod
+    public void callAcceptAnswer(PluginCall call) {
+        if (nativeCallsOff(call)) return;
+        String callId = call.getString("callId", "");
+        String sdp = call.getString("sdp", "");
+        if (callId == null || callId.isEmpty() || sdp == null || sdp.isEmpty()) { call.reject("bad-args"); return; }
+        NativeCallBridge.INSTANCE.acceptAnswer(callId, sdp);
+        call.resolve();
+    }
+
+    /** A remote ICE candidate from the other side. */
+    @PluginMethod
+    public void callRemoteIce(PluginCall call) {
+        if (nativeCallsOff(call)) return;
+        String callId = call.getString("callId", "");
+        String candidate = call.getString("candidate", "");
+        if (callId == null || callId.isEmpty() || candidate == null || candidate.isEmpty()) { call.reject("bad-args"); return; }
+        Integer index = call.getInt("sdpMLineIndex", 0);
+        NativeCallBridge.INSTANCE.remoteIce(callId, call.getString("sdpMid"), index == null ? 0 : index, candidate);
+        call.resolve();
+    }
+
+    /** Mute or unmute the microphone. */
+    @PluginMethod
+    public void callMic(PluginCall call) {
+        if (nativeCallsOff(call)) return;
+        String callId = call.getString("callId", "");
+        if (callId == null || callId.isEmpty()) { call.reject("no-call"); return; }
+        NativeCallBridge.INSTANCE.mic(callId, Boolean.TRUE.equals(call.getBoolean("enabled", true)));
+        call.resolve();
+    }
+
+    /** End the call and release the native peer connection. */
+    @PluginMethod
+    public void callEnd(PluginCall call) {
+        if (nativeCallsOff(call)) return;
+        String callId = call.getString("callId", "");
+        if (callId == null || callId.isEmpty()) { call.reject("no-call"); return; }
+        NativeCallBridge.INSTANCE.end(getContext(), callId);
         call.resolve();
     }
 
