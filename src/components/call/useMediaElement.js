@@ -46,7 +46,10 @@ export function useMediaElement(ref, stream, enabled = true) {
     if (!element || !enabled) return undefined;
     let boundStream = null;
     const bind = () => {
-      boundStream = stream ? new MediaStream(stream.getTracks()) : null;
+      // Only real tracks go into a playback MediaStream. The native-call path (src/nativeRtc.js) plays audio itself
+      // and carries placeholder tracks; passing those to `new MediaStream` throws and crashed the call view.
+      const realTracks = stream ? stream.getTracks().filter((track) => track instanceof MediaStreamTrack) : [];
+      boundStream = stream ? new MediaStream(realTracks) : null;
       element.srcObject = boundStream;
       if (boundStream) element.play?.().catch((error) => console.warn('Call media playback failed:', error));
     };

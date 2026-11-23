@@ -75,6 +75,19 @@ class NativeCall(
 
     private var localAudio: AudioTrack? = null
 
+    // libwebrtc drops addIceCandidate calls made before setRemoteDescription. The JS side can flush remote candidates
+    // before the native (async) setRemoteDescription completes, so buffer them here until the remote description lands.
+    @Volatile private var remoteReady = false
+    private val pendingRemote = java.util.Collections.synchronizedList(ArrayList<IceCandidate>())
+
+    private fun flushRemoteCandidates() {
+        remoteReady = true
+        synchronized(pendingRemote) {
+            for (candidate in pendingRemote) connection?.addIceCandidate(candidate)
+            pendingRemote.clear()
+        }
+    }
+
     init {
         val source = factory.createAudioSource(MediaConstraints())
         val track = factory.createAudioTrack("hm-audio", source)
@@ -115,6 +128,7 @@ class NativeCall(
         val pc = connection ?: return
         pc.setRemoteDescription(object : SimpleSdpObserver() {
             override fun onSetSuccess() {
+                flushRemoteCandidates()
                 pc.createAnswer(object : SimpleSdpObserver() {
                     override fun onCreateSuccess(description: SessionDescription) {
                         pc.setLocalDescription(SimpleSdpObserver(), description)
@@ -127,12 +141,15 @@ class NativeCall(
 
     /** The other side answered our offer. */
     fun acceptAnswer(sdp: String) {
-        connection?.setRemoteDescription(SimpleSdpObserver(), SessionDescription(SessionDescription.Type.ANSWER, sdp))
+        connection?.setRemoteDescription(object : SimpleSdpObserver() {
+            override fun onSetSuccess() { flushRemoteCandidates() }
+        }, SessionDescription(SessionDescription.Type.ANSWER, sdp))
     }
 
-    /** A remote ICE candidate arrived over signaling. */
+    /** A remote ICE candidate arrived over signaling; buffered until the remote description is set. */
     fun addRemoteIceCandidate(sdpMid: String?, sdpMLineIndex: Int, candidate: String) {
-        connection?.addIceCandidate(IceCandidate(sdpMid, sdpMLineIndex, candidate))
+        val ice = IceCandidate(sdpMid, sdpMLineIndex, candidate)
+        if (remoteReady) connection?.addIceCandidate(ice) else pendingRemote.add(ice)
     }
 
     fun close() {
