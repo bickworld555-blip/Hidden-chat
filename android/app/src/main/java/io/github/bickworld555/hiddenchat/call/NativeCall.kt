@@ -1,0 +1,141 @@
+package io.github.bickworld555.hiddenchat.call
+
+import android.content.Context
+import org.webrtc.AudioTrack
+import org.webrtc.DataChannel
+import org.webrtc.IceCandidate
+import org.webrtc.MediaConstraints
+import org.webrtc.MediaStream
+import org.webrtc.PeerConnection
+import org.webrtc.RtpReceiver
+import org.webrtc.SdpObserver
+import org.webrtc.SessionDescription
+
+/**
+ * One native WebRTC call — audio for now. Builds a [PeerConnection] over the shared [WebrtcEngine] factory with the
+ * given ICE servers, publishes a local microphone track, and relays SDP, ICE and media state through [signaling].
+ * This mirrors the per-call logic src/callEngine.js runs in the WebView. Video (camera capture + a renderer) is the
+ * next increment; this class is the seam the live call flow and Telecom (CallConnectionService) will drive.
+ */
+class NativeCall(
+    context: Context,
+    iceServers: List<PeerConnection.IceServer>,
+    private val signaling: NativeCallSignaling,
+) {
+    private val factory = WebrtcEngine.factory(context)
+
+    private val observer = object : PeerConnection.Observer {
+        override fun onIceCandidate(candidate: IceCandidate) =
+            signaling.onLocalIceCandidate(candidate.sdpMid, candidate.sdpMLineIndex, candidate.sdp)
+
+        override fun onConnectionChange(newState: PeerConnection.PeerConnectionState) {
+            when (newState) {
+                PeerConnection.PeerConnectionState.CONNECTED -> signaling.onConnected()
+                PeerConnection.PeerConnectionState.FAILED -> signaling.onClosed("failed")
+                PeerConnection.PeerConnectionState.DISCONNECTED -> signaling.onClosed("disconnected")
+                PeerConnection.PeerConnectionState.CLOSED -> signaling.onClosed("closed")
+                else -> { /* new / connecting */ }
+            }
+        }
+
+        override fun onAddTrack(receiver: RtpReceiver, streams: Array<out MediaStream>) {
+            if (receiver.track()?.kind() == "audio") signaling.onRemoteAudio()
+        }
+
+        override fun onSignalingChange(state: PeerConnection.SignalingState) {}
+        override fun onIceConnectionChange(state: PeerConnection.IceConnectionState) {}
+        override fun onIceConnectionReceivingChange(receiving: Boolean) {}
+        override fun onIceGatheringChange(state: PeerConnection.IceGatheringState) {}
+        override fun onIceCandidatesRemoved(candidates: Array<out IceCandidate>) {}
+        override fun onAddStream(stream: MediaStream) {}
+        override fun onRemoveStream(stream: MediaStream) {}
+        override fun onDataChannel(channel: DataChannel) {}
+        override fun onRenegotiationNeeded() {}
+    }
+
+    private val connection: PeerConnection? = factory.createPeerConnection(
+        PeerConnection.RTCConfiguration(iceServers).apply {
+            sdpSemantics = PeerConnection.SdpSemantics.UNIFIED_PLAN
+            // Keep gathering after the first candidates, like the WebView path, so a network switch can re-gather.
+            continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_CONTINUALLY
+        },
+        observer,
+    )
+
+    private var localAudio: AudioTrack? = null
+
+    init {
+        val source = factory.createAudioSource(MediaConstraints())
+        val track = factory.createAudioTrack("hm-audio", source)
+        localAudio = track
+        connection?.addTrack(track, listOf("hm-stream"))
+    }
+
+    /** Mute/unmute the microphone (the track stays, so no renegotiation). */
+    fun setMicrophoneEnabled(enabled: Boolean) {
+        localAudio?.setEnabled(enabled)
+    }
+
+    /** Outgoing call: make the offer, set it as the local description, hand it to signaling. */
+    fun createOffer() {
+        val pc = connection ?: return
+        pc.createOffer(object : SimpleSdpObserver() {
+            override fun onCreateSuccess(description: SessionDescription) {
+                pc.setLocalDescription(SimpleSdpObserver(), description)
+                signaling.onLocalDescription(description.type.canonicalForm(), description.description)
+            }
+        }, MediaConstraints())
+    }
+
+    /** Incoming call: apply the remote offer, answer it, hand the answer to signaling. */
+    fun acceptOffer(sdp: String) {
+        val pc = connection ?: return
+        pc.setRemoteDescription(object : SimpleSdpObserver() {
+            override fun onSetSuccess() {
+                pc.createAnswer(object : SimpleSdpObserver() {
+                    override fun onCreateSuccess(description: SessionDescription) {
+                        pc.setLocalDescription(SimpleSdpObserver(), description)
+                        signaling.onLocalDescription(description.type.canonicalForm(), description.description)
+                    }
+                }, MediaConstraints())
+            }
+        }, SessionDescription(SessionDescription.Type.OFFER, sdp))
+    }
+
+    /** The other side answered our offer. */
+    fun acceptAnswer(sdp: String) {
+        connection?.setRemoteDescription(SimpleSdpObserver(), SessionDescription(SessionDescription.Type.ANSWER, sdp))
+    }
+
+    /** A remote ICE candidate arrived over signaling. */
+    fun addRemoteIceCandidate(sdpMid: String?, sdpMLineIndex: Int, candidate: String) {
+        connection?.addIceCandidate(IceCandidate(sdpMid, sdpMLineIndex, candidate))
+    }
+
+    fun close() {
+        try { connection?.close() } catch (ignored: Throwable) { /* already gone */ }
+        try { connection?.dispose() } catch (ignored: Throwable) { /* already gone */ }
+        localAudio = null
+    }
+
+    /** No-op SDP observer; only the hooks a given step needs are overridden above. */
+    private open class SimpleSdpObserver : SdpObserver {
+        override fun onCreateSuccess(description: SessionDescription) {}
+        override fun onSetSuccess() {}
+        override fun onCreateFailure(error: String?) {}
+        override fun onSetFailure(error: String?) {}
+    }
+
+    companion object {
+        /** libwebrtc ICE servers from the (urls, username, credential) triples the app's TURN endpoint returns. */
+        fun iceServers(servers: List<Triple<List<String>, String?, String?>>): List<PeerConnection.IceServer> =
+            servers.map { (urls, user, cred) ->
+                PeerConnection.IceServer.builder(urls)
+                    .apply {
+                        if (user != null) setUsername(user)
+                        if (cred != null) setPassword(cred)
+                    }
+                    .createIceServer()
+            }
+    }
+}
