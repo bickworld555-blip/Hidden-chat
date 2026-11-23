@@ -10,6 +10,8 @@ import org.webrtc.PeerConnection
 import org.webrtc.RtpReceiver
 import org.webrtc.SdpObserver
 import org.webrtc.SessionDescription
+import org.webrtc.VideoSink
+import org.webrtc.VideoTrack
 
 /**
  * One native WebRTC call — audio for now. Builds a [PeerConnection] over the shared [WebrtcEngine] factory with the
@@ -21,8 +23,14 @@ class NativeCall(
     context: Context,
     iceServers: List<PeerConnection.IceServer>,
     private val signaling: NativeCallSignaling,
+    private val video: Boolean = false,
 ) {
+    private val appContext = context.applicationContext
     private val factory = WebrtcEngine.factory(context)
+
+    /** A UI renderer for the remote video, set when the UI has a surface for it (a native overlay over the WebView). */
+    var remoteVideoSink: VideoSink? = null
+    private var videoCapture: VideoCapture? = null
 
     private val observer = object : PeerConnection.Observer {
         override fun onIceCandidate(candidate: IceCandidate) =
@@ -39,7 +47,10 @@ class NativeCall(
         }
 
         override fun onAddTrack(receiver: RtpReceiver, streams: Array<out MediaStream>) {
-            if (receiver.track()?.kind() == "audio") signaling.onRemoteAudio()
+            when (val track = receiver.track()) {
+                is VideoTrack -> remoteVideoSink?.let { track.addSink(it) }
+                else -> if (track?.kind() == "audio") signaling.onRemoteAudio()
+            }
         }
 
         override fun onSignalingChange(state: PeerConnection.SignalingState) {}
@@ -69,7 +80,19 @@ class NativeCall(
         val track = factory.createAudioTrack("hm-audio", source)
         localAudio = track
         connection?.addTrack(track, listOf("hm-stream"))
+        if (video) {
+            videoCapture = VideoCapture.create(appContext, factory)?.also { capture ->
+                capture.start()
+                connection?.addTrack(capture.track, listOf("hm-stream"))
+            }
+        }
     }
+
+    /** The local camera track (video calls only), for a local-preview renderer. */
+    fun localVideoTrack(): VideoTrack? = videoCapture?.track
+
+    /** Front/back camera flip. */
+    fun switchCamera() { videoCapture?.switchCamera() }
 
     /** Mute/unmute the microphone (the track stays, so no renegotiation). */
     fun setMicrophoneEnabled(enabled: Boolean) {
@@ -113,6 +136,8 @@ class NativeCall(
     }
 
     fun close() {
+        try { videoCapture?.stop() } catch (ignored: Throwable) { /* already gone */ }
+        videoCapture = null
         try { connection?.close() } catch (ignored: Throwable) { /* already gone */ }
         try { connection?.dispose() } catch (ignored: Throwable) { /* already gone */ }
         localAudio = null

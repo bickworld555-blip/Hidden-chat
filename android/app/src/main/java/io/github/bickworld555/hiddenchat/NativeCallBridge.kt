@@ -41,7 +41,7 @@ object NativeCallBridge {
     fun start(context: Context, callId: String, video: Boolean) {
         val app = context.applicationContext
         Thread({
-            val holder = Holder(NativeCall(app, iceServers(app), signaling(app, callId, video)), video)
+            val holder = Holder(NativeCall(app, iceServers(app), signaling(app, callId, video), video), video)
             put(callId, holder)
             holder.call.createOffer()
         }, "native-call-start").start()
@@ -51,7 +51,7 @@ object NativeCallBridge {
     fun acceptOffer(context: Context, callId: String, video: Boolean, sdp: String) {
         val app = context.applicationContext
         Thread({
-            val holder = Holder(NativeCall(app, iceServers(app), signaling(app, callId, video)), video)
+            val holder = Holder(NativeCall(app, iceServers(app), signaling(app, callId, video), video), video)
             put(callId, holder)
             holder.call.acceptOffer(sdp)
         }, "native-call-accept").start()
