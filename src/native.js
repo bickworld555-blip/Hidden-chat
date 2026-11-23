@@ -84,6 +84,11 @@ export const nativeCallRemoteIce = (callId, candidate) => invoke('callRemoteIce'
 });
 export const nativeCallMic = (callId, enabled) => invoke('callMic', { callId, enabled: Boolean(enabled) });
 export const nativeCallEnd = (callId) => invoke('callEnd', { callId });
+// Native video: show/hide the SurfaceViewRenderer overlay (remote full-screen + local corner) over the WebView, flip
+// the camera, and turn the local camera off/on. The remote picture arriving is reported as the event callRemoteVideo.
+export const nativeCallVideoShow = (callId, show) => invoke('callVideoShow', { callId, show: Boolean(show) });
+export const nativeCallSwitchCamera = (callId) => invoke('callSwitchCamera', { callId });
+export const nativeCallCamera = (callId, enabled) => invoke('callCamera', { callId, enabled: Boolean(enabled) });
 // Uploads in progress: { count, label, progress (0-100) }; count 0 ends the "Sending…" foreground service.
 export const nativeSetUploads = (state) => invoke('setUploads', state);
 // Android Keystore sealing for the local data key (src/secureStorage.js): { sealed } / { value }, null outside the app.

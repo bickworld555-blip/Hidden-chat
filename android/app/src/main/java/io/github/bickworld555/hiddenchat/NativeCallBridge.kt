@@ -14,8 +14,9 @@ import org.webrtc.PeerConnection
  *
  * Locally produced SDP and ICE are emitted to the WebView as plugin events (callLocalDescription / callLocalIce) for
  * it to put on the wire as `call:signal`; remote SDP/ICE arrive back through the plugin methods. ICE servers are
- * fetched natively from /api/v1/rtc-config. Audio-only for now (video media is a later increment); `video` here only
- * chooses the earpiece-vs-loudspeaker route via CallAudio. Reached only behind NativeFlag (the plugin checks it).
+ * fetched natively from /api/v1/rtc-config. `video` builds a camera track too ([NativeCall]/[VideoCapture]) and routes
+ * audio to the loudspeaker; the remote picture and local preview are drawn by a native overlay the plugin attaches to
+ * the Activity (NativeCallVideoView). Reached only behind NativeFlag (the plugin checks it).
  */
 object NativeCallBridge {
     /** How the bridge hands call events back to the WebView (wired to the plugin's notifyListeners in load()). */
@@ -32,6 +33,15 @@ object NativeCallBridge {
     @Synchronized private fun put(callId: String, holder: Holder) { calls[callId] = holder }
     @Synchronized private fun get(callId: String): Holder? = calls[callId]
     @Synchronized private fun take(callId: String): Holder? = calls.remove(callId)
+
+    /** The live native call, for the UI overlay to bind its video renderers to (null once the call is gone). */
+    fun call(callId: String): NativeCall? = get(callId)?.call
+
+    /** Front/back camera flip for a video call. */
+    fun switchCamera(callId: String) { get(callId)?.call?.switchCamera() }
+
+    /** Turn the local camera off/on (camera button), mirroring the WebView path's `track.enabled`. */
+    fun setCamera(callId: String, enabled: Boolean) { get(callId)?.call?.setCameraEnabled(enabled) }
 
     private fun emit(event: String, data: Map<String, Any?>) {
         emitter?.emit(event, data)
@@ -94,6 +104,8 @@ object NativeCallBridge {
         }
 
         override fun onRemoteAudio() = emit("callRemoteAudio", mapOf("callId" to callId))
+
+        override fun onRemoteVideo() = emit("callRemoteVideo", mapOf("callId" to callId))
     }
 
     /** The account's ICE servers (STUN + TURN-REST), fetched natively from the same endpoint the WebView uses. */

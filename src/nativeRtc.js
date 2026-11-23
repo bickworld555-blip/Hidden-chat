@@ -3,9 +3,9 @@
 // callEngine keeps owning the signaling, state machine and reconnection logic. Injected by CallOverlay only when the
 // native-call path is on; the WebView path is unchanged otherwise.
 //
-// STATUS: structure/scaffold. The signaling delegation (offer/answer/ICE) and event routing are wired here against the
-// coarse native bridge; several pieces are deliberately stubbed and marked TODO, and NONE of this is reachable yet
-// (nativeCallsAvailable() is false until a real 2nd-device test turns it on). The known gaps are documented inline.
+// STATUS: structure/scaffold. The signaling delegation (offer/answer/ICE), audio, and the video media path are wired
+// here against the coarse native bridge; NONE of this is reachable yet (nativeCallsAvailable() is false until a real
+// 2nd-device test turns it on). Known gaps are documented inline.
 //
 // Mapping notes (W3C RTCPeerConnection -> the coarse NativeCall API):
 //  - createOffer(): asks the native engine to build+set+emit the offer, resolves with it; setLocalDescription(offer)
@@ -13,9 +13,13 @@
 //  - The native engine fetches its OWN ICE servers (/api/v1/rtc-config) and PLAYS remote audio itself (the device
 //    audio module), so the iceServers passed to the constructor are ignored and ontrack carries no JS MediaStream —
 //    callEngine's <audio>-element playout becomes a no-op for native calls. Revisit when wiring playout/led indicators.
-//  - Video, getStats, transceivers and replaceTrack-based mute/camera are TODO (audio-first).
+//  - VIDEO: the native engine captures the camera and DRAWS both pictures itself, on a native SurfaceView overlay
+//    behind the (made-transparent) WebView — libwebrtc frames cannot reach a WebView <video>. So the local/remote
+//    MediaStreams are decorative placeholders: callEngine still tracks remoteHasVideo / cameraOff / facing and the
+//    controls work, but the pixels are native. getStats and transceivers remain TODO.
 import {
-  nativeCallStart, nativeCallAcceptOffer, nativeCallAcceptAnswer, nativeCallRemoteIce, nativeCallMic, nativeCallEnd, onNative,
+  nativeCallStart, nativeCallAcceptOffer, nativeCallAcceptAnswer, nativeCallRemoteIce, nativeCallMic, nativeCallEnd,
+  nativeCallVideoShow, nativeCallSwitchCamera, nativeCallCamera, onNative,
 } from './native.js';
 
 // Off by default — flipped on only for an on-device 2nd-device test. Until then the injection seam is inert and the
@@ -23,16 +27,35 @@ import {
 let nativeCallsOn = false;
 export function setNativeCallsEnabled(on) { nativeCallsOn = Boolean(on); }
 
+// Toggles the gated .native-video-call class (src/styles.css) that clears the call screen's backgrounds so the native
+// video surface behind the WebView shows, and asks the native side to show/hide its renderer overlay. Guarded for the
+// non-browser (callEngine unit tests) case.
+function setNativeVideoVisible(callId, on) {
+  try {
+    if (typeof document !== 'undefined') document.documentElement.classList.toggle('native-video-call', Boolean(on));
+  } catch { /* no document */ }
+  nativeCallVideoShow(callId, Boolean(on)).catch(() => { /* best-effort */ });
+}
+
 // A placeholder MediaStreamTrack good enough for everything callEngine/useMediaElement call on it (the real media is
 // in the native engine). It must answer addEventListener/stop/getSettings/clone without throwing — a bare object made
-// the call view crash.
-function fakeMediaTrack(kind, id) {
-  return {
-    kind, id, enabled: true, readyState: 'live', muted: false, contentHint: '',
-    stop() {}, getSettings: () => ({}), getCapabilities: () => ({}), applyConstraints: () => Promise.resolve(),
+// the call view crash. `onEnabled` lets the audio/video track's `.enabled` toggle reach the native mic/camera, since
+// callEngine mutes and turns the camera off by setting `track.enabled` rather than renegotiating.
+function fakeMediaTrack(kind, id, onEnabled) {
+  let enabled = true;
+  const track = {
+    kind, id, readyState: 'live', muted: false, contentHint: '',
+    stop() {}, getSettings: () => ({}), getCapabilities: () => ({}), getConstraints: () => ({}),
+    applyConstraints: () => Promise.resolve(),
     addEventListener() {}, removeEventListener() {}, dispatchEvent: () => false,
-    clone() { return fakeMediaTrack(kind, id); },
+    clone() { return fakeMediaTrack(kind, id, onEnabled); },
   };
+  Object.defineProperty(track, 'enabled', {
+    get() { return enabled; },
+    set(value) { enabled = Boolean(value); try { onEnabled?.(enabled); } catch { /* ignore */ } },
+    enumerable: true, configurable: true,
+  });
+  return track;
 }
 
 // The native engine owns the real microphone/camera, so the local MediaStream in the WebView is decorative — but
@@ -62,7 +85,7 @@ function deferred() {
 /**
  * A native-backed RTCPeerConnection for one call/peer (`callId`). Implements the surface src/callEngine.js uses,
  * delegating the media to NativeCallBridge and routing its events (callLocalDescription / callLocalIce / callState /
- * callRemoteAudio) back to the standard handlers callEngine sets.
+ * callRemoteAudio / callRemoteVideo) back to the standard handlers callEngine sets.
  */
 class NativeRtcPeerConnection {
   constructor(callId, { video = false } = {}) {
@@ -90,6 +113,13 @@ class NativeRtcPeerConnection {
       onNative('callState', (e) => { if (e?.callId === callId) this._onState(e.state); }),
       // Native plays remote audio itself; this only lets callEngine know media is flowing (no JS MediaStream to attach).
       onNative('callRemoteAudio', (e) => { if (e?.callId === callId && this.ontrack) this.ontrack({ track: fakeMediaTrack('audio', 'hm-remote-audio'), streams: [] }); }),
+      // The other side's camera: tell callEngine (so it marks remoteHasVideo and lays out the remote tile) and make
+      // sure the native renderer overlay is up. The pixels are drawn natively; this track is a placeholder.
+      onNative('callRemoteVideo', (e) => {
+        if (e?.callId !== callId) return;
+        if (this.ontrack) this.ontrack({ track: fakeMediaTrack('video', 'hm-remote-video'), streams: [] });
+        setNativeVideoVisible(callId, true);
+      }),
     ];
   }
 
@@ -97,6 +127,7 @@ class NativeRtcPeerConnection {
     const next = state === 'connected' ? 'connected' : state === 'closed' ? 'closed' : state === 'failed' ? 'failed' : this.connectionState;
     this.connectionState = next;
     this.iceConnectionState = next;
+    if (this._video && next === 'connected') setNativeVideoVisible(this._callId, true);
     this.onconnectionstatechange?.();
     this.oniceconnectionstatechange?.();
   }
@@ -109,6 +140,8 @@ class NativeRtcPeerConnection {
     this._localSet = true;
     this.localDescription = local;            // so callEngine can read + send the offer
     this.signalingState = 'have-local-offer';
+    // Show the local camera preview while the call rings (the native call + its camera track exist by now).
+    if (this._video) setNativeVideoVisible(this._callId, true);
     return local;
   }
 
@@ -119,6 +152,7 @@ class NativeRtcPeerConnection {
     this._localSet = true;
     this.localDescription = local;            // the answer callEngine will send
     this.signalingState = 'stable';
+    if (this._video) setNativeVideoVisible(this._callId, true);
     return local;
   }
 
@@ -150,8 +184,8 @@ class NativeRtcPeerConnection {
     await nativeCallRemoteIce(this._callId, candidate);
   }
 
-  // --- tracks (native owns the microphone; a "sender" only carries the mute toggle) ---
-  // A sender compatible with what callEngine calls: replaceTrack (mapped to the native mic for audio), and no-op
+  // --- tracks (native owns the microphone and camera; a "sender" only carries the mute/camera toggle) ---
+  // A sender compatible with what callEngine calls: replaceTrack (mapped to the native mic/camera), and no-op
   // parameter hooks (tuneSender tunes bitrate the native engine sets itself).
   _nativeSender(kind) {
     const callId = this._callId;
@@ -159,7 +193,10 @@ class NativeRtcPeerConnection {
       track: null,
       replaceTrack: async (next) => {
         sender.track = next ?? null;
+        // Mute/unmute (audio) or camera off/on (video) follow the replaced track's enabled flag. flipCamera and
+        // cameraOff also reach the native engine through the track's own `.enabled` setter (see fakeMediaTrack).
         if (kind === 'audio') await nativeCallMic(callId, Boolean(next?.enabled ?? true));
+        else if (kind === 'video') await nativeCallCamera(callId, Boolean(next ? (next.enabled ?? true) : false));
       },
       getParameters: () => ({ encodings: [{}] }),
       setParameters: async () => {},
@@ -175,8 +212,8 @@ class NativeRtcPeerConnection {
   }
 
   // callEngine's outgoing path opens audio/video slots with addTransceiver and then fills them with
-  // sender.replaceTrack. The native engine already owns the mic track, so the slot's sender only needs a working
-  // replaceTrack (mapped to the native mic for audio) and no-op parameter hooks — returning a bare object made
+  // sender.replaceTrack. The native engine already owns the tracks, so the slot's sender only needs a working
+  // replaceTrack (mapped to the native mic/camera) and no-op parameter hooks — returning a bare object made
   // fillSlots throw and the call end locally right after the offer.
   addTransceiver(kind) {
     const sender = this._nativeSender(kind === 'video' ? 'video' : 'audio');
@@ -195,18 +232,27 @@ class NativeRtcPeerConnection {
   close() {
     for (const sub of this._subs) { try { sub?.remove?.(); } catch { /* already gone */ } }
     this._subs = [];
+    if (this._video) setNativeVideoVisible(this._callId, false);
     try { nativeCallEnd(this._callId); } catch { /* best-effort */ }
     this.connectionState = 'closed';
   }
 }
 
 /**
- * A minimal getUserMedia for native calls: the native engine captures the microphone itself, so this returns a
- * placeholder MediaStream whose single audio track only carries the enabled flag (mapped to the native mic through the
- * sender's replaceTrack). TODO: video capture (a native camera track + a renderer surface).
+ * A minimal getUserMedia for native calls: the native engine captures the microphone and camera itself, so this
+ * returns placeholder tracks that only carry the enabled flag (mapped to the native mic/camera) — plus, when the
+ * camera is being switched (flipCamera asks getUserMedia again with `switchCamera`), it flips the native camera.
  */
-function nativeGetUserMedia() {
-  return Promise.resolve(new FakeMediaStream([fakeMediaTrack('audio', 'hm-local-audio')]));
+function makeNativeGetUserMedia(callId) {
+  return (constraints = {}) => {
+    if (constraints.switchCamera) nativeCallSwitchCamera(callId).catch(() => { /* best-effort */ });
+    const tracks = [];
+    if (constraints.audio) tracks.push(fakeMediaTrack('audio', 'hm-local-audio', (enabled) => { nativeCallMic(callId, enabled).catch(() => {}); }));
+    if (constraints.video) tracks.push(fakeMediaTrack('video', 'hm-local-video', (enabled) => { nativeCallCamera(callId, enabled).catch(() => {}); }));
+    // A call always needs at least one local track for callEngine's slot filling; default to the microphone.
+    if (tracks.length === 0) tracks.push(fakeMediaTrack('audio', 'hm-local-audio', (enabled) => { nativeCallMic(callId, enabled).catch(() => {}); }));
+    return Promise.resolve(new FakeMediaStream(tracks));
+  };
 }
 
 /** The `rtc` + `getUserMedia` pair to inject into createCallEngine for a native call on `callId`. */
@@ -218,6 +264,11 @@ export function createNativeRtc(callId, { video = false } = {}) {
       RTCRtpSender: globalThis.RTCRtpSender,
       MediaStream: FakeMediaStream,
     },
-    getUserMedia: nativeGetUserMedia,
+    getUserMedia: makeNativeGetUserMedia(callId),
   };
+}
+
+/** Whether the native-call media path should run (off until a 2nd-device test turns it on). */
+export function nativeCallsAvailable() {
+  return nativeCallsOn;
 }

@@ -1744,6 +1744,21 @@ html, body { overflow-x: hidden; }
   animation: fade-in 0.2s ease-out;
 }
 
+/* Native video call: the picture is drawn by a native SurfaceView BEHIND the WebView (src/nativeRtc.js sets this class
+   on <html> and the native side makes the WebView transparent), so the call screen's backgrounds are cleared where the
+   video shows while the controls (header, docks, badges) keep their own backgrounds and draw on top. Only active for a
+   native-path video call; the WebView call path is untouched. Compositing is still being tuned on-device. */
+html.native-video-call,
+html.native-video-call body { background: transparent !important; }
+html.native-video-call .wa-call-backdrop { background: transparent !important; backdrop-filter: none !important; }
+html.native-video-call .wa-call-screen,
+html.native-video-call .wa-video-stage,
+html.native-video-call .wa-video-tile.is-full,
+html.native-video-call .wa-video-tile.is-pip { background: transparent !important; }
+/* The native surface carries the pixels; the WebView's empty call <video> elements are hidden so they do not paint
+   over it. The waiting placeholder (avatar while the other camera is off) still shows because it is a separate layer. */
+html.native-video-call .wa-video-element { visibility: hidden !important; }
+
 /* Floating picture-in-picture window for a minimised call; the media elements stay mounted inside it. */
 .wa-call-backdrop.is-pip {
   position: fixed;

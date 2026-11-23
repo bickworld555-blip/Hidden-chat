@@ -62,6 +62,9 @@ public class HiddenNativePlugin extends Plugin {
 
     private static HiddenNativePlugin instance;
 
+    // Native video overlays (SurfaceViewRenderer over the WebView), one per live video call. UI-thread only.
+    private final Map<String, io.github.bickworld555.hiddenchat.call.NativeCallVideoView> callVideoViews = new HashMap<>();
+
     @Override
     public void load() {
         instance = this;
@@ -1381,6 +1384,69 @@ public class HiddenNativePlugin extends Plugin {
         String callId = call.getString("callId", "");
         if (callId == null || callId.isEmpty()) { call.reject("no-call"); return; }
         NativeCallBridge.INSTANCE.end(getContext(), callId);
+        hideCallVideo(callId);
+        call.resolve();
+    }
+
+    // Takes down a call's native video overlay (if any), on the UI thread. Safe to call for an audio call or twice.
+    private void hideCallVideo(String callId) {
+        if (callId == null) return;
+        io.github.bickworld555.hiddenchat.call.NativeCall nativeCall = NativeCallBridge.INSTANCE.call(callId);
+        if (nativeCall != null) nativeCall.setRemoteVideoSink(null);
+        io.github.bickworld555.hiddenchat.call.NativeCallVideoView view;
+        synchronized (callVideoViews) { view = callVideoViews.remove(callId); }
+        if (view != null) view.detach();
+    }
+
+    /** Show or hide the native video overlay (remote full-screen + local corner preview) over the WebView. */
+    @PluginMethod
+    public void callVideoShow(PluginCall call) {
+        if (nativeCallsOff(call)) return;
+        String callId = call.getString("callId", "");
+        if (callId == null || callId.isEmpty()) { call.reject("no-call"); return; }
+        boolean show = Boolean.TRUE.equals(call.getBoolean("show", true));
+        android.app.Activity activity = getActivity();
+        if (!show || activity == null) { hideCallVideo(callId); call.resolve(); return; }
+        io.github.bickworld555.hiddenchat.call.NativeCall nativeCall = NativeCallBridge.INSTANCE.call(callId);
+        if (nativeCall == null) { call.reject("no-call"); return; }
+        activity.runOnUiThread(() -> {
+            io.github.bickworld555.hiddenchat.call.NativeCallVideoView existing;
+            synchronized (callVideoViews) { existing = callVideoViews.get(callId); }
+            if (existing != null) return; // already shown
+            io.github.bickworld555.hiddenchat.call.NativeCallVideoView view =
+                io.github.bickworld555.hiddenchat.call.NativeCallVideoView.Companion.attach(activity);
+            synchronized (callVideoViews) { callVideoViews.put(callId, view); }
+            nativeCall.setRemoteVideoSink(view.remoteSink()); // binds the remote track, now or when it arrives
+            view.showLocal(nativeCall.localVideoTrack());
+            // The native surface is behind the WebView; make the WebView transparent so the call screen's transparent
+            // regions (gated .native-video-call CSS) reveal it. Harmless otherwise — the HTML stays opaque elsewhere.
+            if (getBridge() != null && getBridge().getWebView() != null) {
+                getBridge().getWebView().setBackgroundColor(android.graphics.Color.TRANSPARENT);
+            }
+        });
+        call.resolve();
+    }
+
+    /** Front/back camera flip for a native video call. */
+    @PluginMethod
+    public void callSwitchCamera(PluginCall call) {
+        if (nativeCallsOff(call)) return;
+        String callId = call.getString("callId", "");
+        if (callId == null || callId.isEmpty()) { call.reject("no-call"); return; }
+        NativeCallBridge.INSTANCE.switchCamera(callId);
+        io.github.bickworld555.hiddenchat.call.NativeCallVideoView view;
+        synchronized (callVideoViews) { view = callVideoViews.get(callId); }
+        if (view != null) view.toggleLocalMirror();
+        call.resolve();
+    }
+
+    /** Turn the local camera off/on (the camera button) without renegotiating. */
+    @PluginMethod
+    public void callCamera(PluginCall call) {
+        if (nativeCallsOff(call)) return;
+        String callId = call.getString("callId", "");
+        if (callId == null || callId.isEmpty()) { call.reject("no-call"); return; }
+        NativeCallBridge.INSTANCE.setCamera(callId, Boolean.TRUE.equals(call.getBoolean("enabled", true)));
         call.resolve();
     }
 

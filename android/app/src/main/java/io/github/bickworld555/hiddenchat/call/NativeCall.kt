@@ -28,9 +28,23 @@ class NativeCall(
     private val appContext = context.applicationContext
     private val factory = WebrtcEngine.factory(context)
 
-    /** A UI renderer for the remote video, set when the UI has a surface for it (a native overlay over the WebView). */
-    var remoteVideoSink: VideoSink? = null
+    // The remote camera track, kept so a renderer that attaches AFTER the track arrives (the UI overlay is built when
+    // the call connects, which can be after onAddTrack) still gets the picture.
+    @Volatile private var remoteVideoTrack: VideoTrack? = null
     private var videoCapture: VideoCapture? = null
+
+    /**
+     * A UI renderer for the remote video (a native SurfaceView overlay over the WebView). Setting it binds the remote
+     * track already received, if any; clearing it unbinds. Set on the main thread by the plugin when the overlay opens.
+     */
+    var remoteVideoSink: VideoSink? = null
+        set(value) {
+            val previous = field
+            val track = remoteVideoTrack
+            if (previous != null && track != null) try { track.removeSink(previous) } catch (ignored: Throwable) { /* gone */ }
+            field = value
+            if (value != null && track != null) try { track.addSink(value) } catch (ignored: Throwable) { /* gone */ }
+        }
 
     private val observer = object : PeerConnection.Observer {
         override fun onIceCandidate(candidate: IceCandidate) =
@@ -48,7 +62,11 @@ class NativeCall(
 
         override fun onAddTrack(receiver: RtpReceiver, streams: Array<out MediaStream>) {
             when (val track = receiver.track()) {
-                is VideoTrack -> remoteVideoSink?.let { track.addSink(it) }
+                is VideoTrack -> {
+                    remoteVideoTrack = track
+                    remoteVideoSink?.let { try { track.addSink(it) } catch (ignored: Throwable) { /* gone */ } }
+                    signaling.onRemoteVideo()
+                }
                 else -> if (track?.kind() == "audio") signaling.onRemoteAudio()
             }
         }
@@ -106,6 +124,9 @@ class NativeCall(
 
     /** Front/back camera flip. */
     fun switchCamera() { videoCapture?.switchCamera() }
+
+    /** Turn the camera off/on (the track stays, so no renegotiation), like the WebView path's `track.enabled`. */
+    fun setCameraEnabled(enabled: Boolean) { videoCapture?.track?.setEnabled(enabled) }
 
     /** Mute/unmute the microphone (the track stays, so no renegotiation). */
     fun setMicrophoneEnabled(enabled: Boolean) {

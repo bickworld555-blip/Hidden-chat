@@ -22,4 +22,7 @@ interface NativeCallSignaling {
 
     /** A remote audio track arrived (the other person can be heard). */
     fun onRemoteAudio()
+
+    /** A remote video track arrived (the other person's camera/screen can be shown). */
+    fun onRemoteVideo()
 }
