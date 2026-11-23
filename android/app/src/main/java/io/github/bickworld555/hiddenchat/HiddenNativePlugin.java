@@ -1273,6 +1273,22 @@ public class HiddenNativePlugin extends Plugin {
         plugin.notifyListeners("pictureInPicture", data, true);
     }
 
+    /**
+     * Explicit sign-out of an account (not the transient userId-null on startup): wipe this phone's native end-to-end
+     * keys — identity, account key, prekeys, ratchet sessions — so nothing decryptable is left, and a later sign-in
+     * re-registers a fresh identity (the cleared store resets NativeRegistration's "published" flags). Kept separate
+     * from clearSession, which also runs before the session has loaded and must not destroy keys.
+     */
+    @PluginMethod
+    public void wipeE2e(PluginCall call) {
+        try {
+            io.github.bickworld555.hiddenchat.core.store.NativeStore store = io.github.bickworld555.hiddenchat.core.store.NativeStore.Companion.get(getContext());
+            if (store != null) store.clear();
+        } catch (Throwable ignored) { /* the goal is to leave nothing decryptable; a failure here is non-fatal */ }
+        CryptoCores.INSTANCE.install(null);
+        call.resolve();
+    }
+
     /** Signing out: forget the account and stop the background connection. */
     @PluginMethod
     public void clearSession(PluginCall call) {

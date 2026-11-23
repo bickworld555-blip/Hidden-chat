@@ -83,13 +83,18 @@ class NativeStore private constructor(private val db: SQLiteDatabase) : KeyRecor
                 return try {
                     val opened = open(context.applicationContext)
                     opened.also { instance = it }
-                } catch (unusable: Exception) {
+                } catch (unusable: Throwable) {
+                    android.util.Log.w("NativeStore", "could not open the native key store", unusable)
                     null
                 }
             }
         }
 
         private fun open(app: Context): NativeStore {
+            // Load the SQLCipher native library before any database call. DatabaseKey.java loads it on the WebView
+            // path, but the native background service runs in a process where that path never ran, so without this the
+            // first openDatabase throws UnsatisfiedLinkError and the native fetch dies. System.loadLibrary is idempotent.
+            System.loadLibrary("sqlcipher")
             val key = rawKey(app)
             val file = File(app.noBackupFilesDir, DB_NAME)
             // The same call style as DatabaseKey.java (net.zetetic:sqlcipher-android), with create flags.
@@ -97,7 +102,9 @@ class NativeStore private constructor(private val db: SQLiteDatabase) : KeyRecor
                 file.absolutePath, key, null,
                 SQLiteDatabase.OPEN_READWRITE or SQLiteDatabase.CREATE_IF_NECESSARY, null,
             )
-            db.execSQL("PRAGMA journal_mode = WAL")
+            // PRAGMA journal_mode returns the new mode, so net.zetetic's SQLCipher requires rawQuery, not execSQL
+            // (execSQL rejects result-returning statements). CREATE TABLE returns nothing, so execSQL is fine there.
+            db.rawQuery("PRAGMA journal_mode = WAL", null).use { it.moveToFirst() }
             db.execSQL("CREATE TABLE IF NOT EXISTS records (k TEXT PRIMARY KEY, v TEXT NOT NULL)")
             return NativeStore(db)
         }

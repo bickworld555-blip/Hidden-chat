@@ -63,6 +63,8 @@ export function nativeSetSession({ origin, token, userId, deviceId = '', lockedC
   return sessionSaved;
 }
 export const nativeClearSession = () => invoke('clearSession');
+// Explicit sign-out only (not the transient userId-null on startup): wipe this device's native end-to-end keys.
+export const nativeWipeE2e = () => invoke('wipeE2e');
 // Uploads in progress: { count, label, progress (0-100) }; count 0 ends the "Sending…" foreground service.
 export const nativeSetUploads = (state) => invoke('setUploads', state);
 // Android Keystore sealing for the local data key (src/secureStorage.js): { sealed } / { value }, null outside the app.

@@ -47,11 +47,18 @@ object NativeRegistration {
     fun register(core: CryptoCore, store: KeyRecords, userId: String, deviceId: String, transport: NativeTransport, now: Long = System.currentTimeMillis()): Boolean {
         val status = transport.getJson("/api/v1/e2e/keys")
         val published = status?.get("published") == true
-        val serverPreKeyCount = if (published) (Json.safeInteger(status?.get("preKeys")) ?: 0L).toInt() else 0
+        // The native core owns a FRESH identity. On the first native registration for this install it must replace
+        // whatever the WebView path (or an earlier identity) published for this device — identity AND prekeys — even
+        // when the server's prekey count and signed-prekey id happen to match (the status does not expose the stored
+        // identity, so count/spk alone cannot detect the swap). The server deletes the old device + prekeys on an
+        // identity change ("security code changed"), so fresh prekeys (serverPreKeyCount 0) must accompany it. Reset
+        // by clear() on sign-out, so a later fresh identity re-registers.
+        val nativePublished = store.get("native-keys-published") == "done"
+        val serverPreKeyCount = if (published && nativePublished) (Json.safeInteger(status?.get("preKeys")) ?: 0L).toInt() else 0
         val upload = core.prepareUpload(serverPreKeyCount, now)
         val newSpkId = Json.safeInteger(Json.map(upload["signedPreKey"])!!["id"])
-        val needKeys = !published || (Json.list(upload["preKeys"])?.isNotEmpty() == true) || Json.safeInteger(status?.get("signedPreKeyId")) != newSpkId
-        if (needKeys) transport.putJson("/api/v1/e2e/keys", upload)
+        val needKeys = !nativePublished || !published || (Json.list(upload["preKeys"])?.isNotEmpty() == true) || Json.safeInteger(status?.get("signedPreKeyId")) != newSpkId
+        if (needKeys && transport.putJson("/api/v1/e2e/keys", upload) != null) store.set("native-keys-published", "done")
 
         // The signed device list is published once per install (a single account key naming this device). Prekey
         // refreshes do not re-sign it; a sign-out (clear) resets this so a fresh identity re-registers.
@@ -60,7 +67,10 @@ object NativeRegistration {
             val identity = core.publicIdentity()
             val entry = DeviceList.Entry(deviceId, Json.string(identity["dh"])!!, Json.string(identity["sig"])!!)
             val signed = DeviceList.signList(account, userId, nextCounter(store), now, listOf(entry))
-            if (transport.putJson("/api/v1/e2e/device-list?create=1", signed) != null) store.set("list-published", "done")
+            // A plain PUT (not create=1): the native path takes over the account with its own account key, replacing
+            // whatever list the WebView path published (the server rejects create=1 when a list already exists, and a
+            // rotation under a new account key is accepted). A truly first list is also created by this same PUT.
+            if (transport.putJson("/api/v1/e2e/device-list", signed) != null) store.set("list-published", "done")
         }
         return true
     }
