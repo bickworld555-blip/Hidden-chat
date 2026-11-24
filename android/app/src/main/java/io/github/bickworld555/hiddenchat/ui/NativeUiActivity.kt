@@ -10,6 +10,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import io.github.bickworld555.hiddenchat.NativeSend
 import io.github.bickworld555.hiddenchat.NativeUiBridge
 import io.github.bickworld555.hiddenchat.core.store.NativeStore
 import io.github.bickworld555.hiddenchat.ui.theme.HiddenTheme
@@ -88,8 +89,16 @@ class NativeUiActivity : ComponentActivity() {
                         messages,
                         loading = loadingMessages && messages.isEmpty(),
                         onBack = { openChat = null },
-                        // Interim send: the web app's E2E path seals + relays; the message returns via the store mirror.
-                        onSend = { text -> NativeUiBridge.requestSend(current.id, text) },
+                        // Fully-native send (native device-list trust + sealing + native socket) when possible; falls
+                        // back to the web app's E2E relay when the native socket is closed (foreground) or the native
+                        // core is unavailable. Off the main thread (it fetches device lists + encrypts).
+                        onSend = { text ->
+                            val chatId = current.id
+                            Thread({
+                                val sent = try { NativeSend.sendText(applicationContext, chatId, text) } catch (ignored: Throwable) { false }
+                                if (!sent) NativeUiBridge.requestSend(chatId, text)
+                            }, "native-send").start()
+                        },
                     )
                 }
             }

@@ -92,6 +92,22 @@ final class NativeRelay extends WebSocketListener {
         return result;
     }
 
+    /** Whether the service's own socket is open (only while the app is backgrounded; the WebView owns it in front). */
+    static synchronized boolean canSend() {
+        return current != null && current.socket != null;
+    }
+
+    /** Puts a (natively sealed) message on the wire as message:send, when the service socket is open (NativeSend). */
+    static synchronized boolean sendMessage(JSONObject message) {
+        if (current == null || current.socket == null || message == null) return false;
+        try {
+            current.socket.send(new JSONObject().put("type", "message:send").put("message", message).toString());
+            return true;
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
     /** "Message" on a ringing call while the app was closed: send the quick reply to the caller first. */
     static synchronized boolean replyToPendingCall(String callId, String text) {
         if (pendingCall == null || current == null || current.socket == null || text == null || text.trim().isEmpty()) return false;
