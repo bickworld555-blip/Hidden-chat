@@ -113,6 +113,8 @@ export const nativeSaveChats = (chats) => invoke('saveNativeChats', { chats: Arr
 export const nativeSaveContacts = (contacts) => invoke('saveNativeContacts', { contacts: Array.isArray(contacts) ? contacts : [] });
 // Step 5 data seam: mirror one chat's recent messages for the native conversation screen: [{ mine, text, time }].
 export const nativeSaveMessages = (chatId, messages) => invoke('saveNativeMessages', { chatId: String(chatId || ''), messages: Array.isArray(messages) ? messages : [] });
+// Step 5 read independence: mirror many chats' messages in one call: { [chatId]: [{ id, mine, text, time, ts }] }.
+export const nativeSaveMessagesBatch = (batch) => invoke('saveNativeMessagesBatch', { batch: batch && typeof batch === 'object' ? batch : {} });
 // Uploads in progress: { count, label, progress (0-100) }; count 0 ends the "Sending…" foreground service.
 export const nativeSetUploads = (state) => invoke('setUploads', state);
 // Android Keystore sealing for the local data key (src/secureStorage.js): { sealed } / { value }, null outside the app.

@@ -1602,6 +1602,35 @@ public class HiddenNativePlugin extends Plugin {
         call.resolve();
     }
 
+    /** Step 5 read independence: mirror many chats' messages at once ({ chatId: [ {id,mine,text,time,ts} ] }). */
+    @PluginMethod
+    public void saveNativeMessagesBatch(PluginCall call) {
+        io.github.bickworld555.hiddenchat.core.store.NativeStore store =
+            io.github.bickworld555.hiddenchat.core.store.NativeStore.Companion.get(getContext());
+        if (store == null) { call.resolve(); return; }
+        JSObject batch = call.getObject("batch");
+        if (batch == null) { call.resolve(); return; }
+        java.util.Iterator<String> keys = batch.keys();
+        while (keys.hasNext()) {
+            String chatId = keys.next();
+            if (chatId == null || chatId.isEmpty()) continue;
+            org.json.JSONArray arr = batch.optJSONArray(chatId);
+            if (arr == null) continue;
+            java.util.List<io.github.bickworld555.hiddenchat.core.store.MessageRecord> rows = new java.util.ArrayList<>();
+            for (int i = 0; i < arr.length(); i++) {
+                try {
+                    org.json.JSONObject o = arr.getJSONObject(i);
+                    String mid = o.optString("id", "");
+                    if (mid.isEmpty()) continue;
+                    rows.add(new io.github.bickworld555.hiddenchat.core.store.MessageRecord(
+                        mid, o.optBoolean("mine", false), o.optString("text", ""), o.optString("time", ""), o.optLong("ts", 0L)));
+                } catch (org.json.JSONException ignored) { /* skip a malformed row */ }
+            }
+            store.saveMessages(chatId, rows);
+        }
+        call.resolve();
+    }
+
     /**
      * The per-account rollout gate for native call media: the native path must be active for this account AND native
      * calls must be switched on for this install. Default OFF (separate from the E2E native flag), so an account on the

@@ -24,7 +24,7 @@ import { applyGroupChange, GROUP_CHANGE_EVENTS } from './groupChanges.js';
 import { cachedGroupDetails } from './groupCache.js';
 import { applyGroupCall, withRunningCall } from './groupCalls.js';
 import { notificationNames } from './notificationNames.js';
-import { nativeClearSession, nativeWipeE2e, nativeEnableE2e, nativeRequestStartupPermissions, nativeSetSession, nativeShell, nativeStartBackground, nativeState, nativeStopBackground, nativeTakePendingCall, nativeMoveToBackground, nativeClearShare, nativeSetCallActive, nativeClearMessageNotifications, nativeClearMissedCalls, nativeTakeMessageActions, nativeTakeCallEvents, nativeSetSystemBarsTheme, nativeOpenSecret, nativePreviewKey, nativeBackgroundFetchDone, nativeScheduleUnsent, nativeE2eActive, nativeCallsAllowed, nativeSaveChats, nativeSaveContacts, nativeSaveMessages, nativeUiAllowed, nativeOpenUi, nativeTakeInbox, onNative } from './native.js';
+import { nativeClearSession, nativeWipeE2e, nativeEnableE2e, nativeRequestStartupPermissions, nativeSetSession, nativeShell, nativeStartBackground, nativeState, nativeStopBackground, nativeTakePendingCall, nativeMoveToBackground, nativeClearShare, nativeSetCallActive, nativeClearMessageNotifications, nativeClearMissedCalls, nativeTakeMessageActions, nativeTakeCallEvents, nativeSetSystemBarsTheme, nativeOpenSecret, nativePreviewKey, nativeBackgroundFetchDone, nativeScheduleUnsent, nativeE2eActive, nativeCallsAllowed, nativeSaveChats, nativeSaveContacts, nativeSaveMessages, nativeSaveMessagesBatch, nativeUiAllowed, nativeOpenUi, nativeTakeInbox, onNative } from './native.js';
 import { setNativeCallsEnabled } from './nativeRtc.js';
 
 // Step 5 data seam: the projection of a chat's messages the native conversation screen shows (last 60, { mine, text,
@@ -278,16 +278,29 @@ export default function App() {
     }, 500);
     return () => clearTimeout(timer);
   }, [chats, knownPeople]);
-  // Step 5 data seam: mirror the open chat's recent messages into the native store so the native conversation screen
-  // can show them. Bounded to the last 60; the native UI shows whatever chat was last open in the web app.
-  const activeMessages = useChatStore((state) => (state.activeChatId ? state.messages[state.activeChatId] : null));
+  // Step 5 read independence: mirror ALL loaded chats' messages into the native store — only the chats whose message
+  // list changed since the last push — so the native UI reads conversations entirely from NativeStore (history +
+  // outgoing included) without a per-open round-trip to the WebView. Seeds every loaded chat on first run, then
+  // incremental. (Chats the web app has not loaded yet still need an on-open load; see nativeUiOpenChat.)
+  const allMessages = useChatStore((state) => state.messages);
+  const mirroredMsgRefs = useRef({});
   useEffect(() => {
-    if (!nativeShell() || !activeChatId) return undefined;
+    if (!nativeShell()) return undefined;
     const timer = setTimeout(() => {
-      nativeSaveMessages(activeChatId, nativeMessageProjection(activeMessages, userId)).catch(() => {});
-    }, 400);
+      const me = useChatStore.getState().userId;
+      const batch = {};
+      const seen = {};
+      for (const [chatId, list] of Object.entries(allMessages || {})) {
+        seen[chatId] = list;
+        if (mirroredMsgRefs.current[chatId] !== list) batch[chatId] = nativeMessageProjection(list, me);
+      }
+      if (Object.keys(batch).length) {
+        nativeSaveMessagesBatch(batch).catch(() => {});
+        mirroredMsgRefs.current = { ...mirroredMsgRefs.current, ...seen };
+      }
+    }, 800);
     return () => clearTimeout(timer);
-  }, [activeChatId, activeMessages, userId]);
+  }, [allMessages]);
   // Step 5 interim send: the native UI hands plaintext here (NativeUiBridge → nativeUiSend); the web app's audited E2E
   // path seals + relays it, then that chat's messages are mirrored back so the native conversation updates.
   useEffect(() => {
