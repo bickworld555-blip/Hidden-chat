@@ -1,5 +1,7 @@
 apply plugin: 'com.android.application'
 apply plugin: 'kotlin-android'
+// Step 5: the native Kotlin/Compose UI (off by default — no launcher points at it yet).
+apply plugin: 'org.jetbrains.kotlin.plugin.compose'
 
 def signingValues = [
     path: System.getenv('ANDROID_KEYSTORE_PATH'),
@@ -40,6 +42,10 @@ android {
         // Back-ports java.time, java.util.Base64 etc. to minSdk 24, so the native core's java.util.Base64
         // (core/crypto/Primitives.kt) is safe on API 24-25 while the JVM unit tests keep running on real java.util.
         coreLibraryDesugaringEnabled true
+    }
+    // Step 5: Jetpack Compose for the native UI (behind a flag; no launcher reaches it yet).
+    buildFeatures {
+        compose true
     }
     defaultConfig {
         applicationId "io.github.bickworld555.hiddenchat"
@@ -121,6 +127,13 @@ dependencies {
     implementation 'com.squareup.okhttp3:okhttp:4.12.0'
     // Native WebRTC media for calls (libwebrtc, org.webrtc API), replacing the WebView's WebRTC stack (Step 4).
     implementation 'io.github.webrtc-sdk:android:125.6422.07'
+    // Step 5: Jetpack Compose for the native UI (off by default). The BOM aligns the Compose artifact versions.
+    implementation platform('androidx.compose:compose-bom:2025.04.01')
+    implementation 'androidx.compose.ui:ui'
+    implementation 'androidx.compose.ui:ui-tooling-preview'
+    implementation 'androidx.compose.material3:material3'
+    implementation 'androidx.activity:activity-compose:1.10.1'
+    debugImplementation 'androidx.compose.ui:ui-tooling'
     // App lock: the phone's biometrics or screen-lock credential (AppSecurity.java).
     implementation 'androidx.biometric:biometric:1.1.0'
     // The local database's one-time switch to a raw SQLCipher key (DatabaseKey): the same versions the SQLite plugin uses.

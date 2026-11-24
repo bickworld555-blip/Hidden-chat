@@ -118,6 +118,13 @@
             android:turnScreenOn="true"
             android:exported="false" />
 
+        <!-- Step 5: the native (Compose) UI. exported=false and no launcher intent, so the app still starts in the
+             WebView; reachable only for a device test via `am start -n <pkg>/.ui.NativeUiActivity`. -->
+        <activity
+            android:name=".ui.NativeUiActivity"
+            android:theme="@style/AppTheme.NoActionBar"
+            android:exported="false" />
+
         <!-- Keeps the app process (and its live WebSocket) running while in the background. -->
         <service
             android:name=".MessagingService"
