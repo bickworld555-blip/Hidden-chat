@@ -80,14 +80,15 @@ object NativeForegroundSocket {
     @Synchronized
     fun start(context: Context) {
         val app = context.applicationContext
-        if (!owns(app)) return
-        val session = RelaySession.read(app) ?: return
-        val user = session.userId ?: return
-        val device = RelaySession.deviceId(app) ?: return
+        if (!owns(app)) { android.util.Log.w("NFS", "start: not owner (socket_owner off or no native core)"); return }
+        val session = RelaySession.read(app) ?: run { android.util.Log.w("NFS", "start: no session"); return }
+        val user = session.userId ?: run { android.util.Log.w("NFS", "start: no userId"); return }
+        val device = RelaySession.deviceId(app) ?: run { android.util.Log.w("NFS", "start: no deviceId"); return }
         appContext = app
         meUser = user
         meDevice = device
         wanted = true
+        android.util.Log.i("NFS", "start: owner ok, user=$user device=$device socket=${socket != null}")
         if (socket == null) connect()
     }
 
@@ -103,6 +104,7 @@ object NativeForegroundSocket {
             // Online subprotocols — no relay.background, so the server marks the account online through this socket.
             .header("Sec-WebSocket-Protocol", "relay.auth.$token, relay.v1, ${ClientVersion.SUBPROTOCOL}")
             .build()
+        android.util.Log.i("NFS", "connect: opening online socket to $url")
         socket = client.newWebSocket(request, Listener())
     }
 
@@ -153,6 +155,7 @@ object NativeForegroundSocket {
         if (webSocket != socket) return
         open = true
         attempt = 0
+        android.util.Log.i("NFS", "onOpened: online socket OPEN")
         sendPresence()
         pingTask?.cancel(false)
         pingTask = scheduler.scheduleWithFixedDelay({ ping() }, PING_INTERVAL_MS, PING_INTERVAL_MS, TimeUnit.MILLISECONDS)
@@ -167,6 +170,7 @@ object NativeForegroundSocket {
 
     private fun onFrame(text: String) {
         val event = try { Json.map(Json.parse(text)) } catch (malformed: Exception) { null } ?: return
+        android.util.Log.i("NFS", "frame type=${Json.string(event["type"])}")
         when (Json.string(event["type"])) {
             "pong", "connection:ready" -> { /* liveness / handshake — nothing to forward */ }
             "message:new", "group:message" -> onIncomingMessage(event)
@@ -179,11 +183,14 @@ object NativeForegroundSocket {
     // Decrypt ONCE, durably persist, THEN acknowledge — never ack what was not kept (the ratchet already advanced).
     // No system notification here: the user is in the foreground native UI, which shows the message from NativeStore.
     private fun onIncomingMessage(event: Map<String, Any?>) {
-        val core = CryptoCores.current() ?: return
+        val core = CryptoCores.current() ?: run { android.util.Log.w("NFS", "incoming: no core"); return }
         val context = appContext ?: return
         val delivery = NativeFetchHandler.handle(core, meUser, meDevice, event) ?: return
+        android.util.Log.i("NFS", "incoming id=${delivery.messageId} opened=${delivery.opened} err=${delivery.error}")
         if (!delivery.opened) { sink?.forward(Json.stringify(event)); return } // can't decrypt → leave to the app, not acked
-        if (!NativeDelivery.persist(context, event, delivery)) return
+        // updateChatList=true: native owns the socket now, so it must refresh the chat-list preview/time/unread itself
+        // (the WebView mirror is suspended). The conversation + unread already update via addMessage inside persist.
+        if (!NativeDelivery.persist(context, event, delivery, updateChatList = true)) { android.util.Log.w("NFS", "incoming: persist failed"); return }
         sendRawFrame(Json.stringify(Json.obj("type" to "message:delivered", "messageIds" to listOf(delivery.messageId))))
         sendRawFrame(Json.stringify(Json.obj("type" to "queue:ack", "messageIds" to listOf(delivery.messageId), "eventIds" to emptyList<String>())))
     }
@@ -218,7 +225,13 @@ object NativeForegroundSocket {
             synchronized(NativeForegroundSocket) { if (webSocket != socket) return }
             onFrame(text)
         }
-        override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) = drop(webSocket)
-        override fun onClosed(webSocket: WebSocket, code: Int, reason: String) = drop(webSocket)
+        override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+            android.util.Log.w("NFS", "onFailure code=${response?.code} msg=${t.message}")
+            drop(webSocket)
+        }
+        override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+            android.util.Log.w("NFS", "onClosed code=$code reason=$reason")
+            drop(webSocket)
+        }
     }
 }

@@ -143,6 +143,23 @@ class NativeStore private constructor(private val db: SQLiteDatabase) : KeyRecor
         bump()
     }
 
+    /**
+     * Reflects an incoming native-socket message in the chat-LIST projection — preview, time, unread +1, moved to the
+     * top — so the native chat list updates live while native owns the foreground socket (the WebView mirror that
+     * normally writes `chats` is suspended then). Only an existing row is updated; a brand-new sender's row still comes
+     * from the next WebView mirror. No-op (no bump) when the chat is not in the list, so nothing flickers.
+     */
+    fun bumpChatForIncoming(chatId: String, preview: String, time: String) = exclusive {
+        val exists = db.rawQuery("SELECT 1 FROM chats WHERE id = ? LIMIT 1", arrayOf(chatId)).use { it.moveToNext() }
+        if (!exists) return@exclusive
+        val top = db.rawQuery("SELECT MIN(position) FROM chats", null).use { if (it.moveToNext()) it.getInt(0) else 0 }
+        db.execSQL(
+            "UPDATE chats SET preview = ?, time = ?, unread = unread + 1, position = ? WHERE id = ?",
+            arrayOf(preview, time, top - 1, chatId),
+        )
+        bump()
+    }
+
     private fun upsertMessage(chatId: String, id: String, mine: Boolean, text: String, time: String, ts: Long) {
         db.execSQL(
             "INSERT INTO chat_messages(chat_id, id, mine, text, time, ts) VALUES(?, ?, ?, ?, ?, ?) " +

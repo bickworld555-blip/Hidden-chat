@@ -30,8 +30,9 @@ object NativeSend {
 
     /** Seal `text` to `peerId` (native trust + encryption) and send it over the relay; true only when it went out. */
     fun sendText(context: Context, peerId: String, text: String): Boolean {
-        // A native socket must be open: the foreground send socket (native UI visible) or the background relay.
-        if (!NativeSendSocket.canSend() && !NativeRelay.canSend()) return false
+        // A native socket must be open: the native-owned online socket (socket_owner), the foreground send socket, or
+        // the background relay.
+        if (!NativeForegroundSocket.isOnline() && !NativeSendSocket.canSend() && !NativeRelay.canSend()) return false
         val core = CryptoCores.current() ?: return false
         val session = RelaySession.read(context) ?: return false
         val meUserId = session.userId ?: return false
@@ -57,8 +58,8 @@ object NativeSend {
 
         val messageId = UUID.randomUUID().toString()
         val message = org.json.JSONObject().put("id", messageId).put("receiverId", peerId).put("content", envelope)
-        // Prefer the foreground socket; fall back to the background relay if that is the one that is open.
-        if (!NativeSendSocket.sendMessage(message) && !NativeRelay.sendMessage(message)) return false
+        // Prefer the native-owned online socket (socket_owner), then the foreground send socket, then the background relay.
+        if (!NativeForegroundSocket.sendMessage(message) && !NativeSendSocket.sendMessage(message) && !NativeRelay.sendMessage(message)) return false
 
         // Optimistic local echo so the native conversation shows the sent message at once.
         val ts = System.currentTimeMillis()

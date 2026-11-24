@@ -27,6 +27,11 @@ import kotlinx.coroutines.withContext
  * still launches straight into the WebView; reachable only for a device test or behind the native-UI flag.
  */
 class NativeUiActivity : ComponentActivity() {
+    private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    // Starting the native-owned socket is deferred ~600ms after the UI becomes visible, so the WebView (which suspends
+    // its own socket on the same visibility change) closes first and the two never both decrypt the same message.
+    private val startSocket = Runnable { NativeForegroundSocket.start(applicationContext) }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
@@ -113,12 +118,23 @@ class NativeUiActivity : ComponentActivity() {
     // WebView takes the socket back when the native UI is hidden. Otherwise the legacy write-only NativeSendSocket.
     override fun onStart() {
         super.onStart()
-        if (NativeForegroundSocket.owns(applicationContext)) NativeUiBridge.requestSocketHandover(true)
-        else NativeSendSocket.start(applicationContext)
+        val owns = NativeForegroundSocket.owns(applicationContext)
+        android.util.Log.i("NFS", "NativeUiActivity.onStart owns=$owns")
+        if (owns) {
+            // Ask the WebView to release its socket (a backup — it also self-suspends on its own visibility-hidden),
+            // then start the native socket ourselves after a short delay, so we do not depend on the (possibly frozen)
+            // WebView calling back, and the WebView's socket closes first.
+            NativeUiBridge.requestSocketHandover(true)
+            mainHandler.removeCallbacks(startSocket)
+            mainHandler.postDelayed(startSocket, 600)
+        } else {
+            NativeSendSocket.start(applicationContext)
+        }
     }
 
     override fun onStop() {
         super.onStop()
+        mainHandler.removeCallbacks(startSocket)
         if (NativeForegroundSocket.owns(applicationContext)) {
             NativeForegroundSocket.stop()
             NativeUiBridge.requestSocketHandover(false)

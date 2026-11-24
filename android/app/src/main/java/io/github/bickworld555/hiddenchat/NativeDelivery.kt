@@ -19,7 +19,7 @@ object NativeDelivery {
      * its remembered-plaintext cache from `inner` and applies `event` through its normal handler, so the message is
      * parsed in JS without decrypting again — the ratchet already advanced here). False → do not acknowledge.
      */
-    fun persist(context: Context, event: Map<String, Any?>, delivery: NativeFetchHandler.Delivery): Boolean {
+    fun persist(context: Context, event: Map<String, Any?>, delivery: NativeFetchHandler.Delivery, updateChatList: Boolean = false): Boolean {
         val store = NativeStore.get(context)
         if (store == null) { android.util.Log.w("NativeDelivery", "persist: store null"); return false }
         return try {
@@ -27,7 +27,10 @@ object NativeDelivery {
             NativeBackgroundInbox(store).add(SecureStore.seal(Json.stringify(entry)))
             // Also record the decrypted message for the native (Compose) UI, so it shows incoming messages without the
             // WebView mirror. Best-effort — a failure here must NOT change whether the message is acknowledged.
-            try { recordForNativeUi(store, event, delivery) } catch (ignored: Throwable) { /* native UI only */ }
+            // `updateChatList` additionally refreshes the chat-list projection (preview/time/unread) — set only by the
+            // foreground-socket path (NativeForegroundSocket), where the WebView mirror is suspended and cannot; the
+            // background inbox paths leave the list to the WebView mirror to avoid double-counting unread.
+            try { recordForNativeUi(store, event, delivery, updateChatList) } catch (ignored: Throwable) { /* native UI only */ }
             true
         } catch (failed: Throwable) {
             android.util.Log.w("NativeDelivery", "persist failed", failed)
@@ -36,7 +39,7 @@ object NativeDelivery {
     }
 
     /** Writes an incoming decrypted message into the native store's chat projection (Step 5 native read). */
-    private fun recordForNativeUi(store: NativeStore, event: Map<String, Any?>, delivery: NativeFetchHandler.Delivery) {
+    private fun recordForNativeUi(store: NativeStore, event: Map<String, Any?>, delivery: NativeFetchHandler.Delivery, updateChatList: Boolean) {
         val raw = delivery.displayText ?: return
         // A readable label for media/voice/location/… (the same MessagePreview the notifications use), not a raw marker.
         val text = MessagePreview.of(raw)
@@ -45,6 +48,7 @@ object NativeDelivery {
         val ts = Json.safeInteger(message?.get("createdAt")) ?: Json.safeInteger(message?.get("timestamp")) ?: System.currentTimeMillis()
         val time = java.text.SimpleDateFormat("h:mm a", java.util.Locale.US).format(java.util.Date(ts)).lowercase(java.util.Locale.US)
         store.addMessage(chatId, delivery.messageId, false, text, time, ts)
+        if (updateChatList) store.bumpChatForIncoming(chatId, text, time)
     }
 
     /** Posts the conversation notification with the decrypted text, on the account's chosen alert channel. */

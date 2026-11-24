@@ -1704,6 +1704,7 @@ public class HiddenNativePlugin extends Plugin {
     /** The WebView has suspended its own socket; native may now open the single online socket (handover step). */
     @PluginMethod
     public void webViewSocketReleased(PluginCall call) {
+        android.util.Log.i("NFS", "webViewSocketReleased: WebView suspended, starting native socket");
         NativeForegroundSocket.INSTANCE.start(getContext());
         call.resolve();
     }

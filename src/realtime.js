@@ -48,6 +48,11 @@ export class RealtimeClient {
     // second online connection decrypting the same messages. resume() revives it when native hands the socket back.
     this.suspended = false;
     this.onForward = null;
+    // When native owns the one foreground socket (socket_owner), this is set true: the client then suspends itself
+    // whenever the page is hidden (the native UI is in front and owns the socket) and resumes when visible again. Driven
+    // by the page's OWN visibility, which fires reliably as the Activity pauses — not by a native push event that a
+    // frozen WebView might never process.
+    this.suspendWhenHidden = false;
     this.isIdle = false;
     this.visibility = document.visibilityState;
     this.lastActivity = Date.now();
@@ -62,6 +67,14 @@ export class RealtimeClient {
     this.listenersAttached = false;
     this.handleVisibility = () => {
       this.visibility = document.visibilityState;
+      // socket_owner: native owns the socket while the native UI (hidden page) is in front. Close ours when hidden so
+      // the two never both decrypt; reopen when the page is visible again (native UI closed). Outgoing goes to the
+      // native socket via onForward meanwhile.
+      if (this.suspendWhenHidden) {
+        if (this.visibility === 'visible') { this.hiddenAt = 0; this.resume(); }
+        else { this.hiddenAt = Date.now(); this.suspend(this.onForward); }
+        return;
+      }
       if (this.visibility === 'visible') {
         const hiddenFor = this.hiddenAt ? Date.now() - this.hiddenAt : 0;
         this.hiddenAt = 0;

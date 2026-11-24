@@ -123,6 +123,8 @@
         <activity
             android:name=".ui.NativeUiActivity"
             android:theme="@style/AppTheme.NoActionBar"
+            android:launchMode="singleTask"
+            android:configChanges="orientation|screenSize|screenLayout|smallestScreenSize|keyboardHidden|keyboard|uiMode"
             android:exported="false" />
 
         <!-- Keeps the app process (and its live WebSocket) running while in the background. -->
