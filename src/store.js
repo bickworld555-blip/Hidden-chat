@@ -1512,6 +1512,29 @@ export const useChatStore = create((setState, getState) => ({
     }));
     return added.length;
   },
+  // Loads one chat's newest message window from this device's store if it is not in memory yet — the native UI (Step 5)
+  // can open a chat the global start-up window (hydrateMessages) did not reach. Idempotent: a chat already holding
+  // messages is left as-is. Returns how many messages the chat has after loading.
+  async loadChatWindow(chatId) {
+    const { userId, messages } = getState();
+    if (!userId || !chatId || (messages[chatId]?.length ?? 0) > 0) return messages[chatId]?.length ?? 0;
+    const { messages: recent, more } = await messageStore().loadOlder(userId, chatId, Date.now() + 1, MESSAGE_WINDOW).catch(() => ({ messages: [], more: false }));
+    if (userId !== getState().userId || !recent.length) return 0;
+    const chatSaved = saved.chats.get(chatId) ?? new Map();
+    for (const message of recent) chatSaved.set(message.id, message);
+    saved.chats.set(chatId, chatSaved);
+    setState((state) => {
+      const existing = state.messages[chatId] ?? [];
+      const byId = new Map(recent.map((message) => [message.id, message]));
+      for (const message of existing) byId.set(message.id, message);
+      const list = [...byId.values()].sort((left, right) => String(left.timestamp).localeCompare(String(right.timestamp)));
+      return {
+        messages: { ...state.messages, [chatId]: list },
+        olderOnDevice: { ...state.olderOnDevice, [chatId]: Boolean(more) },
+      };
+    });
+    return getState().messages[chatId]?.length ?? 0;
+  },
   // Saving copies every message on the main thread, so bursts (history loading, a busy group) are coalesced into
   // one write per PERSIST_DELAY_MS; leaving the app flushes at once (flushPersistedMessages).
   persistMessages(userId) {

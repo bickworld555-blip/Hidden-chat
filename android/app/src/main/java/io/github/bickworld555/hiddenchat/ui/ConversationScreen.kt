@@ -44,7 +44,7 @@ data class MessageRowData(val mine: Boolean, val text: String, val time: String)
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ConversationScreen(title: String, messages: List<MessageRowData>, onBack: () -> Unit, onSend: (String) -> Unit = {}) {
+fun ConversationScreen(title: String, messages: List<MessageRowData>, onBack: () -> Unit, onSend: (String) -> Unit = {}, loading: Boolean = false) {
     var draft by remember { mutableStateOf("") }
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -95,7 +95,11 @@ fun ConversationScreen(title: String, messages: List<MessageRowData>, onBack: ()
     ) { padding ->
         if (messages.isEmpty()) {
             Box(modifier = Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
-                Text("No messages", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 15.sp)
+                Text(
+                    if (loading) "Loading…" else "No messages",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = 15.sp,
+                )
             }
         } else {
             LazyColumn(

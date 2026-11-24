@@ -24,4 +24,11 @@ object NativeUiBridge {
         if (chatId.isEmpty() || text.isEmpty()) return
         emitter?.emit("nativeUiSend", mapOf("chatId" to chatId, "text" to text))
     }
+
+    /** Ask the web app to load `chatId`'s message window (if not loaded) and mirror it, so the native conversation
+     *  shows messages even for a chat the start-up window did not reach. */
+    fun requestMessages(chatId: String) {
+        if (chatId.isEmpty()) return
+        emitter?.emit("nativeUiOpenChat", mapOf("chatId" to chatId))
+    }
 }

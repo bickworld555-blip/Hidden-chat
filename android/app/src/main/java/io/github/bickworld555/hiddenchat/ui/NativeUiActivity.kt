@@ -35,13 +35,30 @@ class NativeUiActivity : ComponentActivity() {
                 var chats by remember { mutableStateOf(emptyList<ChatRowData>()) }
                 var openChat by remember { mutableStateOf<ChatRowData?>(null) }
                 var messages by remember { mutableStateOf(emptyList<MessageRowData>()) }
+                var loadingMessages by remember { mutableStateOf(false) }
 
                 LaunchedEffect(version) {
                     chats = withContext(Dispatchers.IO) { readChats(store) }
                 }
+                // Opening a chat asks the web app to load + mirror its message window (the start-up window may not have
+                // reached it), so the conversation shows messages rather than "No messages". The spinner clears when
+                // messages arrive or after a grace period (a genuinely empty chat).
+                LaunchedEffect(openChat) {
+                    val current = openChat
+                    if (current == null) {
+                        loadingMessages = false
+                    } else {
+                        loadingMessages = true
+                        NativeUiBridge.requestMessages(current.id)
+                        kotlinx.coroutines.delay(4000)
+                        loadingMessages = false
+                    }
+                }
                 LaunchedEffect(openChat, version) {
                     val current = openChat
-                    messages = if (current == null) emptyList() else withContext(Dispatchers.IO) { readMessages(store, current.id) }
+                    val loaded = if (current == null) emptyList() else withContext(Dispatchers.IO) { readMessages(store, current.id) }
+                    messages = loaded
+                    if (loaded.isNotEmpty()) loadingMessages = false
                 }
 
                 // Android back from a conversation returns to the list rather than leaving the screen.
@@ -54,6 +71,7 @@ class NativeUiActivity : ComponentActivity() {
                     ConversationScreen(
                         current.name,
                         messages,
+                        loading = loadingMessages && messages.isEmpty(),
                         onBack = { openChat = null },
                         // Interim send: the web app's E2E path seals + relays; the message returns via the store mirror.
                         onSend = { text -> NativeUiBridge.requestSend(current.id, text) },

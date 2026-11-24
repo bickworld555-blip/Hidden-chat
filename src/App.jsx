@@ -280,6 +280,17 @@ export default function App() {
       nativeSaveMessages(chatId, nativeMessageProjection(store.messages[chatId], store.userId)).catch(() => {});
     });
   }, []);
+  // Step 5 data seam: the native UI opened a chat — load its message window from this device's store (if the start-up
+  // window did not reach it) and mirror it, so the native conversation shows messages instead of "No messages".
+  useEffect(() => {
+    if (!nativeShell()) return undefined;
+    return onNative('nativeUiOpenChat', async ({ chatId }) => {
+      if (!chatId) return;
+      try { await useChatStore.getState().loadChatWindow(chatId); } catch { /* nothing loaded */ }
+      const store = useChatStore.getState();
+      nativeSaveMessages(chatId, nativeMessageProjection(store.messages[chatId], store.userId)).catch(() => {});
+    });
+  }, []);
   // Step 5 native-UI rollout: when enabled for this install (default off), open the native Compose UI in place of the
   // WebView once signed in. Off by default, so every account keeps the WebView UI until a rollout turns it on.
   useEffect(() => {
