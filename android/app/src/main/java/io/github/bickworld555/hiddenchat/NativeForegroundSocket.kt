@@ -170,7 +170,6 @@ object NativeForegroundSocket {
 
     private fun onFrame(text: String) {
         val event = try { Json.map(Json.parse(text)) } catch (malformed: Exception) { null } ?: return
-        android.util.Log.i("NFS", "frame type=${Json.string(event["type"])}")
         when (Json.string(event["type"])) {
             "pong", "connection:ready" -> { /* liveness / handshake — nothing to forward */ }
             "message:new", "group:message" -> onIncomingMessage(event)

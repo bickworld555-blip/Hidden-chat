@@ -161,9 +161,14 @@ class NativeStore private constructor(private val db: SQLiteDatabase) : KeyRecor
     }
 
     private fun upsertMessage(chatId: String, id: String, mine: Boolean, text: String, time: String, ts: Long) {
+        // Never overwrite an existing non-empty text with an empty one: the WebView mirror pushes empty text for a
+        // message that native (not the WebView) sent or received — the web store has no content for it — which would
+        // otherwise clobber the native row and show a blank bubble. Real messages always have a non-empty label.
         db.execSQL(
             "INSERT INTO chat_messages(chat_id, id, mine, text, time, ts) VALUES(?, ?, ?, ?, ?, ?) " +
-                "ON CONFLICT(chat_id, id) DO UPDATE SET mine = excluded.mine, text = excluded.text, time = excluded.time, ts = excluded.ts",
+                "ON CONFLICT(chat_id, id) DO UPDATE SET mine = excluded.mine, " +
+                "text = CASE WHEN excluded.text = '' AND text <> '' THEN text ELSE excluded.text END, " +
+                "time = excluded.time, ts = excluded.ts",
             arrayOf(chatId, id, if (mine) 1 else 0, text, time, ts),
         )
     }
