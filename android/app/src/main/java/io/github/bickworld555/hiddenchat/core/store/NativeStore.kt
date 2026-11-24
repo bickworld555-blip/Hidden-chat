@@ -11,6 +11,9 @@ import net.zetetic.database.sqlcipher.SQLiteDatabase
 /** One chat-list row the native (Compose) UI shows, mirrored from the web app's chat list (Step 5 data seam). */
 data class ChatRecord(val id: String, val name: String, val preview: String, val time: String, val unread: Int)
 
+/** One message bubble the native conversation screen shows, mirrored from the web app (Step 5 data seam). */
+data class MessageRecord(val mine: Boolean, val text: String, val time: String)
+
 /**
  * Where the native encryption core (CryptoCore) keeps its records between calls: this device's identity, prekeys,
  * sessions, pinned identities and sender keys, by name, as JSON text. A SQLCipher database of its own
@@ -66,7 +69,7 @@ class NativeStore private constructor(private val db: SQLiteDatabase) : KeyRecor
     }
 
     /** Forgets every record (sign-out): the core's identity, sessions and keys all go, and the mirrored chat list. */
-    override fun clear() { exclusive { db.execSQL("DELETE FROM records"); db.execSQL("DELETE FROM chats") } }
+    override fun clear() { exclusive { db.execSQL("DELETE FROM records"); db.execSQL("DELETE FROM chats"); db.execSQL("DELETE FROM messages") } }
 
     /**
      * Replaces the mirrored chat list the native UI reads (Step 5 data seam), preserving the given order. The web app
@@ -94,6 +97,28 @@ class NativeStore private constructor(private val db: SQLiteDatabase) : KeyRecor
         out
     }
 
+    /** Replaces the mirrored messages for one chat (Step 5 data seam), oldest-first, in the given order. */
+    fun saveMessages(chatId: String, rows: List<MessageRecord>) = exclusive {
+        db.execSQL("DELETE FROM messages WHERE chat_id = ?", arrayOf(chatId))
+        rows.forEachIndexed { index, row ->
+            db.execSQL(
+                "INSERT INTO messages(chat_id, mine, text, time, position) VALUES(?, ?, ?, ?, ?)",
+                arrayOf(chatId, if (row.mine) 1 else 0, row.text, row.time, index),
+            )
+        }
+    }
+
+    /** The mirrored messages for one chat, oldest-first, for the native conversation screen. */
+    fun messages(chatId: String): List<MessageRecord> = exclusive {
+        val out = ArrayList<MessageRecord>()
+        db.rawQuery("SELECT mine, text, time FROM messages WHERE chat_id = ? ORDER BY position ASC", arrayOf(chatId)).use { cursor ->
+            while (cursor.moveToNext()) {
+                out.add(MessageRecord(cursor.getInt(0) != 0, cursor.getString(1), cursor.getString(2)))
+            }
+        }
+        out
+    }
+
     /**
      * Makes sure this store belongs to [account]. If it holds another account's data (or none yet), every record is
      * wiped first so the new owner starts from a fresh identity — the native store is never shared across accounts,
@@ -104,6 +129,7 @@ class NativeStore private constructor(private val db: SQLiteDatabase) : KeyRecor
         if (get(OWNER) != account) {
             db.execSQL("DELETE FROM records")
             db.execSQL("DELETE FROM chats")
+            db.execSQL("DELETE FROM messages")
             set(OWNER, account)
         }
     }
@@ -166,8 +192,10 @@ class NativeStore private constructor(private val db: SQLiteDatabase) : KeyRecor
                 // (execSQL rejects result-returning statements). A wrong key throws here; CREATE TABLE returns nothing.
                 db.rawQuery("PRAGMA journal_mode = WAL", null).use { it.moveToFirst() }
                 db.execSQL("CREATE TABLE IF NOT EXISTS records (k TEXT PRIMARY KEY, v TEXT NOT NULL)")
-                // Step 5 data seam: the native UI's chat-list projection, mirrored from the web app.
+                // Step 5 data seam: the native UI's chat-list + per-chat message projections, mirrored from the web app.
                 db.execSQL("CREATE TABLE IF NOT EXISTS chats (id TEXT PRIMARY KEY, name TEXT NOT NULL, preview TEXT NOT NULL, time TEXT NOT NULL, unread INTEGER NOT NULL DEFAULT 0, position INTEGER NOT NULL DEFAULT 0)")
+                db.execSQL("CREATE TABLE IF NOT EXISTS messages (chat_id TEXT NOT NULL, mine INTEGER NOT NULL DEFAULT 0, text TEXT NOT NULL, time TEXT NOT NULL, position INTEGER NOT NULL DEFAULT 0)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS messages_chat ON messages (chat_id, position)")
             } catch (bad: Throwable) {
                 try { db.close() } catch (ignored: Throwable) { /* already unusable */ }
                 throw bad

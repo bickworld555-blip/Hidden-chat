@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { cachedGroups, prefetchGroupDetails, saveGroups } from './groupCache.js';
 import { activateAccount, addOrActivateAccount, getAccountsState, loadAccounts, removeAccount, sessionFromAccount, updateAccountUser } from './accounts.js';
 import { Bell, ChevronRight, MessageSquarePlus, Moon, Sun } from 'lucide-react';
-import { flushPersistedMessages, notificationPreview, onContactAccepted, savedMessageCount, useChatStore } from './store.js';
+import { flushPersistedMessages, notificationPreview, onContactAccepted, previewFor, savedMessageCount, useChatStore } from './store.js';
 import { e2eLockReady } from './e2eLock.js';
 import { importInbox } from './backgroundInbox.js';
 import { runScheduledBackup, shouldOfferRestore } from './cloudBackup.js';
@@ -24,7 +24,7 @@ import { applyGroupChange, GROUP_CHANGE_EVENTS } from './groupChanges.js';
 import { cachedGroupDetails } from './groupCache.js';
 import { applyGroupCall, withRunningCall } from './groupCalls.js';
 import { notificationNames } from './notificationNames.js';
-import { nativeClearSession, nativeWipeE2e, nativeEnableE2e, nativeRequestStartupPermissions, nativeSetSession, nativeShell, nativeStartBackground, nativeState, nativeStopBackground, nativeTakePendingCall, nativeMoveToBackground, nativeClearShare, nativeSetCallActive, nativeClearMessageNotifications, nativeClearMissedCalls, nativeTakeMessageActions, nativeTakeCallEvents, nativeSetSystemBarsTheme, nativeOpenSecret, nativePreviewKey, nativeBackgroundFetchDone, nativeScheduleUnsent, nativeE2eActive, nativeCallsAllowed, nativeSaveChats, nativeTakeInbox, onNative } from './native.js';
+import { nativeClearSession, nativeWipeE2e, nativeEnableE2e, nativeRequestStartupPermissions, nativeSetSession, nativeShell, nativeStartBackground, nativeState, nativeStopBackground, nativeTakePendingCall, nativeMoveToBackground, nativeClearShare, nativeSetCallActive, nativeClearMessageNotifications, nativeClearMissedCalls, nativeTakeMessageActions, nativeTakeCallEvents, nativeSetSystemBarsTheme, nativeOpenSecret, nativePreviewKey, nativeBackgroundFetchDone, nativeScheduleUnsent, nativeE2eActive, nativeCallsAllowed, nativeSaveChats, nativeSaveMessages, nativeTakeInbox, onNative } from './native.js';
 import { setNativeCallsEnabled } from './nativeRtc.js';
 import { parseShare } from './shareTarget.js';
 import { e2eDeviceId, onE2eEvent, importNativeInbox, publishPreviewKey, replayE2eEvent, sealDirect, sealToOwnDevices, startE2e, stopE2e, userForXmppAddress, xmppGroupTargetsFor, xmppTargetsFor } from './e2e/client.js';
@@ -246,6 +246,25 @@ export default function App() {
     }, 400);
     return () => clearTimeout(timer);
   }, [chats]);
+  // Step 5 data seam: mirror the open chat's recent messages into the native store so the native conversation screen
+  // can show them. Bounded to the last 60; the native UI shows whatever chat was last open in the web app.
+  const activeMessages = useChatStore((state) => (state.activeChatId ? state.messages[state.activeChatId] : null));
+  useEffect(() => {
+    if (!nativeShell() || !activeChatId) return undefined;
+    const timer = setTimeout(() => {
+      const list = Array.isArray(activeMessages) ? activeMessages : [];
+      const projection = list.slice(-60).map((message) => {
+        const at = typeof message.createdAt === 'number' ? message.createdAt : Date.parse(message.timestamp);
+        return {
+          mine: message.senderId === userId,
+          text: message.deleted ? '🚫 Message deleted' : previewFor(message.content ?? ''),
+          time: Number.isFinite(at) ? new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '',
+        };
+      });
+      nativeSaveMessages(activeChatId, projection).catch(() => {});
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [activeChatId, activeMessages, userId]);
   // A message request accepted (here or on another device): the XMPP receipts held for that person go out.
   useEffect(() => onContactAccepted((peerId) => xmppRef.current?.releaseReceipts?.(peerId)), []);
   // The latest link of the chain that opens and handles incoming events in order (a background fetch waits for it).

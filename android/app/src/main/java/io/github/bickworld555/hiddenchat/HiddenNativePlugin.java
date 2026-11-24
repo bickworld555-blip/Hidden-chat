@@ -1547,6 +1547,29 @@ public class HiddenNativePlugin extends Plugin {
         call.resolve();
     }
 
+    /** Step 5 data seam: mirror one chat's recent messages into the native store for the native conversation screen. */
+    @PluginMethod
+    public void saveNativeMessages(PluginCall call) {
+        io.github.bickworld555.hiddenchat.core.store.NativeStore store =
+            io.github.bickworld555.hiddenchat.core.store.NativeStore.Companion.get(getContext());
+        if (store == null) { call.resolve(); return; }
+        String chatId = call.getString("chatId", "");
+        if (chatId == null || chatId.isEmpty()) { call.reject("no-chat"); return; }
+        JSArray arr = call.getArray("messages");
+        java.util.List<io.github.bickworld555.hiddenchat.core.store.MessageRecord> rows = new java.util.ArrayList<>();
+        if (arr != null) {
+            for (int i = 0; i < arr.length(); i++) {
+                try {
+                    org.json.JSONObject o = arr.getJSONObject(i);
+                    rows.add(new io.github.bickworld555.hiddenchat.core.store.MessageRecord(
+                        o.optBoolean("mine", false), o.optString("text", ""), o.optString("time", "")));
+                } catch (org.json.JSONException ignored) { /* skip a malformed row */ }
+            }
+        }
+        store.saveMessages(chatId, rows);
+        call.resolve();
+    }
+
     /**
      * The per-account rollout gate for native call media: the native path must be active for this account AND native
      * calls must be switched on for this install. Default OFF (separate from the E2E native flag), so an account on the

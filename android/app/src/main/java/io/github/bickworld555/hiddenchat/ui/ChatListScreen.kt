@@ -1,6 +1,7 @@
 package io.github.bickworld555.hiddenchat.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -32,7 +33,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 /** One chat row's data the native UI shows (Step 5 data seam), mirrored from the web app's chat list. */
-data class ChatRowData(val name: String, val lastMessage: String, val time: String, val unread: Int = 0)
+data class ChatRowData(val id: String, val name: String, val lastMessage: String, val time: String, val unread: Int = 0)
 
 /**
  * The native chat list (Step 5). A scaffold mirroring the web app's home screen — a top bar, a scrollable list of
@@ -41,7 +42,7 @@ data class ChatRowData(val name: String, val lastMessage: String, val time: Stri
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ChatListScreen(chats: List<ChatRowData> = emptyList()) {
+fun ChatListScreen(chats: List<ChatRowData> = emptyList(), onOpenChat: (ChatRowData) -> Unit = {}) {
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
@@ -68,7 +69,7 @@ fun ChatListScreen(chats: List<ChatRowData> = emptyList()) {
         } else {
             LazyColumn(modifier = Modifier.fillMaxSize().padding(padding)) {
                 items(chats) { chat ->
-                    ChatRow(chat)
+                    ChatRow(chat, onClick = { onOpenChat(chat) })
                     HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant, thickness = 0.5.dp)
                 }
             }
@@ -77,9 +78,9 @@ fun ChatListScreen(chats: List<ChatRowData> = emptyList()) {
 }
 
 @Composable
-private fun ChatRow(chat: ChatRowData) {
+private fun ChatRow(chat: ChatRowData, onClick: () -> Unit) {
     Row(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Avatar(chat.name)

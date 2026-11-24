@@ -104,6 +104,8 @@ export const nativeSetCallsRollout = (enabled) => invoke('setNativeCallsRollout'
 // Step 5 data seam: mirror the web app's chat list into the native store so the native (Compose) UI can show it.
 // `chats` is a lightweight projection: [{ id, name, preview, time, unread }].
 export const nativeSaveChats = (chats) => invoke('saveNativeChats', { chats: Array.isArray(chats) ? chats : [] });
+// Step 5 data seam: mirror one chat's recent messages for the native conversation screen: [{ mine, text, time }].
+export const nativeSaveMessages = (chatId, messages) => invoke('saveNativeMessages', { chatId: String(chatId || ''), messages: Array.isArray(messages) ? messages : [] });
 // Uploads in progress: { count, label, progress (0-100) }; count 0 ends the "Sending…" foreground service.
 export const nativeSetUploads = (state) => invoke('setUploads', state);
 // Android Keystore sealing for the local data key (src/secureStorage.js): { sealed } / { value }, null outside the app.
