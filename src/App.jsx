@@ -35,7 +35,7 @@ function nativeMessageProjection(list, userId) {
     return {
       mine: message.senderId === userId,
       text: message.deleted ? '🚫 Message deleted' : previewFor(message.content ?? ''),
-      time: Number.isFinite(at) ? new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '',
+      time: Number.isFinite(at) ? new Date(at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true }).toLowerCase() : '',
     };
   });
 }
