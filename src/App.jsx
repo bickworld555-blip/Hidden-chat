@@ -24,7 +24,7 @@ import { applyGroupChange, GROUP_CHANGE_EVENTS } from './groupChanges.js';
 import { cachedGroupDetails } from './groupCache.js';
 import { applyGroupCall, withRunningCall } from './groupCalls.js';
 import { notificationNames } from './notificationNames.js';
-import { nativeClearSession, nativeWipeE2e, nativeEnableE2e, nativeRequestStartupPermissions, nativeSetSession, nativeShell, nativeStartBackground, nativeState, nativeStopBackground, nativeTakePendingCall, nativeMoveToBackground, nativeClearShare, nativeSetCallActive, nativeClearMessageNotifications, nativeClearMissedCalls, nativeTakeMessageActions, nativeTakeCallEvents, nativeSetSystemBarsTheme, nativeOpenSecret, nativePreviewKey, nativeBackgroundFetchDone, nativeScheduleUnsent, nativeE2eActive, nativeCallsAllowed, nativeSaveChats, nativeSaveContacts, nativeSaveMessages, nativeSaveMessagesBatch, nativeUiAllowed, nativeOpenUi, nativeTakeInbox, onNative } from './native.js';
+import { nativeClearSession, nativeWipeE2e, nativeEnableE2e, nativeRequestStartupPermissions, nativeSetSession, nativeShell, nativeStartBackground, nativeState, nativeStopBackground, nativeTakePendingCall, nativeMoveToBackground, nativeClearShare, nativeSetCallActive, nativeClearMessageNotifications, nativeClearMissedCalls, nativeTakeMessageActions, nativeTakeCallEvents, nativeSetSystemBarsTheme, nativeOpenSecret, nativePreviewKey, nativeBackgroundFetchDone, nativeScheduleUnsent, nativeE2eActive, nativeCallsAllowed, nativeSaveChats, nativeSaveContacts, nativeSaveMessages, nativeSaveMessagesBatch, nativeUiAllowed, nativeOpenUi, nativeTakeInbox, nativeWebViewSocketReleased, nativeRelaySend, onNative } from './native.js';
 import { setNativeCallsEnabled } from './nativeRtc.js';
 
 // Step 5 data seam: the projection of a chat's messages the native conversation screen shows (last 60, { mine, text,
@@ -322,6 +322,32 @@ export default function App() {
       const store = useChatStore.getState();
       nativeSaveMessages(chatId, nativeMessageProjection(store.messages[chatId], store.userId)).catch(() => {});
     });
+  }, []);
+  // Checklist item 1 (single foreground socket): when native owns the socket it tells us here. `active` → suspend our
+  // RealtimeClient (it stops holding a socket and routes outgoing frames to the native socket) and tell native it may
+  // open the one online connection; `!active` → resume ours. `nativeRelayFrame` carries a non-message frame native
+  // received (calls, receipts, typing, …) for us to handle as our own. All inert unless the socket_owner sub-flag is on
+  // (default off) — the native side only ever emits these then. The store's `client` is the live RealtimeClient.
+  useEffect(() => {
+    if (!nativeShell()) return undefined;
+    const stopHandover = onNative('nativeSocketHandover', async ({ active } = {}) => {
+      const client = useChatStore.getState().client;
+      if (!client) return; // not connected yet: native never starts its socket, so the WebView keeps ours (fail-safe)
+      if (active) {
+        client.suspend((frame) => { nativeRelaySend(frame).catch(() => {}); });
+        await nativeWebViewSocketReleased().catch(() => {});
+      } else {
+        client.resume();
+      }
+    });
+    const stopFrame = onNative('nativeRelayFrame', ({ frame } = {}) => {
+      const client = useChatStore.getState().client;
+      if (!client || typeof frame !== 'string') return;
+      let event;
+      try { event = JSON.parse(frame); } catch { return; }
+      client.inject(event);
+    });
+    return () => { stopHandover(); stopFrame(); };
   }, []);
   // Step 5 native-UI rollout: when enabled for this install (default off), open the native Compose UI in place of the
   // WebView once signed in. Off by default, so every account keeps the WebView UI until a rollout turns it on.

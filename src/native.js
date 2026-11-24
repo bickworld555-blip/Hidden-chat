@@ -106,6 +106,14 @@ export const nativeSetCallsRollout = (enabled) => invoke('setNativeCallsRollout'
 export async function nativeUiAllowed() { const result = await invoke('nativeUiAllowed'); return Boolean(result?.allowed); }
 export const nativeSetUiRollout = (enabled) => invoke('setNativeUiRollout', { enabled: Boolean(enabled) });
 export const nativeOpenUi = () => invoke('openNativeUi');
+// Checklist item 1: whether native owns the single foreground relay socket for this install (socket_owner sub-flag AND
+// a native E2E core); a setter; the handover callback the WebView calls once it has suspended its own socket (so native
+// opens the one online connection); and the route for a frame the suspended WebView sends. Default off — a crypto path
+// (native receive/decrypt/ack), verified on two real devices before enabling.
+export async function nativeSocketOwnerActive() { const result = await invoke('nativeSocketOwnerAllowed'); return Boolean(result?.active); }
+export const nativeSetSocketOwner = (on) => invoke('setNativeSocketOwner', { on: Boolean(on) });
+export const nativeWebViewSocketReleased = () => invoke('webViewSocketReleased');
+export const nativeRelaySend = (frame) => invoke('nativeRelaySend', { frame: String(frame) });
 // Step 5 data seam: mirror the web app's chat list into the native store so the native (Compose) UI can show it.
 // `chats` is a lightweight projection: [{ id, name, preview, time, unread }].
 export const nativeSaveChats = (chats) => invoke('saveNativeChats', { chats: Array.isArray(chats) ? chats : [] });

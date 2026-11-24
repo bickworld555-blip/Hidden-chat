@@ -10,6 +10,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import io.github.bickworld555.hiddenchat.NativeForegroundSocket
 import io.github.bickworld555.hiddenchat.NativeSend
 import io.github.bickworld555.hiddenchat.NativeSendSocket
 import io.github.bickworld555.hiddenchat.NativeUiBridge
@@ -106,16 +107,24 @@ class NativeUiActivity : ComponentActivity() {
         }
     }
 
-    // The native UI's own relay connection, open only while this screen is visible, so a native send can go out over a
-    // native socket (NativeSend) instead of the WebView's. Closed when the UI is hidden so it never lingers.
+    // The native UI's own relay connection, open only while this screen is visible. When this device owns the one
+    // foreground socket (socket_owner sub-flag), ask the WebView to release its socket first (it then calls back
+    // webViewSocketReleased, which starts NativeForegroundSocket) so there is never a second online connection; the
+    // WebView takes the socket back when the native UI is hidden. Otherwise the legacy write-only NativeSendSocket.
     override fun onStart() {
         super.onStart()
-        NativeSendSocket.start(applicationContext)
+        if (NativeForegroundSocket.owns(applicationContext)) NativeUiBridge.requestSocketHandover(true)
+        else NativeSendSocket.start(applicationContext)
     }
 
     override fun onStop() {
         super.onStop()
-        NativeSendSocket.stop()
+        if (NativeForegroundSocket.owns(applicationContext)) {
+            NativeForegroundSocket.stop()
+            NativeUiBridge.requestSocketHandover(false)
+        } else {
+            NativeSendSocket.stop()
+        }
     }
 
     private fun readChats(store: NativeStore?): List<ChatRowData> = try {

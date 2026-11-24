@@ -31,4 +31,13 @@ object NativeUiBridge {
         if (chatId.isEmpty()) return
         emitter?.emit("nativeUiOpenChat", mapOf("chatId" to chatId))
     }
+
+    /**
+     * Ask the web app to release (active=true) or take back (active=false) the one foreground relay socket, so native
+     * can own it without a second online connection decrypting the same messages (checklist item 1). On active=true the
+     * web app suspends its RealtimeClient and calls back `webViewSocketReleased`, which starts [NativeForegroundSocket].
+     */
+    fun requestSocketHandover(active: Boolean) {
+        emitter?.emit("nativeSocketHandover", mapOf("active" to active))
+    }
 }

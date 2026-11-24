@@ -43,6 +43,11 @@ export class RealtimeClient {
     this.closed = false;
     this.retryTimer = null;
     this.socket = null;
+    // When the native app owns the one foreground socket (NativeForegroundSocket), this client is SUSPENDED: it holds
+    // no socket of its own and routes its outgoing frames to `onForward` (the native socket), so there is never a
+    // second online connection decrypting the same messages. resume() revives it when native hands the socket back.
+    this.suspended = false;
+    this.onForward = null;
     this.isIdle = false;
     this.visibility = document.visibilityState;
     this.lastActivity = Date.now();
@@ -106,7 +111,7 @@ export class RealtimeClient {
   }
 
   connect() {
-    if (this.closed) return;
+    if (this.closed || this.suspended) return;
     window.clearTimeout(this.retryTimer);
     if (this.socket?.readyState === WebSocket.CONNECTING || this.socket?.readyState === WebSocket.OPEN) return;
     if (!this.listenersAttached) this.attachLifecycleListeners();
@@ -327,6 +332,16 @@ export class RealtimeClient {
   }
 
   send(event) {
+    // Suspended: the native socket is the only connection; hand the frame to it. With no forwarder yet, queue it so
+    // resume() replays it (the same backpressure cap as the disconnected case).
+    if (this.suspended) {
+      if (this.onForward) {
+        try { this.onForward(JSON.stringify(event)); return true; } catch { return false; }
+      }
+      if (this.queue.length >= 100) return false;
+      this.queue.push(event);
+      return true;
+    }
     if (this.socket?.readyState === WebSocket.OPEN) {
       try {
         this.transmit(this.socket, event);
@@ -340,6 +355,40 @@ export class RealtimeClient {
     if (this.queue.length >= 100) return false;
     this.queue.push(event);
     return true;
+  }
+
+  /**
+   * The native app has taken ownership of the one foreground socket. Drop ours and stop reconnecting — WITHOUT the
+   * terminal close() (resume() revives it) — so the two never decrypt the same message. Outgoing frames now go to
+   * `onForward`. Idempotent.
+   */
+  suspend(onForward) {
+    if (this.closed) return;
+    this.onForward = onForward ?? this.onForward;
+    if (this.suspended) return;
+    this.suspended = true;
+    this.stopChecks();
+    window.clearTimeout(this.retryTimer);
+    const old = this.socket;
+    this.socket = null;
+    this.onState('offline', true);
+    if (old) { try { old.close(1000, 'native owns socket'); } catch { /* already closing */ } }
+  }
+
+  /** Native handed the socket back: reconnect ours and replay anything queued while suspended. */
+  resume() {
+    if (this.closed || !this.suspended) return;
+    this.suspended = false;
+    this.onForward = null;
+    this.attempt = 0;
+    this.connect();
+  }
+
+  /** A frame the native socket received and forwarded (a non-message event it does not own): handle it as our own. */
+  inject(event) {
+    if (!event || typeof event !== 'object') return;
+    if (event.type === 'message:ack' && event.message?.id) this.awaitingAcks.delete(event.message.id);
+    try { this.onEvent(event); } catch { /* a handler's own failure */ }
   }
 
   close() {

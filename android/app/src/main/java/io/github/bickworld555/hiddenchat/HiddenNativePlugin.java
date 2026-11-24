@@ -85,6 +85,15 @@ public class HiddenNativePlugin extends Plugin {
                 // The web app is gone: the send request is dropped (the native UI's send needs the live WebView for now).
             }
         });
+        // When native owns the one foreground socket (socket_owner, checklist item 1), every non-message frame it
+        // receives is handed to the WebView, which still owns those features (calls, receipts, typing, reactions, …).
+        NativeForegroundSocket.INSTANCE.setSink((frame) -> {
+            try {
+                notifyListeners("nativeRelayFrame", new JSObject().put("frame", frame), true);
+            } catch (Exception ignored) {
+                // The web app is gone: the frame is dropped (native owns the socket only while the native UI is up).
+            }
+        });
         // A page that (re)loads starts without a call: one still marked live belonged to the page that went away.
         getBridge().addWebViewListener(new com.getcapacitor.WebViewListener() {
             @Override
@@ -1671,6 +1680,40 @@ public class HiddenNativePlugin extends Plugin {
         boolean enabled = Boolean.TRUE.equals(call.getBoolean("enabled", false));
         getContext().getSharedPreferences("hm_native_ui", Context.MODE_PRIVATE).edit().putBoolean("enabled", enabled).apply();
         call.resolve();
+    }
+
+    /**
+     * Whether this install lets native own the single foreground relay socket (checklist item 1): `on` is the
+     * socket_owner sub-flag, `active` also requires the native E2E core (NativeFlag). Default OFF, separate from the
+     * native-UI switch. This is a crypto path (native receive/decrypt/ack) — verify on two real devices before enabling.
+     */
+    @PluginMethod
+    public void nativeSocketOwnerAllowed(PluginCall call) {
+        boolean on = getContext().getSharedPreferences("hm_native_ui", Context.MODE_PRIVATE).getBoolean("socket_owner", false);
+        call.resolve(new JSObject().put("on", on).put("active", NativeForegroundSocket.INSTANCE.owns(getContext())));
+    }
+
+    /** Turn native foreground-socket ownership on/off for this install (a device test sets it). Default off. */
+    @PluginMethod
+    public void setNativeSocketOwner(PluginCall call) {
+        boolean on = Boolean.TRUE.equals(call.getBoolean("on", false));
+        getContext().getSharedPreferences("hm_native_ui", Context.MODE_PRIVATE).edit().putBoolean("socket_owner", on).apply();
+        call.resolve();
+    }
+
+    /** The WebView has suspended its own socket; native may now open the single online socket (handover step). */
+    @PluginMethod
+    public void webViewSocketReleased(PluginCall call) {
+        NativeForegroundSocket.INSTANCE.start(getContext());
+        call.resolve();
+    }
+
+    /** Put a frame the (suspended) WebView produced onto the native-owned socket; `sent` says whether it went out. */
+    @PluginMethod
+    public void nativeRelaySend(PluginCall call) {
+        String frame = call.getString("frame", "");
+        boolean sent = frame != null && !frame.isEmpty() && NativeForegroundSocket.INSTANCE.sendRawFrame(frame);
+        call.resolve(new JSObject().put("sent", sent));
     }
 
     /** Open the native (Compose) UI, only when the native-UI switch is on (so it can never appear unless enabled). */
