@@ -6,7 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { cachedGroups, prefetchGroupDetails, saveGroups } from './groupCache.js';
 import { activateAccount, addOrActivateAccount, getAccountsState, loadAccounts, removeAccount, sessionFromAccount, updateAccountUser } from './accounts.js';
 import { Bell, ChevronRight, MessageSquarePlus, Moon, Sun } from 'lucide-react';
-import { flushPersistedMessages, notificationPreview, onContactAccepted, previewFor, savedMessageCount, useChatStore } from './store.js';
+import { flushPersistedMessages, loadAllSavedMessages, notificationPreview, onContactAccepted, previewFor, savedMessageCount, useChatStore } from './store.js';
 import { e2eLockReady } from './e2eLock.js';
 import { importInbox } from './backgroundInbox.js';
 import { runScheduledBackup, shouldOfferRestore } from './cloudBackup.js';
@@ -29,8 +29,8 @@ import { setNativeCallsEnabled } from './nativeRtc.js';
 
 // Step 5 data seam: the projection of a chat's messages the native conversation screen shows (last 60, { mine, text,
 // time }). Shared by the active-chat mirror and the native-UI send handler.
-function nativeMessageProjection(list, userId) {
-  return (Array.isArray(list) ? list : []).filter((message) => message?.id).slice(-60).map((message) => {
+function nativeMessageProjection(list, userId, cap = 60) {
+  return (Array.isArray(list) ? list : []).filter((message) => message?.id).slice(-cap).map((message) => {
     const at = typeof message.createdAt === 'number' ? message.createdAt : Date.parse(message.timestamp);
     return {
       id: String(message.id),
@@ -301,6 +301,51 @@ export default function App() {
     }, 800);
     return () => clearTimeout(timer);
   }, [allMessages]);
+  // Item 2 (history → NativeStore as source of truth): a ONE-TIME full-history migration. The bulk mirror above only
+  // covers chats the WebView has LOADED (recent window); this copies the COMPLETE local history — every chat, deep —
+  // from this device's encrypted store (loadAllSavedMessages) into NativeStore once, so the native UI reads the whole
+  // history from NativeStore and no longer depends on what the WebView happens to have loaded. Idempotent
+  // (nativeSaveMessagesBatch upserts), batched to bound the bridge payload, run once per account (a deviceStorage
+  // flag), and gated on the native-UI flag so WebView-only installs skip the work.
+  useEffect(() => {
+    if (!nativeShell() || !sessionToken) return undefined;
+    let cancelled = false;
+    (async () => {
+      const me = useChatStore.getState().userId;
+      if (!me) return;
+      if (!(await nativeUiAllowed().catch(() => false))) return;
+      const flag = `native-history-migrated:${me}`;
+      if (deviceStorage.getItem(flag)) return;
+      const all = await loadAllSavedMessages(me).catch(() => null);
+      if (!all || cancelled) return;
+      let batch = {};
+      let pending = 0;
+      let chats = 0;
+      let total = 0;
+      const flush = async () => {
+        if (cancelled || !Object.keys(batch).length) return;
+        await nativeSaveMessagesBatch(batch).catch(() => {});
+        batch = {};
+        pending = 0;
+      };
+      for (const [chatId, list] of Object.entries(all)) {
+        if (cancelled) return;
+        const projection = nativeMessageProjection(list, me, 2000); // deep history per chat; bounded
+        if (!projection.length) continue;
+        batch[chatId] = projection;
+        pending += projection.length;
+        chats += 1;
+        total += projection.length;
+        if (pending >= 1500) await flush();
+      }
+      await flush();
+      if (!cancelled) {
+        deviceStorage.setItem(flag, '1');
+        console.log(`[hm-migrate] native history migrated: chats=${chats} messages=${total}`);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [sessionToken]);
   // Step 5 interim send: the native UI hands plaintext here (NativeUiBridge → nativeUiSend); the web app's audited E2E
   // path seals + relays it, then that chat's messages are mirrored back so the native conversation updates.
   useEffect(() => {
