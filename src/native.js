@@ -101,6 +101,9 @@ export const nativeCallStats = (callId) => invoke('callStats', { callId });
 // native calls switched on for this install — default off). A rollout driver / device test flips the switch.
 export async function nativeCallsAllowed() { const result = await invoke('nativeCallsAllowed'); return Boolean(result?.allowed); }
 export const nativeSetCallsRollout = (enabled) => invoke('setNativeCallsRollout', { enabled: Boolean(enabled) });
+// Step 5 data seam: mirror the web app's chat list into the native store so the native (Compose) UI can show it.
+// `chats` is a lightweight projection: [{ id, name, preview, time, unread }].
+export const nativeSaveChats = (chats) => invoke('saveNativeChats', { chats: Array.isArray(chats) ? chats : [] });
 // Uploads in progress: { count, label, progress (0-100) }; count 0 ends the "Sending…" foreground service.
 export const nativeSetUploads = (state) => invoke('setUploads', state);
 // Android Keystore sealing for the local data key (src/secureStorage.js): { sealed } / { value }, null outside the app.

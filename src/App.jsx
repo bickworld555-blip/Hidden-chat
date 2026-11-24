@@ -24,7 +24,7 @@ import { applyGroupChange, GROUP_CHANGE_EVENTS } from './groupChanges.js';
 import { cachedGroupDetails } from './groupCache.js';
 import { applyGroupCall, withRunningCall } from './groupCalls.js';
 import { notificationNames } from './notificationNames.js';
-import { nativeClearSession, nativeWipeE2e, nativeEnableE2e, nativeRequestStartupPermissions, nativeSetSession, nativeShell, nativeStartBackground, nativeState, nativeStopBackground, nativeTakePendingCall, nativeMoveToBackground, nativeClearShare, nativeSetCallActive, nativeClearMessageNotifications, nativeClearMissedCalls, nativeTakeMessageActions, nativeTakeCallEvents, nativeSetSystemBarsTheme, nativeOpenSecret, nativePreviewKey, nativeBackgroundFetchDone, nativeScheduleUnsent, nativeE2eActive, nativeCallsAllowed, nativeTakeInbox, onNative } from './native.js';
+import { nativeClearSession, nativeWipeE2e, nativeEnableE2e, nativeRequestStartupPermissions, nativeSetSession, nativeShell, nativeStartBackground, nativeState, nativeStopBackground, nativeTakePendingCall, nativeMoveToBackground, nativeClearShare, nativeSetCallActive, nativeClearMessageNotifications, nativeClearMissedCalls, nativeTakeMessageActions, nativeTakeCallEvents, nativeSetSystemBarsTheme, nativeOpenSecret, nativePreviewKey, nativeBackgroundFetchDone, nativeScheduleUnsent, nativeE2eActive, nativeCallsAllowed, nativeSaveChats, nativeTakeInbox, onNative } from './native.js';
 import { setNativeCallsEnabled } from './nativeRtc.js';
 import { parseShare } from './shareTarget.js';
 import { e2eDeviceId, onE2eEvent, importNativeInbox, publishPreviewKey, replayE2eEvent, sealDirect, sealToOwnDevices, startE2e, stopE2e, userForXmppAddress, xmppGroupTargetsFor, xmppTargetsFor } from './e2e/client.js';
@@ -230,6 +230,22 @@ export default function App() {
   const xmppRef = useRef(null);
   // The relay settings a call needs, fetched ahead so placing or answering a call does not wait for them.
   useEffect(() => { prefetchIceServers(sessionToken); }, [sessionToken]);
+  // Step 5 data seam: mirror the chat list into the native store (debounced) so the native Compose UI can show real
+  // conversations. The web app owns the chat data; this pushes a lightweight projection. Native shell only.
+  useEffect(() => {
+    if (!nativeShell()) return undefined;
+    const timer = setTimeout(() => {
+      const projection = (chats || []).slice(0, 200).map((chat) => ({
+        id: String(chat.id ?? ''),
+        name: String(chat.name ?? ''),
+        preview: typeof chat.preview === 'string' ? chat.preview : '',
+        time: String(chat.time ?? ''),
+        unread: Number(chat.unread) || 0,
+      })).filter((chat) => chat.id);
+      nativeSaveChats(projection).catch(() => {});
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [chats]);
   // A message request accepted (here or on another device): the XMPP receipts held for that person go out.
   useEffect(() => onContactAccepted((peerId) => xmppRef.current?.releaseReceipts?.(peerId)), []);
   // The latest link of the chain that opens and handles incoming events in order (a background fetch waits for it).

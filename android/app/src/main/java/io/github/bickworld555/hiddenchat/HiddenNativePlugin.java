@@ -1521,6 +1521,33 @@ public class HiddenNativePlugin extends Plugin {
     }
 
     /**
+     * Step 5 data seam: the web app mirrors its chat list into the native store so the native (Compose) UI can show
+     * real conversations. A lightweight projection (id, name, preview, time, unread); the chat data stays owned by the
+     * web app. Not gated by the call/E2E flags — it is local display data, and does nothing if there is no native store.
+     */
+    @PluginMethod
+    public void saveNativeChats(PluginCall call) {
+        io.github.bickworld555.hiddenchat.core.store.NativeStore store =
+            io.github.bickworld555.hiddenchat.core.store.NativeStore.Companion.get(getContext());
+        if (store == null) { call.resolve(); return; }
+        JSArray arr = call.getArray("chats");
+        java.util.List<io.github.bickworld555.hiddenchat.core.store.ChatRecord> rows = new java.util.ArrayList<>();
+        if (arr != null) {
+            for (int i = 0; i < arr.length(); i++) {
+                try {
+                    org.json.JSONObject o = arr.getJSONObject(i);
+                    String id = o.optString("id", "");
+                    if (id.isEmpty()) continue;
+                    rows.add(new io.github.bickworld555.hiddenchat.core.store.ChatRecord(
+                        id, o.optString("name", ""), o.optString("preview", ""), o.optString("time", ""), o.optInt("unread", 0)));
+                } catch (org.json.JSONException ignored) { /* skip a malformed row */ }
+            }
+        }
+        store.saveChats(rows);
+        call.resolve();
+    }
+
+    /**
      * The per-account rollout gate for native call media: the native path must be active for this account AND native
      * calls must be switched on for this install. Default OFF (separate from the E2E native flag), so an account on the
      * native E2E path does not silently get the still-unverified native call path — the WebView call stack runs until a

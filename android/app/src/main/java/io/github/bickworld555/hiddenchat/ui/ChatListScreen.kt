@@ -31,25 +31,17 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-/** One chat row's data. Step 5 foundation uses placeholder rows; a later increment reads the native message store. */
+/** One chat row's data the native UI shows (Step 5 data seam), mirrored from the web app's chat list. */
 data class ChatRowData(val name: String, val lastMessage: String, val time: String, val unread: Int = 0)
 
-private val SAMPLE_CHATS = listOf(
-    ChatRowData("Hidden Messenger", "Native UI foundation (Step 5) — placeholder data", "now", 2),
-    ChatRowData("Design", "Let's align the chat list with the web app tokens", "09:41"),
-    ChatRowData("Calls", "Native WebRTC media is wired (Step 4)", "Yesterday"),
-    ChatRowData("Family", "See you this weekend 🎉", "Mon", 0),
-    ChatRowData("Work", "Pushed the build to the test device", "Sun"),
-)
-
 /**
- * The native chat list (Step 5 foundation). A scaffold mirroring the web app's home screen — a top bar, a scrollable
- * list of conversations, and a compose button. Placeholder data for now; the real list will come from the native store
- * once the data seam is built. Nothing points a launcher at this yet, so the WebView UI is unaffected.
+ * The native chat list (Step 5). A scaffold mirroring the web app's home screen — a top bar, a scrollable list of
+ * conversations, and a compose button. The rows come from the native store ([NativeStore.chats], mirrored from the web
+ * app); an empty store shows an empty state. Nothing points a launcher at this yet, so the WebView UI is unaffected.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ChatListScreen() {
+fun ChatListScreen(chats: List<ChatRowData> = emptyList()) {
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
@@ -69,10 +61,16 @@ fun ChatListScreen() {
             ) { Text("+", fontSize = 26.sp) }
         },
     ) { padding ->
-        LazyColumn(modifier = Modifier.fillMaxSize().padding(padding)) {
-            items(SAMPLE_CHATS) { chat ->
-                ChatRow(chat)
-                HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant, thickness = 0.5.dp)
+        if (chats.isEmpty()) {
+            Box(modifier = Modifier.fillMaxSize().padding(padding), contentAlignment = Alignment.Center) {
+                Text("No chats yet", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 15.sp)
+            }
+        } else {
+            LazyColumn(modifier = Modifier.fillMaxSize().padding(padding)) {
+                items(chats) { chat ->
+                    ChatRow(chat)
+                    HorizontalDivider(color = MaterialTheme.colorScheme.surfaceVariant, thickness = 0.5.dp)
+                }
             }
         }
     }

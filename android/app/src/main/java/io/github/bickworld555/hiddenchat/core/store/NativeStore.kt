@@ -8,6 +8,9 @@ import java.security.SecureRandom
 import java.util.concurrent.locks.ReentrantLock
 import net.zetetic.database.sqlcipher.SQLiteDatabase
 
+/** One chat-list row the native (Compose) UI shows, mirrored from the web app's chat list (Step 5 data seam). */
+data class ChatRecord(val id: String, val name: String, val preview: String, val time: String, val unread: Int)
+
 /**
  * Where the native encryption core (CryptoCore) keeps its records between calls: this device's identity, prekeys,
  * sessions, pinned identities and sender keys, by name, as JSON text. A SQLCipher database of its own
@@ -62,8 +65,34 @@ class NativeStore private constructor(private val db: SQLiteDatabase) : KeyRecor
         }
     }
 
-    /** Forgets every record (sign-out): the core's identity, sessions and keys all go. */
-    override fun clear() { exclusive { db.execSQL("DELETE FROM records") } }
+    /** Forgets every record (sign-out): the core's identity, sessions and keys all go, and the mirrored chat list. */
+    override fun clear() { exclusive { db.execSQL("DELETE FROM records"); db.execSQL("DELETE FROM chats") } }
+
+    /**
+     * Replaces the mirrored chat list the native UI reads (Step 5 data seam), preserving the given order. The web app
+     * owns the chat data and pushes this lightweight projection (id, name, preview, time, unread) whenever its list
+     * changes; a later increment will have the native background inbox keep it up to date directly.
+     */
+    fun saveChats(rows: List<ChatRecord>) = exclusive {
+        db.execSQL("DELETE FROM chats")
+        rows.forEachIndexed { index, row ->
+            db.execSQL(
+                "INSERT INTO chats(id, name, preview, time, unread, position) VALUES(?, ?, ?, ?, ?, ?)",
+                arrayOf(row.id, row.name, row.preview, row.time, row.unread, index),
+            )
+        }
+    }
+
+    /** The mirrored chat list for the native UI, in saved (most-recent-first) order. */
+    fun chats(): List<ChatRecord> = exclusive {
+        val out = ArrayList<ChatRecord>()
+        db.rawQuery("SELECT id, name, preview, time, unread FROM chats ORDER BY position ASC", null).use { cursor ->
+            while (cursor.moveToNext()) {
+                out.add(ChatRecord(cursor.getString(0), cursor.getString(1), cursor.getString(2), cursor.getString(3), cursor.getInt(4)))
+            }
+        }
+        out
+    }
 
     /**
      * Makes sure this store belongs to [account]. If it holds another account's data (or none yet), every record is
@@ -74,6 +103,7 @@ class NativeStore private constructor(private val db: SQLiteDatabase) : KeyRecor
     fun adoptOwner(account: String) = exclusive {
         if (get(OWNER) != account) {
             db.execSQL("DELETE FROM records")
+            db.execSQL("DELETE FROM chats")
             set(OWNER, account)
         }
     }
@@ -136,6 +166,8 @@ class NativeStore private constructor(private val db: SQLiteDatabase) : KeyRecor
                 // (execSQL rejects result-returning statements). A wrong key throws here; CREATE TABLE returns nothing.
                 db.rawQuery("PRAGMA journal_mode = WAL", null).use { it.moveToFirst() }
                 db.execSQL("CREATE TABLE IF NOT EXISTS records (k TEXT PRIMARY KEY, v TEXT NOT NULL)")
+                // Step 5 data seam: the native UI's chat-list projection, mirrored from the web app.
+                db.execSQL("CREATE TABLE IF NOT EXISTS chats (id TEXT PRIMARY KEY, name TEXT NOT NULL, preview TEXT NOT NULL, time TEXT NOT NULL, unread INTEGER NOT NULL DEFAULT 0, position INTEGER NOT NULL DEFAULT 0)")
             } catch (bad: Throwable) {
                 try { db.close() } catch (ignored: Throwable) { /* already unusable */ }
                 throw bad
