@@ -12,10 +12,10 @@ import kotlinx.coroutines.flow.asStateFlow
 import net.zetetic.database.sqlcipher.SQLiteDatabase
 
 /** One chat-list row the native (Compose) UI shows, mirrored from the web app's chat list (Step 5 data seam). */
-data class ChatRecord(val id: String, val name: String, val preview: String, val time: String, val unread: Int)
+data class ChatRecord(val id: String, val name: String, val preview: String, val time: String, val unread: Int, val avatar: String)
 
 /** One person the native new-chat picker shows (chats + known people), mirrored from the web app (Step 5). */
-data class ContactRecord(val id: String, val name: String)
+data class ContactRecord(val id: String, val name: String, val avatar: String)
 
 /**
  * One message in a chat the native UI shows. Keyed by [id] and ordered by [ts] (epoch ms) so the native background
@@ -95,8 +95,8 @@ class NativeStore private constructor(private val db: SQLiteDatabase) : KeyRecor
         db.execSQL("DELETE FROM chats")
         rows.forEachIndexed { index, row ->
             db.execSQL(
-                "INSERT INTO chats(id, name, preview, time, unread, position) VALUES(?, ?, ?, ?, ?, ?)",
-                arrayOf(row.id, row.name, row.preview, row.time, row.unread, index),
+                "INSERT INTO chats(id, name, preview, time, unread, position, avatar) VALUES(?, ?, ?, ?, ?, ?, ?)",
+                arrayOf(row.id, row.name, row.preview, row.time, row.unread, index, row.avatar),
             )
         }
         bump()
@@ -105,9 +105,9 @@ class NativeStore private constructor(private val db: SQLiteDatabase) : KeyRecor
     /** The mirrored chat list for the native UI, in saved (most-recent-first) order. */
     fun chats(): List<ChatRecord> = exclusive {
         val out = ArrayList<ChatRecord>()
-        db.rawQuery("SELECT id, name, preview, time, unread FROM chats ORDER BY position ASC", null).use { cursor ->
+        db.rawQuery("SELECT id, name, preview, time, unread, avatar FROM chats ORDER BY position ASC", null).use { cursor ->
             while (cursor.moveToNext()) {
-                out.add(ChatRecord(cursor.getString(0), cursor.getString(1), cursor.getString(2), cursor.getString(3), cursor.getInt(4)))
+                out.add(ChatRecord(cursor.getString(0), cursor.getString(1), cursor.getString(2), cursor.getString(3), cursor.getInt(4), cursor.getString(5)))
             }
         }
         out
@@ -117,7 +117,7 @@ class NativeStore private constructor(private val db: SQLiteDatabase) : KeyRecor
     fun saveContacts(rows: List<ContactRecord>) = exclusive {
         db.execSQL("DELETE FROM contacts")
         rows.forEachIndexed { index, row ->
-            db.execSQL("INSERT INTO contacts(id, name, position) VALUES(?, ?, ?)", arrayOf(row.id, row.name, index))
+            db.execSQL("INSERT INTO contacts(id, name, position, avatar) VALUES(?, ?, ?, ?)", arrayOf(row.id, row.name, index, row.avatar))
         }
         bump()
     }
@@ -125,8 +125,8 @@ class NativeStore private constructor(private val db: SQLiteDatabase) : KeyRecor
     /** The people for the native new-chat picker, in saved order. */
     fun contacts(): List<ContactRecord> = exclusive {
         val out = ArrayList<ContactRecord>()
-        db.rawQuery("SELECT id, name FROM contacts ORDER BY position ASC", null).use { cursor ->
-            while (cursor.moveToNext()) out.add(ContactRecord(cursor.getString(0), cursor.getString(1)))
+        db.rawQuery("SELECT id, name, avatar FROM contacts ORDER BY position ASC", null).use { cursor ->
+            while (cursor.moveToNext()) out.add(ContactRecord(cursor.getString(0), cursor.getString(1), cursor.getString(2)))
         }
         out
     }
@@ -238,8 +238,11 @@ class NativeStore private constructor(private val db: SQLiteDatabase) : KeyRecor
                 db.rawQuery("PRAGMA journal_mode = WAL", null).use { it.moveToFirst() }
                 db.execSQL("CREATE TABLE IF NOT EXISTS records (k TEXT PRIMARY KEY, v TEXT NOT NULL)")
                 // Step 5 data seam: the native UI's chat-list + per-chat message projections, mirrored from the web app.
-                db.execSQL("CREATE TABLE IF NOT EXISTS chats (id TEXT PRIMARY KEY, name TEXT NOT NULL, preview TEXT NOT NULL, time TEXT NOT NULL, unread INTEGER NOT NULL DEFAULT 0, position INTEGER NOT NULL DEFAULT 0)")
-                db.execSQL("CREATE TABLE IF NOT EXISTS contacts (id TEXT PRIMARY KEY, name TEXT NOT NULL, position INTEGER NOT NULL DEFAULT 0)")
+                db.execSQL("CREATE TABLE IF NOT EXISTS chats (id TEXT PRIMARY KEY, name TEXT NOT NULL, preview TEXT NOT NULL, time TEXT NOT NULL, unread INTEGER NOT NULL DEFAULT 0, position INTEGER NOT NULL DEFAULT 0, avatar TEXT NOT NULL DEFAULT '')")
+                db.execSQL("CREATE TABLE IF NOT EXISTS contacts (id TEXT PRIMARY KEY, name TEXT NOT NULL, position INTEGER NOT NULL DEFAULT 0, avatar TEXT NOT NULL DEFAULT '')")
+                // Add the avatar column to databases created before it existed (a no-op once the column is present).
+                try { db.execSQL("ALTER TABLE chats ADD COLUMN avatar TEXT NOT NULL DEFAULT ''") } catch (ignored: Throwable) { /* already present */ }
+                try { db.execSQL("ALTER TABLE contacts ADD COLUMN avatar TEXT NOT NULL DEFAULT ''") } catch (ignored: Throwable) { /* already present */ }
                 // Superseded by chat_messages (id-keyed, ts-ordered, upsert) so the native inbox and the web mirror can
                 // both write; the old position-ordered cache is dropped (it is a cache, rebuilt from the mirror/inbox).
                 db.execSQL("DROP TABLE IF EXISTS messages")

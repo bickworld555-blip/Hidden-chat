@@ -23,6 +23,8 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
+import io.github.bickworld555.hiddenchat.NativeImage
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -33,7 +35,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 /** One chat row's data the native UI shows (Step 5 data seam), mirrored from the web app's chat list. */
-data class ChatRowData(val id: String, val name: String, val lastMessage: String, val time: String, val unread: Int = 0)
+data class ChatRowData(val id: String, val name: String, val lastMessage: String, val time: String, val unread: Int = 0, val avatar: String = "")
 
 /**
  * The native chat list (Step 5). A scaffold mirroring the web app's home screen — a top bar, a scrollable list of
@@ -83,7 +85,7 @@ private fun ChatRow(chat: ChatRowData, onClick: () -> Unit) {
         modifier = Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        ContactAvatar(chat.name)
+        ContactAvatar(chat.name, chat.avatar)
         Spacer(Modifier.width(14.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(
@@ -117,12 +119,26 @@ private fun ChatRow(chat: ChatRowData, onClick: () -> Unit) {
 }
 
 @Composable
-internal fun ContactAvatar(name: String) {
+internal fun ContactAvatar(name: String, avatar: String? = null) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val url = remember(avatar) { NativeImage.url(context, avatar) }
     val initials = name.trim().split(" ").mapNotNull { it.firstOrNull()?.toString() }.take(2).joinToString("").uppercase()
     val palette = listOf(Color(0xFF2674D9), Color(0xFF1B8A6B), Color(0xFFB8641B), Color(0xFF8A1B6B), Color(0xFF1B6B8A))
     val color = palette[(name.hashCode() and 0x7FFFFFFF) % palette.size]
     Box(
         modifier = Modifier.clip(CircleShape).background(color).size(48.dp),
         contentAlignment = Alignment.Center,
-    ) { Text(initials.ifEmpty { "?" }, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 16.sp) }
+    ) {
+        // Initials show while the photo loads or if there is none; the photo (when it loads) draws over them.
+        Text(initials.ifEmpty { "?" }, color = Color.White, fontWeight = FontWeight.SemiBold, fontSize = 16.sp)
+        if (url != null) {
+            coil.compose.AsyncImage(
+                model = url,
+                imageLoader = NativeImage.loader(context),
+                contentDescription = null,
+                modifier = Modifier.size(48.dp).clip(CircleShape),
+                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+            )
+        }
+    }
 }

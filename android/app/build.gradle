@@ -134,6 +134,8 @@ dependencies {
     implementation 'androidx.compose.material3:material3'
     implementation 'androidx.activity:activity-compose:1.10.1'
     implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1'
+    // Step 5: avatar images in the native UI (auth-gated, loaded via the session token over the existing OkHttp).
+    implementation 'io.coil-kt:coil-compose:2.7.0'
     debugImplementation 'androidx.compose.ui:ui-tooling'
     // App lock: the phone's biometrics or screen-lock credential (AppSecurity.java).
     implementation 'androidx.biometric:biometric:1.1.0'

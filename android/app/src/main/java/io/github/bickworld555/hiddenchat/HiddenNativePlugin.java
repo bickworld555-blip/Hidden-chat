@@ -1547,7 +1547,7 @@ public class HiddenNativePlugin extends Plugin {
                     String id = o.optString("id", "");
                     if (id.isEmpty()) continue;
                     rows.add(new io.github.bickworld555.hiddenchat.core.store.ChatRecord(
-                        id, o.optString("name", ""), o.optString("preview", ""), o.optString("time", ""), o.optInt("unread", 0)));
+                        id, o.optString("name", ""), o.optString("preview", ""), o.optString("time", ""), o.optInt("unread", 0), o.optString("avatar", "")));
                 } catch (org.json.JSONException ignored) { /* skip a malformed row */ }
             }
         }
@@ -1569,7 +1569,7 @@ public class HiddenNativePlugin extends Plugin {
                     org.json.JSONObject o = arr.getJSONObject(i);
                     String id = o.optString("id", "");
                     if (id.isEmpty()) continue;
-                    rows.add(new io.github.bickworld555.hiddenchat.core.store.ContactRecord(id, o.optString("name", "")));
+                    rows.add(new io.github.bickworld555.hiddenchat.core.store.ContactRecord(id, o.optString("name", ""), o.optString("avatar", "")));
                 } catch (org.json.JSONException ignored) { /* skip a malformed row */ }
             }
         }

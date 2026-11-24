@@ -26,7 +26,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 /** One person in the native new-chat picker (Step 5), mirrored from the web app's chats + known people. */
-data class ContactRowData(val id: String, val name: String)
+data class ContactRowData(val id: String, val name: String, val avatar: String = "")
 
 /**
  * The native new-chat picker (Step 5): the people the user can start or continue a conversation with (existing chats
@@ -74,7 +74,7 @@ private fun ContactRow(contact: ContactRowData, onClick: () -> Unit) {
         modifier = Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        ContactAvatar(contact.name)
+        ContactAvatar(contact.name, contact.avatar)
         Spacer(Modifier.width(14.dp))
         Text(
             contact.name,

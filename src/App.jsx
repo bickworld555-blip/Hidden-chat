@@ -256,6 +256,7 @@ export default function App() {
         preview: typeof chat.preview === 'string' ? chat.preview : '',
         time: String(chat.time ?? ''),
         unread: Number(chat.unread) || 0,
+        avatar: typeof chat.avatar === 'string' ? chat.avatar : '',
       })).filter((chat) => chat.id);
       nativeSaveChats(projection).catch(() => {});
     }, 400);
@@ -268,10 +269,10 @@ export default function App() {
     const timer = setTimeout(() => {
       const byId = new Map();
       for (const chat of chats || []) {
-        if (chat?.id && chat.id !== userId && !byId.has(chat.id)) byId.set(chat.id, { id: String(chat.id), name: String(chat.name || chat.username || chat.id) });
+        if (chat?.id && chat.id !== userId && !byId.has(chat.id)) byId.set(chat.id, { id: String(chat.id), name: String(chat.name || chat.username || chat.id), avatar: typeof chat.avatar === 'string' ? chat.avatar : '' });
       }
       for (const person of Object.values(knownPeople || {})) {
-        if (person?.id && person.id !== userId && !byId.has(person.id)) byId.set(person.id, { id: String(person.id), name: String(person.name || person.profileName || person.username || person.id) });
+        if (person?.id && person.id !== userId && !byId.has(person.id)) byId.set(person.id, { id: String(person.id), name: String(person.name || person.profileName || person.username || person.id), avatar: typeof person.avatar === 'string' ? person.avatar : '' });
       }
       nativeSaveContacts([...byId.values()].slice(0, 500)).catch(() => {});
     }, 500);

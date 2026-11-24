@@ -74,7 +74,7 @@ class NativeUiActivity : ComponentActivity() {
                         contacts,
                         onPick = { contact ->
                             showNewChat = false
-                            openChat = ChatRowData(contact.id, contact.name, "", "", 0)
+                            openChat = ChatRowData(contact.id, contact.name, "", "", 0, contact.avatar)
                         },
                         onBack = { showNewChat = false },
                     )
@@ -97,7 +97,7 @@ class NativeUiActivity : ComponentActivity() {
     }
 
     private fun readChats(store: NativeStore?): List<ChatRowData> = try {
-        store?.chats()?.map { ChatRowData(it.id, it.name, it.preview, it.time, it.unread) } ?: emptyList()
+        store?.chats()?.map { ChatRowData(it.id, it.name, it.preview, it.time, it.unread, it.avatar) } ?: emptyList()
     } catch (ignored: Throwable) {
         emptyList()
     }
@@ -109,7 +109,7 @@ class NativeUiActivity : ComponentActivity() {
     }
 
     private fun readContacts(store: NativeStore?): List<ContactRowData> = try {
-        store?.contacts()?.map { ContactRowData(it.id, it.name) } ?: emptyList()
+        store?.contacts()?.map { ContactRowData(it.id, it.name, it.avatar) } ?: emptyList()
     } catch (ignored: Throwable) {
         emptyList()
     }
