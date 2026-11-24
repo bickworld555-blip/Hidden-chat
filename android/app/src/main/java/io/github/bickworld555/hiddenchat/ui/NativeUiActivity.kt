@@ -10,6 +10,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import io.github.bickworld555.hiddenchat.NativeUiBridge
 import io.github.bickworld555.hiddenchat.core.store.NativeStore
 import io.github.bickworld555.hiddenchat.ui.theme.HiddenTheme
 import kotlinx.coroutines.Dispatchers
@@ -50,7 +51,13 @@ class NativeUiActivity : ComponentActivity() {
                 if (current == null) {
                     ChatListScreen(chats, onOpenChat = { openChat = it })
                 } else {
-                    ConversationScreen(current.name, messages, onBack = { openChat = null })
+                    ConversationScreen(
+                        current.name,
+                        messages,
+                        onBack = { openChat = null },
+                        // Interim send: the web app's E2E path seals + relays; the message returns via the store mirror.
+                        onSend = { text -> NativeUiBridge.requestSend(current.id, text) },
+                    )
                 }
             }
         }

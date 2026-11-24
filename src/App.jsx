@@ -26,6 +26,19 @@ import { applyGroupCall, withRunningCall } from './groupCalls.js';
 import { notificationNames } from './notificationNames.js';
 import { nativeClearSession, nativeWipeE2e, nativeEnableE2e, nativeRequestStartupPermissions, nativeSetSession, nativeShell, nativeStartBackground, nativeState, nativeStopBackground, nativeTakePendingCall, nativeMoveToBackground, nativeClearShare, nativeSetCallActive, nativeClearMessageNotifications, nativeClearMissedCalls, nativeTakeMessageActions, nativeTakeCallEvents, nativeSetSystemBarsTheme, nativeOpenSecret, nativePreviewKey, nativeBackgroundFetchDone, nativeScheduleUnsent, nativeE2eActive, nativeCallsAllowed, nativeSaveChats, nativeSaveMessages, nativeUiAllowed, nativeOpenUi, nativeTakeInbox, onNative } from './native.js';
 import { setNativeCallsEnabled } from './nativeRtc.js';
+
+// Step 5 data seam: the projection of a chat's messages the native conversation screen shows (last 60, { mine, text,
+// time }). Shared by the active-chat mirror and the native-UI send handler.
+function nativeMessageProjection(list, userId) {
+  return (Array.isArray(list) ? list : []).slice(-60).map((message) => {
+    const at = typeof message.createdAt === 'number' ? message.createdAt : Date.parse(message.timestamp);
+    return {
+      mine: message.senderId === userId,
+      text: message.deleted ? '🚫 Message deleted' : previewFor(message.content ?? ''),
+      time: Number.isFinite(at) ? new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '',
+    };
+  });
+}
 import { parseShare } from './shareTarget.js';
 import { e2eDeviceId, onE2eEvent, importNativeInbox, publishPreviewKey, replayE2eEvent, sealDirect, sealToOwnDevices, startE2e, stopE2e, userForXmppAddress, xmppGroupTargetsFor, xmppTargetsFor } from './e2e/client.js';
 import { createControlBuffer, expiredIds, resolveControl, roleIn } from './e2e/lifecycle.js';
@@ -252,19 +265,21 @@ export default function App() {
   useEffect(() => {
     if (!nativeShell() || !activeChatId) return undefined;
     const timer = setTimeout(() => {
-      const list = Array.isArray(activeMessages) ? activeMessages : [];
-      const projection = list.slice(-60).map((message) => {
-        const at = typeof message.createdAt === 'number' ? message.createdAt : Date.parse(message.timestamp);
-        return {
-          mine: message.senderId === userId,
-          text: message.deleted ? '🚫 Message deleted' : previewFor(message.content ?? ''),
-          time: Number.isFinite(at) ? new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '',
-        };
-      });
-      nativeSaveMessages(activeChatId, projection).catch(() => {});
+      nativeSaveMessages(activeChatId, nativeMessageProjection(activeMessages, userId)).catch(() => {});
     }, 400);
     return () => clearTimeout(timer);
   }, [activeChatId, activeMessages, userId]);
+  // Step 5 interim send: the native UI hands plaintext here (NativeUiBridge → nativeUiSend); the web app's audited E2E
+  // path seals + relays it, then that chat's messages are mirrored back so the native conversation updates.
+  useEffect(() => {
+    if (!nativeShell()) return undefined;
+    return onNative('nativeUiSend', async ({ chatId, text }) => {
+      if (!chatId || typeof text !== 'string' || !text.trim()) return;
+      try { await useChatStore.getState().sendMessage(chatId, text.trim()); } catch { /* send failed; nothing to mirror */ }
+      const store = useChatStore.getState();
+      nativeSaveMessages(chatId, nativeMessageProjection(store.messages[chatId], store.userId)).catch(() => {});
+    });
+  }, []);
   // Step 5 native-UI rollout: when enabled for this install (default off), open the native Compose UI in place of the
   // WebView once signed in. Off by default, so every account keeps the WebView UI until a rollout turns it on.
   useEffect(() => {

@@ -77,6 +77,14 @@ public class HiddenNativePlugin extends Plugin {
                 // The web app is gone or the payload would not serialize: the call event is simply not delivered.
             }
         });
+        // The native (Compose) UI asks the web app to send messages through its audited E2E path (Step 5 interim).
+        NativeUiBridge.INSTANCE.setEmitter((event, data) -> {
+            try {
+                notifyListeners(event, JSObject.fromJSONObject(new JSONObject(Json.INSTANCE.stringify(data))), true);
+            } catch (Exception ignored) {
+                // The web app is gone: the send request is dropped (the native UI's send needs the live WebView for now).
+            }
+        });
         // A page that (re)loads starts without a call: one still marked live belonged to the page that went away.
         getBridge().addWebViewListener(new com.getcapacitor.WebViewListener() {
             @Override

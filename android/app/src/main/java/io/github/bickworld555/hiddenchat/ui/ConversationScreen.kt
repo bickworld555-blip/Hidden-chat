@@ -44,7 +44,7 @@ data class MessageRowData(val mine: Boolean, val text: String, val time: String)
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ConversationScreen(title: String, messages: List<MessageRowData>, onBack: () -> Unit) {
+fun ConversationScreen(title: String, messages: List<MessageRowData>, onBack: () -> Unit, onSend: (String) -> Unit = {}) {
     var draft by remember { mutableStateOf("") }
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -77,7 +77,11 @@ fun ConversationScreen(title: String, messages: List<MessageRowData>, onBack: ()
                     keyboardActions = KeyboardActions(onSend = {}),
                 )
                 IconButton(
-                    onClick = { /* TODO: wire the native send/encrypt path; the WebView still owns sending */ },
+                    // Interim: the web app's audited E2E path seals + relays; the sent message returns via the mirror.
+                    onClick = {
+                        val text = draft.trim()
+                        if (text.isNotEmpty()) { onSend(text); draft = "" }
+                    },
                     enabled = draft.isNotBlank(),
                 ) {
                     Text(
