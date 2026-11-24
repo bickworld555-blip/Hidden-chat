@@ -19,9 +19,8 @@ import java.util.UUID
  *
  * SECURITY-CRITICAL and UNVERIFIED: written without a running comparison, it MUST be reviewed against the web code and
  * validated on two real devices before the native-UI flag is enabled. Scope: direct plain-text only (no groups, media,
- * extras, receipts). TRANSPORT CAVEAT: [NativeRelay]'s socket is open only while the app is backgrounded (the WebView
- * owns the foreground socket), so [sendText] returns false in the foreground and the caller falls back to the web
- * relay; a native foreground connection is the remaining step for 100% WebView-free send.
+ * extras, receipts). TRANSPORT: sends over [NativeSendSocket] (the native UI's own foreground connection) when visible,
+ * or [NativeRelay] when backgrounded; the caller falls back to the web relay only if neither native socket is open.
  */
 object NativeSend {
     // A base64 P-256 public key (43 bytes -> 86 chars + "=="); a device id. Mirrors deviceList.js KEY / DEVICE_ID.
@@ -31,7 +30,8 @@ object NativeSend {
 
     /** Seal `text` to `peerId` (native trust + encryption) and send it over the relay; true only when it went out. */
     fun sendText(context: Context, peerId: String, text: String): Boolean {
-        if (!NativeRelay.canSend()) return false            // no native socket (foreground): caller uses the web relay
+        // A native socket must be open: the foreground send socket (native UI visible) or the background relay.
+        if (!NativeSendSocket.canSend() && !NativeRelay.canSend()) return false
         val core = CryptoCores.current() ?: return false
         val session = RelaySession.read(context) ?: return false
         val meUserId = session.userId ?: return false
@@ -57,7 +57,8 @@ object NativeSend {
 
         val messageId = UUID.randomUUID().toString()
         val message = org.json.JSONObject().put("id", messageId).put("receiverId", peerId).put("content", envelope)
-        if (!NativeRelay.sendMessage(message)) return false
+        // Prefer the foreground socket; fall back to the background relay if that is the one that is open.
+        if (!NativeSendSocket.sendMessage(message) && !NativeRelay.sendMessage(message)) return false
 
         // Optimistic local echo so the native conversation shows the sent message at once.
         val ts = System.currentTimeMillis()

@@ -11,6 +11,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import io.github.bickworld555.hiddenchat.NativeSend
+import io.github.bickworld555.hiddenchat.NativeSendSocket
 import io.github.bickworld555.hiddenchat.NativeUiBridge
 import io.github.bickworld555.hiddenchat.core.store.NativeStore
 import io.github.bickworld555.hiddenchat.ui.theme.HiddenTheme
@@ -103,6 +104,18 @@ class NativeUiActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    // The native UI's own relay connection, open only while this screen is visible, so a native send can go out over a
+    // native socket (NativeSend) instead of the WebView's. Closed when the UI is hidden so it never lingers.
+    override fun onStart() {
+        super.onStart()
+        NativeSendSocket.start(applicationContext)
+    }
+
+    override fun onStop() {
+        super.onStop()
+        NativeSendSocket.stop()
     }
 
     private fun readChats(store: NativeStore?): List<ChatRowData> = try {
