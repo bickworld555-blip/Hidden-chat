@@ -30,12 +30,14 @@ import { setNativeCallsEnabled } from './nativeRtc.js';
 // Step 5 data seam: the projection of a chat's messages the native conversation screen shows (last 60, { mine, text,
 // time }). Shared by the active-chat mirror and the native-UI send handler.
 function nativeMessageProjection(list, userId) {
-  return (Array.isArray(list) ? list : []).slice(-60).map((message) => {
+  return (Array.isArray(list) ? list : []).filter((message) => message?.id).slice(-60).map((message) => {
     const at = typeof message.createdAt === 'number' ? message.createdAt : Date.parse(message.timestamp);
     return {
+      id: String(message.id),
       mine: message.senderId === userId,
       text: message.deleted ? '🚫 Message deleted' : previewFor(message.content ?? ''),
       time: Number.isFinite(at) ? new Date(at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true }).toLowerCase() : '',
+      ts: Number.isFinite(at) ? at : 0,
     };
   });
 }

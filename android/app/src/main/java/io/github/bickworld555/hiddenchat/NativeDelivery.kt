@@ -25,11 +25,24 @@ object NativeDelivery {
         return try {
             val entry = Json.obj("event" to event, "inner" to delivery.plaintext)
             NativeBackgroundInbox(store).add(SecureStore.seal(Json.stringify(entry)))
+            // Also record the decrypted message for the native (Compose) UI, so it shows incoming messages without the
+            // WebView mirror. Best-effort — a failure here must NOT change whether the message is acknowledged.
+            try { recordForNativeUi(store, event, delivery) } catch (ignored: Throwable) { /* native UI only */ }
             true
         } catch (failed: Throwable) {
             android.util.Log.w("NativeDelivery", "persist failed", failed)
             false
         }
+    }
+
+    /** Writes an incoming decrypted message into the native store's chat projection (Step 5 native read). */
+    private fun recordForNativeUi(store: NativeStore, event: Map<String, Any?>, delivery: NativeFetchHandler.Delivery) {
+        val text = delivery.displayText ?: return
+        val chatId = delivery.groupId ?: delivery.senderId
+        val message = Json.map(event["message"])
+        val ts = Json.safeInteger(message?.get("createdAt")) ?: Json.safeInteger(message?.get("timestamp")) ?: System.currentTimeMillis()
+        val time = java.text.SimpleDateFormat("h:mm a", java.util.Locale.US).format(java.util.Date(ts)).lowercase(java.util.Locale.US)
+        store.addMessage(chatId, delivery.messageId, false, text, time, ts)
     }
 
     /** Posts the conversation notification with the decrypted text, on the account's chosen alert channel. */

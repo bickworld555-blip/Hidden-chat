@@ -14,8 +14,11 @@ import net.zetetic.database.sqlcipher.SQLiteDatabase
 /** One chat-list row the native (Compose) UI shows, mirrored from the web app's chat list (Step 5 data seam). */
 data class ChatRecord(val id: String, val name: String, val preview: String, val time: String, val unread: Int)
 
-/** One message bubble the native conversation screen shows, mirrored from the web app (Step 5 data seam). */
-data class MessageRecord(val mine: Boolean, val text: String, val time: String)
+/**
+ * One message in a chat the native UI shows. Keyed by [id] and ordered by [ts] (epoch ms) so the native background
+ * inbox and the web-app mirror can both write it (upsert) without duplicates or ordering conflicts (Step 5).
+ */
+data class MessageRecord(val id: String, val mine: Boolean, val text: String, val time: String, val ts: Long)
 
 /**
  * Where the native encryption core (CryptoCore) keeps its records between calls: this device's identity, prekeys,
@@ -78,7 +81,7 @@ class NativeStore private constructor(private val db: SQLiteDatabase) : KeyRecor
     }
 
     /** Forgets every record (sign-out): the core's identity, sessions and keys all go, and the mirrored chat list. */
-    override fun clear() { exclusive { db.execSQL("DELETE FROM records"); db.execSQL("DELETE FROM chats"); db.execSQL("DELETE FROM messages"); bump() } }
+    override fun clear() { exclusive { db.execSQL("DELETE FROM records"); db.execSQL("DELETE FROM chats"); db.execSQL("DELETE FROM chat_messages"); bump() } }
 
     /**
      * Replaces the mirrored chat list the native UI reads (Step 5 data seam), preserving the given order. The web app
@@ -107,24 +110,32 @@ class NativeStore private constructor(private val db: SQLiteDatabase) : KeyRecor
         out
     }
 
-    /** Replaces the mirrored messages for one chat (Step 5 data seam), oldest-first, in the given order. */
+    /** Upserts a window of a chat's messages (the web-app mirror), by id; existing rows are updated, others kept. */
     fun saveMessages(chatId: String, rows: List<MessageRecord>) = exclusive {
-        db.execSQL("DELETE FROM messages WHERE chat_id = ?", arrayOf(chatId))
-        rows.forEachIndexed { index, row ->
-            db.execSQL(
-                "INSERT INTO messages(chat_id, mine, text, time, position) VALUES(?, ?, ?, ?, ?)",
-                arrayOf(chatId, if (row.mine) 1 else 0, row.text, row.time, index),
-            )
-        }
+        for (row in rows) upsertMessage(chatId, row.id, row.mine, row.text, row.time, row.ts)
         bump()
     }
 
-    /** The mirrored messages for one chat, oldest-first, for the native conversation screen. */
+    /** Upserts one message (the native background inbox, as it decrypts an incoming message), so it appears natively. */
+    fun addMessage(chatId: String, id: String, mine: Boolean, text: String, time: String, ts: Long) = exclusive {
+        upsertMessage(chatId, id, mine, text, time, ts)
+        bump()
+    }
+
+    private fun upsertMessage(chatId: String, id: String, mine: Boolean, text: String, time: String, ts: Long) {
+        db.execSQL(
+            "INSERT INTO chat_messages(chat_id, id, mine, text, time, ts) VALUES(?, ?, ?, ?, ?, ?) " +
+                "ON CONFLICT(chat_id, id) DO UPDATE SET mine = excluded.mine, text = excluded.text, time = excluded.time, ts = excluded.ts",
+            arrayOf(chatId, id, if (mine) 1 else 0, text, time, ts),
+        )
+    }
+
+    /** A chat's messages, oldest-first (by timestamp), for the native conversation screen. */
     fun messages(chatId: String): List<MessageRecord> = exclusive {
         val out = ArrayList<MessageRecord>()
-        db.rawQuery("SELECT mine, text, time FROM messages WHERE chat_id = ? ORDER BY position ASC", arrayOf(chatId)).use { cursor ->
+        db.rawQuery("SELECT id, mine, text, time, ts FROM chat_messages WHERE chat_id = ? ORDER BY ts ASC", arrayOf(chatId)).use { cursor ->
             while (cursor.moveToNext()) {
-                out.add(MessageRecord(cursor.getInt(0) != 0, cursor.getString(1), cursor.getString(2)))
+                out.add(MessageRecord(cursor.getString(0), cursor.getInt(1) != 0, cursor.getString(2), cursor.getString(3), cursor.getLong(4)))
             }
         }
         out
@@ -140,7 +151,7 @@ class NativeStore private constructor(private val db: SQLiteDatabase) : KeyRecor
         if (get(OWNER) != account) {
             db.execSQL("DELETE FROM records")
             db.execSQL("DELETE FROM chats")
-            db.execSQL("DELETE FROM messages")
+            db.execSQL("DELETE FROM chat_messages")
             set(OWNER, account)
             bump()
         }
@@ -206,8 +217,11 @@ class NativeStore private constructor(private val db: SQLiteDatabase) : KeyRecor
                 db.execSQL("CREATE TABLE IF NOT EXISTS records (k TEXT PRIMARY KEY, v TEXT NOT NULL)")
                 // Step 5 data seam: the native UI's chat-list + per-chat message projections, mirrored from the web app.
                 db.execSQL("CREATE TABLE IF NOT EXISTS chats (id TEXT PRIMARY KEY, name TEXT NOT NULL, preview TEXT NOT NULL, time TEXT NOT NULL, unread INTEGER NOT NULL DEFAULT 0, position INTEGER NOT NULL DEFAULT 0)")
-                db.execSQL("CREATE TABLE IF NOT EXISTS messages (chat_id TEXT NOT NULL, mine INTEGER NOT NULL DEFAULT 0, text TEXT NOT NULL, time TEXT NOT NULL, position INTEGER NOT NULL DEFAULT 0)")
-                db.execSQL("CREATE INDEX IF NOT EXISTS messages_chat ON messages (chat_id, position)")
+                // Superseded by chat_messages (id-keyed, ts-ordered, upsert) so the native inbox and the web mirror can
+                // both write; the old position-ordered cache is dropped (it is a cache, rebuilt from the mirror/inbox).
+                db.execSQL("DROP TABLE IF EXISTS messages")
+                db.execSQL("CREATE TABLE IF NOT EXISTS chat_messages (chat_id TEXT NOT NULL, id TEXT NOT NULL, mine INTEGER NOT NULL DEFAULT 0, text TEXT NOT NULL, time TEXT NOT NULL, ts INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (chat_id, id))")
+                db.execSQL("CREATE INDEX IF NOT EXISTS chat_messages_order ON chat_messages (chat_id, ts)")
             } catch (bad: Throwable) {
                 try { db.close() } catch (ignored: Throwable) { /* already unusable */ }
                 throw bad

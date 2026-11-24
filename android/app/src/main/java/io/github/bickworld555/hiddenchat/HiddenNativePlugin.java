@@ -1569,8 +1569,10 @@ public class HiddenNativePlugin extends Plugin {
             for (int i = 0; i < arr.length(); i++) {
                 try {
                     org.json.JSONObject o = arr.getJSONObject(i);
+                    String mid = o.optString("id", "");
+                    if (mid.isEmpty()) continue;
                     rows.add(new io.github.bickworld555.hiddenchat.core.store.MessageRecord(
-                        o.optBoolean("mine", false), o.optString("text", ""), o.optString("time", "")));
+                        mid, o.optBoolean("mine", false), o.optString("text", ""), o.optString("time", ""), o.optLong("ts", 0L)));
                 } catch (org.json.JSONException ignored) { /* skip a malformed row */ }
             }
         }
