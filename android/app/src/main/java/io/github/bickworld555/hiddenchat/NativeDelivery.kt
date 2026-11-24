@@ -37,7 +37,9 @@ object NativeDelivery {
 
     /** Writes an incoming decrypted message into the native store's chat projection (Step 5 native read). */
     private fun recordForNativeUi(store: NativeStore, event: Map<String, Any?>, delivery: NativeFetchHandler.Delivery) {
-        val text = delivery.displayText ?: return
+        val raw = delivery.displayText ?: return
+        // A readable label for media/voice/location/… (the same MessagePreview the notifications use), not a raw marker.
+        val text = MessagePreview.of(raw)
         val chatId = delivery.groupId ?: delivery.senderId
         val message = Json.map(event["message"])
         val ts = Json.safeInteger(message?.get("createdAt")) ?: Json.safeInteger(message?.get("timestamp")) ?: System.currentTimeMillis()

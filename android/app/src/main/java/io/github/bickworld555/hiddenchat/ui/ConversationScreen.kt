@@ -102,7 +102,13 @@ fun ConversationScreen(title: String, messages: List<MessageRowData>, onBack: ()
                 )
             }
         } else {
+            // Open at (and follow) the newest message, like any chat app, rather than the oldest at the top.
+            val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+            androidx.compose.runtime.LaunchedEffect(messages.size) {
+                if (messages.isNotEmpty()) listState.scrollToItem(messages.size - 1)
+            }
             LazyColumn(
+                state = listState,
                 modifier = Modifier.fillMaxSize().padding(padding),
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
