@@ -4,36 +4,51 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import io.github.bickworld555.hiddenchat.core.store.NativeStore
 import io.github.bickworld555.hiddenchat.ui.theme.HiddenTheme
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.withContext
 
 /**
- * The entry point for the native (Compose) UI — Step 5. Hosts the chat list and the conversation screen, both read
- * from the native store (the projections the web app mirrors there). Registered in the manifest exported=false with no
- * launcher intent, so the app still launches straight into the WebView; reachable only for a device test
- * (`adb shell am start -n <pkg>/.ui.NativeUiActivity`). The native UI grows from here, kept off the default path.
+ * The entry point for the native (Compose) UI — Step 5. Hosts the chat list and the conversation screen, read from the
+ * native store (the projections the web app mirrors there) and kept in step through the store's change Flow, with every
+ * database read done off the main thread. Registered in the manifest exported=false with no launcher intent, so the app
+ * still launches straight into the WebView; reachable only for a device test or behind the native-UI flag.
  */
 class NativeUiActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // One-shot read on open (the lists are small); a reactive store Flow + background load is a later increment.
-        val chats = readChats()
         setContent {
             HiddenTheme {
+                val store = remember { NativeStore.get(applicationContext) }
+                // Re-read whenever the store changes (the web app mirrors new chats/messages in); never on the main thread.
+                val version by (store?.changes ?: remember { MutableStateFlow(0L) }).collectAsState()
+
+                var chats by remember { mutableStateOf(emptyList<ChatRowData>()) }
                 var openChat by remember { mutableStateOf<ChatRowData?>(null) }
                 var messages by remember { mutableStateOf(emptyList<MessageRowData>()) }
+
+                LaunchedEffect(version) {
+                    chats = withContext(Dispatchers.IO) { readChats(store) }
+                }
+                LaunchedEffect(openChat, version) {
+                    val current = openChat
+                    messages = if (current == null) emptyList() else withContext(Dispatchers.IO) { readMessages(store, current.id) }
+                }
+
                 // Android back from a conversation returns to the list rather than leaving the screen.
                 BackHandler(enabled = openChat != null) { openChat = null }
+
                 val current = openChat
                 if (current == null) {
-                    ChatListScreen(chats, onOpenChat = { chat ->
-                        messages = readMessages(chat.id)
-                        openChat = chat
-                    })
+                    ChatListScreen(chats, onOpenChat = { openChat = it })
                 } else {
                     ConversationScreen(current.name, messages, onBack = { openChat = null })
                 }
@@ -41,14 +56,14 @@ class NativeUiActivity : ComponentActivity() {
         }
     }
 
-    private fun readChats(): List<ChatRowData> = try {
-        NativeStore.get(this)?.chats()?.map { ChatRowData(it.id, it.name, it.preview, it.time, it.unread) } ?: emptyList()
+    private fun readChats(store: NativeStore?): List<ChatRowData> = try {
+        store?.chats()?.map { ChatRowData(it.id, it.name, it.preview, it.time, it.unread) } ?: emptyList()
     } catch (ignored: Throwable) {
         emptyList()
     }
 
-    private fun readMessages(chatId: String): List<MessageRowData> = try {
-        NativeStore.get(this)?.messages(chatId)?.map { MessageRowData(it.mine, it.text, it.time) } ?: emptyList()
+    private fun readMessages(store: NativeStore?, chatId: String): List<MessageRowData> = try {
+        store?.messages(chatId)?.map { MessageRowData(it.mine, it.text, it.time) } ?: emptyList()
     } catch (ignored: Throwable) {
         emptyList()
     }

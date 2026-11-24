@@ -101,6 +101,11 @@ export const nativeCallStats = (callId) => invoke('callStats', { callId });
 // native calls switched on for this install — default off). A rollout driver / device test flips the switch.
 export async function nativeCallsAllowed() { const result = await invoke('nativeCallsAllowed'); return Boolean(result?.allowed); }
 export const nativeSetCallsRollout = (enabled) => invoke('setNativeCallsRollout', { enabled: Boolean(enabled) });
+// Step 5 native-UI rollout gate: whether the native Compose UI is enabled for this install, a setter, and a launcher
+// (opens the native UI only when the switch is on). Default off — the WebView UI is used until a rollout turns it on.
+export async function nativeUiAllowed() { const result = await invoke('nativeUiAllowed'); return Boolean(result?.allowed); }
+export const nativeSetUiRollout = (enabled) => invoke('setNativeUiRollout', { enabled: Boolean(enabled) });
+export const nativeOpenUi = () => invoke('openNativeUi');
 // Step 5 data seam: mirror the web app's chat list into the native store so the native (Compose) UI can show it.
 // `chats` is a lightweight projection: [{ id, name, preview, time, unread }].
 export const nativeSaveChats = (chats) => invoke('saveNativeChats', { chats: Array.isArray(chats) ? chats : [] });

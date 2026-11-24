@@ -1590,6 +1590,36 @@ public class HiddenNativePlugin extends Plugin {
         call.resolve();
     }
 
+    /**
+     * The rollout gate for the native (Compose) UI — Step 5. Default OFF; when on, the app may open the native UI in
+     * place of the WebView for this account. Separate from the call/E2E flags; the native UI is still incomplete
+     * (e.g. sending), so it ships behind this switch until it is ready and verified.
+     */
+    @PluginMethod
+    public void nativeUiAllowed(PluginCall call) {
+        boolean on = getContext().getSharedPreferences("hm_native_ui", Context.MODE_PRIVATE).getBoolean("enabled", false);
+        call.resolve(new JSObject().put("allowed", on));
+    }
+
+    /** Turn the native UI on/off for this install (a rollout driver or a device test sets it). Default off. */
+    @PluginMethod
+    public void setNativeUiRollout(PluginCall call) {
+        boolean enabled = Boolean.TRUE.equals(call.getBoolean("enabled", false));
+        getContext().getSharedPreferences("hm_native_ui", Context.MODE_PRIVATE).edit().putBoolean("enabled", enabled).apply();
+        call.resolve();
+    }
+
+    /** Open the native (Compose) UI, only when the native-UI switch is on (so it can never appear unless enabled). */
+    @PluginMethod
+    public void openNativeUi(PluginCall call) {
+        boolean on = getContext().getSharedPreferences("hm_native_ui", Context.MODE_PRIVATE).getBoolean("enabled", false);
+        if (!on) { call.resolve(new JSObject().put("opened", false)); return; }
+        Intent intent = new Intent(getContext(), io.github.bickworld555.hiddenchat.ui.NativeUiActivity.class);
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        getContext().startActivity(intent);
+        call.resolve(new JSObject().put("opened", true));
+    }
+
     /** Signing out: forget the account and stop the background connection. */
     @PluginMethod
     public void clearSession(PluginCall call) {

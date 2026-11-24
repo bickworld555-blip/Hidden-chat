@@ -133,6 +133,7 @@ dependencies {
     implementation 'androidx.compose.ui:ui-tooling-preview'
     implementation 'androidx.compose.material3:material3'
     implementation 'androidx.activity:activity-compose:1.10.1'
+    implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1'
     debugImplementation 'androidx.compose.ui:ui-tooling'
     // App lock: the phone's biometrics or screen-lock credential (AppSecurity.java).
     implementation 'androidx.biometric:biometric:1.1.0'

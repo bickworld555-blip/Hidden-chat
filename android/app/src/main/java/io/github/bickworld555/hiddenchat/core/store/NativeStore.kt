@@ -6,6 +6,9 @@ import io.github.bickworld555.hiddenchat.core.crypto.KeyRecords
 import java.io.File
 import java.security.SecureRandom
 import java.util.concurrent.locks.ReentrantLock
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import net.zetetic.database.sqlcipher.SQLiteDatabase
 
 /** One chat-list row the native (Compose) UI shows, mirrored from the web app's chat list (Step 5 data seam). */
@@ -30,6 +33,12 @@ data class MessageRecord(val mine: Boolean, val text: String, val time: String)
  */
 class NativeStore private constructor(private val db: SQLiteDatabase) : KeyRecords {
     private val lock = ReentrantLock()
+
+    // Bumped whenever the UI-facing projections (chats / messages) change, so the native UI can observe the store as a
+    // Flow and re-read off the main thread instead of blocking on open.
+    private val _changes = MutableStateFlow(0L)
+    val changes: StateFlow<Long> = _changes.asStateFlow()
+    private fun bump() { _changes.value = _changes.value + 1 }
 
     override fun get(name: String): String? {
         db.rawQuery("SELECT v FROM records WHERE k = ?", arrayOf(name)).use { cursor ->
@@ -69,7 +78,7 @@ class NativeStore private constructor(private val db: SQLiteDatabase) : KeyRecor
     }
 
     /** Forgets every record (sign-out): the core's identity, sessions and keys all go, and the mirrored chat list. */
-    override fun clear() { exclusive { db.execSQL("DELETE FROM records"); db.execSQL("DELETE FROM chats"); db.execSQL("DELETE FROM messages") } }
+    override fun clear() { exclusive { db.execSQL("DELETE FROM records"); db.execSQL("DELETE FROM chats"); db.execSQL("DELETE FROM messages"); bump() } }
 
     /**
      * Replaces the mirrored chat list the native UI reads (Step 5 data seam), preserving the given order. The web app
@@ -84,6 +93,7 @@ class NativeStore private constructor(private val db: SQLiteDatabase) : KeyRecor
                 arrayOf(row.id, row.name, row.preview, row.time, row.unread, index),
             )
         }
+        bump()
     }
 
     /** The mirrored chat list for the native UI, in saved (most-recent-first) order. */
@@ -106,6 +116,7 @@ class NativeStore private constructor(private val db: SQLiteDatabase) : KeyRecor
                 arrayOf(chatId, if (row.mine) 1 else 0, row.text, row.time, index),
             )
         }
+        bump()
     }
 
     /** The mirrored messages for one chat, oldest-first, for the native conversation screen. */
@@ -131,6 +142,7 @@ class NativeStore private constructor(private val db: SQLiteDatabase) : KeyRecor
             db.execSQL("DELETE FROM chats")
             db.execSQL("DELETE FROM messages")
             set(OWNER, account)
+            bump()
         }
     }
 

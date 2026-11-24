@@ -24,7 +24,7 @@ import { applyGroupChange, GROUP_CHANGE_EVENTS } from './groupChanges.js';
 import { cachedGroupDetails } from './groupCache.js';
 import { applyGroupCall, withRunningCall } from './groupCalls.js';
 import { notificationNames } from './notificationNames.js';
-import { nativeClearSession, nativeWipeE2e, nativeEnableE2e, nativeRequestStartupPermissions, nativeSetSession, nativeShell, nativeStartBackground, nativeState, nativeStopBackground, nativeTakePendingCall, nativeMoveToBackground, nativeClearShare, nativeSetCallActive, nativeClearMessageNotifications, nativeClearMissedCalls, nativeTakeMessageActions, nativeTakeCallEvents, nativeSetSystemBarsTheme, nativeOpenSecret, nativePreviewKey, nativeBackgroundFetchDone, nativeScheduleUnsent, nativeE2eActive, nativeCallsAllowed, nativeSaveChats, nativeSaveMessages, nativeTakeInbox, onNative } from './native.js';
+import { nativeClearSession, nativeWipeE2e, nativeEnableE2e, nativeRequestStartupPermissions, nativeSetSession, nativeShell, nativeStartBackground, nativeState, nativeStopBackground, nativeTakePendingCall, nativeMoveToBackground, nativeClearShare, nativeSetCallActive, nativeClearMessageNotifications, nativeClearMissedCalls, nativeTakeMessageActions, nativeTakeCallEvents, nativeSetSystemBarsTheme, nativeOpenSecret, nativePreviewKey, nativeBackgroundFetchDone, nativeScheduleUnsent, nativeE2eActive, nativeCallsAllowed, nativeSaveChats, nativeSaveMessages, nativeUiAllowed, nativeOpenUi, nativeTakeInbox, onNative } from './native.js';
 import { setNativeCallsEnabled } from './nativeRtc.js';
 import { parseShare } from './shareTarget.js';
 import { e2eDeviceId, onE2eEvent, importNativeInbox, publishPreviewKey, replayE2eEvent, sealDirect, sealToOwnDevices, startE2e, stopE2e, userForXmppAddress, xmppGroupTargetsFor, xmppTargetsFor } from './e2e/client.js';
@@ -265,6 +265,12 @@ export default function App() {
     }, 400);
     return () => clearTimeout(timer);
   }, [activeChatId, activeMessages, userId]);
+  // Step 5 native-UI rollout: when enabled for this install (default off), open the native Compose UI in place of the
+  // WebView once signed in. Off by default, so every account keeps the WebView UI until a rollout turns it on.
+  useEffect(() => {
+    if (!nativeShell() || !sessionToken) return;
+    nativeUiAllowed().then((allowed) => { if (allowed) nativeOpenUi().catch(() => {}); }).catch(() => {});
+  }, [sessionToken]);
   // A message request accepted (here or on another device): the XMPP receipts held for that person go out.
   useEffect(() => onContactAccepted((peerId) => xmppRef.current?.releaseReceipts?.(peerId)), []);
   // The latest link of the chain that opens and handles incoming events in order (a background fetch waits for it).
