@@ -24,7 +24,7 @@ import { applyGroupChange, GROUP_CHANGE_EVENTS } from './groupChanges.js';
 import { cachedGroupDetails } from './groupCache.js';
 import { applyGroupCall, withRunningCall } from './groupCalls.js';
 import { notificationNames } from './notificationNames.js';
-import { nativeClearSession, nativeWipeE2e, nativeEnableE2e, nativeRequestStartupPermissions, nativeSetSession, nativeShell, nativeStartBackground, nativeState, nativeStopBackground, nativeTakePendingCall, nativeMoveToBackground, nativeClearShare, nativeSetCallActive, nativeClearMessageNotifications, nativeClearMissedCalls, nativeTakeMessageActions, nativeTakeCallEvents, nativeSetSystemBarsTheme, nativeOpenSecret, nativePreviewKey, nativeBackgroundFetchDone, nativeScheduleUnsent, nativeE2eActive, nativeCallsAllowed, nativeSaveChats, nativeSaveMessages, nativeUiAllowed, nativeOpenUi, nativeTakeInbox, onNative } from './native.js';
+import { nativeClearSession, nativeWipeE2e, nativeEnableE2e, nativeRequestStartupPermissions, nativeSetSession, nativeShell, nativeStartBackground, nativeState, nativeStopBackground, nativeTakePendingCall, nativeMoveToBackground, nativeClearShare, nativeSetCallActive, nativeClearMessageNotifications, nativeClearMissedCalls, nativeTakeMessageActions, nativeTakeCallEvents, nativeSetSystemBarsTheme, nativeOpenSecret, nativePreviewKey, nativeBackgroundFetchDone, nativeScheduleUnsent, nativeE2eActive, nativeCallsAllowed, nativeSaveChats, nativeSaveContacts, nativeSaveMessages, nativeUiAllowed, nativeOpenUi, nativeTakeInbox, onNative } from './native.js';
 import { setNativeCallsEnabled } from './nativeRtc.js';
 
 // Step 5 data seam: the projection of a chat's messages the native conversation screen shows (last 60, { mine, text,
@@ -261,6 +261,22 @@ export default function App() {
     }, 400);
     return () => clearTimeout(timer);
   }, [chats]);
+  // Step 5: mirror the people the native new-chat picker shows — the union of existing chats and known people.
+  const knownPeople = useChatStore((state) => state.knownPeople);
+  useEffect(() => {
+    if (!nativeShell()) return undefined;
+    const timer = setTimeout(() => {
+      const byId = new Map();
+      for (const chat of chats || []) {
+        if (chat?.id && chat.id !== userId && !byId.has(chat.id)) byId.set(chat.id, { id: String(chat.id), name: String(chat.name || chat.username || chat.id) });
+      }
+      for (const person of Object.values(knownPeople || {})) {
+        if (person?.id && person.id !== userId && !byId.has(person.id)) byId.set(person.id, { id: String(person.id), name: String(person.name || person.profileName || person.username || person.id) });
+      }
+      nativeSaveContacts([...byId.values()].slice(0, 500)).catch(() => {});
+    }, 500);
+    return () => clearTimeout(timer);
+  }, [chats, knownPeople]);
   // Step 5 data seam: mirror the open chat's recent messages into the native store so the native conversation screen
   // can show them. Bounded to the last 60; the native UI shows whatever chat was last open in the web app.
   const activeMessages = useChatStore((state) => (state.activeChatId ? state.messages[state.activeChatId] : null));

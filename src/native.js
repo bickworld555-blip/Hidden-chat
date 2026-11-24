@@ -109,6 +109,8 @@ export const nativeOpenUi = () => invoke('openNativeUi');
 // Step 5 data seam: mirror the web app's chat list into the native store so the native (Compose) UI can show it.
 // `chats` is a lightweight projection: [{ id, name, preview, time, unread }].
 export const nativeSaveChats = (chats) => invoke('saveNativeChats', { chats: Array.isArray(chats) ? chats : [] });
+// Step 5: mirror the people the native new-chat picker shows (chats + known contacts): [{ id, name }].
+export const nativeSaveContacts = (contacts) => invoke('saveNativeContacts', { contacts: Array.isArray(contacts) ? contacts : [] });
 // Step 5 data seam: mirror one chat's recent messages for the native conversation screen: [{ mine, text, time }].
 export const nativeSaveMessages = (chatId, messages) => invoke('saveNativeMessages', { chatId: String(chatId || ''), messages: Array.isArray(messages) ? messages : [] });
 // Uploads in progress: { count, label, progress (0-100) }; count 0 ends the "Sending…" foreground service.

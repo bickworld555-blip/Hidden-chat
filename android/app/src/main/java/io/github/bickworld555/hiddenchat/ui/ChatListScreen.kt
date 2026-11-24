@@ -42,7 +42,7 @@ data class ChatRowData(val id: String, val name: String, val lastMessage: String
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ChatListScreen(chats: List<ChatRowData> = emptyList(), onOpenChat: (ChatRowData) -> Unit = {}) {
+fun ChatListScreen(chats: List<ChatRowData> = emptyList(), onOpenChat: (ChatRowData) -> Unit = {}, onNewChat: () -> Unit = {}) {
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
@@ -56,7 +56,7 @@ fun ChatListScreen(chats: List<ChatRowData> = emptyList(), onOpenChat: (ChatRowD
         },
         floatingActionButton = {
             FloatingActionButton(
-                onClick = { /* a later increment opens the new-chat flow */ },
+                onClick = onNewChat,
                 containerColor = MaterialTheme.colorScheme.primary,
                 contentColor = MaterialTheme.colorScheme.onPrimary,
             ) { Text("+", fontSize = 26.sp) }
@@ -83,7 +83,7 @@ private fun ChatRow(chat: ChatRowData, onClick: () -> Unit) {
         modifier = Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Avatar(chat.name)
+        ContactAvatar(chat.name)
         Spacer(Modifier.width(14.dp))
         Column(modifier = Modifier.weight(1f)) {
             Text(
@@ -117,7 +117,7 @@ private fun ChatRow(chat: ChatRowData, onClick: () -> Unit) {
 }
 
 @Composable
-private fun Avatar(name: String) {
+internal fun ContactAvatar(name: String) {
     val initials = name.trim().split(" ").mapNotNull { it.firstOrNull()?.toString() }.take(2).joinToString("").uppercase()
     val palette = listOf(Color(0xFF2674D9), Color(0xFF1B8A6B), Color(0xFFB8641B), Color(0xFF8A1B6B), Color(0xFF1B6B8A))
     val color = palette[(name.hashCode() and 0x7FFFFFFF) % palette.size]

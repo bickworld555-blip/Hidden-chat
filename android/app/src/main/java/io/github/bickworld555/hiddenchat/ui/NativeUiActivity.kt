@@ -33,12 +33,15 @@ class NativeUiActivity : ComponentActivity() {
                 val version by (store?.changes ?: remember { MutableStateFlow(0L) }).collectAsState()
 
                 var chats by remember { mutableStateOf(emptyList<ChatRowData>()) }
+                var contacts by remember { mutableStateOf(emptyList<ContactRowData>()) }
                 var openChat by remember { mutableStateOf<ChatRowData?>(null) }
+                var showNewChat by remember { mutableStateOf(false) }
                 var messages by remember { mutableStateOf(emptyList<MessageRowData>()) }
                 var loadingMessages by remember { mutableStateOf(false) }
 
                 LaunchedEffect(version) {
                     chats = withContext(Dispatchers.IO) { readChats(store) }
+                    contacts = withContext(Dispatchers.IO) { readContacts(store) }
                 }
                 // Opening a chat asks the web app to load + mirror its message window (the start-up window may not have
                 // reached it), so the conversation shows messages rather than "No messages". The spinner clears when
@@ -61,14 +64,26 @@ class NativeUiActivity : ComponentActivity() {
                     if (loaded.isNotEmpty()) loadingMessages = false
                 }
 
-                // Android back from a conversation returns to the list rather than leaving the screen.
+                // Android back from a sub-screen returns to the list rather than leaving the app.
                 BackHandler(enabled = openChat != null) { openChat = null }
+                BackHandler(enabled = showNewChat) { showNewChat = false }
 
                 val current = openChat
-                if (current == null) {
-                    ChatListScreen(chats, onOpenChat = { openChat = it })
-                } else {
-                    ConversationScreen(
+                when {
+                    showNewChat -> NewChatScreen(
+                        contacts,
+                        onPick = { contact ->
+                            showNewChat = false
+                            openChat = ChatRowData(contact.id, contact.name, "", "", 0)
+                        },
+                        onBack = { showNewChat = false },
+                    )
+                    current == null -> ChatListScreen(
+                        chats,
+                        onOpenChat = { openChat = it },
+                        onNewChat = { showNewChat = true },
+                    )
+                    else -> ConversationScreen(
                         current.name,
                         messages,
                         loading = loadingMessages && messages.isEmpty(),
@@ -89,6 +104,12 @@ class NativeUiActivity : ComponentActivity() {
 
     private fun readMessages(store: NativeStore?, chatId: String): List<MessageRowData> = try {
         store?.messages(chatId)?.map { MessageRowData(it.mine, it.text, it.time) } ?: emptyList()
+    } catch (ignored: Throwable) {
+        emptyList()
+    }
+
+    private fun readContacts(store: NativeStore?): List<ContactRowData> = try {
+        store?.contacts()?.map { ContactRowData(it.id, it.name) } ?: emptyList()
     } catch (ignored: Throwable) {
         emptyList()
     }

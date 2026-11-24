@@ -1555,6 +1555,28 @@ public class HiddenNativePlugin extends Plugin {
         call.resolve();
     }
 
+    /** Step 5: mirror the people (chats + known contacts) the native new-chat picker shows. */
+    @PluginMethod
+    public void saveNativeContacts(PluginCall call) {
+        io.github.bickworld555.hiddenchat.core.store.NativeStore store =
+            io.github.bickworld555.hiddenchat.core.store.NativeStore.Companion.get(getContext());
+        if (store == null) { call.resolve(); return; }
+        JSArray arr = call.getArray("contacts");
+        java.util.List<io.github.bickworld555.hiddenchat.core.store.ContactRecord> rows = new java.util.ArrayList<>();
+        if (arr != null) {
+            for (int i = 0; i < arr.length(); i++) {
+                try {
+                    org.json.JSONObject o = arr.getJSONObject(i);
+                    String id = o.optString("id", "");
+                    if (id.isEmpty()) continue;
+                    rows.add(new io.github.bickworld555.hiddenchat.core.store.ContactRecord(id, o.optString("name", "")));
+                } catch (org.json.JSONException ignored) { /* skip a malformed row */ }
+            }
+        }
+        store.saveContacts(rows);
+        call.resolve();
+    }
+
     /** Step 5 data seam: mirror one chat's recent messages into the native store for the native conversation screen. */
     @PluginMethod
     public void saveNativeMessages(PluginCall call) {
