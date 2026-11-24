@@ -98,6 +98,8 @@ class NativeBackgroundService : Service() {
         val deviceId = RelaySession.deviceId(applicationContext) ?: return
         try {
             NativeRegistration.register(core, store, userId, deviceId, server)
+            // The native path also owns the notification preview key so a push preview opens without the WebView.
+            NativeRegistration.publishPreviewKey(core, store, userId, deviceId, PreviewKey.publicKey(applicationContext), server)
             store.set("registered", "done")
         } catch (failed: Exception) {
             Log.w(TAG, "native registration failed", failed)

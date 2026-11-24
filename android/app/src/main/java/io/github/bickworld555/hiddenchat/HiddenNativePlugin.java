@@ -208,6 +208,9 @@ public class HiddenNativePlugin extends Plugin {
                 String deviceId = RelaySession.deviceId(getContext());
                 if (store == null || server == null || session == null || session.userId == null || deviceId == null) { call.reject("native-register-unavailable"); return; }
                 io.github.bickworld555.hiddenchat.core.NativeRegistration.INSTANCE.register(core, store, session.userId, deviceId, server, System.currentTimeMillis());
+                // Publish this device's notification preview key on the native path too, so a push can carry a sealed
+                // preview opened without the WebView. No-op when this phone keeps no preview key (empty), idempotent.
+                io.github.bickworld555.hiddenchat.core.NativeRegistration.INSTANCE.publishPreviewKey(core, store, session.userId, deviceId, PreviewKey.publicKey(getContext()), server);
                 JSObject result = new JSObject();
                 result.put("ok", true);
                 call.resolve(result);

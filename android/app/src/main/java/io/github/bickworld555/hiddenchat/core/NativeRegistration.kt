@@ -74,4 +74,25 @@ object NativeRegistration {
         }
         return true
     }
+
+    /**
+     * Publishes this device's notification preview public key, signed by its identity (src/e2e/client.js
+     * publishPreviewKey), once per key — so a push can carry a sealed preview the native side opens (PreviewKey),
+     * without the WebView publishing it. The key comes from Android (PreviewKey) and is passed in so this stays
+     * Android-free and unit-testable. A no-op when there is no key; idempotent for the same key + identity.
+     */
+    fun publishPreviewKey(core: CryptoCore, store: KeyRecords, userId: String, deviceId: String, previewKey: String?, transport: NativeTransport): Boolean {
+        if (previewKey.isNullOrEmpty()) return false
+        val identitySig = Json.string(core.publicIdentity()["sig"]) ?: ""
+        val marker = "$previewKey|$identitySig"
+        val markKey = "e2e:preview-key:$userId:$deviceId"
+        if (store.get(markKey) == marker) return true
+        val signature = core.signPreviewKey(previewKey)
+        return if (transport.putJson("/api/v1/e2e/preview-key", Json.obj("key" to previewKey, "signature" to signature)) != null) {
+            store.set(markKey, marker)
+            true
+        } else {
+            false
+        }
+    }
 }
