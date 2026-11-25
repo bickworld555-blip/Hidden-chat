@@ -1,6 +1,7 @@
 package io.github.bickworld555.hiddenchat.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -34,8 +35,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 /** One message bubble the native conversation screen shows (Step 5). `status` drives the read-receipt ticks on our own
- * sent messages ('' | sent | delivered | read | waiting); it is unused for incoming messages. */
-data class MessageRowData(val mine: Boolean, val text: String, val time: String, val status: String = "")
+ * sent messages ('' | sent | delivered | read | waiting); it is unused for incoming messages. `replyText` (item 4
+ * replies) is the quoted snippet of the message this one replies to, shown above the bubble ("" when not a reply). */
+data class MessageRowData(val id: String, val mine: Boolean, val text: String, val time: String, val status: String = "", val replyText: String = "")
 
 /**
  * The native conversation screen (Step 5). A back-navigable top bar, a scrollable list of message bubbles (mine on the
@@ -49,7 +51,8 @@ fun ConversationScreen(
     title: String,
     messages: List<MessageRowData>,
     onBack: () -> Unit,
-    onSend: (String) -> Unit = {},
+    // Item 4 replies: the second argument is the id of the message being replied to, or null for a normal send.
+    onSend: (String, String?) -> Unit = { _, _ -> },
     loading: Boolean = false,
     // Checklist item 4: the peer's live activity ("typing…"/"recording audio…") shown under the name, and a callback on
     // every edit of the message box so the native-owned socket can announce our own "typing…". Both default off/no-op.
@@ -57,6 +60,9 @@ fun ConversationScreen(
     onDraft: (String) -> Unit = {},
 ) {
     var draft by remember { mutableStateOf("") }
+    // Item 4 replies: the message currently being replied to (long-press a bubble to set it), shown as a quote bar above
+    // the composer and carried in the next send.
+    var replyingTo by remember { mutableStateOf<MessageRowData?>(null) }
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
@@ -81,32 +87,50 @@ fun ConversationScreen(
             )
         },
         bottomBar = {
-            Row(
-                modifier = Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface).padding(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                OutlinedTextField(
-                    value = draft,
-                    // Each edit announces "typing…" to the peer (onDraft → the native-owned socket), item 4.
-                    onValueChange = { draft = it; onDraft(it) },
-                    modifier = Modifier.weight(1f),
-                    placeholder = { Text("Message") },
-                    maxLines = 4,
-                    keyboardActions = KeyboardActions(onSend = {}),
-                )
-                IconButton(
-                    // The native E2E path seals + relays; sending also stops our "typing…" (onDraft("")).
-                    onClick = {
-                        val text = draft.trim()
-                        if (text.isNotEmpty()) { onSend(text); draft = ""; onDraft("") }
-                    },
-                    enabled = draft.isNotBlank(),
+            Column(modifier = Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface)) {
+                // Item 4 replies: the quote bar above the composer while replying, with a cancel.
+                val replying = replyingTo
+                if (replying != null) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(if (replying.mine) "You" else title, color = MaterialTheme.colorScheme.primary, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                            Text(replying.text, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, maxLines = 1)
+                        }
+                        IconButton(onClick = { replyingTo = null }) {
+                            Text("✕", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 16.sp)
+                        }
+                    }
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Text(
-                        "➤",
-                        color = if (draft.isNotBlank()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontSize = 20.sp,
+                    OutlinedTextField(
+                        value = draft,
+                        // Each edit announces "typing…" to the peer (onDraft → the native-owned socket), item 4.
+                        onValueChange = { draft = it; onDraft(it) },
+                        modifier = Modifier.weight(1f),
+                        placeholder = { Text("Message") },
+                        maxLines = 4,
+                        keyboardActions = KeyboardActions(onSend = {}),
                     )
+                    IconButton(
+                        // The native E2E path seals + relays; sending passes the reply target and stops our "typing…".
+                        onClick = {
+                            val text = draft.trim()
+                            if (text.isNotEmpty()) { onSend(text, replyingTo?.id); draft = ""; onDraft(""); replyingTo = null }
+                        },
+                        enabled = draft.isNotBlank(),
+                    ) {
+                        Text(
+                            "➤",
+                            color = if (draft.isNotBlank()) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 20.sp,
+                        )
+                    }
                 }
             }
         },
@@ -131,14 +155,15 @@ fun ConversationScreen(
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                itemsIndexed(messages) { _, message -> MessageBubble(message) }
+                itemsIndexed(messages) { _, message -> MessageBubble(message, onReply = { replyingTo = message }) }
             }
         }
     }
 }
 
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-private fun MessageBubble(message: MessageRowData) {
+private fun MessageBubble(message: MessageRowData, onReply: () -> Unit = {}) {
     val mine = message.mine
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -149,8 +174,27 @@ private fun MessageBubble(message: MessageRowData) {
                 .widthIn(max = 300.dp)
                 .clip(RoundedCornerShape(14.dp))
                 .background(if (mine) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant)
+                // Long-press a bubble to reply to it (item 4 replies).
+                .combinedClickable(onClick = {}, onLongClick = onReply)
                 .padding(horizontal = 12.dp, vertical = 8.dp),
         ) {
+            // Item 4 replies: the quoted snippet of the message this one replies to, above the text.
+            if (message.replyText.isNotEmpty()) {
+                Column(
+                    modifier = Modifier
+                        .padding(bottom = 4.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(if (mine) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.15f) else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                ) {
+                    Text(
+                        message.replyText,
+                        color = (if (mine) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface).copy(alpha = 0.75f),
+                        fontSize = 12.sp,
+                        maxLines = 2,
+                    )
+                }
+            }
             Text(
                 message.text,
                 color = if (mine) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,

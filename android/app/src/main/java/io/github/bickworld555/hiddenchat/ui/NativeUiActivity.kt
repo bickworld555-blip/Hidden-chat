@@ -120,11 +120,12 @@ class NativeUiActivity : ComponentActivity() {
                             // Fully-native send (native device-list trust + sealing + native socket) when possible; falls
                             // back to the web app's E2E relay when the native socket is closed (foreground) or the native
                             // core is unavailable. Off the main thread (it fetches device lists + encrypts).
-                            onSend = { text ->
+                            onSend = { text, replyToId ->
                                 val chatId = current.id
                                 Thread({
-                                    val sent = try { NativeSend.sendText(applicationContext, chatId, text) } catch (ignored: Throwable) { false }
-                                    if (!sent) NativeUiBridge.requestSend(chatId, text)
+                                    // Item 4 replies: replyToId (or null) rides in the inner `r` field via NativeSend.
+                                    val sent = try { NativeSend.sendText(applicationContext, chatId, text, replyToId) } catch (ignored: Throwable) { false }
+                                    if (!sent) NativeUiBridge.requestSend(chatId, text) // WebView fallback (no reply target)
                                 }, "native-send").start()
                             },
                             typingLabel = if (isGroup) "" else NativeTyping.labelFor(typing[current.id]),
@@ -174,7 +175,7 @@ class NativeUiActivity : ComponentActivity() {
     }
 
     private fun readMessages(store: NativeStore?, chatId: String): List<MessageRowData> = try {
-        store?.messages(chatId)?.map { MessageRowData(it.mine, it.text, it.time, it.status) } ?: emptyList()
+        store?.messages(chatId)?.map { MessageRowData(it.id, it.mine, it.text, it.time, it.status, it.replyText) } ?: emptyList()
     } catch (ignored: Throwable) {
         emptyList()
     }

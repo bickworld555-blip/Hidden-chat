@@ -28,8 +28,9 @@ object NativeSend {
     private val DEVICE_ID = Regex("^[A-Za-z0-9_-]{1,128}$")
     private const val MAX_LISTED = 64
 
-    /** Seal `text` to `peerId` (native trust + encryption) and send it over the relay; true only when it went out. */
-    fun sendText(context: Context, peerId: String, text: String): Boolean {
+    /** Seal `text` to `peerId` (native trust + encryption) and send it over the relay; true only when it went out.
+     *  [replyToId] (item 4 replies) is the id of the message being replied to, carried in the inner `r` field. */
+    fun sendText(context: Context, peerId: String, text: String, replyToId: String? = null): Boolean {
         // A native socket must be open: the native-owned online socket (socket_owner), the foreground send socket, or
         // the background relay.
         if (!NativeForegroundSocket.isOnline() && !NativeSendSocket.canSend() && !NativeRelay.canSend()) return false
@@ -48,7 +49,9 @@ object NativeSend {
         targets[peerId] = peer
         if (mine.isNotEmpty()) targets[meUserId] = mine
 
-        val innerJson = Json.stringify(linkedMapOf<String, Any?>("c" to text))
+        val inner = linkedMapOf<String, Any?>("c" to text)
+        if (!replyToId.isNullOrEmpty()) inner["r"] = replyToId // item 4 replies: same inner field the web uses (client.js)
+        val innerJson = Json.stringify(inner)
         val claim: (String, List<String>) -> List<Any?> = { userId, ids ->
             val res = server.postJson("/api/v1/e2e/users/${enc(userId)}/bundles", linkedMapOf<String, Any?>("deviceIds" to ids))
             Json.list(res?.get("bundles")) ?: emptyList()
@@ -64,7 +67,11 @@ object NativeSend {
         // Optimistic local echo so the native conversation shows the sent message at once.
         val ts = System.currentTimeMillis()
         val time = java.text.SimpleDateFormat("h:mm a", java.util.Locale.US).format(java.util.Date(ts)).lowercase(java.util.Locale.US)
-        try { store.addMessage(peerId, messageId, true, text, time, ts); store.raiseStatusById(messageId, "sent") } catch (ignored: Throwable) { /* echo only */ }
+        try {
+            store.addMessage(peerId, messageId, true, text, time, ts)
+            store.raiseStatusById(messageId, "sent")
+            if (!replyToId.isNullOrEmpty()) store.setReplyTo(peerId, messageId, replyToId)
+        } catch (ignored: Throwable) { /* echo only */ }
         return true
     }
 

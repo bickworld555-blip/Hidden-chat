@@ -21,7 +21,20 @@ data class ContactRecord(val id: String, val name: String, val avatar: String)
  * One message in a chat the native UI shows. Keyed by [id] and ordered by [ts] (epoch ms) so the native background
  * inbox and the web-app mirror can both write it (upsert) without duplicates or ordering conflicts (Step 5).
  */
-data class MessageRecord(val id: String, val mine: Boolean, val text: String, val time: String, val ts: Long, val status: String = "")
+// @JvmOverloads so the Java mirror (HiddenNativePlugin) can still construct it with just the core fields; the trailing
+// ones (status ticks, reply quote) are set by the native receive/echo paths, not the mirror.
+data class MessageRecord @JvmOverloads constructor(
+    val id: String,
+    val mine: Boolean,
+    val text: String,
+    val time: String,
+    val ts: Long,
+    val status: String = "",
+    /** The id of the message this one replies to (item 4 replies), or "". */
+    val replyTo: String = "",
+    /** The quoted snippet of [replyTo], resolved at read time (never stored); "" when unknown/not a reply. */
+    val replyText: String = "",
+)
 
 /** One row of the authoritative message store (checklist item 2): a message's full JSON, keyed by (chatId, id), ts in ms. */
 data class FullMessage(val chatId: String, val id: String, val ts: Long, val json: String)
@@ -179,12 +192,25 @@ class NativeStore private constructor(private val db: SQLiteDatabase) : KeyRecor
     /** A chat's messages, oldest-first (by timestamp), for the native conversation screen. */
     fun messages(chatId: String): List<MessageRecord> = exclusive {
         val out = ArrayList<MessageRecord>()
-        db.rawQuery("SELECT id, mine, text, time, ts, status FROM chat_messages WHERE chat_id = ? ORDER BY ts ASC", arrayOf(chatId)).use { cursor ->
+        db.rawQuery("SELECT id, mine, text, time, ts, status, reply_to FROM chat_messages WHERE chat_id = ? ORDER BY ts ASC", arrayOf(chatId)).use { cursor ->
             while (cursor.moveToNext()) {
-                out.add(MessageRecord(cursor.getString(0), cursor.getInt(1) != 0, cursor.getString(2), cursor.getString(3), cursor.getLong(4), cursor.getString(5) ?: ""))
+                out.add(MessageRecord(cursor.getString(0), cursor.getInt(1) != 0, cursor.getString(2), cursor.getString(3), cursor.getLong(4), cursor.getString(5) ?: "", cursor.getString(6) ?: ""))
             }
         }
-        out
+        // Item 4 replies: resolve each reply's quoted snippet from the message it points to (same chat), so the native UI
+        // can show "┃ <quoted text>" above the bubble without a second query. Unknown (older/unloaded) → left blank.
+        val byId = out.associateBy { it.id }
+        out.map { if (it.replyTo.isNotEmpty()) it.copy(replyText = byId[it.replyTo]?.text ?: "") else it }
+    }
+
+    /** Records which message [id] (in [chatId]) replies to (item 4 replies); never clobbers an existing non-empty value. */
+    fun setReplyTo(chatId: String, id: String, replyTo: String) = exclusive {
+        if (replyTo.isEmpty()) return@exclusive
+        db.execSQL(
+            "UPDATE chat_messages SET reply_to = ? WHERE chat_id = ? AND id = ? AND reply_to = ''",
+            arrayOf(replyTo, chatId, id),
+        )
+        bump()
     }
 
     // Checklist item 4 (read-receipt ticks): status moves forward only (failed<sent/waiting<delivered<read), mirroring
@@ -375,6 +401,9 @@ class NativeStore private constructor(private val db: SQLiteDatabase) : KeyRecor
                 // Checklist item 4 (read-receipt ticks): the delivery status of OUR sent messages ('' | sent | delivered
                 // | read), shown as ticks in the native conversation. A no-op once the column exists.
                 try { db.execSQL("ALTER TABLE chat_messages ADD COLUMN status TEXT NOT NULL DEFAULT ''") } catch (ignored: Throwable) { /* already present */ }
+                // Checklist item 4 (replies/quotes): the id of the message this one replies to (the inner `r` field),
+                // so the native conversation can show the quoted snippet above the bubble. A no-op once present.
+                try { db.execSQL("ALTER TABLE chat_messages ADD COLUMN reply_to TEXT NOT NULL DEFAULT ''") } catch (ignored: Throwable) { /* already present */ }
                 // Checklist item 2 (authoritative store): the WebView's message history, native-owned. Each row is one
                 // message's FULL JSON, opaque to native (round-tripped, never parsed here — native stays decoupled from
                 // the WebView's evolving message shape), keyed by (chat_id, id) and ordered by ts (epoch ms). This is the
