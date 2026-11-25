@@ -375,6 +375,30 @@ export default function App() {
   // (default off) — the native side only ever emits these then. The store's `client` is the live RealtimeClient.
   useEffect(() => {
     if (!nativeShell()) return undefined;
+    // Checklist item 2 (native-first for the native-owned window): while native owned the socket it decrypted and
+    // persisted every incoming message into its OWN inbox (NativeDelivery → NativeBackgroundInbox); the WebView socket
+    // was suspended and never saw them, and the server already dropped them (native acked delivered + queue:ack), so
+    // the WebView cannot re-fetch them. On the way back (handover !active), drain that inbox through the SAME lossless
+    // path startup uses: importNativeInbox seeds the remembered-plaintext cache from each entry's `inner`, so the event
+    // is applied WITHOUT decrypting again (the native ratchet already advanced — re-decrypting would desync it). For
+    // that window native is the writer of record and the WebView imports native's inbox. Drain BEFORE resuming our
+    // socket so the gap is closed before live delivery resumes. Guarded against overlap; a no-op when the inbox is
+    // empty or the native core is not active.
+    let draining = false;
+    const drainNativeInbox = async (client) => {
+      if (draining || !(await nativeE2eActive().catch(() => false))) return;
+      draining = true;
+      try {
+        const applyOpened = async (event) => {
+          if (event?.type === 'identity-changed') { replayE2eEvent(event); return; }
+          client.inject(event); // routes through the client's own event handler (onRealtimeEvent), same as startup
+        };
+        const imported = await importNativeInbox(await nativeTakeInbox(), applyOpened).catch(() => 0);
+        if (imported) { await flushPersistedMessages(); console.log('[NFS] drained native inbox on resume: ' + imported); }
+      } finally {
+        draining = false;
+      }
+    };
     const stopHandover = onNative('nativeSocketHandover', async ({ active } = {}) => {
       const client = useChatStore.getState().client;
       console.log('[NFS] nativeSocketHandover active=' + active + ' hasClient=' + !!client);
@@ -384,6 +408,7 @@ export default function App() {
         await nativeWebViewSocketReleased().catch(() => {});
         console.log('[NFS] suspended + released');
       } else {
+        await drainNativeInbox(client);
         client.resume();
         console.log('[NFS] resumed');
       }
