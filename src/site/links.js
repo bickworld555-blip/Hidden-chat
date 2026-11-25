@@ -1,6 +1,6 @@
-// Where the public site sends people to get the app. The APK link is the latest release build (EAS); update it
-// with each release.
-export const ANDROID_APK_URL = 'https://expo.dev/artifacts/eas/7H4zrPsm1aYTj7gT1kgGm-xcMcZRxL43x4wiiTUNGq8.apk';
+// Where the public site sends people to get the app. The APK link is the latest signed release build, attached to
+// the GitHub Release of the tag "android-v<version>"; update it with each release.
+export const ANDROID_APK_URL = 'https://github.com/bickworld555-blip/Hidden-chat/releases/download/android-v1.0.0/HiddenMessenger.apk';
 
 // The Windows app (desktop/): the installer and the portable .exe, attached to the GitHub Release of the tag
 // "desktop-v<version>" by .github/workflows/desktop-release.yml. Raise the version with desktop/package.json.
