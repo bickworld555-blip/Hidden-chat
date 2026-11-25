@@ -14,6 +14,7 @@ import io.github.bickworld555.hiddenchat.NativeForegroundSocket
 import io.github.bickworld555.hiddenchat.NativeSend
 import io.github.bickworld555.hiddenchat.NativeSendSocket
 import io.github.bickworld555.hiddenchat.NativeTyping
+import io.github.bickworld555.hiddenchat.NativeLinkPreview
 import io.github.bickworld555.hiddenchat.NativeTypingSender
 import io.github.bickworld555.hiddenchat.NativeUiBridge
 import io.github.bickworld555.hiddenchat.core.store.NativeStore
@@ -158,7 +159,12 @@ class NativeUiActivity : ComponentActivity() {
                                 }, "native-send").start()
                             },
                             typingLabel = if (isGroup) "" else NativeTyping.labelFor(typing[current.id]),
-                            onDraft = { text -> if (!isGroup) { if (text.isBlank()) typingSender.stop() else typingSender.typed() } },
+                            onDraft = { text ->
+                                if (!isGroup) { if (text.isBlank()) typingSender.stop() else typingSender.typed() }
+                                // Item 4 link previews: start fetching the preview for a link as it is typed, so Send
+                                // can attach it without waiting (NativeLinkPreview.takeForSend).
+                                NativeLinkPreview.prefetchFromText(text)
+                            },
                             // Item 4 reactions: seal + send over the native socket, off the main thread (direct chats only).
                             onReact = { messageId, emoji ->
                                 // "" means toggle-off / remove (sendReaction takes null); anything else adds/updates.
@@ -245,11 +251,29 @@ class NativeUiActivity : ComponentActivity() {
                     it.reactions.map { pair -> pair.second },
                     it.reactions.firstOrNull { pair -> pair.first == me }?.second ?: "",
                     it.edited, it.deleted, it.forwarded, it.expiresAt,
+                    parseLinkPreview(it.linkPreview),
                 )
             }
         } ?: emptyList()
     } catch (ignored: Throwable) {
         emptyList()
+    }
+
+    /** Parses a stored link-preview card (item 4) from its JSON into the UI row, or null when absent/malformed. */
+    private fun parseLinkPreview(json: String): LinkPreviewData? {
+        if (json.isBlank()) return null
+        val lp = runCatching { io.github.bickworld555.hiddenchat.core.Json.map(io.github.bickworld555.hiddenchat.core.Json.parse(json)) }.getOrNull() ?: return null
+        val url = io.github.bickworld555.hiddenchat.core.Json.string(lp["url"]) ?: return null
+        val host = runCatching { java.net.URI(url).host?.replace(Regex("^(?:www\\.|m\\.|web\\.)"), "") ?: "" }.getOrDefault("")
+        return LinkPreviewData(
+            url = url,
+            title = io.github.bickworld555.hiddenchat.core.Json.string(lp["title"]) ?: "",
+            description = io.github.bickworld555.hiddenchat.core.Json.string(lp["description"]) ?: "",
+            siteName = io.github.bickworld555.hiddenchat.core.Json.string(lp["siteName"]) ?: "",
+            host = host,
+            video = lp["video"] == true,
+            thumbnail = io.github.bickworld555.hiddenchat.core.Json.string(lp["thumbnail"]) ?: "",
+        )
     }
 
     private fun readContacts(store: NativeStore?): List<ContactRowData> = try {

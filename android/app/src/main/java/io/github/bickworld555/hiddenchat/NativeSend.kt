@@ -40,6 +40,11 @@ object NativeSend {
         // Item 4 disappearing: if this chat has a timer, carry `ex` seconds inside the encryption (web client.js).
         val disappear = NativeStore.get(context)?.disappearSeconds(peerId) ?: 0L
         if (disappear > 0) inner["ex"] = disappear
+        // Item 4 link previews: if the text has a link whose preview is ready (prepared while typing), carry the card
+        // inside the encryption (inner `lp`, like the web). Never blocks the send beyond the short wait; forwards keep
+        // the forwarded message's own body but re-make the preview here (the inner is sealed, not re-sendable as-is).
+        val linkPreview = NativeLinkPreview.takeForSend(text)
+        if (linkPreview != null) inner["lp"] = linkPreview
         val envelope = sealTo(context, peerId, inner) ?: return false
 
         val messageId = UUID.randomUUID().toString()
@@ -57,6 +62,7 @@ object NativeSend {
             if (!replyToId.isNullOrEmpty()) store?.setReplyTo(peerId, messageId, replyToId)
             if (forwarded) store?.setForwarded(messageId)
             if (disappear > 0) store?.setExpiry(messageId, ts + disappear * 1000) // item 4 disappearing: our own copy expires too
+            if (linkPreview != null) store?.setLinkPreview(messageId, Json.stringify(linkPreview)) // item 4 link previews: our own echo shows the card too
         } catch (ignored: Throwable) { /* echo only */ }
         return true
     }

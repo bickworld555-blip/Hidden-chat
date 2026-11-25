@@ -44,6 +44,8 @@ data class MessageRecord @JvmOverloads constructor(
     val forwarded: Boolean = false,
     /** Item 4 disappearing: when this message disappears (epoch ms), or 0 = never; drives the ⏱ indicator. */
     val expiresAt: Long = 0,
+    /** Item 4 link previews: the sender-made preview card as JSON (the inner `lp`), or "" when the message has none. */
+    val linkPreview: String = "",
 )
 
 /** One row of the authoritative message store (checklist item 2): a message's full JSON, keyed by (chatId, id), ts in ms. */
@@ -204,9 +206,9 @@ class NativeStore private constructor(private val db: SQLiteDatabase) : KeyRecor
         val out = ArrayList<MessageRecord>()
         // Item 4 disappearing: a message past its expires_at is not shown (the sweep removes it from the DB separately).
         val now = System.currentTimeMillis()
-        db.rawQuery("SELECT id, mine, text, time, ts, status, reply_to, reactions, edited, deleted, forwarded, expires_at FROM chat_messages WHERE chat_id = ? AND (expires_at = 0 OR expires_at > $now) ORDER BY ts ASC", arrayOf(chatId)).use { cursor ->
+        db.rawQuery("SELECT id, mine, text, time, ts, status, reply_to, reactions, edited, deleted, forwarded, expires_at, link_preview FROM chat_messages WHERE chat_id = ? AND (expires_at = 0 OR expires_at > $now) ORDER BY ts ASC", arrayOf(chatId)).use { cursor ->
             while (cursor.moveToNext()) {
-                out.add(MessageRecord(cursor.getString(0), cursor.getInt(1) != 0, cursor.getString(2), cursor.getString(3), cursor.getLong(4), cursor.getString(5) ?: "", cursor.getString(6) ?: "", "", parseReactions(cursor.getString(7)), cursor.getInt(8) != 0, cursor.getInt(9) != 0, cursor.getInt(10) != 0, cursor.getLong(11)))
+                out.add(MessageRecord(cursor.getString(0), cursor.getInt(1) != 0, cursor.getString(2), cursor.getString(3), cursor.getLong(4), cursor.getString(5) ?: "", cursor.getString(6) ?: "", "", parseReactions(cursor.getString(7)), cursor.getInt(8) != 0, cursor.getInt(9) != 0, cursor.getInt(10) != 0, cursor.getLong(11), cursor.getString(12) ?: ""))
             }
         }
         // Item 4 replies: resolve each reply's quoted snippet from the message it points to (same chat), so the native UI
@@ -254,13 +256,21 @@ class NativeStore private constructor(private val db: SQLiteDatabase) : KeyRecor
     /** Item 4 delete-for-everyone: replaces a message (by id) with the deleted placeholder — clears text, reactions and
      *  reply, sets deleted=1. Idempotent; no-op if not stored. */
     fun markDeleted(messageId: String) = exclusive {
-        db.execSQL("UPDATE chat_messages SET deleted = 1, text = '', reactions = '', reply_to = '' WHERE id = ?", arrayOf(messageId))
+        db.execSQL("UPDATE chat_messages SET deleted = 1, text = '', reactions = '', reply_to = '', link_preview = '' WHERE id = ?", arrayOf(messageId))
         bump()
     }
 
     /** Item 4 forwarding: flags a message (by id) as forwarded, for the "Forwarded" label. */
     fun setForwarded(messageId: String) = exclusive {
         db.execSQL("UPDATE chat_messages SET forwarded = 1 WHERE id = ?", arrayOf(messageId))
+        bump()
+    }
+
+    /** Item 4 link previews: stores the sender-made preview card (the inner `lp`, already sanitized) as JSON for a
+     *  message (by id). Empty/blank clears it. Never clobbers with an empty value once a card is set. */
+    fun setLinkPreview(messageId: String, json: String?) = exclusive {
+        if (json.isNullOrBlank()) return@exclusive
+        db.execSQL("UPDATE chat_messages SET link_preview = ? WHERE id = ?", arrayOf(json, messageId))
         bump()
     }
 
@@ -505,6 +515,9 @@ class NativeStore private constructor(private val db: SQLiteDatabase) : KeyRecor
                 // Checklist item 4 (disappearing messages): expires_at (epoch ms) is when this message should disappear
                 // (0 = never). Set from the inner `ex` seconds on send/receive; the sweep deletes rows past it. No-op once present.
                 try { db.execSQL("ALTER TABLE chat_messages ADD COLUMN expires_at INTEGER NOT NULL DEFAULT 0") } catch (ignored: Throwable) { /* already present */ }
+                // Checklist item 4 (link previews): the sender-made preview card as JSON (the inner `lp`), shown as a
+                // WhatsApp-style card above the text. Travels inside the E2E message; recipients fetch nothing. No-op once present.
+                try { db.execSQL("ALTER TABLE chat_messages ADD COLUMN link_preview TEXT NOT NULL DEFAULT ''") } catch (ignored: Throwable) { /* already present */ }
                 // Checklist item 2 (authoritative store): the WebView's message history, native-owned. Each row is one
                 // message's FULL JSON, opaque to native (round-tripped, never parsed here — native stays decoupled from
                 // the WebView's evolving message shape), keyed by (chat_id, id) and ordered by ts (epoch ms). This is the

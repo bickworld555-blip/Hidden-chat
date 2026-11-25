@@ -1,5 +1,10 @@
 package io.github.bickworld555.hiddenchat.ui
 
+import android.content.Intent
+import android.graphics.BitmapFactory
+import android.net.Uri
+import android.util.Base64
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -10,6 +15,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
@@ -34,14 +40,22 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 /** One message bubble the native conversation screen shows (Step 5). `status` drives the read-receipt ticks on our own
  * sent messages ('' | sent | delivered | read | waiting); it is unused for incoming messages. `replyText` (item 4
  * replies) is the quoted snippet of the message this one replies to, shown above the bubble ("" when not a reply). */
-data class MessageRowData(val id: String, val mine: Boolean, val text: String, val time: String, val status: String = "", val replyText: String = "", val reactions: List<String> = emptyList(), val myReaction: String = "", val edited: Boolean = false, val deleted: Boolean = false, val forwarded: Boolean = false, val expiresAt: Long = 0)
+data class MessageRowData(val id: String, val mine: Boolean, val text: String, val time: String, val status: String = "", val replyText: String = "", val reactions: List<String> = emptyList(), val myReaction: String = "", val edited: Boolean = false, val deleted: Boolean = false, val forwarded: Boolean = false, val expiresAt: Long = 0, val linkPreview: LinkPreviewData? = null)
+
+/** The sender-made link-preview card shown above a bubble (item 4 link previews). `thumbnail` is a small JPEG data URL
+ * that travelled inside the encrypted message (recipients fetch nothing); "" when the preview has no image. */
+data class LinkPreviewData(val url: String, val title: String, val description: String, val siteName: String, val host: String, val video: Boolean, val thumbnail: String)
 
 /**
  * The native conversation screen (Step 5). A back-navigable top bar, a scrollable list of message bubbles (mine on the
@@ -223,6 +237,73 @@ fun ConversationScreen(
     }
 }
 
+/**
+ * Item 4 link previews: WhatsApp's card for a link the sender shared. The card (title/description/site + an optional
+ * thumbnail) travelled INSIDE the encrypted message, so nothing is fetched here. Tapping opens the link externally.
+ */
+@Composable
+private fun LinkPreviewCard(preview: LinkPreviewData, mine: Boolean) {
+    val context = LocalContext.current
+    val bitmap = remember(preview.thumbnail) {
+        val data = preview.thumbnail
+        if (data.isEmpty()) {
+            null
+        } else {
+            runCatching {
+                val base64 = data.substringAfter("base64,", "")
+                if (base64.isEmpty()) return@runCatching null
+                val bytes = Base64.decode(base64, Base64.DEFAULT)
+                BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+            }.getOrNull()
+        }
+    }
+    val tint = if (mine) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
+    Column(
+        modifier = Modifier
+            .padding(bottom = 4.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(if (mine) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.12f) else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f))
+            .clickable {
+                runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(preview.url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+            },
+    ) {
+        if (bitmap != null) {
+            Box {
+                Image(
+                    bitmap = bitmap.asImageBitmap(),
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxWidth().height(140.dp),
+                )
+                if (preview.video) {
+                    Text(
+                        "▶",
+                        color = MaterialTheme.colorScheme.onPrimary,
+                        fontSize = 20.sp,
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.5f))
+                            .padding(horizontal = 10.dp, vertical = 4.dp),
+                    )
+                }
+            }
+        }
+        Column(modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp)) {
+            if (preview.title.isNotEmpty()) {
+                Text(preview.title, color = tint, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
+            if (preview.description.isNotEmpty() && preview.description != preview.title) {
+                Text(preview.description, color = tint.copy(alpha = 0.75f), fontSize = 12.sp, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
+            val site = preview.siteName.ifEmpty { preview.host }
+            if (site.isNotEmpty()) {
+                Text("🔗 $site", color = tint.copy(alpha = 0.55f), fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(top = 2.dp))
+            }
+        }
+    }
+}
+
 // The reactions the long-press menu offers (WhatsApp's default set).
 private val REACTION_EMOJIS = listOf("👍", "❤️", "😂", "😮", "😢", "🙏")
 
@@ -303,6 +384,9 @@ private fun MessageBubble(
                             )
                         }
                     }
+                    // Item 4 link previews: the sender-made card above the text (nothing is fetched — the thumbnail,
+                    // if any, came inside the encrypted message). Tapping it opens the link.
+                    message.linkPreview?.let { LinkPreviewCard(it, mine) }
                     Text(
                         message.text,
                         color = if (mine) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,

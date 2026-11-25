@@ -56,6 +56,9 @@ object NativeDelivery {
         // Item 4 disappearing: `ex` seconds → this message disappears ex seconds after it was sent (expiryOf, web).
         val ex = Json.safeInteger(inner?.get("ex"))
         if (ex != null && ex > 0) store.setExpiry(delivery.messageId, ts + ex * 1000)
+        // Item 4 link previews: the sender put a preview card in the inner `lp` (nothing is fetched here); store it as-is.
+        val lp = Json.map(inner?.get("lp"))
+        if (lp != null) store.setLinkPreview(delivery.messageId, Json.stringify(lp))
         if (updateChatList) store.bumpChatForIncoming(chatId, text, time)
     }
 
