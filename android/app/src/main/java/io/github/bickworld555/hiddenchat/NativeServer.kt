@@ -27,6 +27,22 @@ class NativeServer private constructor(private val origin: String, private val t
     fun postJson(path: String, body: Map<String, Any?>): Map<String, Any?>? =
         request(Request.Builder().url(origin + path).post(Json.stringify(body).toRequestBody(jsonType)))
 
+    /** A GET whose body is raw bytes (e.g. an attachment's ciphertext at /api/v1/media/<id>), or null on failure. */
+    fun getBytes(path: String): ByteArray? {
+        val request = Request.Builder().url(origin + path).get()
+            .header("Authorization", "Bearer $token")
+            .header(ClientVersion.HEADER, ClientVersion.PROTOCOL.toString())
+            .build()
+        return try {
+            client.newCall(request).execute().use { response ->
+                val body = response.body
+                if (!response.isSuccessful || body == null) null else body.bytes()
+            }
+        } catch (failed: Exception) {
+            null
+        }
+    }
+
     /** A GET whose body is a JSON array (e.g. a group's message history), not an object. */
     fun getArray(path: String): List<Any?>? {
         val request = Request.Builder().url(origin + path).get()

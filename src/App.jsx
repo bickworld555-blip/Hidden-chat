@@ -50,7 +50,7 @@ function nativeMessageProjection(list, userId, cap = 60) {
       time: Number.isFinite(at) ? new Date(at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true }).toLowerCase() : '',
       ts: Number.isFinite(at) ? at : 0,
       expiresAt: Number.isFinite(expiresAt) ? expiresAt : 0,
-      ...(mediaKind ? { mediaKind, mediaPreview, mediaDuration: Number.isFinite(message.duration) ? Math.round(message.duration) : 0 } : {}),
+      ...(mediaKind ? { mediaKind, mediaPreview, mediaDuration: Number.isFinite(message.duration) ? Math.round(message.duration) : 0, mediaSource: typeof message.content === 'string' ? message.content : '' } : {}),
     };
   });
 }

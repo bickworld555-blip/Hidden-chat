@@ -68,7 +68,8 @@ object NativeDelivery {
         if (kind.isNotEmpty()) {
             val preview = Json.string(inner?.get("pv"))?.takeIf { it.isNotEmpty() } ?: Json.string(inner?.get("th")) ?: ""
             val duration = (Json.safeInteger(inner?.get("du")) ?: 0L).toInt()
-            store.setMedia(delivery.messageId, kind, preview, duration)
+            // `raw` is the attachment content (emedia/media ref) — carried so the native viewer can decrypt full-res.
+            store.setMedia(delivery.messageId, kind, preview, duration, raw)
         }
         if (updateChatList) store.bumpChatForIncoming(chatId, text, time)
     }

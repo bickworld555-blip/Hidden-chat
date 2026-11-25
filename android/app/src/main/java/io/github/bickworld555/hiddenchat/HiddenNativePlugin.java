@@ -1621,7 +1621,7 @@ public class HiddenNativePlugin extends Plugin {
             mid, o.optBoolean("mine", false), o.optString("text", ""), o.optString("time", ""), o.optLong("ts", 0L),
             "", "", "", java.util.Collections.<kotlin.Pair<String, String>>emptyList(), false, false, false,
             o.optLong("expiresAt", 0L), "",
-            o.optString("mediaKind", ""), o.optString("mediaPreview", ""), o.optInt("mediaDuration", 0));
+            o.optString("mediaKind", ""), o.optString("mediaPreview", ""), o.optInt("mediaDuration", 0), o.optString("mediaSource", ""));
     }
 
     /** Step 5 read independence: mirror many chats' messages at once ({ chatId: [ {id,mine,text,time,ts} ] }). */

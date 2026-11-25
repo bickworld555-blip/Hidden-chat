@@ -10,6 +10,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -55,8 +56,17 @@ import androidx.compose.ui.unit.sp
 data class MessageRowData(val id: String, val mine: Boolean, val text: String, val time: String, val status: String = "", val replyText: String = "", val reactions: List<String> = emptyList(), val myReaction: String = "", val edited: Boolean = false, val deleted: Boolean = false, val forwarded: Boolean = false, val expiresAt: Long = 0, val linkPreview: LinkPreviewData? = null, val media: MediaData? = null)
 
 /** Item 5 media: the carried preview of a photo/video bubble. `preview` is the small JPEG data URL that travelled inside
- * the message (a photo's thumb or a video's poster); `kind` is "photo"/"video"; `duration` is a video length in seconds. */
-data class MediaData(val kind: String, val preview: String, val duration: Int)
+ * the message (a photo's thumb or a video's poster); `kind` is "photo"/"video"; `duration` is a video length in seconds;
+ * `source` is the raw attachment ref (emedia/media), used to decrypt and open the full-resolution file on tap. */
+data class MediaData(val kind: String, val preview: String, val duration: Int, val source: String = "")
+
+/** Item 5 full-res media: the result of decrypting an attachment for the full-screen viewer. */
+private sealed interface MediaOpened {
+    object Loading : MediaOpened
+    class Photo(val bitmap: android.graphics.Bitmap) : MediaOpened
+    class Video(val file: java.io.File) : MediaOpened
+    object Failed : MediaOpened
+}
 
 /** The sender-made link-preview card shown above a bubble (item 4 link previews). `thumbnail` is a small JPEG data URL
  * that travelled inside the encrypted message (recipients fetch nothing); "" when the preview has no image. */
@@ -346,8 +356,33 @@ private fun MediaCard(media: MediaData) {
         }
     }
     if (enlarged) {
-        // Full-screen preview of the carried thumbnail/poster. (It is the small preview image the sender included; the
-        // full-resolution file needs native media decryption, a separate step.) Tap anywhere to dismiss.
+        // Item 5 full-resolution viewer: on open, decrypt the attachment natively (NativeMediaCrypto — the ciphertext
+        // file + its per-file key from the message's descriptor; never the E2E ratchet) OFF the main thread, showing the
+        // carried preview thumbnail + a spinner meanwhile. A photo shows its full-res bitmap; a video plays from a
+        // decrypted temp file. The temp file is deleted when the viewer closes. Tap outside to dismiss.
+        val context = LocalContext.current
+        val opened by androidx.compose.runtime.produceState<MediaOpened>(MediaOpened.Loading, media.source, media.kind) {
+            value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                try {
+                    if (media.kind == "video") {
+                        io.github.bickworld555.hiddenchat.NativeMediaCrypto.decryptedToTempFile(context, media.source, ".mp4")
+                            ?.let { MediaOpened.Video(it) } ?: MediaOpened.Failed
+                    } else {
+                        val bytes = io.github.bickworld555.hiddenchat.NativeMediaCrypto.decryptedBytes(context, media.source)
+                        bytes?.let { BitmapFactory.decodeByteArray(it, 0, it.size) }?.let { MediaOpened.Photo(it) } ?: MediaOpened.Failed
+                    }
+                } catch (failed: Throwable) {
+                    MediaOpened.Failed
+                }
+            }
+        }
+        // Delete a decrypted video temp file once the viewer is gone. Key the effect on the file itself and capture it
+        // by value — keying on `opened` and re-reading it in onDispose would read the *new* value during the
+        // Loading→Video transition and delete the freshly-decrypted file before the player ever opens it (ENOENT).
+        val videoFile = (opened as? MediaOpened.Video)?.file
+        androidx.compose.runtime.DisposableEffect(videoFile) {
+            onDispose { videoFile?.delete() }
+        }
         androidx.compose.ui.window.Dialog(
             onDismissRequest = { enlarged = false },
             properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
@@ -355,19 +390,74 @@ private fun MediaCard(media: MediaData) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.92f))
+                    .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.95f))
                     .clickable { enlarged = false },
                 contentAlignment = Alignment.Center,
             ) {
-                Image(
-                    bitmap = bitmap.asImageBitmap(),
-                    contentDescription = null,
-                    contentScale = ContentScale.Fit,
-                    modifier = Modifier.fillMaxWidth().padding(16.dp),
-                )
+                when (val result = opened) {
+                    is MediaOpened.Photo -> Image(
+                        bitmap = result.bitmap.asImageBitmap(),
+                        contentDescription = null,
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier.fillMaxWidth().padding(8.dp),
+                    )
+                    is MediaOpened.Video -> VideoPlayer(result.file, bitmap.width.toFloat() / bitmap.height.coerceAtLeast(1))
+                    MediaOpened.Failed -> Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Image(bitmap = bitmap.asImageBitmap(), contentDescription = null, contentScale = ContentScale.Fit, modifier = Modifier.widthIn(max = 240.dp).padding(8.dp))
+                        Text("Couldn't open this media.", color = androidx.compose.ui.graphics.Color.White, fontSize = 13.sp, modifier = Modifier.padding(8.dp))
+                    }
+                    MediaOpened.Loading -> Box(contentAlignment = Alignment.Center) {
+                        Image(bitmap = bitmap.asImageBitmap(), contentDescription = null, contentScale = ContentScale.Fit, modifier = Modifier.widthIn(max = 240.dp).padding(8.dp))
+                        androidx.compose.material3.CircularProgressIndicator(color = androidx.compose.ui.graphics.Color.White)
+                    }
+                }
             }
         }
     }
+}
+
+/**
+ * Item 5 full-resolution video playback: plays a decrypted temp file on a [android.view.TextureView] driven by a
+ * [android.media.MediaPlayer]. A TextureView (not VideoView's SurfaceView) is used deliberately — a SurfaceView cannot
+ * get a valid surface inside a Compose [androidx.compose.ui.window.Dialog] window, so VideoView reports "Can't play
+ * this video" even though the decrypt succeeded. `aspect` (width/height, from the carried poster) keeps the frame from
+ * stretching. The player is released when the viewer closes; looping playback starts automatically once prepared.
+ */
+@Composable
+private fun VideoPlayer(file: java.io.File, aspect: Float) {
+    val player = remember { android.media.MediaPlayer() }
+    val ready = remember { androidx.compose.runtime.mutableStateOf(false) }
+    androidx.compose.runtime.DisposableEffect(file) {
+        onDispose { runCatching { player.reset() }; runCatching { player.release() } }
+    }
+    androidx.compose.ui.viewinterop.AndroidView(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(8.dp)
+            .aspectRatio(if (aspect.isFinite() && aspect > 0f) aspect else 16f / 9f),
+        factory = { ctx ->
+            android.view.TextureView(ctx).apply {
+                surfaceTextureListener = object : android.view.TextureView.SurfaceTextureListener {
+                    override fun onSurfaceTextureAvailable(st: android.graphics.SurfaceTexture, width: Int, height: Int) {
+                        runCatching {
+                            player.setSurface(android.view.Surface(st))
+                            player.setDataSource(file.absolutePath)
+                            player.isLooping = true
+                            player.setOnPreparedListener { it.start(); ready.value = true }
+                            player.setOnErrorListener { _, what, extra ->
+                                android.util.Log.w("VideoPlayer", "MediaPlayer error what=$what extra=$extra")
+                                false
+                            }
+                            player.prepareAsync()
+                        }.onFailure { android.util.Log.w("VideoPlayer", "setup failed", it) }
+                    }
+                    override fun onSurfaceTextureSizeChanged(st: android.graphics.SurfaceTexture, width: Int, height: Int) {}
+                    override fun onSurfaceTextureDestroyed(st: android.graphics.SurfaceTexture): Boolean = true
+                    override fun onSurfaceTextureUpdated(st: android.graphics.SurfaceTexture) {}
+                }
+            }
+        },
+    )
 }
 
 private fun mediaDurationLabel(seconds: Int): String = "%d:%02d".format(seconds / 60, seconds % 60)
