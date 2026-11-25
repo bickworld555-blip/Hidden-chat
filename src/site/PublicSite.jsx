@@ -49,7 +49,6 @@ function Header({ path, go }) {
           {PAGES.map(([to, label]) => <Link key={to} to={to} go={(next) => { setOpen(false); go(next); }} className={path.startsWith(to) ? 'is-active' : ''}>{label}</Link>)}
         </nav>
         <div className="site-header-actions">
-          <a href="/app" className="site-button is-ghost">Log in</a>
           <Link to="/download" go={go} className="site-button">Download</Link>
           <button type="button" className="site-menu" aria-label="Menu" aria-expanded={open} onClick={() => setOpen(!open)}><span /><span /><span /></button>
         </div>
@@ -60,7 +59,7 @@ function Header({ path, go }) {
 
 function Footer({ go }) {
   const groups = [
-    ['Product', [['/messaging', 'Messaging'], ['/calling', 'Calling'], ['/features', 'All features'], ['/business', 'For business'], ['/download', 'Download'], ['/app', 'Open web app']]],
+    ['Product', [['/messaging', 'Messaging'], ['/calling', 'Calling'], ['/features', 'All features'], ['/business', 'For business'], ['/download', 'Download']]],
     ['Trust', [['/privacy', 'Privacy & encryption'], ['/terms', 'Terms of Service'], ['/help/end-to-end-encryption', 'How encryption works'], ['/help/report-and-block', 'Report abuse'], ['/delete-account', 'Delete your account']]],
     ['Help', [['/help', 'Help Center'], ['/help/create-account', 'Create an account'], ['/help/install-android', 'Install on Android']]],
   ];
@@ -120,7 +119,6 @@ function Home({ go }) {
               <a href={WINDOWS_INSTALLER_URL} className="site-button is-large is-ghost site-windows-button" download>
                 <Monitor size={18} aria-hidden="true" /> Download for Windows (.exe)
               </a>
-              <a href="/app" className="site-button is-large is-ghost">Open in your browser</a>
             </div>
             <p className="site-hero-note">The Windows app runs on Windows 10 and 11 (64-bit) and links to the app on your phone with a QR code. <Link to="/download" go={go} className="site-more">More download options <ChevronRight size={14} /></Link></p>
           </div>
@@ -351,8 +349,8 @@ function Messaging({ go }) {
         ))}
       </div>
       <h2>Use it on your computer</h2>
-      <Steps items={[['Open hiddenmessenger.com/app', 'on your computer and choose “Link with your phone”.'], ['On your phone', 'go to Settings › Account › Linked devices › Link a device.'], ['Scan the QR code', 'Your recent chats arrive end-to-end encrypted, and new messages show on both.']]} />
-      <p><a className="site-button" href="/app">Open the web app</a></p>
+      <Steps items={[['Download the Windows app', 'the installer or the portable .exe below.'], ['On your phone', 'go to Settings › Account › Linked devices › Link a device.'], ['Scan the QR code', 'Your recent chats arrive end-to-end encrypted, and new messages show on both.']]} />
+      <p><a className="site-button" href={WINDOWS_INSTALLER_URL} download>Download for Windows (.exe)</a></p>
     </div>
   );
 }
@@ -407,11 +405,6 @@ function Download() {
           <a className="site-button is-large" href={WINDOWS_INSTALLER_URL} download><DownloadIcon size={18} aria-hidden="true" /> Download for Windows (.exe)</a>
           <p className="site-download-alt">Version {WINDOWS_APP_VERSION} · <a href={WINDOWS_PORTABLE_URL} download>Portable version</a> (runs without installing)</p>
           <p className="site-download-note">Windows may show a SmartScreen notice the first time, because the app is new: choose <strong>More info › Run anyway</strong>.</p>
-        </section>
-        <section className="site-card site-download">
-          <h2><MessageCircle size={20} /> Web</h2>
-          <p>Use Hidden Messenger in Chrome, Edge, Firefox or Safari on your computer. Link it to the app on your phone by scanning a QR code.</p>
-          <a className="site-button is-large is-ghost" href="/app">Open the web app</a>
         </section>
       </div>
     </div>

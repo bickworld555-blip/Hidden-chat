@@ -148,9 +148,9 @@ test('sharing an ID: the link carries the number, opens the app or a public page
   assert.ok(text.endsWith(link), 'the link last, where chat apps make it tappable');
 
   assert.equal(entryFor('/u/4821937765'), 'site', 'a visitor sees "Open in the app" / "Get the app"');
-  assert.equal(entryFor('/u/4821937765', { signedIn: true }), 'app', 'a signed-in web user goes straight to the chat');
+  assert.equal(entryFor('/u/4821937765', { signedIn: true }), 'site', 'the website is download-only; the browser never opens the chat');
   assert.equal(entryFor('/u/4821937765', { native: true }), 'app');
-  assert.equal(entryFor('/u/rahim_42'), 'app', 'business short links unchanged');
+  assert.equal(entryFor('/u/rahim_42'), 'site', 'every browser path shows the download site now');
 
   // The share sheet: the app's own first, then the browser's, then copying; a cancelled sheet is not an error.
   const copiedTexts = [];

@@ -1,6 +1,6 @@
 // Where the public site sends people to get the app. The APK link is the latest signed release build, attached to
 // the GitHub Release of the tag "android-v<version>"; update it with each release.
-export const ANDROID_APK_URL = 'https://github.com/bickworld555-blip/Hidden-chat/releases/download/android-v1.0.0/HiddenMessenger.apk';
+export const ANDROID_APK_URL = 'https://github.com/bickworld555-blip/Hidden-chat/releases/download/android-v1.0.1/HiddenMessenger.apk';
 
 // The Windows app (desktop/): the installer and the portable .exe, attached to the GitHub Release of the tag
 // "desktop-v<version>" by .github/workflows/desktop-release.yml. Raise the version with desktop/package.json.
@@ -16,11 +16,12 @@ export const PUBLIC_PATH = /^\/(?:features|calling|messaging|privacy|terms|busin
 export const ACCOUNT_LINK_PATH = /^\/u\/[1-9]\d{9}\/?$/;
 export const SIGNED_IN_HINT = 'hm:signed-in';
 
-/** Which experience a page load shows: the public site, or the messenger (always in the Android app). */
-export function entryFor(pathname, { native = false, signedIn = false } = {}) {
+/**
+ * Which experience a page load shows. The website is a download portal only: in a browser EVERY path shows the public
+ * site (download links + "Open in the app" handoff pages), so there is no web messenger or login in the browser. The
+ * installed app (the Capacitor/native shell) always runs the messenger.
+ */
+export function entryFor(pathname, { native = false } = {}) {
   if (native) return 'app';
-  if (ACCOUNT_LINK_PATH.test(pathname)) return signedIn ? 'app' : 'site';
-  if (!PUBLIC_PATH.test(pathname)) return 'app';
-  if (pathname === '/' && signedIn) return 'redirect-app';
   return 'site';
 }

@@ -1865,7 +1865,10 @@ public class HiddenNativePlugin extends Plugin {
      */
     @PluginMethod
     public void nativeUiAllowed(PluginCall call) {
-        boolean on = getContext().getSharedPreferences("hm_native_ui", Context.MODE_PRIVATE).getBoolean("enabled", false);
+        // Native-first build: the Compose UI is ON by default. The send/receive path still bridges through the WebView's
+        // audited E2E (nativeUiSend), so this does not touch the native crypto core (NativeFlag) or socket ownership,
+        // which stay off until verified on two real devices. A rollout driver or device test can still set it false.
+        boolean on = getContext().getSharedPreferences("hm_native_ui", Context.MODE_PRIVATE).getBoolean("enabled", true);
         call.resolve(new JSObject().put("allowed", on));
     }
 

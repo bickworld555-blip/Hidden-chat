@@ -206,11 +206,6 @@ public class AppActivity extends BridgeActivity {
         if (getBridge() != null) PickedFiles.install(getBridge());
         // Screen security (FLAG_SECURE) from the first frame, before the web app has loaded.
         AppSecurity.apply(this);
-        // TEMPORARY test hook (remove before release): name the throwaway account the native path is for, so flag-on
-        // verification never touches the real account. `am start ... --es hm_native_for <userId>` ("" disables).
-        if (getIntent() != null && getIntent().hasExtra("hm_native_for")) {
-            NativeBackground.setEnabledForAccount(this, getIntent().getStringExtra("hm_native_for"));
-        }
         // The native end-to-end core, so the foreground web app routes its crypto through it (bridge). Only for the
         // account the flag names; the real account (a different id) keeps its own WebView protocol.
         if (NativeFlag.active(this)) NativeBackground.install(this);

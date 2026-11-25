@@ -139,11 +139,11 @@ test('reports reach the admin console; suspending signs the account out and bloc
   assert.deepEqual([listed.length, listed[0].suspendedAt, listed[0].isAdmin], [1, null, undefined]);
 });
 
-test('page routing: public pages on the website, the messenger everywhere else and always in the app', () => {
-  for (const path of ['/', '/features', '/privacy', '/business', '/download', '/help', '/help/create-account']) assert.equal(entryFor(path), 'site', path);
-  for (const path of ['/app', '/join/abcdefghijklmnop', '/call/abcdefghijklmnop']) assert.equal(entryFor(path), 'app', path);
-  assert.equal(entryFor('/', { signedIn: true }), 'redirect-app');
-  assert.equal(entryFor('/features', { signedIn: true }), 'site', 'signed-in people can still read the site');
+test('page routing: the website is a download portal only; the messenger runs only in the installed app', () => {
+  // In a browser every path shows the public site — no web messenger or login, even on /app or deep links.
+  for (const path of ['/', '/features', '/privacy', '/business', '/download', '/help', '/help/create-account', '/app', '/join/abcdefghijklmnop', '/call/abcdefghijklmnop']) assert.equal(entryFor(path), 'site', path);
+  assert.equal(entryFor('/', { signedIn: true }), 'site', 'a signed-in browser still only sees the download site');
+  assert.equal(entryFor('/app', { native: true }), 'app', 'the installed app always runs the messenger');
   assert.equal(entryFor('/', { native: true }), 'app', 'the Android app never shows the website');
 });
 
