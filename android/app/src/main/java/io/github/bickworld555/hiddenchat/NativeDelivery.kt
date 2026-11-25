@@ -48,9 +48,11 @@ object NativeDelivery {
         val ts = Json.safeInteger(message?.get("createdAt")) ?: Json.safeInteger(message?.get("timestamp")) ?: System.currentTimeMillis()
         val time = java.text.SimpleDateFormat("h:mm a", java.util.Locale.US).format(java.util.Date(ts)).lowercase(java.util.Locale.US)
         store.addMessage(chatId, delivery.messageId, false, text, time, ts)
-        // Item 4 replies: the inner `r` field is the id of the message this one replies to; record it for the quote.
-        val replyTo = delivery.plaintext?.let { runCatching { Json.string(Json.map(Json.parse(it))?.get("r")) }.getOrNull() }
+        // Item 4 replies + forwarding: the inner `r` is the replied-to id; `fw`==1 marks a forwarded message.
+        val inner = delivery.plaintext?.let { runCatching { Json.map(Json.parse(it)) }.getOrNull() }
+        val replyTo = Json.string(inner?.get("r"))
         if (!replyTo.isNullOrEmpty()) store.setReplyTo(chatId, delivery.messageId, replyTo)
+        if (Json.safeInteger(inner?.get("fw")) == 1L) store.setForwarded(delivery.messageId)
         if (updateChatList) store.bumpChatForIncoming(chatId, text, time)
     }
 

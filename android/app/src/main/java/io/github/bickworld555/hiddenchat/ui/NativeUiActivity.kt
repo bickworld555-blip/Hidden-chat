@@ -48,6 +48,9 @@ class NativeUiActivity : ComponentActivity() {
                 var showNewChat by remember { mutableStateOf(false) }
                 var messages by remember { mutableStateOf(emptyList<MessageRowData>()) }
                 var loadingMessages by remember { mutableStateOf(false) }
+                // Item 4 forwarding: the message being forwarded; while set, the chat picker (NewChatScreen) is shown to
+                // choose the target, then it is sent there with the forwarded flag.
+                var forwardingMessage by remember { mutableStateOf<MessageRowData?>(null) }
 
                 LaunchedEffect(version) {
                     chats = withContext(Dispatchers.IO) { readChats(store) }
@@ -86,9 +89,22 @@ class NativeUiActivity : ComponentActivity() {
                 // Android back from a sub-screen returns to the list rather than leaving the app.
                 BackHandler(enabled = openChat != null) { openChat = null }
                 BackHandler(enabled = showNewChat) { showNewChat = false }
+                BackHandler(enabled = forwardingMessage != null) { forwardingMessage = null }
 
                 val current = openChat
                 when {
+                    // Item 4 forwarding: pick a target chat for the message, then send it there with the forwarded flag.
+                    forwardingMessage != null -> NewChatScreen(
+                        contacts,
+                        onPick = { contact ->
+                            val msg = forwardingMessage
+                            forwardingMessage = null
+                            if (msg != null && msg.text.isNotEmpty()) Thread({
+                                try { NativeSend.sendText(applicationContext, contact.id, msg.text, null, true) } catch (ignored: Throwable) { /* best-effort */ }
+                            }, "native-forward").start()
+                        },
+                        onBack = { forwardingMessage = null },
+                    )
                     showNewChat -> NewChatScreen(
                         contacts,
                         onPick = { contact ->
@@ -148,6 +164,8 @@ class NativeUiActivity : ComponentActivity() {
                                     try { NativeSend.deleteForEveryone(applicationContext, messageId) } catch (ignored: Throwable) { /* best-effort */ }
                                 }, "native-delete").start()
                             },
+                            // Item 4 forwarding: open the chat picker for this message.
+                            onForward = { message -> forwardingMessage = message },
                         )
                     }
                 }
@@ -200,7 +218,7 @@ class NativeUiActivity : ComponentActivity() {
                     it.id, it.mine, it.text, it.time, it.status, it.replyText,
                     it.reactions.map { pair -> pair.second },
                     it.reactions.firstOrNull { pair -> pair.first == me }?.second ?: "",
-                    it.edited, it.deleted,
+                    it.edited, it.deleted, it.forwarded,
                 )
             }
         } ?: emptyList()

@@ -40,6 +40,8 @@ data class MessageRecord @JvmOverloads constructor(
     /** Item 4 edit/delete: whether this message was edited, and whether it was deleted-for-everyone (placeholder). */
     val edited: Boolean = false,
     val deleted: Boolean = false,
+    /** Item 4 forwarding: whether this message was forwarded (the inner `fw` flag), for the "Forwarded" label. */
+    val forwarded: Boolean = false,
 )
 
 /** One row of the authoritative message store (checklist item 2): a message's full JSON, keyed by (chatId, id), ts in ms. */
@@ -198,9 +200,9 @@ class NativeStore private constructor(private val db: SQLiteDatabase) : KeyRecor
     /** A chat's messages, oldest-first (by timestamp), for the native conversation screen. */
     fun messages(chatId: String): List<MessageRecord> = exclusive {
         val out = ArrayList<MessageRecord>()
-        db.rawQuery("SELECT id, mine, text, time, ts, status, reply_to, reactions, edited, deleted FROM chat_messages WHERE chat_id = ? ORDER BY ts ASC", arrayOf(chatId)).use { cursor ->
+        db.rawQuery("SELECT id, mine, text, time, ts, status, reply_to, reactions, edited, deleted, forwarded FROM chat_messages WHERE chat_id = ? ORDER BY ts ASC", arrayOf(chatId)).use { cursor ->
             while (cursor.moveToNext()) {
-                out.add(MessageRecord(cursor.getString(0), cursor.getInt(1) != 0, cursor.getString(2), cursor.getString(3), cursor.getLong(4), cursor.getString(5) ?: "", cursor.getString(6) ?: "", "", parseReactions(cursor.getString(7)), cursor.getInt(8) != 0, cursor.getInt(9) != 0))
+                out.add(MessageRecord(cursor.getString(0), cursor.getInt(1) != 0, cursor.getString(2), cursor.getString(3), cursor.getLong(4), cursor.getString(5) ?: "", cursor.getString(6) ?: "", "", parseReactions(cursor.getString(7)), cursor.getInt(8) != 0, cursor.getInt(9) != 0, cursor.getInt(10) != 0))
             }
         }
         // Item 4 replies: resolve each reply's quoted snippet from the message it points to (same chat), so the native UI
@@ -249,6 +251,12 @@ class NativeStore private constructor(private val db: SQLiteDatabase) : KeyRecor
      *  reply, sets deleted=1. Idempotent; no-op if not stored. */
     fun markDeleted(messageId: String) = exclusive {
         db.execSQL("UPDATE chat_messages SET deleted = 1, text = '', reactions = '', reply_to = '' WHERE id = ?", arrayOf(messageId))
+        bump()
+    }
+
+    /** Item 4 forwarding: flags a message (by id) as forwarded, for the "Forwarded" label. */
+    fun setForwarded(messageId: String) = exclusive {
+        db.execSQL("UPDATE chat_messages SET forwarded = 1 WHERE id = ?", arrayOf(messageId))
         bump()
     }
 
@@ -463,6 +471,8 @@ class NativeStore private constructor(private val db: SQLiteDatabase) : KeyRecor
                 // "This message was deleted" placeholder. No-ops once present.
                 try { db.execSQL("ALTER TABLE chat_messages ADD COLUMN edited INTEGER NOT NULL DEFAULT 0") } catch (ignored: Throwable) { /* already present */ }
                 try { db.execSQL("ALTER TABLE chat_messages ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0") } catch (ignored: Throwable) { /* already present */ }
+                // Checklist item 4 (forwarding): forwarded=1 shows a "Forwarded" label (the inner `fw` flag). No-op once present.
+                try { db.execSQL("ALTER TABLE chat_messages ADD COLUMN forwarded INTEGER NOT NULL DEFAULT 0") } catch (ignored: Throwable) { /* already present */ }
                 // Checklist item 2 (authoritative store): the WebView's message history, native-owned. Each row is one
                 // message's FULL JSON, opaque to native (round-tripped, never parsed here — native stays decoupled from
                 // the WebView's evolving message shape), keyed by (chat_id, id) and ordered by ts (epoch ms). This is the

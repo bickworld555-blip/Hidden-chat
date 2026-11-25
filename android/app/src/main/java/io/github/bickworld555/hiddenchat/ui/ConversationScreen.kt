@@ -41,7 +41,7 @@ import androidx.compose.ui.unit.sp
 /** One message bubble the native conversation screen shows (Step 5). `status` drives the read-receipt ticks on our own
  * sent messages ('' | sent | delivered | read | waiting); it is unused for incoming messages. `replyText` (item 4
  * replies) is the quoted snippet of the message this one replies to, shown above the bubble ("" when not a reply). */
-data class MessageRowData(val id: String, val mine: Boolean, val text: String, val time: String, val status: String = "", val replyText: String = "", val reactions: List<String> = emptyList(), val myReaction: String = "", val edited: Boolean = false, val deleted: Boolean = false)
+data class MessageRowData(val id: String, val mine: Boolean, val text: String, val time: String, val status: String = "", val replyText: String = "", val reactions: List<String> = emptyList(), val myReaction: String = "", val edited: Boolean = false, val deleted: Boolean = false, val forwarded: Boolean = false)
 
 /**
  * The native conversation screen (Step 5). A back-navigable top bar, a scrollable list of message bubbles (mine on the
@@ -67,6 +67,8 @@ fun ConversationScreen(
     // Item 4 edit/delete: (messageId, newText) to save an edit; (messageId) to delete for everyone. Default no-op.
     onEdit: (String, String) -> Unit = { _, _ -> },
     onDelete: (String) -> Unit = {},
+    // Item 4 forwarding: open the chat picker to forward this message. Default no-op.
+    onForward: (MessageRowData) -> Unit = {},
 ) {
     var draft by remember { mutableStateOf("") }
     // Item 4 replies: the message currently being replied to (long-press a bubble to set it), shown as a quote bar above
@@ -193,6 +195,7 @@ fun ConversationScreen(
                         onReact = { emoji -> onReact(message.id, emoji) },
                         onEditStart = { editingMessage = message; draft = message.text; replyingTo = null },
                         onDelete = { onDelete(message.id) },
+                        onForward = { onForward(message) },
                     )
                 }
             }
@@ -211,6 +214,7 @@ private fun MessageBubble(
     onReact: (String) -> Unit = {},
     onEditStart: () -> Unit = {},
     onDelete: () -> Unit = {},
+    onForward: () -> Unit = {},
 ) {
     val mine = message.mine
     // Item 4 delete-for-everyone: a deleted message shows a plain italic placeholder — no menu, reactions, reply or ticks.
@@ -246,6 +250,16 @@ private fun MessageBubble(
                         .combinedClickable(onClick = {}, onLongClick = { menuOpen = true })
                         .padding(horizontal = 12.dp, vertical = 8.dp),
                 ) {
+                    // Item 4 forwarding: the "Forwarded" label above the content.
+                    if (message.forwarded) {
+                        Text(
+                            "↪ Forwarded",
+                            color = (if (mine) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface).copy(alpha = 0.6f),
+                            fontSize = 11.sp,
+                            fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
+                            modifier = Modifier.padding(bottom = 2.dp),
+                        )
+                    }
                     // Item 4 replies: the quoted snippet of the message this one replies to, above the text.
                     if (message.replyText.isNotEmpty()) {
                         Column(
@@ -323,6 +337,8 @@ private fun MessageBubble(
                         }
                     }
                     DropdownMenuItem(text = { Text("Reply") }, onClick = { onReply(); menuOpen = false })
+                    // Item 4 forwarding: any message can be forwarded to another chat.
+                    DropdownMenuItem(text = { Text("Forward") }, onClick = { onForward(); menuOpen = false })
                     // Item 4 edit/delete: only on my own messages (the server enforces sender-only + the time windows).
                     if (mine) {
                         DropdownMenuItem(text = { Text("Edit") }, onClick = { onEditStart(); menuOpen = false })

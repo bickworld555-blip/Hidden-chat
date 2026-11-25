@@ -30,12 +30,13 @@ object NativeSend {
 
     /** Seal `text` to `peerId` (native trust + encryption) and send it over the relay; true only when it went out.
      *  [replyToId] (item 4 replies) is the id of the message being replied to, carried in the inner `r` field. */
-    fun sendText(context: Context, peerId: String, text: String, replyToId: String? = null): Boolean {
+    fun sendText(context: Context, peerId: String, text: String, replyToId: String? = null, forwarded: Boolean = false): Boolean {
         // A native socket must be open: the native-owned online socket (socket_owner), the foreground send socket, or
         // the background relay.
         if (!NativeForegroundSocket.isOnline() && !NativeSendSocket.canSend() && !NativeRelay.canSend()) return false
         val inner = linkedMapOf<String, Any?>("c" to text)
         if (!replyToId.isNullOrEmpty()) inner["r"] = replyToId // item 4 replies: same inner field the web uses (client.js)
+        if (forwarded) inner["fw"] = 1 // item 4 forwarding: the same `fw` flag the web uses
         val envelope = sealTo(context, peerId, inner) ?: return false
 
         val messageId = UUID.randomUUID().toString()
@@ -51,6 +52,7 @@ object NativeSend {
             store?.addMessage(peerId, messageId, true, text, time, ts)
             store?.raiseStatusById(messageId, "sent")
             if (!replyToId.isNullOrEmpty()) store?.setReplyTo(peerId, messageId, replyToId)
+            if (forwarded) store?.setForwarded(messageId)
         } catch (ignored: Throwable) { /* echo only */ }
         return true
     }
