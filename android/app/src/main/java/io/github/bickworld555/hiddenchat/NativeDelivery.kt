@@ -53,6 +53,9 @@ object NativeDelivery {
         val replyTo = Json.string(inner?.get("r"))
         if (!replyTo.isNullOrEmpty()) store.setReplyTo(chatId, delivery.messageId, replyTo)
         if (Json.safeInteger(inner?.get("fw")) == 1L) store.setForwarded(delivery.messageId)
+        // Item 4 disappearing: `ex` seconds → this message disappears ex seconds after it was sent (expiryOf, web).
+        val ex = Json.safeInteger(inner?.get("ex"))
+        if (ex != null && ex > 0) store.setExpiry(delivery.messageId, ts + ex * 1000)
         if (updateChatList) store.bumpChatForIncoming(chatId, text, time)
     }
 

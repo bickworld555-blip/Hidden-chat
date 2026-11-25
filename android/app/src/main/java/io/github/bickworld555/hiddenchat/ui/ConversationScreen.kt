@@ -41,7 +41,7 @@ import androidx.compose.ui.unit.sp
 /** One message bubble the native conversation screen shows (Step 5). `status` drives the read-receipt ticks on our own
  * sent messages ('' | sent | delivered | read | waiting); it is unused for incoming messages. `replyText` (item 4
  * replies) is the quoted snippet of the message this one replies to, shown above the bubble ("" when not a reply). */
-data class MessageRowData(val id: String, val mine: Boolean, val text: String, val time: String, val status: String = "", val replyText: String = "", val reactions: List<String> = emptyList(), val myReaction: String = "", val edited: Boolean = false, val deleted: Boolean = false, val forwarded: Boolean = false)
+data class MessageRowData(val id: String, val mine: Boolean, val text: String, val time: String, val status: String = "", val replyText: String = "", val reactions: List<String> = emptyList(), val myReaction: String = "", val edited: Boolean = false, val deleted: Boolean = false, val forwarded: Boolean = false, val expiresAt: Long = 0)
 
 /**
  * The native conversation screen (Step 5). A back-navigable top bar, a scrollable list of message bubbles (mine on the
@@ -69,6 +69,9 @@ fun ConversationScreen(
     onDelete: (String) -> Unit = {},
     // Item 4 forwarding: open the chat picker to forward this message. Default no-op.
     onForward: (MessageRowData) -> Unit = {},
+    // Item 4 disappearing: the chat's current timer in seconds (0 = off), and a callback to change it (Off/24h/7d/90d).
+    disappearSeconds: Long = 0,
+    onSetDisappear: (Long) -> Unit = {},
 ) {
     var draft by remember { mutableStateOf("") }
     // Item 4 replies: the message currently being replied to (long-press a bubble to set it), shown as a quote bar above
@@ -83,14 +86,31 @@ fun ConversationScreen(
                 title = {
                     Column {
                         Text(title, fontWeight = FontWeight.SemiBold, maxLines = 1)
-                        if (typingLabel.isNotEmpty()) {
-                            Text(typingLabel, color = MaterialTheme.colorScheme.primary, fontSize = 12.sp, maxLines = 1)
+                        // The typing line wins; otherwise, if a disappearing timer is on, show it under the name.
+                        when {
+                            typingLabel.isNotEmpty() -> Text(typingLabel, color = MaterialTheme.colorScheme.primary, fontSize = 12.sp, maxLines = 1)
+                            disappearSeconds > 0 -> Text("⏱ Disappearing: ${disappearLabel(disappearSeconds)}", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, maxLines = 1)
                         }
                     }
                 },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Text("←", color = MaterialTheme.colorScheme.onSurface, fontSize = 22.sp)
+                    }
+                },
+                actions = {
+                    // Item 4 disappearing: the ⏱ menu to set this chat's timer.
+                    var timerMenu by remember { mutableStateOf(false) }
+                    IconButton(onClick = { timerMenu = true }) {
+                        Text("⏱", color = if (disappearSeconds > 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface, fontSize = 18.sp)
+                    }
+                    DropdownMenu(expanded = timerMenu, onDismissRequest = { timerMenu = false }) {
+                        for ((seconds, label) in DISAPPEAR_CHOICES) {
+                            DropdownMenuItem(
+                                text = { Text(if (seconds == disappearSeconds) "✓ $label" else label) },
+                                onClick = { onSetDisappear(seconds); timerMenu = false },
+                            )
+                        }
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -206,6 +226,12 @@ fun ConversationScreen(
 // The reactions the long-press menu offers (WhatsApp's default set).
 private val REACTION_EMOJIS = listOf("👍", "❤️", "😂", "😮", "😢", "🙏")
 
+// Item 4 disappearing: the timer choices the ⏱ menu offers (seconds → label); the server accepts only these.
+private val DISAPPEAR_CHOICES = listOf(0L to "Off", 86400L to "24 hours", 604800L to "7 days", 7776000L to "90 days")
+private fun disappearLabel(seconds: Long): String = when (seconds) {
+    86400L -> "24h"; 604800L -> "7d"; 7776000L -> "90d"; else -> "Off"
+}
+
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun MessageBubble(
@@ -282,11 +308,20 @@ private fun MessageBubble(
                         color = if (mine) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
                         fontSize = 15.sp,
                     )
-                    if (message.time.isNotEmpty() || message.edited || (mine && message.status.isNotEmpty())) {
+                    if (message.time.isNotEmpty() || message.edited || message.expiresAt > 0 || (mine && message.status.isNotEmpty())) {
                         Row(
                             modifier = Modifier.align(Alignment.End).padding(top = 2.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
+                            // Item 4 disappearing: a ⏱ on a message that will disappear.
+                            if (message.expiresAt > 0) {
+                                Text(
+                                    "⏱",
+                                    color = (if (mine) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant).copy(alpha = 0.7f),
+                                    fontSize = 10.sp,
+                                    modifier = Modifier.padding(end = 4.dp),
+                                )
+                            }
                             // Item 4 edit: the "edited" label before the time.
                             if (message.edited) {
                                 Text(

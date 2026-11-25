@@ -37,6 +37,9 @@ object NativeSend {
         val inner = linkedMapOf<String, Any?>("c" to text)
         if (!replyToId.isNullOrEmpty()) inner["r"] = replyToId // item 4 replies: same inner field the web uses (client.js)
         if (forwarded) inner["fw"] = 1 // item 4 forwarding: the same `fw` flag the web uses
+        // Item 4 disappearing: if this chat has a timer, carry `ex` seconds inside the encryption (web client.js).
+        val disappear = NativeStore.get(context)?.disappearSeconds(peerId) ?: 0L
+        if (disappear > 0) inner["ex"] = disappear
         val envelope = sealTo(context, peerId, inner) ?: return false
 
         val messageId = UUID.randomUUID().toString()
@@ -53,6 +56,7 @@ object NativeSend {
             store?.raiseStatusById(messageId, "sent")
             if (!replyToId.isNullOrEmpty()) store?.setReplyTo(peerId, messageId, replyToId)
             if (forwarded) store?.setForwarded(messageId)
+            if (disappear > 0) store?.setExpiry(messageId, ts + disappear * 1000) // item 4 disappearing: our own copy expires too
         } catch (ignored: Throwable) { /* echo only */ }
         return true
     }

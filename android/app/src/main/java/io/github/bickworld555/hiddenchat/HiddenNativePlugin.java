@@ -1745,6 +1745,27 @@ public class HiddenNativePlugin extends Plugin {
         call.resolve(result);
     }
 
+    /** Item 4 disappearing (TEST HOOK, native-UI builds): force a message's expiry into the past so the filter/sweep
+     * can be verified without waiting out the real 24h/7d/90d timers. Harmless (sets one column). */
+    @PluginMethod
+    public void debugExpireMessage(PluginCall call) {
+        io.github.bickworld555.hiddenchat.core.store.NativeStore store =
+            io.github.bickworld555.hiddenchat.core.store.NativeStore.Companion.get(getContext());
+        String id = call.getString("messageId", "");
+        if (store != null && id != null && !id.isEmpty()) store.setExpiry(id, 1L);
+        call.resolve();
+    }
+
+    /** Item 4 disappearing: run the expiry sweep now and report how many messages it removed. */
+    @PluginMethod
+    public void sweepExpiredMessages(PluginCall call) {
+        io.github.bickworld555.hiddenchat.core.store.NativeStore store =
+            io.github.bickworld555.hiddenchat.core.store.NativeStore.Companion.get(getContext());
+        JSObject result = new JSObject();
+        result.put("swept", store != null ? store.sweepExpired() : 0);
+        call.resolve(result);
+    }
+
     /** How many messages the native authoritative store holds. */
     @PluginMethod
     public void countFullMessages(PluginCall call) {

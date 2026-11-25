@@ -206,6 +206,13 @@ object NativeForegroundSocket {
             "message:reaction" -> onReaction(event)
             "message:edited" -> onEdited(event)
             "message:deleted" -> onDeleted(event)
+            "chat:disappearing" -> {
+                // Item 4 disappearing: the peer set (or cleared) this chat's timer; record it so our next send carries `ex`.
+                val peer = Json.string(event["peerId"])
+                val seconds = Json.safeInteger(event["seconds"])
+                if (peer != null && seconds != null) appContext?.let { NativeStore.get(it)?.setDisappearSeconds(peer, seconds) }
+                sink?.forward(text)
+            }
             // Every other frame (call:*, message:ack, message:read, message:reaction, presence:update, error,
             // xmpp:wake, …) stays the WebView's job for now — hand it over untouched.
             else -> sink?.forward(text)

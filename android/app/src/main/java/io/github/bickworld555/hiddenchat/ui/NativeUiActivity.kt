@@ -51,6 +51,8 @@ class NativeUiActivity : ComponentActivity() {
                 // Item 4 forwarding: the message being forwarded; while set, the chat picker (NewChatScreen) is shown to
                 // choose the target, then it is sent there with the forwarded flag.
                 var forwardingMessage by remember { mutableStateOf<MessageRowData?>(null) }
+                // Item 4 disappearing: the open chat's timer in seconds (0 = off), read in the effect below.
+                var disappear by remember { mutableStateOf(0L) }
 
                 LaunchedEffect(version) {
                     chats = withContext(Dispatchers.IO) { readChats(store) }
@@ -84,6 +86,17 @@ class NativeUiActivity : ComponentActivity() {
                     val loaded = if (current == null) emptyList() else withContext(Dispatchers.IO) { readMessages(store, current.id) }
                     messages = loaded
                     if (loaded.isNotEmpty()) loadingMessages = false
+                }
+                // Item 4 disappearing: the open chat's current timer (re-read on change), and a 30s expiry sweep while open.
+                LaunchedEffect(openChat, version) {
+                    val c = openChat
+                    disappear = if (c == null) 0L else withContext(Dispatchers.IO) { runCatching { store?.disappearSeconds(c.id) }.getOrNull() ?: 0L }
+                }
+                LaunchedEffect(openChat) {
+                    while (openChat != null) {
+                        withContext(Dispatchers.IO) { runCatching { store?.sweepExpired() } }
+                        kotlinx.coroutines.delay(30_000)
+                    }
                 }
 
                 // Android back from a sub-screen returns to the list rather than leaving the app.
@@ -166,6 +179,19 @@ class NativeUiActivity : ComponentActivity() {
                             },
                             // Item 4 forwarding: open the chat picker for this message.
                             onForward = { message -> forwardingMessage = message },
+                            // Item 4 disappearing: set this chat's timer — record it and tell the peer (chat:disappearing).
+                            disappearSeconds = disappear,
+                            onSetDisappear = { seconds ->
+                                if (!isGroup) {
+                                    disappear = seconds
+                                    Thread({
+                                        try {
+                                            store?.setDisappearSeconds(current.id, seconds)
+                                            NativeForegroundSocket.sendRawFrame(org.json.JSONObject().put("type", "chat:disappearing").put("peerId", current.id).put("seconds", seconds).toString())
+                                        } catch (ignored: Throwable) { /* best-effort */ }
+                                    }, "native-disappear").start()
+                                }
+                            },
                         )
                     }
                 }
@@ -218,7 +244,7 @@ class NativeUiActivity : ComponentActivity() {
                     it.id, it.mine, it.text, it.time, it.status, it.replyText,
                     it.reactions.map { pair -> pair.second },
                     it.reactions.firstOrNull { pair -> pair.first == me }?.second ?: "",
-                    it.edited, it.deleted, it.forwarded,
+                    it.edited, it.deleted, it.forwarded, it.expiresAt,
                 )
             }
         } ?: emptyList()

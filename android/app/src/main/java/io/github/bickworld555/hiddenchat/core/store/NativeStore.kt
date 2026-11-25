@@ -42,6 +42,8 @@ data class MessageRecord @JvmOverloads constructor(
     val deleted: Boolean = false,
     /** Item 4 forwarding: whether this message was forwarded (the inner `fw` flag), for the "Forwarded" label. */
     val forwarded: Boolean = false,
+    /** Item 4 disappearing: when this message disappears (epoch ms), or 0 = never; drives the ⏱ indicator. */
+    val expiresAt: Long = 0,
 )
 
 /** One row of the authoritative message store (checklist item 2): a message's full JSON, keyed by (chatId, id), ts in ms. */
@@ -200,9 +202,11 @@ class NativeStore private constructor(private val db: SQLiteDatabase) : KeyRecor
     /** A chat's messages, oldest-first (by timestamp), for the native conversation screen. */
     fun messages(chatId: String): List<MessageRecord> = exclusive {
         val out = ArrayList<MessageRecord>()
-        db.rawQuery("SELECT id, mine, text, time, ts, status, reply_to, reactions, edited, deleted, forwarded FROM chat_messages WHERE chat_id = ? ORDER BY ts ASC", arrayOf(chatId)).use { cursor ->
+        // Item 4 disappearing: a message past its expires_at is not shown (the sweep removes it from the DB separately).
+        val now = System.currentTimeMillis()
+        db.rawQuery("SELECT id, mine, text, time, ts, status, reply_to, reactions, edited, deleted, forwarded, expires_at FROM chat_messages WHERE chat_id = ? AND (expires_at = 0 OR expires_at > $now) ORDER BY ts ASC", arrayOf(chatId)).use { cursor ->
             while (cursor.moveToNext()) {
-                out.add(MessageRecord(cursor.getString(0), cursor.getInt(1) != 0, cursor.getString(2), cursor.getString(3), cursor.getLong(4), cursor.getString(5) ?: "", cursor.getString(6) ?: "", "", parseReactions(cursor.getString(7)), cursor.getInt(8) != 0, cursor.getInt(9) != 0, cursor.getInt(10) != 0))
+                out.add(MessageRecord(cursor.getString(0), cursor.getInt(1) != 0, cursor.getString(2), cursor.getString(3), cursor.getLong(4), cursor.getString(5) ?: "", cursor.getString(6) ?: "", "", parseReactions(cursor.getString(7)), cursor.getInt(8) != 0, cursor.getInt(9) != 0, cursor.getInt(10) != 0, cursor.getLong(11)))
             }
         }
         // Item 4 replies: resolve each reply's quoted snippet from the message it points to (same chat), so the native UI
@@ -258,6 +262,31 @@ class NativeStore private constructor(private val db: SQLiteDatabase) : KeyRecor
     fun setForwarded(messageId: String) = exclusive {
         db.execSQL("UPDATE chat_messages SET forwarded = 1 WHERE id = ?", arrayOf(messageId))
         bump()
+    }
+
+    // --- item 4 disappearing messages -------------------------------------------------------------------------------
+
+    /** Sets a message's disappear time (epoch ms; [expiresAt] <= 0 clears it). Found by id across chats. */
+    fun setExpiry(messageId: String, expiresAt: Long) = exclusive {
+        db.execSQL("UPDATE chat_messages SET expires_at = ? WHERE id = ?", arrayOf(maxOf(0L, expiresAt), messageId))
+        bump()
+    }
+
+    /** The per-chat disappearing timer in seconds (0 = off), set via chat:disappearing. */
+    fun disappearSeconds(chatId: String): Long = exclusive { get("disappear:$chatId")?.toLongOrNull() ?: 0L }
+
+    /** Records the per-chat disappearing timer (seconds; 0 = off). */
+    fun setDisappearSeconds(chatId: String, seconds: Long) = exclusive {
+        if (seconds > 0) set("disappear:$chatId", seconds.toString()) else delete("disappear:$chatId")
+        bump()
+    }
+
+    /** Deletes every message already past its expires_at (the disappearing sweep); returns how many went. */
+    fun sweepExpired(): Int = exclusive {
+        val now = System.currentTimeMillis()
+        val gone = db.rawQuery("SELECT COUNT(*) FROM chat_messages WHERE expires_at > 0 AND expires_at <= $now", null).use { if (it.moveToNext()) it.getInt(0) else 0 }
+        if (gone > 0) { db.execSQL("DELETE FROM chat_messages WHERE expires_at > 0 AND expires_at <= $now"); bump() }
+        gone
     }
 
     /** Records which message [id] (in [chatId]) replies to (item 4 replies); never clobbers an existing non-empty value. */
@@ -473,6 +502,9 @@ class NativeStore private constructor(private val db: SQLiteDatabase) : KeyRecor
                 try { db.execSQL("ALTER TABLE chat_messages ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0") } catch (ignored: Throwable) { /* already present */ }
                 // Checklist item 4 (forwarding): forwarded=1 shows a "Forwarded" label (the inner `fw` flag). No-op once present.
                 try { db.execSQL("ALTER TABLE chat_messages ADD COLUMN forwarded INTEGER NOT NULL DEFAULT 0") } catch (ignored: Throwable) { /* already present */ }
+                // Checklist item 4 (disappearing messages): expires_at (epoch ms) is when this message should disappear
+                // (0 = never). Set from the inner `ex` seconds on send/receive; the sweep deletes rows past it. No-op once present.
+                try { db.execSQL("ALTER TABLE chat_messages ADD COLUMN expires_at INTEGER NOT NULL DEFAULT 0") } catch (ignored: Throwable) { /* already present */ }
                 // Checklist item 2 (authoritative store): the WebView's message history, native-owned. Each row is one
                 // message's FULL JSON, opaque to native (round-tripped, never parsed here — native stays decoupled from
                 // the WebView's evolving message shape), keyed by (chat_id, id) and ordered by ts (epoch ms). This is the
