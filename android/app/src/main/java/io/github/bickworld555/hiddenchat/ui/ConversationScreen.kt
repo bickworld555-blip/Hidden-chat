@@ -33,8 +33,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-/** One message bubble the native conversation screen shows (Step 5), mirrored from the web app. */
-data class MessageRowData(val mine: Boolean, val text: String, val time: String)
+/** One message bubble the native conversation screen shows (Step 5). `status` drives the read-receipt ticks on our own
+ * sent messages ('' | sent | delivered | read | waiting); it is unused for incoming messages. */
+data class MessageRowData(val mine: Boolean, val text: String, val time: String, val status: String = "")
 
 /**
  * The native conversation screen (Step 5). A back-navigable top bar, a scrollable list of message bubbles (mine on the
@@ -155,14 +156,44 @@ private fun MessageBubble(message: MessageRowData) {
                 color = if (mine) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
                 fontSize = 15.sp,
             )
-            if (message.time.isNotEmpty()) {
-                Text(
-                    message.time,
-                    color = if (mine) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.7f) else MaterialTheme.colorScheme.onSurfaceVariant,
-                    fontSize = 10.sp,
+            if (message.time.isNotEmpty() || (mine && message.status.isNotEmpty())) {
+                Row(
                     modifier = Modifier.align(Alignment.End).padding(top = 2.dp),
-                )
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    if (message.time.isNotEmpty()) {
+                        Text(
+                            message.time,
+                            color = if (mine) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.7f) else MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontSize = 10.sp,
+                        )
+                    }
+                    // Read-receipt ticks, only on our own messages (item 4): ✓ sent, ✓✓ delivered, ✓✓ (blue) read.
+                    if (mine) {
+                        val ticks = statusTicks(message.status)
+                        if (ticks.isNotEmpty()) {
+                            Text(
+                                ticks,
+                                color = if (message.status == "read") ReadTickColor else MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.7f),
+                                fontSize = 11.sp,
+                                modifier = Modifier.padding(start = 4.dp),
+                            )
+                        }
+                    }
+                }
             }
         }
     }
+}
+
+// A light blue for the "read" double-tick that reads on the primary-coloured bubble (WhatsApp shows blue read ticks).
+private val ReadTickColor = androidx.compose.ui.graphics.Color(0xFF4FC3F7)
+
+/** The tick glyph for a sent message's status: ✓ sent, ✓✓ delivered/read, ⧗ waiting, ✕ failed, none when unknown. */
+private fun statusTicks(status: String): String = when (status) {
+    "read", "delivered" -> "✓✓"
+    "sent" -> "✓"
+    "waiting" -> "⧗"
+    "failed" -> "✕"
+    else -> ""
 }

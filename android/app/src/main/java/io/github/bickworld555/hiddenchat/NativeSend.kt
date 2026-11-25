@@ -64,7 +64,7 @@ object NativeSend {
         // Optimistic local echo so the native conversation shows the sent message at once.
         val ts = System.currentTimeMillis()
         val time = java.text.SimpleDateFormat("h:mm a", java.util.Locale.US).format(java.util.Date(ts)).lowercase(java.util.Locale.US)
-        try { store.addMessage(peerId, messageId, true, text, time, ts) } catch (ignored: Throwable) { /* echo only */ }
+        try { store.addMessage(peerId, messageId, true, text, time, ts); store.raiseStatusById(messageId, "sent") } catch (ignored: Throwable) { /* echo only */ }
         return true
     }
 

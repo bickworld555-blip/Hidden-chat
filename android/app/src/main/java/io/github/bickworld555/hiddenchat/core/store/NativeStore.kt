@@ -21,7 +21,7 @@ data class ContactRecord(val id: String, val name: String, val avatar: String)
  * One message in a chat the native UI shows. Keyed by [id] and ordered by [ts] (epoch ms) so the native background
  * inbox and the web-app mirror can both write it (upsert) without duplicates or ordering conflicts (Step 5).
  */
-data class MessageRecord(val id: String, val mine: Boolean, val text: String, val time: String, val ts: Long)
+data class MessageRecord(val id: String, val mine: Boolean, val text: String, val time: String, val ts: Long, val status: String = "")
 
 /** One row of the authoritative message store (checklist item 2): a message's full JSON, keyed by (chatId, id), ts in ms. */
 data class FullMessage(val chatId: String, val id: String, val ts: Long, val json: String)
@@ -179,12 +179,50 @@ class NativeStore private constructor(private val db: SQLiteDatabase) : KeyRecor
     /** A chat's messages, oldest-first (by timestamp), for the native conversation screen. */
     fun messages(chatId: String): List<MessageRecord> = exclusive {
         val out = ArrayList<MessageRecord>()
-        db.rawQuery("SELECT id, mine, text, time, ts FROM chat_messages WHERE chat_id = ? ORDER BY ts ASC", arrayOf(chatId)).use { cursor ->
+        db.rawQuery("SELECT id, mine, text, time, ts, status FROM chat_messages WHERE chat_id = ? ORDER BY ts ASC", arrayOf(chatId)).use { cursor ->
             while (cursor.moveToNext()) {
-                out.add(MessageRecord(cursor.getString(0), cursor.getInt(1) != 0, cursor.getString(2), cursor.getString(3), cursor.getLong(4)))
+                out.add(MessageRecord(cursor.getString(0), cursor.getInt(1) != 0, cursor.getString(2), cursor.getString(3), cursor.getLong(4), cursor.getString(5) ?: ""))
             }
         }
         out
+    }
+
+    // Checklist item 4 (read-receipt ticks): status moves forward only (failed<sent/waiting<delivered<read), mirroring
+    // src/messageStatus.js mergeMessageStatus, so a late or duplicate receipt can never downgrade a tick.
+    private val statusRank = mapOf("failed" to 0, "waiting" to 1, "sent" to 1, "delivered" to 2, "read" to 3)
+
+    /** Raises one sent message's delivery status by id (message:status/ack carry only the id), never downgrading it. */
+    fun raiseStatusById(id: String, status: String) = exclusive {
+        val newRank = statusRank[status] ?: return@exclusive
+        val current = db.rawQuery("SELECT status FROM chat_messages WHERE id = ? LIMIT 1", arrayOf(id)).use {
+            if (it.moveToNext()) it.getString(0) ?: "" else null
+        } ?: return@exclusive
+        if (newRank > (statusRank[current] ?: -1)) {
+            db.execSQL("UPDATE chat_messages SET status = ? WHERE id = ?", arrayOf(status, id))
+            bump()
+        }
+    }
+
+    /**
+     * The native UI opened [chatId]: clears its unread badge and returns the incoming message ids that still need a read
+     * receipt sent (those newer than the last read watermark for this chat), advancing the watermark so each is sent
+     * once. The caller sends `message:read` for them over the native socket. Mirrors store.js markRead (read receipts
+     * only move forward, so re-opening never re-sends).
+     */
+    fun markChatRead(chatId: String): List<String> = exclusive {
+        val key = "read-watermark:$chatId"
+        val since = get(key)?.toLongOrNull() ?: 0L
+        val ids = ArrayList<String>()
+        var maxTs = since
+        db.rawQuery("SELECT id, ts FROM chat_messages WHERE chat_id = ? AND mine = 0 AND ts > $since ORDER BY ts ASC", arrayOf(chatId)).use { c ->
+            while (c.moveToNext()) { ids.add(c.getString(0)); maxTs = maxOf(maxTs, c.getLong(1)) }
+        }
+        if (maxTs > since) set(key, maxTs.toString())
+        // Clear the unread badge in the chat-list projection (the user is now looking at the chat).
+        val exists = db.rawQuery("SELECT 1 FROM chats WHERE id = ? LIMIT 1", arrayOf(chatId)).use { it.moveToNext() }
+        if (exists) db.execSQL("UPDATE chats SET unread = 0 WHERE id = ?", arrayOf(chatId))
+        if (ids.isNotEmpty() || exists) bump()
+        ids
     }
 
     // --- authoritative full-message store (checklist item 2): the WebView's messageStore backend ----------------------
@@ -332,8 +370,11 @@ class NativeStore private constructor(private val db: SQLiteDatabase) : KeyRecor
                 // Superseded by chat_messages (id-keyed, ts-ordered, upsert) so the native inbox and the web mirror can
                 // both write; the old position-ordered cache is dropped (it is a cache, rebuilt from the mirror/inbox).
                 db.execSQL("DROP TABLE IF EXISTS messages")
-                db.execSQL("CREATE TABLE IF NOT EXISTS chat_messages (chat_id TEXT NOT NULL, id TEXT NOT NULL, mine INTEGER NOT NULL DEFAULT 0, text TEXT NOT NULL, time TEXT NOT NULL, ts INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (chat_id, id))")
+                db.execSQL("CREATE TABLE IF NOT EXISTS chat_messages (chat_id TEXT NOT NULL, id TEXT NOT NULL, mine INTEGER NOT NULL DEFAULT 0, text TEXT NOT NULL, time TEXT NOT NULL, ts INTEGER NOT NULL DEFAULT 0, status TEXT NOT NULL DEFAULT '', PRIMARY KEY (chat_id, id))")
                 db.execSQL("CREATE INDEX IF NOT EXISTS chat_messages_order ON chat_messages (chat_id, ts)")
+                // Checklist item 4 (read-receipt ticks): the delivery status of OUR sent messages ('' | sent | delivered
+                // | read), shown as ticks in the native conversation. A no-op once the column exists.
+                try { db.execSQL("ALTER TABLE chat_messages ADD COLUMN status TEXT NOT NULL DEFAULT ''") } catch (ignored: Throwable) { /* already present */ }
                 // Checklist item 2 (authoritative store): the WebView's message history, native-owned. Each row is one
                 // message's FULL JSON, opaque to native (round-tripped, never parsed here — native stays decoupled from
                 // the WebView's evolving message shape), keyed by (chat_id, id) and ordered by ts (epoch ms). This is the

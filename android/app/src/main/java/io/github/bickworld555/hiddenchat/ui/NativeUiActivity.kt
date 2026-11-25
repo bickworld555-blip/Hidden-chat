@@ -63,6 +63,15 @@ class NativeUiActivity : ComponentActivity() {
                     } else {
                         loadingMessages = true
                         NativeUiBridge.requestMessages(current.id)
+                        // Checklist item 4: opening a chat sends read receipts for its new incoming messages (so the peer
+                        // sees "read") and clears the unread badge — only when native owns the online socket (otherwise
+                        // the WebView owns receipts). Off the main thread (DB + socket write).
+                        if (NativeForegroundSocket.isOnline()) {
+                            withContext(Dispatchers.IO) {
+                                val ids = try { store?.markChatRead(current.id) ?: emptyList() } catch (ignored: Throwable) { emptyList() }
+                                for (id in ids) NativeForegroundSocket.sendRawFrame(org.json.JSONObject().put("type", "message:read").put("messageId", id).toString())
+                            }
+                        }
                         kotlinx.coroutines.delay(4000)
                         loadingMessages = false
                     }
@@ -165,7 +174,7 @@ class NativeUiActivity : ComponentActivity() {
     }
 
     private fun readMessages(store: NativeStore?, chatId: String): List<MessageRowData> = try {
-        store?.messages(chatId)?.map { MessageRowData(it.mine, it.text, it.time) } ?: emptyList()
+        store?.messages(chatId)?.map { MessageRowData(it.mine, it.text, it.time, it.status) } ?: emptyList()
     } catch (ignored: Throwable) {
         emptyList()
     }

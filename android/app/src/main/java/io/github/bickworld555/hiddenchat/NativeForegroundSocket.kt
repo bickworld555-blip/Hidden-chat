@@ -185,6 +185,21 @@ object NativeForegroundSocket {
                 }
                 sink?.forward(text)
             }
+            // Checklist item 4 (read-receipt ticks): a delivery/read receipt for one of OUR sent messages. Raise its
+            // status in the native store (ticks move forward only) AND forward so the WebView stays consistent.
+            "message:status" -> {
+                val ctx = appContext
+                val id = Json.string(event["messageId"])
+                val status = Json.string(event["status"])
+                if (ctx != null && id != null && status != null) io.github.bickworld555.hiddenchat.core.store.NativeStore.get(ctx)?.raiseStatusById(id, status)
+                sink?.forward(text)
+            }
+            "message:played" -> {
+                val ctx = appContext
+                val id = Json.string(event["messageId"])
+                if (ctx != null && id != null) io.github.bickworld555.hiddenchat.core.store.NativeStore.get(ctx)?.raiseStatusById(id, "read")
+                sink?.forward(text)
+            }
             // Every other frame (call:*, message:ack, message:read, message:reaction, presence:update, error,
             // xmpp:wake, …) stays the WebView's job for now — hand it over untouched.
             else -> sink?.forward(text)

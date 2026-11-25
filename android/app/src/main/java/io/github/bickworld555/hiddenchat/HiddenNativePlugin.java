@@ -1606,7 +1606,7 @@ public class HiddenNativePlugin extends Plugin {
                     String mid = o.optString("id", "");
                     if (mid.isEmpty()) continue;
                     rows.add(new io.github.bickworld555.hiddenchat.core.store.MessageRecord(
-                        mid, o.optBoolean("mine", false), o.optString("text", ""), o.optString("time", ""), o.optLong("ts", 0L)));
+                        mid, o.optBoolean("mine", false), o.optString("text", ""), o.optString("time", ""), o.optLong("ts", 0L), ""));
                 } catch (org.json.JSONException ignored) { /* skip a malformed row */ }
             }
         }
@@ -1635,7 +1635,7 @@ public class HiddenNativePlugin extends Plugin {
                     String mid = o.optString("id", "");
                     if (mid.isEmpty()) continue;
                     rows.add(new io.github.bickworld555.hiddenchat.core.store.MessageRecord(
-                        mid, o.optBoolean("mine", false), o.optString("text", ""), o.optString("time", ""), o.optLong("ts", 0L)));
+                        mid, o.optBoolean("mine", false), o.optString("text", ""), o.optString("time", ""), o.optLong("ts", 0L), ""));
                 } catch (org.json.JSONException ignored) { /* skip a malformed row */ }
             }
             store.saveMessages(chatId, rows);
