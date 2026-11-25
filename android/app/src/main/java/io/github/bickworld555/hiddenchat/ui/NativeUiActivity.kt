@@ -49,9 +49,10 @@ class NativeUiActivity : ComponentActivity() {
                 var showNewChat by remember { mutableStateOf(false) }
                 var messages by remember { mutableStateOf(emptyList<MessageRowData>()) }
                 var loadingMessages by remember { mutableStateOf(false) }
-                // Item 4 forwarding: the message being forwarded; while set, the chat picker (NewChatScreen) is shown to
-                // choose the target, then it is sent there with the forwarded flag.
-                var forwardingMessage by remember { mutableStateOf<MessageRowData?>(null) }
+                // Item 4 forwarding + multi-select: the message(s) being forwarded; while non-empty, the chat picker
+                // (NewChatScreen) is shown to choose the target, then each is sent there with the forwarded flag (in
+                // chat order). A single Forward and a multi-select Forward both populate this list.
+                var forwardingMessages by remember { mutableStateOf<List<MessageRowData>>(emptyList()) }
                 // Item 4 disappearing: the open chat's timer in seconds (0 = off), read in the effect below.
                 var disappear by remember { mutableStateOf(0L) }
 
@@ -103,21 +104,24 @@ class NativeUiActivity : ComponentActivity() {
                 // Android back from a sub-screen returns to the list rather than leaving the app.
                 BackHandler(enabled = openChat != null) { openChat = null }
                 BackHandler(enabled = showNewChat) { showNewChat = false }
-                BackHandler(enabled = forwardingMessage != null) { forwardingMessage = null }
+                BackHandler(enabled = forwardingMessages.isNotEmpty()) { forwardingMessages = emptyList() }
 
                 val current = openChat
                 when {
-                    // Item 4 forwarding: pick a target chat for the message, then send it there with the forwarded flag.
-                    forwardingMessage != null -> NewChatScreen(
+                    // Item 4 forwarding + multi-select: pick a target chat, then send each chosen message there with the
+                    // forwarded flag, oldest-first (the list is already in chat order).
+                    forwardingMessages.isNotEmpty() -> NewChatScreen(
                         contacts,
                         onPick = { contact ->
-                            val msg = forwardingMessage
-                            forwardingMessage = null
-                            if (msg != null && msg.text.isNotEmpty()) Thread({
-                                try { NativeSend.sendText(applicationContext, contact.id, msg.text, null, true) } catch (ignored: Throwable) { /* best-effort */ }
+                            val msgs = forwardingMessages
+                            forwardingMessages = emptyList()
+                            Thread({
+                                for (msg in msgs) {
+                                    if (msg.text.isNotEmpty()) try { NativeSend.sendText(applicationContext, contact.id, msg.text, null, true) } catch (ignored: Throwable) { /* best-effort */ }
+                                }
                             }, "native-forward").start()
                         },
-                        onBack = { forwardingMessage = null },
+                        onBack = { forwardingMessages = emptyList() },
                     )
                     showNewChat -> NewChatScreen(
                         contacts,
@@ -184,7 +188,15 @@ class NativeUiActivity : ComponentActivity() {
                                 }, "native-delete").start()
                             },
                             // Item 4 forwarding: open the chat picker for this message.
-                            onForward = { message -> forwardingMessage = message },
+                            onForward = { message -> forwardingMessages = listOf(message) },
+                            // Item 4 multi-select: forward every selected message (chat order), or delete-for-everyone each
+                            // (the server enforces sender-only + the 24h window, so a non-deletable one is simply ignored).
+                            onForwardMany = { list -> if (list.isNotEmpty()) forwardingMessages = list },
+                            onDeleteMany = { ids ->
+                                if (!isGroup && ids.isNotEmpty()) Thread({
+                                    for (id in ids) try { NativeSend.deleteForEveryone(applicationContext, id) } catch (ignored: Throwable) { /* best-effort */ }
+                                }, "native-delete-many").start()
+                            },
                             // Item 4 disappearing: set this chat's timer — record it and tell the peer (chat:disappearing).
                             disappearSeconds = disappear,
                             onSetDisappear = { seconds ->

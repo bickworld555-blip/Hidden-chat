@@ -83,11 +83,22 @@ fun ConversationScreen(
     onDelete: (String) -> Unit = {},
     // Item 4 forwarding: open the chat picker to forward this message. Default no-op.
     onForward: (MessageRowData) -> Unit = {},
+    // Item 4 multi-select: forward every selected message, or delete-for-everyone the selected ids. Default no-op.
+    onForwardMany: (List<MessageRowData>) -> Unit = {},
+    onDeleteMany: (List<String>) -> Unit = {},
     // Item 4 disappearing: the chat's current timer in seconds (0 = off), and a callback to change it (Off/24h/7d/90d).
     disappearSeconds: Long = 0,
     onSetDisappear: (Long) -> Unit = {},
 ) {
     var draft by remember { mutableStateOf("") }
+    // Item 4 multi-select: the ids of the messages currently selected (empty = not in selection mode). Kept as ids and
+    // resolved against the live list in chat order, so a message deleted/expired meanwhile simply drops out.
+    var selectedIds by remember { mutableStateOf(setOf<String>()) }
+    val selectionActive = selectedIds.isNotEmpty()
+    val clearSelection = { selectedIds = emptySet() }
+    val selectedMessages = messages.filter { it.id in selectedIds }
+    // Back clears the selection first (like the web useBackHandler), rather than leaving the chat.
+    androidx.activity.compose.BackHandler(enabled = selectionActive) { clearSelection() }
     // Item 4 replies: the message currently being replied to (long-press a bubble to set it), shown as a quote bar above
     // the composer and carried in the next send.
     var replyingTo by remember { mutableStateOf<MessageRowData?>(null) }
@@ -96,42 +107,72 @@ fun ConversationScreen(
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
-            TopAppBar(
-                title = {
-                    Column {
-                        Text(title, fontWeight = FontWeight.SemiBold, maxLines = 1)
-                        // The typing line wins; otherwise, if a disappearing timer is on, show it under the name.
-                        when {
-                            typingLabel.isNotEmpty() -> Text(typingLabel, color = MaterialTheme.colorScheme.primary, fontSize = 12.sp, maxLines = 1)
-                            disappearSeconds > 0 -> Text("⏱ Disappearing: ${disappearLabel(disappearSeconds)}", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, maxLines = 1)
+            // Item 4 multi-select: while messages are selected, the top bar becomes a selection bar (count + bulk
+            // Forward / Delete-for-everyone), like WhatsApp; otherwise the normal chat header.
+            if (selectionActive) {
+                val allMineLive = selectedMessages.isNotEmpty() && selectedMessages.all { it.mine && !it.deleted }
+                TopAppBar(
+                    title = { Text("${selectedIds.size} selected", fontWeight = FontWeight.SemiBold, maxLines = 1) },
+                    navigationIcon = {
+                        IconButton(onClick = clearSelection) {
+                            Text("✕", color = MaterialTheme.colorScheme.onSurface, fontSize = 20.sp)
                         }
-                    }
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Text("←", color = MaterialTheme.colorScheme.onSurface, fontSize = 22.sp)
-                    }
-                },
-                actions = {
-                    // Item 4 disappearing: the ⏱ menu to set this chat's timer.
-                    var timerMenu by remember { mutableStateOf(false) }
-                    IconButton(onClick = { timerMenu = true }) {
-                        Text("⏱", color = if (disappearSeconds > 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface, fontSize = 18.sp)
-                    }
-                    DropdownMenu(expanded = timerMenu, onDismissRequest = { timerMenu = false }) {
-                        for ((seconds, label) in DISAPPEAR_CHOICES) {
-                            DropdownMenuItem(
-                                text = { Text(if (seconds == disappearSeconds) "✓ $label" else label) },
-                                onClick = { onSetDisappear(seconds); timerMenu = false },
-                            )
+                    },
+                    actions = {
+                        IconButton(onClick = { onForwardMany(selectedMessages); clearSelection() }) {
+                            Text("↪", color = MaterialTheme.colorScheme.onSurface, fontSize = 20.sp)
                         }
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
-                    titleContentColor = MaterialTheme.colorScheme.onSurface,
-                ),
-            )
+                        // Delete-for-everyone only when every selected message is my own, non-deleted one (the server
+                        // still enforces the 24h window; a too-old one is simply ignored).
+                        if (allMineLive) {
+                            IconButton(onClick = { onDeleteMany(selectedMessages.map { it.id }); clearSelection() }) {
+                                Text("🗑", color = MaterialTheme.colorScheme.onSurface, fontSize = 18.sp)
+                            }
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                        titleContentColor = MaterialTheme.colorScheme.onSurface,
+                    ),
+                )
+            } else {
+                TopAppBar(
+                    title = {
+                        Column {
+                            Text(title, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                            // The typing line wins; otherwise, if a disappearing timer is on, show it under the name.
+                            when {
+                                typingLabel.isNotEmpty() -> Text(typingLabel, color = MaterialTheme.colorScheme.primary, fontSize = 12.sp, maxLines = 1)
+                                disappearSeconds > 0 -> Text("⏱ Disappearing: ${disappearLabel(disappearSeconds)}", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, maxLines = 1)
+                            }
+                        }
+                    },
+                    navigationIcon = {
+                        IconButton(onClick = onBack) {
+                            Text("←", color = MaterialTheme.colorScheme.onSurface, fontSize = 22.sp)
+                        }
+                    },
+                    actions = {
+                        // Item 4 disappearing: the ⏱ menu to set this chat's timer.
+                        var timerMenu by remember { mutableStateOf(false) }
+                        IconButton(onClick = { timerMenu = true }) {
+                            Text("⏱", color = if (disappearSeconds > 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface, fontSize = 18.sp)
+                        }
+                        DropdownMenu(expanded = timerMenu, onDismissRequest = { timerMenu = false }) {
+                            for ((seconds, label) in DISAPPEAR_CHOICES) {
+                                DropdownMenuItem(
+                                    text = { Text(if (seconds == disappearSeconds) "✓ $label" else label) },
+                                    onClick = { onSetDisappear(seconds); timerMenu = false },
+                                )
+                            }
+                        }
+                    },
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = MaterialTheme.colorScheme.surface,
+                        titleContentColor = MaterialTheme.colorScheme.onSurface,
+                    ),
+                )
+            }
         },
         bottomBar = {
             Column(modifier = Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface)) {
@@ -230,6 +271,12 @@ fun ConversationScreen(
                         onEditStart = { editingMessage = message; draft = message.text; replyingTo = null },
                         onDelete = { onDelete(message.id) },
                         onForward = { onForward(message) },
+                        // Item 4 multi-select: tap toggles while selecting; "Select" in the menu starts it.
+                        selectionActive = selectionActive,
+                        selected = message.id in selectedIds,
+                        onToggleSelect = {
+                            selectedIds = if (message.id in selectedIds) selectedIds - message.id else selectedIds + message.id
+                        },
                     )
                 }
             }
@@ -322,11 +369,20 @@ private fun MessageBubble(
     onEditStart: () -> Unit = {},
     onDelete: () -> Unit = {},
     onForward: () -> Unit = {},
+    // Item 4 multi-select: whether the screen is in selection mode, whether THIS message is selected, and a toggle.
+    selectionActive: Boolean = false,
+    selected: Boolean = false,
+    onToggleSelect: () -> Unit = {},
 ) {
     val mine = message.mine
+    // A faint band behind the whole row marks a selected message (and the row the selection menu can act on).
+    val rowBackground = if (selected) Modifier.background(MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)) else Modifier
     // Item 4 delete-for-everyone: a deleted message shows a plain italic placeholder — no menu, reactions, reply or ticks.
     if (message.deleted) {
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = if (mine) Arrangement.End else Arrangement.Start) {
+        Row(
+            modifier = Modifier.fillMaxWidth().then(rowBackground),
+            horizontalArrangement = if (mine) Arrangement.End else Arrangement.Start,
+        ) {
             Text(
                 "🚫 This message was deleted",
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -336,6 +392,8 @@ private fun MessageBubble(
                     .widthIn(max = 300.dp)
                     .clip(RoundedCornerShape(14.dp))
                     .background(if (mine) MaterialTheme.colorScheme.primary.copy(alpha = 0.35f) else MaterialTheme.colorScheme.surfaceVariant)
+                    // While selecting, a deleted placeholder can still be toggled (e.g. to forward the rest).
+                    .combinedClickable(onClick = { if (selectionActive) onToggleSelect() }, onLongClick = { onToggleSelect() })
                     .padding(horizontal = 12.dp, vertical = 8.dp),
             )
         }
@@ -343,9 +401,19 @@ private fun MessageBubble(
     }
     var menuOpen by remember { mutableStateOf(false) }
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().then(rowBackground),
         horizontalArrangement = if (mine) Arrangement.End else Arrangement.Start,
+        verticalAlignment = Alignment.CenterVertically,
     ) {
+        // Item 4 multi-select: a leading check while selecting (filled when this message is selected).
+        if (selectionActive) {
+            Text(
+                if (selected) "☑" else "☐",
+                color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = 18.sp,
+                modifier = Modifier.padding(end = 6.dp),
+            )
+        }
         Column(horizontalAlignment = if (mine) Alignment.End else Alignment.Start) {
             Box {
                 Column(
@@ -353,8 +421,11 @@ private fun MessageBubble(
                         .widthIn(max = 300.dp)
                         .clip(RoundedCornerShape(14.dp))
                         .background(if (mine) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant)
-                        // Long-press a bubble for the reaction + reply menu (item 4).
-                        .combinedClickable(onClick = {}, onLongClick = { menuOpen = true })
+                        // Tap toggles selection while selecting; otherwise long-press opens the reaction + reply menu (item 4).
+                        .combinedClickable(
+                            onClick = { if (selectionActive) onToggleSelect() },
+                            onLongClick = { if (selectionActive) onToggleSelect() else menuOpen = true },
+                        )
                         .padding(horizontal = 12.dp, vertical = 8.dp),
                 ) {
                     // Item 4 forwarding: the "Forwarded" label above the content.
@@ -458,6 +529,8 @@ private fun MessageBubble(
                     DropdownMenuItem(text = { Text("Reply") }, onClick = { onReply(); menuOpen = false })
                     // Item 4 forwarding: any message can be forwarded to another chat.
                     DropdownMenuItem(text = { Text("Forward") }, onClick = { onForward(); menuOpen = false })
+                    // Item 4 multi-select: start selection mode with this message selected.
+                    DropdownMenuItem(text = { Text("Select") }, onClick = { onToggleSelect(); menuOpen = false })
                     // Item 4 edit/delete: only on my own messages (the server enforces sender-only + the time windows).
                     if (mine) {
                         DropdownMenuItem(text = { Text("Edit") }, onClick = { onEditStart(); menuOpen = false })
