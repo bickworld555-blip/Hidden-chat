@@ -34,30 +34,9 @@ object NativeSend {
         // A native socket must be open: the native-owned online socket (socket_owner), the foreground send socket, or
         // the background relay.
         if (!NativeForegroundSocket.isOnline() && !NativeSendSocket.canSend() && !NativeRelay.canSend()) return false
-        val core = CryptoCores.current() ?: return false
-        val session = RelaySession.read(context) ?: return false
-        val meUserId = session.userId ?: return false
-        val meDeviceId = RelaySession.deviceId(context) ?: return false
-        val server = NativeServer.from(context) ?: return false
-        val store = NativeStore.get(context) ?: return false
-
-        val peer = devicesOf(server, store, peerId)
-        if (peer.isEmpty()) return false                    // the contact has no (trusted) keys yet
-        val mine = devicesOf(server, store, meUserId).filter { Json.string(Json.map(it)?.get("deviceId")) != meDeviceId }
-
-        val targets = LinkedHashMap<String, Any?>()
-        targets[peerId] = peer
-        if (mine.isNotEmpty()) targets[meUserId] = mine
-
         val inner = linkedMapOf<String, Any?>("c" to text)
         if (!replyToId.isNullOrEmpty()) inner["r"] = replyToId // item 4 replies: same inner field the web uses (client.js)
-        val innerJson = Json.stringify(inner)
-        val claim: (String, List<String>) -> List<Any?> = { userId, ids ->
-            val res = server.postJson("/api/v1/e2e/users/${enc(userId)}/bundles", linkedMapOf<String, Any?>("deviceIds" to ids))
-            Json.list(res?.get("bundles")) ?: emptyList()
-        }
-        val d = try { core.encryptForDevices(targets, innerJson, claim) } catch (failed: Throwable) { return false }
-        val envelope = "e2e2:text|" + Json.stringify(linkedMapOf<String, Any?>("v" to 2, "sd" to meDeviceId, "d" to d))
+        val envelope = sealTo(context, peerId, inner) ?: return false
 
         val messageId = UUID.randomUUID().toString()
         val message = org.json.JSONObject().put("id", messageId).put("receiverId", peerId).put("content", envelope)
@@ -65,14 +44,67 @@ object NativeSend {
         if (!NativeForegroundSocket.sendMessage(message) && !NativeSendSocket.sendMessage(message) && !NativeRelay.sendMessage(message)) return false
 
         // Optimistic local echo so the native conversation shows the sent message at once.
+        val store = NativeStore.get(context)
         val ts = System.currentTimeMillis()
         val time = java.text.SimpleDateFormat("h:mm a", java.util.Locale.US).format(java.util.Date(ts)).lowercase(java.util.Locale.US)
         try {
-            store.addMessage(peerId, messageId, true, text, time, ts)
-            store.raiseStatusById(messageId, "sent")
-            if (!replyToId.isNullOrEmpty()) store.setReplyTo(peerId, messageId, replyToId)
+            store?.addMessage(peerId, messageId, true, text, time, ts)
+            store?.raiseStatusById(messageId, "sent")
+            if (!replyToId.isNullOrEmpty()) store?.setReplyTo(peerId, messageId, replyToId)
         } catch (ignored: Throwable) { /* echo only */ }
         return true
+    }
+
+    /**
+     * Item 4 reactions (SEND): seals "reaction:<emoji>" to [peerId] with the SAME trusted device list + ratchet as a
+     * message (web src/e2e: transmitReaction → sealDirect), and sends it as `message:reaction { messageId, emoji }` over
+     * the native-owned online socket. [emoji] null removes the reaction (sent unsealed, as the web/server expect).
+     * Applies the reaction locally at once. Requires the online socket (the native UI is foreground when reacting).
+     */
+    fun sendReaction(context: Context, peerId: String, messageId: String, emoji: String?): Boolean {
+        if (!NativeForegroundSocket.isOnline()) return false
+        val session = RelaySession.read(context) ?: return false
+        val meUserId = session.userId ?: return false
+        val store = NativeStore.get(context)
+        val frame = org.json.JSONObject().put("type", "message:reaction").put("messageId", messageId)
+        if (emoji.isNullOrEmpty()) {
+            frame.put("emoji", org.json.JSONObject.NULL) // removal: null emoji, the server deletes the reaction
+        } else {
+            val sealed = sealTo(context, peerId, linkedMapOf<String, Any?>("c" to ("reaction:$emoji"))) ?: return false
+            frame.put("emoji", sealed)
+        }
+        if (!NativeForegroundSocket.sendRawFrame(frame.toString())) return false
+        try { store?.addReaction(messageId, meUserId, emoji) } catch (ignored: Throwable) { /* local echo only */ }
+        return true
+    }
+
+    /**
+     * Seals one inner payload to [peerId] using the VERIFIED device list (the trust half below) and the native ratchet,
+     * returning the `e2e2:text|{v,sd,d}` envelope, or null on any failure. Shared by [sendText] and [sendReaction] so
+     * the device-list trust + sealing lives in exactly one place.
+     */
+    private fun sealTo(context: Context, peerId: String, inner: LinkedHashMap<String, Any?>): String? {
+        val core = CryptoCores.current() ?: return null
+        val session = RelaySession.read(context) ?: return null
+        val meUserId = session.userId ?: return null
+        val meDeviceId = RelaySession.deviceId(context) ?: return null
+        val server = NativeServer.from(context) ?: return null
+        val store = NativeStore.get(context) ?: return null
+
+        val peer = devicesOf(server, store, peerId)
+        if (peer.isEmpty()) return null                     // the contact has no (trusted) keys yet
+        val mine = devicesOf(server, store, meUserId).filter { Json.string(Json.map(it)?.get("deviceId")) != meDeviceId }
+
+        val targets = LinkedHashMap<String, Any?>()
+        targets[peerId] = peer
+        if (mine.isNotEmpty()) targets[meUserId] = mine
+
+        val claim: (String, List<String>) -> List<Any?> = { userId, ids ->
+            val res = server.postJson("/api/v1/e2e/users/${enc(userId)}/bundles", linkedMapOf<String, Any?>("deviceIds" to ids))
+            Json.list(res?.get("bundles")) ?: emptyList()
+        }
+        val d = try { core.encryptForDevices(targets, Json.stringify(inner), claim) } catch (failed: Throwable) { return null }
+        return "e2e2:text|" + Json.stringify(linkedMapOf<String, Any?>("v" to 2, "sd" to meDeviceId, "d" to d))
     }
 
     // --- device-list trust (port of client.js devicesOf/trustedDevices + deviceList.js) --------------------------------

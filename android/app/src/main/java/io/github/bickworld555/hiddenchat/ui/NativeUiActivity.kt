@@ -130,6 +130,13 @@ class NativeUiActivity : ComponentActivity() {
                             },
                             typingLabel = if (isGroup) "" else NativeTyping.labelFor(typing[current.id]),
                             onDraft = { text -> if (!isGroup) { if (text.isBlank()) typingSender.stop() else typingSender.typed() } },
+                            // Item 4 reactions: seal + send over the native socket, off the main thread (direct chats only).
+                            onReact = { messageId, emoji ->
+                                // "" means toggle-off / remove (sendReaction takes null); anything else adds/updates.
+                                if (!isGroup) Thread({
+                                    try { NativeSend.sendReaction(applicationContext, current.id, messageId, emoji.ifEmpty { null }) } catch (ignored: Throwable) { /* best-effort */ }
+                                }, "native-react").start()
+                            },
                         )
                     }
                 }
@@ -175,7 +182,16 @@ class NativeUiActivity : ComponentActivity() {
     }
 
     private fun readMessages(store: NativeStore?, chatId: String): List<MessageRowData> = try {
-        store?.messages(chatId)?.map { MessageRowData(it.id, it.mine, it.text, it.time, it.status, it.replyText) } ?: emptyList()
+        store?.messages(chatId)?.let { rows ->
+            val me = store.owner() ?: ""
+            rows.map {
+                MessageRowData(
+                    it.id, it.mine, it.text, it.time, it.status, it.replyText,
+                    it.reactions.map { pair -> pair.second },
+                    it.reactions.firstOrNull { pair -> pair.first == me }?.second ?: "",
+                )
+            }
+        } ?: emptyList()
     } catch (ignored: Throwable) {
         emptyList()
     }

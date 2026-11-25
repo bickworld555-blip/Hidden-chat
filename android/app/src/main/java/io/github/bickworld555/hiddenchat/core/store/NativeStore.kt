@@ -2,6 +2,7 @@ package io.github.bickworld555.hiddenchat.core.store
 
 import android.content.Context
 import io.github.bickworld555.hiddenchat.SecureStore
+import io.github.bickworld555.hiddenchat.core.Json
 import io.github.bickworld555.hiddenchat.core.crypto.KeyRecords
 import java.io.File
 import java.security.SecureRandom
@@ -34,6 +35,8 @@ data class MessageRecord @JvmOverloads constructor(
     val replyTo: String = "",
     /** The quoted snippet of [replyTo], resolved at read time (never stored); "" when unknown/not a reply. */
     val replyText: String = "",
+    /** This message's reactions (item 4) as (userId, emoji) pairs; empty when none. */
+    val reactions: List<Pair<String, String>> = emptyList(),
 )
 
 /** One row of the authoritative message store (checklist item 2): a message's full JSON, keyed by (chatId, id), ts in ms. */
@@ -192,15 +195,45 @@ class NativeStore private constructor(private val db: SQLiteDatabase) : KeyRecor
     /** A chat's messages, oldest-first (by timestamp), for the native conversation screen. */
     fun messages(chatId: String): List<MessageRecord> = exclusive {
         val out = ArrayList<MessageRecord>()
-        db.rawQuery("SELECT id, mine, text, time, ts, status, reply_to FROM chat_messages WHERE chat_id = ? ORDER BY ts ASC", arrayOf(chatId)).use { cursor ->
+        db.rawQuery("SELECT id, mine, text, time, ts, status, reply_to, reactions FROM chat_messages WHERE chat_id = ? ORDER BY ts ASC", arrayOf(chatId)).use { cursor ->
             while (cursor.moveToNext()) {
-                out.add(MessageRecord(cursor.getString(0), cursor.getInt(1) != 0, cursor.getString(2), cursor.getString(3), cursor.getLong(4), cursor.getString(5) ?: "", cursor.getString(6) ?: ""))
+                out.add(MessageRecord(cursor.getString(0), cursor.getInt(1) != 0, cursor.getString(2), cursor.getString(3), cursor.getLong(4), cursor.getString(5) ?: "", cursor.getString(6) ?: "", "", parseReactions(cursor.getString(7))))
             }
         }
         // Item 4 replies: resolve each reply's quoted snippet from the message it points to (same chat), so the native UI
         // can show "┃ <quoted text>" above the bubble without a second query. Unknown (older/unloaded) → left blank.
         val byId = out.associateBy { it.id }
         out.map { if (it.replyTo.isNotEmpty()) it.copy(replyText = byId[it.replyTo]?.text ?: "") else it }
+    }
+
+    // Item 4 reactions: the reactions column is a JSON array [{u:userId, e:emoji}]; one reaction per user (toggle).
+    private fun parseReactions(json: String?): List<Pair<String, String>> {
+        if (json.isNullOrEmpty()) return emptyList()
+        val list = runCatching { Json.list(Json.parse(json)) }.getOrNull() ?: return emptyList()
+        return list.mapNotNull { entry ->
+            val m = Json.map(entry) ?: return@mapNotNull null
+            val u = Json.string(m["u"]); val e = Json.string(m["e"])
+            if (u != null && e != null) u to e else null
+        }
+    }
+
+    private fun reactionsJson(reactions: List<Pair<String, String>>): String =
+        Json.stringify(reactions.map { linkedMapOf<String, Any?>("u" to it.first, "e" to it.second) })
+
+    /**
+     * Applies a reaction to the message with [messageId] (found across chats — ids are unique): sets [reactorId]'s emoji
+     * (one per user, replacing any prior), or removes it when [emoji] is null. Item 4 reactions; mirrors store.js
+     * applyReaction. No-op when the message is not stored here.
+     */
+    fun addReaction(messageId: String, reactorId: String, emoji: String?) = exclusive {
+        val row = db.rawQuery("SELECT chat_id, reactions FROM chat_messages WHERE id = ? LIMIT 1", arrayOf(messageId)).use {
+            if (it.moveToNext()) Pair(it.getString(0), it.getString(1) ?: "") else null
+        } ?: return@exclusive
+        val current = parseReactions(row.second)
+        val others = current.filter { it.first != reactorId }
+        val next = if (emoji.isNullOrEmpty()) others else others + (reactorId to emoji)
+        db.execSQL("UPDATE chat_messages SET reactions = ? WHERE id = ?", arrayOf(reactionsJson(next), messageId))
+        bump()
     }
 
     /** Records which message [id] (in [chatId]) replies to (item 4 replies); never clobbers an existing non-empty value. */
@@ -329,6 +362,9 @@ class NativeStore private constructor(private val db: SQLiteDatabase) : KeyRecor
         }
     }
 
+    /** The account this store belongs to (adoptOwner), e.g. to resolve which reaction on a message is the user's own. */
+    fun owner(): String? = exclusive { get(OWNER) }
+
     fun close() = db.close()
 
     companion object {
@@ -404,6 +440,9 @@ class NativeStore private constructor(private val db: SQLiteDatabase) : KeyRecor
                 // Checklist item 4 (replies/quotes): the id of the message this one replies to (the inner `r` field),
                 // so the native conversation can show the quoted snippet above the bubble. A no-op once present.
                 try { db.execSQL("ALTER TABLE chat_messages ADD COLUMN reply_to TEXT NOT NULL DEFAULT ''") } catch (ignored: Throwable) { /* already present */ }
+                // Checklist item 4 (reactions): a JSON array [{u:userId, e:emoji}] of this message's reactions, shown as
+                // chips under the bubble. A no-op once present.
+                try { db.execSQL("ALTER TABLE chat_messages ADD COLUMN reactions TEXT NOT NULL DEFAULT ''") } catch (ignored: Throwable) { /* already present */ }
                 // Checklist item 2 (authoritative store): the WebView's message history, native-owned. Each row is one
                 // message's FULL JSON, opaque to native (round-tripped, never parsed here — native stays decoupled from
                 // the WebView's evolving message shape), keyed by (chat_id, id) and ordered by ts (epoch ms). This is the

@@ -1,7 +1,9 @@
 package io.github.bickworld555.hiddenchat.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -14,6 +16,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -37,7 +41,7 @@ import androidx.compose.ui.unit.sp
 /** One message bubble the native conversation screen shows (Step 5). `status` drives the read-receipt ticks on our own
  * sent messages ('' | sent | delivered | read | waiting); it is unused for incoming messages. `replyText` (item 4
  * replies) is the quoted snippet of the message this one replies to, shown above the bubble ("" when not a reply). */
-data class MessageRowData(val id: String, val mine: Boolean, val text: String, val time: String, val status: String = "", val replyText: String = "")
+data class MessageRowData(val id: String, val mine: Boolean, val text: String, val time: String, val status: String = "", val replyText: String = "", val reactions: List<String> = emptyList(), val myReaction: String = "")
 
 /**
  * The native conversation screen (Step 5). A back-navigable top bar, a scrollable list of message bubbles (mine on the
@@ -58,6 +62,8 @@ fun ConversationScreen(
     // every edit of the message box so the native-owned socket can announce our own "typing…". Both default off/no-op.
     typingLabel: String = "",
     onDraft: (String) -> Unit = {},
+    // Item 4 reactions: (messageId, emoji) — long-press a bubble to react. Default no-op.
+    onReact: (String, String) -> Unit = { _, _ -> },
 ) {
     var draft by remember { mutableStateOf("") }
     // Item 4 replies: the message currently being replied to (long-press a bubble to set it), shown as a quote bar above
@@ -155,74 +161,119 @@ fun ConversationScreen(
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                itemsIndexed(messages) { _, message -> MessageBubble(message, onReply = { replyingTo = message }) }
+                itemsIndexed(messages) { _, message ->
+                    MessageBubble(message, onReply = { replyingTo = message }, onReact = { emoji -> onReact(message.id, emoji) })
+                }
             }
         }
     }
 }
 
+// The reactions the long-press menu offers (WhatsApp's default set).
+private val REACTION_EMOJIS = listOf("👍", "❤️", "😂", "😮", "😢", "🙏")
+
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-private fun MessageBubble(message: MessageRowData, onReply: () -> Unit = {}) {
+private fun MessageBubble(message: MessageRowData, onReply: () -> Unit = {}, onReact: (String) -> Unit = {}) {
     val mine = message.mine
+    var menuOpen by remember { mutableStateOf(false) }
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = if (mine) Arrangement.End else Arrangement.Start,
     ) {
-        Column(
-            modifier = Modifier
-                .widthIn(max = 300.dp)
-                .clip(RoundedCornerShape(14.dp))
-                .background(if (mine) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant)
-                // Long-press a bubble to reply to it (item 4 replies).
-                .combinedClickable(onClick = {}, onLongClick = onReply)
-                .padding(horizontal = 12.dp, vertical = 8.dp),
-        ) {
-            // Item 4 replies: the quoted snippet of the message this one replies to, above the text.
-            if (message.replyText.isNotEmpty()) {
+        Column(horizontalAlignment = if (mine) Alignment.End else Alignment.Start) {
+            Box {
                 Column(
                     modifier = Modifier
-                        .padding(bottom = 4.dp)
-                        .clip(RoundedCornerShape(6.dp))
-                        .background(if (mine) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.15f) else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
-                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                        .widthIn(max = 300.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                        .background(if (mine) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant)
+                        // Long-press a bubble for the reaction + reply menu (item 4).
+                        .combinedClickable(onClick = {}, onLongClick = { menuOpen = true })
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
                 ) {
-                    Text(
-                        message.replyText,
-                        color = (if (mine) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface).copy(alpha = 0.75f),
-                        fontSize = 12.sp,
-                        maxLines = 2,
-                    )
-                }
-            }
-            Text(
-                message.text,
-                color = if (mine) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
-                fontSize = 15.sp,
-            )
-            if (message.time.isNotEmpty() || (mine && message.status.isNotEmpty())) {
-                Row(
-                    modifier = Modifier.align(Alignment.End).padding(top = 2.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    if (message.time.isNotEmpty()) {
-                        Text(
-                            message.time,
-                            color = if (mine) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.7f) else MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontSize = 10.sp,
-                        )
-                    }
-                    // Read-receipt ticks, only on our own messages (item 4): ✓ sent, ✓✓ delivered, ✓✓ (blue) read.
-                    if (mine) {
-                        val ticks = statusTicks(message.status)
-                        if (ticks.isNotEmpty()) {
+                    // Item 4 replies: the quoted snippet of the message this one replies to, above the text.
+                    if (message.replyText.isNotEmpty()) {
+                        Column(
+                            modifier = Modifier
+                                .padding(bottom = 4.dp)
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(if (mine) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.15f) else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+                                .padding(horizontal = 8.dp, vertical = 4.dp),
+                        ) {
                             Text(
-                                ticks,
-                                color = if (message.status == "read") ReadTickColor else MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.7f),
-                                fontSize = 11.sp,
-                                modifier = Modifier.padding(start = 4.dp),
+                                message.replyText,
+                                color = (if (mine) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface).copy(alpha = 0.75f),
+                                fontSize = 12.sp,
+                                maxLines = 2,
                             )
                         }
+                    }
+                    Text(
+                        message.text,
+                        color = if (mine) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
+                        fontSize = 15.sp,
+                    )
+                    if (message.time.isNotEmpty() || (mine && message.status.isNotEmpty())) {
+                        Row(
+                            modifier = Modifier.align(Alignment.End).padding(top = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            if (message.time.isNotEmpty()) {
+                                Text(
+                                    message.time,
+                                    color = if (mine) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.7f) else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontSize = 10.sp,
+                                )
+                            }
+                            // Read-receipt ticks, only on our own messages (item 4): ✓ sent, ✓✓ delivered, ✓✓ (blue) read.
+                            if (mine) {
+                                val ticks = statusTicks(message.status)
+                                if (ticks.isNotEmpty()) {
+                                    Text(
+                                        ticks,
+                                        color = if (message.status == "read") ReadTickColor else MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.7f),
+                                        fontSize = 11.sp,
+                                        modifier = Modifier.padding(start = 4.dp),
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+                // Item 4 reactions: long-press menu — a row of emojis to react with, plus Reply.
+                DropdownMenu(expanded = menuOpen, onDismissRequest = { menuOpen = false }) {
+                    Row(modifier = Modifier.padding(horizontal = 8.dp)) {
+                        for (emoji in REACTION_EMOJIS) {
+                            val isMine = emoji == message.myReaction
+                            Text(
+                                emoji,
+                                fontSize = 22.sp,
+                                modifier = Modifier
+                                    .clip(CircleShape)
+                                    // Tapping the emoji I already reacted with removes it (toggle off, "" = remove).
+                                    .background(if (isMine) MaterialTheme.colorScheme.primary.copy(alpha = 0.25f) else androidx.compose.ui.graphics.Color.Transparent)
+                                    .clickable { onReact(if (isMine) "" else emoji); menuOpen = false }
+                                    .padding(6.dp),
+                            )
+                        }
+                    }
+                    DropdownMenuItem(text = { Text("Reply") }, onClick = { onReply(); menuOpen = false })
+                }
+            }
+            // Item 4 reactions: chips under the bubble — each distinct emoji with a count when more than one.
+            if (message.reactions.isNotEmpty()) {
+                Row(modifier = Modifier.padding(top = 2.dp)) {
+                    for ((emoji, count) in message.reactions.groupingBy { it }.eachCount()) {
+                        Text(
+                            if (count > 1) "$emoji $count" else emoji,
+                            fontSize = 13.sp,
+                            modifier = Modifier
+                                .padding(end = 4.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(MaterialTheme.colorScheme.surfaceVariant)
+                                .padding(horizontal = 6.dp, vertical = 1.dp),
+                        )
                     }
                 }
             }

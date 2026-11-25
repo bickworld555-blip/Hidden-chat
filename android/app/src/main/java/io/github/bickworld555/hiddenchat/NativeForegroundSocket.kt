@@ -3,7 +3,9 @@ package io.github.bickworld555.hiddenchat
 import android.content.Context
 import io.github.bickworld555.hiddenchat.core.Json
 import io.github.bickworld555.hiddenchat.core.NativeFetchHandler
+import io.github.bickworld555.hiddenchat.core.NativeInbox
 import io.github.bickworld555.hiddenchat.core.crypto.CryptoCores
+import io.github.bickworld555.hiddenchat.core.store.NativeStore
 import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
@@ -40,6 +42,7 @@ object NativeForegroundSocket {
     }
 
     private const val PING_INTERVAL_MS = 20_000L
+    private const val REACTION_PREFIX = "reaction:" // the sealed reaction's inner is {c:"reaction:<emoji>"} (web src/e2e)
 
     private val client: OkHttpClient = OkHttpClient.Builder()
         .pingInterval(25, TimeUnit.SECONDS)
@@ -200,6 +203,7 @@ object NativeForegroundSocket {
                 if (ctx != null && id != null) io.github.bickworld555.hiddenchat.core.store.NativeStore.get(ctx)?.raiseStatusById(id, "read")
                 sink?.forward(text)
             }
+            "message:reaction" -> onReaction(event)
             // Every other frame (call:*, message:ack, message:read, message:reaction, presence:update, error,
             // xmpp:wake, …) stays the WebView's job for now — hand it over untouched.
             else -> sink?.forward(text)
@@ -221,6 +225,36 @@ object NativeForegroundSocket {
         if (delivery.groupId == null) NativeTyping.note(delivery.senderId, null)
         sendRawFrame(Json.stringify(Json.obj("type" to "message:delivered", "messageIds" to listOf(delivery.messageId))))
         sendRawFrame(Json.stringify(Json.obj("type" to "queue:ack", "messageIds" to listOf(delivery.messageId), "eventIds" to emptyList<String>())))
+    }
+
+    // Item 4 reactions (RECEIVE): a reaction is an envelope sealed with the SAME ratchet as a message (web sealDirect),
+    // so opening it advances the ratchet — exactly ONE consumer may. Native (the socket owner) opens it here, applies
+    // it, and forwards the OPENED emoji so the WebView never re-opens it. Since native and the WebView share ONE core
+    // when native E2E is active, there is no ratchet desync even if an open is attempted twice (the second fails).
+    private fun onReaction(event: Map<String, Any?>) {
+        val context = appContext ?: return
+        val messageId = Json.string(event["messageId"]) ?: return
+        val reactorId = Json.string(event["userId"]) ?: return
+        val raw = event["emoji"]
+        val opened: String? = when {
+            raw == null -> null // removal
+            raw is String && NativeInbox.isEnvelope(raw) -> {
+                val core = CryptoCores.current() ?: run { sink?.forward(Json.stringify(event)); return } // no core: leave to the WebView
+                try {
+                    val plaintext = NativeInbox.openDirect(core, meUser, meDevice, reactorId, raw)
+                    val c = Json.string(Json.map(Json.parse(plaintext))?.get("c"))
+                    if (c != null && c.startsWith(REACTION_PREFIX)) c.substring(REACTION_PREFIX.length).ifEmpty { null } else null
+                } catch (failed: Throwable) {
+                    android.util.Log.w("NFS", "reaction open failed id=$messageId: ${failed.message}")
+                    sink?.forward(Json.stringify(event)); return // could not open: leave the raw reaction to the WebView
+                }
+            }
+            raw is String -> raw // already plain (a short emoji, not sealed)
+            else -> null
+        }
+        NativeStore.get(context)?.addReaction(messageId, reactorId, opened)
+        // Forward the OPENED reaction (plain emoji or null) so the WebView applies it without decrypting again.
+        sink?.forward(Json.stringify(Json.obj("type" to "message:reaction", "messageId" to messageId, "userId" to reactorId, "emoji" to opened)))
     }
 
     @Synchronized
