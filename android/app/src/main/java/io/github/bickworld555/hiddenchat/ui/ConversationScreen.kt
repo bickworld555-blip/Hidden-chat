@@ -41,7 +41,7 @@ import androidx.compose.ui.unit.sp
 /** One message bubble the native conversation screen shows (Step 5). `status` drives the read-receipt ticks on our own
  * sent messages ('' | sent | delivered | read | waiting); it is unused for incoming messages. `replyText` (item 4
  * replies) is the quoted snippet of the message this one replies to, shown above the bubble ("" when not a reply). */
-data class MessageRowData(val id: String, val mine: Boolean, val text: String, val time: String, val status: String = "", val replyText: String = "", val reactions: List<String> = emptyList(), val myReaction: String = "")
+data class MessageRowData(val id: String, val mine: Boolean, val text: String, val time: String, val status: String = "", val replyText: String = "", val reactions: List<String> = emptyList(), val myReaction: String = "", val edited: Boolean = false, val deleted: Boolean = false)
 
 /**
  * The native conversation screen (Step 5). A back-navigable top bar, a scrollable list of message bubbles (mine on the
@@ -64,11 +64,16 @@ fun ConversationScreen(
     onDraft: (String) -> Unit = {},
     // Item 4 reactions: (messageId, emoji) — long-press a bubble to react. Default no-op.
     onReact: (String, String) -> Unit = { _, _ -> },
+    // Item 4 edit/delete: (messageId, newText) to save an edit; (messageId) to delete for everyone. Default no-op.
+    onEdit: (String, String) -> Unit = { _, _ -> },
+    onDelete: (String) -> Unit = {},
 ) {
     var draft by remember { mutableStateOf("") }
     // Item 4 replies: the message currently being replied to (long-press a bubble to set it), shown as a quote bar above
     // the composer and carried in the next send.
     var replyingTo by remember { mutableStateOf<MessageRowData?>(null) }
+    // Item 4 edit: the message currently being edited (its text is loaded into the composer); send saves the edit.
+    var editingMessage by remember { mutableStateOf<MessageRowData?>(null) }
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
@@ -94,8 +99,24 @@ fun ConversationScreen(
         },
         bottomBar = {
             Column(modifier = Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surface)) {
-                // Item 4 replies: the quote bar above the composer while replying, with a cancel.
-                val replying = replyingTo
+                // Item 4 edit: the "Editing" banner while editing a message, with a cancel.
+                val editing = editingMessage
+                if (editing != null) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Editing message", color = MaterialTheme.colorScheme.primary, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                            Text(editing.text, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 12.sp, maxLines = 1)
+                        }
+                        IconButton(onClick = { editingMessage = null; draft = "" }) {
+                            Text("✕", color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 16.sp)
+                        }
+                    }
+                }
+                // Item 4 replies: the quote bar above the composer while replying (not while editing), with a cancel.
+                val replying = if (editing == null) replyingTo else null
                 if (replying != null) {
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(start = 12.dp, end = 4.dp, top = 6.dp),
@@ -124,10 +145,14 @@ fun ConversationScreen(
                         keyboardActions = KeyboardActions(onSend = {}),
                     )
                     IconButton(
-                        // The native E2E path seals + relays; sending passes the reply target and stops our "typing…".
+                        // Editing a message saves the edit; otherwise the native E2E path seals + relays a new message.
                         onClick = {
                             val text = draft.trim()
-                            if (text.isNotEmpty()) { onSend(text, replyingTo?.id); draft = ""; onDraft(""); replyingTo = null }
+                            if (text.isNotEmpty()) {
+                                val editing = editingMessage
+                                if (editing != null) { onEdit(editing.id, text); editingMessage = null } else { onSend(text, replyingTo?.id); replyingTo = null }
+                                draft = ""; onDraft("")
+                            }
                         },
                         enabled = draft.isNotBlank(),
                     ) {
@@ -162,7 +187,13 @@ fun ConversationScreen(
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 itemsIndexed(messages) { _, message ->
-                    MessageBubble(message, onReply = { replyingTo = message }, onReact = { emoji -> onReact(message.id, emoji) })
+                    MessageBubble(
+                        message,
+                        onReply = { replyingTo = message },
+                        onReact = { emoji -> onReact(message.id, emoji) },
+                        onEditStart = { editingMessage = message; draft = message.text; replyingTo = null },
+                        onDelete = { onDelete(message.id) },
+                    )
                 }
             }
         }
@@ -174,8 +205,31 @@ private val REACTION_EMOJIS = listOf("👍", "❤️", "😂", "😮", "😢", "
 
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
-private fun MessageBubble(message: MessageRowData, onReply: () -> Unit = {}, onReact: (String) -> Unit = {}) {
+private fun MessageBubble(
+    message: MessageRowData,
+    onReply: () -> Unit = {},
+    onReact: (String) -> Unit = {},
+    onEditStart: () -> Unit = {},
+    onDelete: () -> Unit = {},
+) {
     val mine = message.mine
+    // Item 4 delete-for-everyone: a deleted message shows a plain italic placeholder — no menu, reactions, reply or ticks.
+    if (message.deleted) {
+        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = if (mine) Arrangement.End else Arrangement.Start) {
+            Text(
+                "🚫 This message was deleted",
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                fontSize = 14.sp,
+                fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
+                modifier = Modifier
+                    .widthIn(max = 300.dp)
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(if (mine) MaterialTheme.colorScheme.primary.copy(alpha = 0.35f) else MaterialTheme.colorScheme.surfaceVariant)
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+            )
+        }
+        return
+    }
     var menuOpen by remember { mutableStateOf(false) }
     Row(
         modifier = Modifier.fillMaxWidth(),
@@ -214,11 +268,21 @@ private fun MessageBubble(message: MessageRowData, onReply: () -> Unit = {}, onR
                         color = if (mine) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
                         fontSize = 15.sp,
                     )
-                    if (message.time.isNotEmpty() || (mine && message.status.isNotEmpty())) {
+                    if (message.time.isNotEmpty() || message.edited || (mine && message.status.isNotEmpty())) {
                         Row(
                             modifier = Modifier.align(Alignment.End).padding(top = 2.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
+                            // Item 4 edit: the "edited" label before the time.
+                            if (message.edited) {
+                                Text(
+                                    "edited",
+                                    color = if (mine) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.6f) else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    fontSize = 10.sp,
+                                    fontStyle = androidx.compose.ui.text.font.FontStyle.Italic,
+                                    modifier = Modifier.padding(end = 4.dp),
+                                )
+                            }
                             if (message.time.isNotEmpty()) {
                                 Text(
                                     message.time,
@@ -259,6 +323,11 @@ private fun MessageBubble(message: MessageRowData, onReply: () -> Unit = {}, onR
                         }
                     }
                     DropdownMenuItem(text = { Text("Reply") }, onClick = { onReply(); menuOpen = false })
+                    // Item 4 edit/delete: only on my own messages (the server enforces sender-only + the time windows).
+                    if (mine) {
+                        DropdownMenuItem(text = { Text("Edit") }, onClick = { onEditStart(); menuOpen = false })
+                        DropdownMenuItem(text = { Text("Delete for everyone") }, onClick = { onDelete(); menuOpen = false })
+                    }
                 }
             }
             // Item 4 reactions: chips under the bubble — each distinct emoji with a count when more than one.

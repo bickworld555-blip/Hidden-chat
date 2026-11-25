@@ -37,6 +37,9 @@ data class MessageRecord @JvmOverloads constructor(
     val replyText: String = "",
     /** This message's reactions (item 4) as (userId, emoji) pairs; empty when none. */
     val reactions: List<Pair<String, String>> = emptyList(),
+    /** Item 4 edit/delete: whether this message was edited, and whether it was deleted-for-everyone (placeholder). */
+    val edited: Boolean = false,
+    val deleted: Boolean = false,
 )
 
 /** One row of the authoritative message store (checklist item 2): a message's full JSON, keyed by (chatId, id), ts in ms. */
@@ -195,9 +198,9 @@ class NativeStore private constructor(private val db: SQLiteDatabase) : KeyRecor
     /** A chat's messages, oldest-first (by timestamp), for the native conversation screen. */
     fun messages(chatId: String): List<MessageRecord> = exclusive {
         val out = ArrayList<MessageRecord>()
-        db.rawQuery("SELECT id, mine, text, time, ts, status, reply_to, reactions FROM chat_messages WHERE chat_id = ? ORDER BY ts ASC", arrayOf(chatId)).use { cursor ->
+        db.rawQuery("SELECT id, mine, text, time, ts, status, reply_to, reactions, edited, deleted FROM chat_messages WHERE chat_id = ? ORDER BY ts ASC", arrayOf(chatId)).use { cursor ->
             while (cursor.moveToNext()) {
-                out.add(MessageRecord(cursor.getString(0), cursor.getInt(1) != 0, cursor.getString(2), cursor.getString(3), cursor.getLong(4), cursor.getString(5) ?: "", cursor.getString(6) ?: "", "", parseReactions(cursor.getString(7))))
+                out.add(MessageRecord(cursor.getString(0), cursor.getInt(1) != 0, cursor.getString(2), cursor.getString(3), cursor.getLong(4), cursor.getString(5) ?: "", cursor.getString(6) ?: "", "", parseReactions(cursor.getString(7)), cursor.getInt(8) != 0, cursor.getInt(9) != 0))
             }
         }
         // Item 4 replies: resolve each reply's quoted snippet from the message it points to (same chat), so the native UI
@@ -233,6 +236,19 @@ class NativeStore private constructor(private val db: SQLiteDatabase) : KeyRecor
         val others = current.filter { it.first != reactorId }
         val next = if (emoji.isNullOrEmpty()) others else others + (reactorId to emoji)
         db.execSQL("UPDATE chat_messages SET reactions = ? WHERE id = ?", arrayOf(reactionsJson(next), messageId))
+        bump()
+    }
+
+    /** Item 4 edit: replaces a message's text (found by id across chats) and flags it edited. No-op if not stored or deleted. */
+    fun editMessageText(messageId: String, newText: String) = exclusive {
+        db.execSQL("UPDATE chat_messages SET text = ?, edited = 1 WHERE id = ? AND deleted = 0", arrayOf(newText, messageId))
+        bump()
+    }
+
+    /** Item 4 delete-for-everyone: replaces a message (by id) with the deleted placeholder — clears text, reactions and
+     *  reply, sets deleted=1. Idempotent; no-op if not stored. */
+    fun markDeleted(messageId: String) = exclusive {
+        db.execSQL("UPDATE chat_messages SET deleted = 1, text = '', reactions = '', reply_to = '' WHERE id = ?", arrayOf(messageId))
         bump()
     }
 
@@ -443,6 +459,10 @@ class NativeStore private constructor(private val db: SQLiteDatabase) : KeyRecor
                 // Checklist item 4 (reactions): a JSON array [{u:userId, e:emoji}] of this message's reactions, shown as
                 // chips under the bubble. A no-op once present.
                 try { db.execSQL("ALTER TABLE chat_messages ADD COLUMN reactions TEXT NOT NULL DEFAULT ''") } catch (ignored: Throwable) { /* already present */ }
+                // Checklist item 4 (edit / delete-for-everyone): edited=1 shows an "edited" label; deleted=1 renders the
+                // "This message was deleted" placeholder. No-ops once present.
+                try { db.execSQL("ALTER TABLE chat_messages ADD COLUMN edited INTEGER NOT NULL DEFAULT 0") } catch (ignored: Throwable) { /* already present */ }
+                try { db.execSQL("ALTER TABLE chat_messages ADD COLUMN deleted INTEGER NOT NULL DEFAULT 0") } catch (ignored: Throwable) { /* already present */ }
                 // Checklist item 2 (authoritative store): the WebView's message history, native-owned. Each row is one
                 // message's FULL JSON, opaque to native (round-tripped, never parsed here — native stays decoupled from
                 // the WebView's evolving message shape), keyed by (chat_id, id) and ordered by ts (epoch ms). This is the

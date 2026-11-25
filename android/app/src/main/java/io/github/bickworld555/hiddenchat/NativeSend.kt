@@ -79,6 +79,33 @@ object NativeSend {
     }
 
     /**
+     * Item 4 edit: seals the new text to [peerId] (same trust + ratchet as a message) and PUTs it to the message's REST
+     * endpoint (the server re-broadcasts message:edited). Applies the new text locally at once (optimistic — this
+     * device has the plaintext; it cannot open its own sealed echo, which is not addressed to it). The server enforces
+     * sender-only + the 15-minute edit window and that the message is still stored; returns false on any rejection.
+     */
+    fun editMessage(context: Context, peerId: String, messageId: String, newText: String): Boolean {
+        val envelope = sealTo(context, peerId, linkedMapOf<String, Any?>("c" to newText)) ?: return false
+        val server = NativeServer.from(context) ?: return false
+        val result = server.putJson("/api/v1/messages/${enc(messageId)}", linkedMapOf<String, Any?>("content" to envelope))
+        if (result == null || result["error"] != null) return false
+        try { NativeStore.get(context)?.editMessageText(messageId, newText) } catch (ignored: Throwable) { /* local echo only */ }
+        return true
+    }
+
+    /**
+     * Item 4 delete-for-everyone: sends `message:delete { messageId, scope:"everyone" }` over the native socket. The
+     * placeholder is rendered when the server's confirming message:deleted echo arrives (NativeForegroundSocket.onDeleted),
+     * so a server rejection (not the sender, or past the window) never leaves a wrongly-deleted message. Requires the
+     * online socket; true when the frame went out.
+     */
+    fun deleteForEveryone(context: Context, messageId: String): Boolean {
+        if (!NativeForegroundSocket.isOnline()) return false
+        val frame = org.json.JSONObject().put("type", "message:delete").put("messageId", messageId).put("scope", "everyone")
+        return NativeForegroundSocket.sendRawFrame(frame.toString())
+    }
+
+    /**
      * Seals one inner payload to [peerId] using the VERIFIED device list (the trust half below) and the native ratchet,
      * returning the `e2e2:text|{v,sd,d}` envelope, or null on any failure. Shared by [sendText] and [sendReaction] so
      * the device-list trust + sealing lives in exactly one place.

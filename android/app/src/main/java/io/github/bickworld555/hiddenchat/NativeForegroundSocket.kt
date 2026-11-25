@@ -204,6 +204,8 @@ object NativeForegroundSocket {
                 sink?.forward(text)
             }
             "message:reaction" -> onReaction(event)
+            "message:edited" -> onEdited(event)
+            "message:deleted" -> onDeleted(event)
             // Every other frame (call:*, message:ack, message:read, message:reaction, presence:update, error,
             // xmpp:wake, …) stays the WebView's job for now — hand it over untouched.
             else -> sink?.forward(text)
@@ -255,6 +257,41 @@ object NativeForegroundSocket {
         NativeStore.get(context)?.addReaction(messageId, reactorId, opened)
         // Forward the OPENED reaction (plain emoji or null) so the WebView applies it without decrypting again.
         sink?.forward(Json.stringify(Json.obj("type" to "message:reaction", "messageId" to messageId, "userId" to reactorId, "emoji" to opened)))
+    }
+
+    // Item 4 edit: message:edited carries the SEALED new text (ratchet-advancing), like a message. A PEER's edit is
+    // opened here (exactly once; native owns the socket) and applied; the opened text is forwarded so the WebView does
+    // not re-open it. My OWN edit echo is sealed to the peer + my OTHER devices, never this one, so it cannot be opened
+    // here — it was already applied locally at send time, so it is just forwarded for the WebView.
+    private fun onEdited(event: Map<String, Any?>) {
+        val messageId = Json.string(event["messageId"]) ?: return
+        val senderId = Json.string(event["senderId"]) ?: return
+        val content = event["content"]
+        if (senderId != meUser && content is String && NativeInbox.isEnvelope(content)) {
+            val core = CryptoCores.current()
+            if (core != null) {
+                try {
+                    val plaintext = NativeInbox.openDirect(core, meUser, meDevice, senderId, content)
+                    val newText = Json.string(Json.map(Json.parse(plaintext))?.get("c"))
+                    if (newText != null) {
+                        appContext?.let { NativeStore.get(it)?.editMessageText(messageId, MessagePreview.of(newText)) }
+                        // Forward the OPENED edit so the WebView applies it without decrypting again.
+                        sink?.forward(Json.stringify(Json.obj("type" to "message:edited", "messageId" to messageId, "senderId" to senderId, "content" to newText, "editedAt" to event["editedAt"])))
+                        return
+                    }
+                } catch (failed: Throwable) {
+                    android.util.Log.w("NFS", "edit open failed id=$messageId: ${failed.message}")
+                }
+            }
+        }
+        sink?.forward(Json.stringify(event)) // own edit, or unopenable: leave to the WebView (native already applied own edits)
+    }
+
+    // Item 4 delete-for-everyone: no ciphertext — just render the placeholder natively and forward for the WebView.
+    private fun onDeleted(event: Map<String, Any?>) {
+        val messageId = Json.string(event["messageId"]) ?: return
+        if (Json.string(event["scope"]) == "everyone") appContext?.let { NativeStore.get(it)?.markDeleted(messageId) }
+        sink?.forward(Json.stringify(event))
     }
 
     @Synchronized

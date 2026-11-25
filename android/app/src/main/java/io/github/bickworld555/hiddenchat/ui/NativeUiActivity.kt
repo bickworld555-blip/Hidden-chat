@@ -137,6 +137,17 @@ class NativeUiActivity : ComponentActivity() {
                                     try { NativeSend.sendReaction(applicationContext, current.id, messageId, emoji.ifEmpty { null }) } catch (ignored: Throwable) { /* best-effort */ }
                                 }, "native-react").start()
                             },
+                            // Item 4 edit/delete: seal+PUT the edit, or send the delete-for-everyone, off the main thread.
+                            onEdit = { messageId, newText ->
+                                if (!isGroup) Thread({
+                                    try { NativeSend.editMessage(applicationContext, current.id, messageId, newText) } catch (ignored: Throwable) { /* best-effort */ }
+                                }, "native-edit").start()
+                            },
+                            onDelete = { messageId ->
+                                if (!isGroup) Thread({
+                                    try { NativeSend.deleteForEveryone(applicationContext, messageId) } catch (ignored: Throwable) { /* best-effort */ }
+                                }, "native-delete").start()
+                            },
                         )
                     }
                 }
@@ -189,6 +200,7 @@ class NativeUiActivity : ComponentActivity() {
                     it.id, it.mine, it.text, it.time, it.status, it.replyText,
                     it.reactions.map { pair -> pair.second },
                     it.reactions.firstOrNull { pair -> pair.first == me }?.second ?: "",
+                    it.edited, it.deleted,
                 )
             }
         } ?: emptyList()
