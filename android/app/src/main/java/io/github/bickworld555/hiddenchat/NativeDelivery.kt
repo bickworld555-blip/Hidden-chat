@@ -61,6 +61,15 @@ object NativeDelivery {
         // Item 4 link previews: the sender put a preview card in the inner `lp` (nothing is fetched here); store it as-is.
         val lp = Json.map(inner?.get("lp"))
         if (lp != null) store.setLinkPreview(delivery.messageId, Json.stringify(lp))
+        // Item 5 media: a photo/video/voice carries a small preview image inside the message (the inner `th` thumbnail
+        // or `pv` poster, already decrypted — the full ciphertext file is never touched here) + a length (`du`). Store
+        // it so the native bubble shows the real preview, not a text label.
+        val kind = MessagePreview.kindOf(raw)
+        if (kind.isNotEmpty()) {
+            val preview = Json.string(inner?.get("pv"))?.takeIf { it.isNotEmpty() } ?: Json.string(inner?.get("th")) ?: ""
+            val duration = (Json.safeInteger(inner?.get("du")) ?: 0L).toInt()
+            store.setMedia(delivery.messageId, kind, preview, duration)
+        }
         if (updateChatList) store.bumpChatForIncoming(chatId, text, time)
     }
 

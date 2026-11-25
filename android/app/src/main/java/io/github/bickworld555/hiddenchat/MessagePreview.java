@@ -42,6 +42,32 @@ final class MessagePreview {
         return content;
     }
 
+    /**
+     * Item 5 media rendering: the media kind for the native bubble (photo|video|gif|voice|audio|doc), or "" for a
+     * non-media message. Lets the native UI pick the right preview (a photo's `th` thumbnail, a video's `pv` poster).
+     */
+    static String kindOf(String content) {
+        if (content == null) return "";
+        if (content.startsWith("voice:") || content.startsWith("voice-opened:")) return "voice";
+        if (content.startsWith("vnote:")) return "video";
+        if (content.startsWith("viewonce:")) return content.matches("(?s).*\\.(mp4|webm|mov|m4v|3gp|mkv)$") ? "video" : "photo";
+        if (content.startsWith("media:") || content.startsWith("emedia:")) {
+            String filename;
+            if (content.startsWith("emedia:")) { String[] p = content.split(":", 4); filename = p.length == 4 ? p[3] : ""; }
+            else { int second = content.indexOf(':', 6); filename = second < 0 ? "" : content.substring(second + 1); }
+            int dot = filename.lastIndexOf('.');
+            String ext = dot < 0 ? "" : filename.substring(dot + 1).toLowerCase(Locale.ROOT);
+            switch (ext) {
+                case "gif": return "gif";
+                case "jpg": case "jpeg": case "png": case "webp": case "bmp": case "avif": case "heic": case "heif": case "svg": case "tif": case "tiff": return "photo";
+                case "mp4": case "m4v": case "mov": case "webm": case "mkv": case "avi": case "3gp": return "video";
+                case "mp3": case "m4a": case "aac": case "wav": case "ogg": case "oga": case "opus": case "flac": case "weba": return "audio";
+                default: return "doc";
+            }
+        }
+        return "";
+    }
+
     /** voice:<id>:<seconds> → "🎤 Voice message (0:12)". */
     private static String voice(String content) {
         String[] parts = content.split(":");

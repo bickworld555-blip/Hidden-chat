@@ -264,6 +264,7 @@ class NativeUiActivity : ComponentActivity() {
                     it.reactions.firstOrNull { pair -> pair.first == me }?.second ?: "",
                     it.edited, it.deleted, it.forwarded, it.expiresAt,
                     parseLinkPreview(it.linkPreview),
+                    if (it.mediaKind.isNotEmpty()) MediaData(it.mediaKind, it.mediaPreview, it.mediaDuration) else null,
                 )
             }
         } ?: emptyList()

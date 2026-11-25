@@ -36,6 +36,13 @@ function nativeMessageProjection(list, userId, cap = 60) {
     // the native side already swept (chat_messages row deleted) resurrects with no expiry when the WebView mirror
     // re-inserts it on relaunch. 0 = never. (src/e2e/lifecycle.js expiryOf/expiredIds set message.expiresAt.)
     const expiresAt = typeof message.expiresAt === 'number' ? message.expiresAt : Date.parse(message.expiresAt ?? '');
+    // Item 5 media: carry the small preview image that travels inside the message (a photo's 48px `thumb` or a video's
+    // 320px `poster`, a JPEG data URL — never the ciphertext file) so the native bubble shows the real preview. A poster
+    // means a video (its length is `duration`); a thumb-only means a photo. Deleted messages carry no media.
+    const poster = !message.deleted && typeof message.poster === 'string' ? message.poster : '';
+    const thumb = !message.deleted && typeof message.thumb === 'string' ? message.thumb : '';
+    const mediaPreview = poster || thumb;
+    const mediaKind = mediaPreview ? (poster ? 'video' : 'photo') : '';
     return {
       id: String(message.id),
       mine: message.senderId === userId,
@@ -43,6 +50,7 @@ function nativeMessageProjection(list, userId, cap = 60) {
       time: Number.isFinite(at) ? new Date(at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true }).toLowerCase() : '',
       ts: Number.isFinite(at) ? at : 0,
       expiresAt: Number.isFinite(expiresAt) ? expiresAt : 0,
+      ...(mediaKind ? { mediaKind, mediaPreview, mediaDuration: Number.isFinite(message.duration) ? Math.round(message.duration) : 0 } : {}),
     };
   });
 }

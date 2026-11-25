@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
@@ -51,7 +52,11 @@ import androidx.compose.ui.unit.sp
 /** One message bubble the native conversation screen shows (Step 5). `status` drives the read-receipt ticks on our own
  * sent messages ('' | sent | delivered | read | waiting); it is unused for incoming messages. `replyText` (item 4
  * replies) is the quoted snippet of the message this one replies to, shown above the bubble ("" when not a reply). */
-data class MessageRowData(val id: String, val mine: Boolean, val text: String, val time: String, val status: String = "", val replyText: String = "", val reactions: List<String> = emptyList(), val myReaction: String = "", val edited: Boolean = false, val deleted: Boolean = false, val forwarded: Boolean = false, val expiresAt: Long = 0, val linkPreview: LinkPreviewData? = null)
+data class MessageRowData(val id: String, val mine: Boolean, val text: String, val time: String, val status: String = "", val replyText: String = "", val reactions: List<String> = emptyList(), val myReaction: String = "", val edited: Boolean = false, val deleted: Boolean = false, val forwarded: Boolean = false, val expiresAt: Long = 0, val linkPreview: LinkPreviewData? = null, val media: MediaData? = null)
+
+/** Item 5 media: the carried preview of a photo/video bubble. `preview` is the small JPEG data URL that travelled inside
+ * the message (a photo's thumb or a video's poster); `kind` is "photo"/"video"; `duration` is a video length in seconds. */
+data class MediaData(val kind: String, val preview: String, val duration: Int)
 
 /** The sender-made link-preview card shown above a bubble (item 4 link previews). `thumbnail` is a small JPEG data URL
  * that travelled inside the encrypted message (recipients fetch nothing); "" when the preview has no image. */
@@ -285,6 +290,89 @@ fun ConversationScreen(
 }
 
 /**
+ * Item 5 media: the photo/video preview that travelled inside the message (a photo's 48px thumb or a video's 320px
+ * poster — a small JPEG, never the ciphertext file). Rendered in the bubble instead of a "📷 Photo" text label; a video
+ * shows a ▶ badge and its length. Tapping enlarges the preview full-screen. (Full-resolution open needs native media
+ * decryption, a separate step; this shows the carried preview the sender included.)
+ */
+@Composable
+private fun MediaCard(media: MediaData) {
+    val bitmap = remember(media.preview) {
+        runCatching {
+            val base64 = media.preview.substringAfter("base64,", "")
+            if (base64.isEmpty()) return@runCatching null
+            val bytes = Base64.decode(base64, Base64.DEFAULT)
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+        }.getOrNull()
+    } ?: return
+    var enlarged by remember { mutableStateOf(false) }
+    val isVideo = media.kind == "video"
+    Box(
+        modifier = Modifier
+            .padding(bottom = 2.dp)
+            .clip(RoundedCornerShape(10.dp))
+            .clickable { enlarged = true },
+        contentAlignment = Alignment.Center,
+    ) {
+        Image(
+            bitmap = bitmap.asImageBitmap(),
+            contentDescription = if (isVideo) "Video" else "Photo",
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.widthIn(max = 240.dp).heightIn(min = 120.dp, max = 300.dp),
+        )
+        if (isVideo) {
+            Text(
+                "▶",
+                color = androidx.compose.ui.graphics.Color.White,
+                fontSize = 26.sp,
+                modifier = Modifier
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.55f))
+                    .padding(horizontal = 14.dp, vertical = 6.dp),
+            )
+            if (media.duration > 0) {
+                Text(
+                    mediaDurationLabel(media.duration),
+                    color = androidx.compose.ui.graphics.Color.White,
+                    fontSize = 11.sp,
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(6.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.55f))
+                        .padding(horizontal = 6.dp, vertical = 2.dp),
+                )
+            }
+        }
+    }
+    if (enlarged) {
+        // Full-screen preview of the carried thumbnail/poster. (It is the small preview image the sender included; the
+        // full-resolution file needs native media decryption, a separate step.) Tap anywhere to dismiss.
+        androidx.compose.ui.window.Dialog(
+            onDismissRequest = { enlarged = false },
+            properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.92f))
+                    .clickable { enlarged = false },
+                contentAlignment = Alignment.Center,
+            ) {
+                Image(
+                    bitmap = bitmap.asImageBitmap(),
+                    contentDescription = null,
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.fillMaxWidth().padding(16.dp),
+                )
+            }
+        }
+    }
+}
+
+private fun mediaDurationLabel(seconds: Int): String = "%d:%02d".format(seconds / 60, seconds % 60)
+
+/**
  * Item 4 link previews: WhatsApp's card for a link the sender shared. The card (title/description/site + an optional
  * thumbnail) travelled INSIDE the encrypted message, so nothing is fetched here. Tapping opens the link externally.
  */
@@ -458,11 +546,18 @@ private fun MessageBubble(
                     // Item 4 link previews: the sender-made card above the text (nothing is fetched — the thumbnail,
                     // if any, came inside the encrypted message). Tapping it opens the link.
                     message.linkPreview?.let { LinkPreviewCard(it, mine) }
-                    Text(
-                        message.text,
-                        color = if (mine) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
-                        fontSize = 15.sp,
-                    )
+                    // Item 5 media: a photo/video renders its carried preview image (thumb/poster) in place of the text
+                    // label. When there is no preview (voice note, document, or a media message without a thumb), the
+                    // text label below is shown as before.
+                    val mediaShown = message.media?.preview?.isNotEmpty() == true
+                    if (mediaShown) MediaCard(message.media!!)
+                    if (!mediaShown) {
+                        Text(
+                            message.text,
+                            color = if (mine) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
+                            fontSize = 15.sp,
+                        )
+                    }
                     if (message.time.isNotEmpty() || message.edited || message.expiresAt > 0 || (mine && message.status.isNotEmpty())) {
                         Row(
                             modifier = Modifier.align(Alignment.End).padding(top = 2.dp),

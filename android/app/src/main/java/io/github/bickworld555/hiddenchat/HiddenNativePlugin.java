@@ -1614,12 +1614,14 @@ public class HiddenNativePlugin extends Plugin {
     }
 
     /** One mirrored message row from the WebView projection (App.jsx nativeMessageProjection). Carries the disappearing
-     *  `expiresAt` (ms; 0 = never) so a swept message re-mirrored on relaunch keeps its expiry instead of resurrecting. */
+     *  `expiresAt` (ms; 0 = never) so a swept message re-mirrored on relaunch keeps its expiry, and the item-5 media
+     *  preview (kind + thumb/poster data URL + length) so the native bubble shows the real photo/video preview. */
     private static io.github.bickworld555.hiddenchat.core.store.MessageRecord mirrorMessageRecord(String mid, org.json.JSONObject o) {
         return new io.github.bickworld555.hiddenchat.core.store.MessageRecord(
             mid, o.optBoolean("mine", false), o.optString("text", ""), o.optString("time", ""), o.optLong("ts", 0L),
             "", "", "", java.util.Collections.<kotlin.Pair<String, String>>emptyList(), false, false, false,
-            o.optLong("expiresAt", 0L));
+            o.optLong("expiresAt", 0L), "",
+            o.optString("mediaKind", ""), o.optString("mediaPreview", ""), o.optInt("mediaDuration", 0));
     }
 
     /** Step 5 read independence: mirror many chats' messages at once ({ chatId: [ {id,mine,text,time,ts} ] }). */
