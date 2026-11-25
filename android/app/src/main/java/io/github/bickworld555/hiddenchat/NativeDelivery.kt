@@ -54,8 +54,10 @@ object NativeDelivery {
         if (!replyTo.isNullOrEmpty()) store.setReplyTo(chatId, delivery.messageId, replyTo)
         if (Json.safeInteger(inner?.get("fw")) == 1L) store.setForwarded(delivery.messageId)
         // Item 4 disappearing: `ex` seconds → this message disappears ex seconds after it was sent (expiryOf, web).
-        val ex = Json.safeInteger(inner?.get("ex"))
-        if (ex != null && ex > 0) store.setExpiry(delivery.messageId, ts + ex * 1000)
+        // Only the standard timers (24h/7d/90d) are honored, exactly like the web — an arbitrary `ex` is ignored, so
+        // native and the WebView agree about whether this message disappears (a disagreement resurrected swept messages).
+        val ex = NativeDisappear.clean(Json.safeInteger(inner?.get("ex")))
+        if (ex > 0) store.setExpiry(delivery.messageId, ts + ex * 1000)
         // Item 4 link previews: the sender put a preview card in the inner `lp` (nothing is fetched here); store it as-is.
         val lp = Json.map(inner?.get("lp"))
         if (lp != null) store.setLinkPreview(delivery.messageId, Json.stringify(lp))

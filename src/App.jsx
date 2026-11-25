@@ -32,12 +32,17 @@ import { setNativeCallsEnabled } from './nativeRtc.js';
 function nativeMessageProjection(list, userId, cap = 60) {
   return (Array.isArray(list) ? list : []).filter((message) => message?.id).slice(-cap).map((message) => {
     const at = typeof message.createdAt === 'number' ? message.createdAt : Date.parse(message.timestamp);
+    // Carry the disappearing expiry (ms) so the native projection never treats it as absent: without this a message
+    // the native side already swept (chat_messages row deleted) resurrects with no expiry when the WebView mirror
+    // re-inserts it on relaunch. 0 = never. (src/e2e/lifecycle.js expiryOf/expiredIds set message.expiresAt.)
+    const expiresAt = typeof message.expiresAt === 'number' ? message.expiresAt : Date.parse(message.expiresAt ?? '');
     return {
       id: String(message.id),
       mine: message.senderId === userId,
       text: message.deleted ? '🚫 Message deleted' : previewFor(message.content ?? ''),
       time: Number.isFinite(at) ? new Date(at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true }).toLowerCase() : '',
       ts: Number.isFinite(at) ? at : 0,
+      expiresAt: Number.isFinite(expiresAt) ? expiresAt : 0,
     };
   });
 }

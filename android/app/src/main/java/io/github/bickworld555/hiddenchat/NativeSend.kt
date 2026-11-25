@@ -37,8 +37,9 @@ object NativeSend {
         val inner = linkedMapOf<String, Any?>("c" to text)
         if (!replyToId.isNullOrEmpty()) inner["r"] = replyToId // item 4 replies: same inner field the web uses (client.js)
         if (forwarded) inner["fw"] = 1 // item 4 forwarding: the same `fw` flag the web uses
-        // Item 4 disappearing: if this chat has a timer, carry `ex` seconds inside the encryption (web client.js).
-        val disappear = NativeStore.get(context)?.disappearSeconds(peerId) ?: 0L
+        // Item 4 disappearing: if this chat has a (standard 24h/7d/90d) timer, carry `ex` seconds inside the encryption
+        // (web client.js). NativeDisappear.clean keeps native from ever emitting a non-standard timer the web would drop.
+        val disappear = NativeDisappear.clean(NativeStore.get(context)?.disappearSeconds(peerId))
         if (disappear > 0) inner["ex"] = disappear
         // Item 4 link previews: if the text has a link whose preview is ready (prepared while typing), carry the card
         // inside the encryption (inner `lp`, like the web). Never blocks the send beyond the short wait; forwards keep

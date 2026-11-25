@@ -161,7 +161,9 @@ class NativeStore private constructor(private val db: SQLiteDatabase) : KeyRecor
 
     /** Upserts a window of a chat's messages (the web-app mirror), by id; existing rows are updated, others kept. */
     fun saveMessages(chatId: String, rows: List<MessageRecord>) = exclusive {
-        for (row in rows) upsertMessage(chatId, row.id, row.mine, row.text, row.time, row.ts)
+        // Carry each row's disappearing expiry (item 4) so a message the native sweep already removed does not
+        // resurrect with no timer when the WebView mirror re-inserts it on relaunch (projection now sends expiresAt).
+        for (row in rows) upsertMessage(chatId, row.id, row.mine, row.text, row.time, row.ts, row.expiresAt)
         bump()
     }
 
@@ -188,16 +190,21 @@ class NativeStore private constructor(private val db: SQLiteDatabase) : KeyRecor
         bump()
     }
 
-    private fun upsertMessage(chatId: String, id: String, mine: Boolean, text: String, time: String, ts: Long) {
+    private fun upsertMessage(chatId: String, id: String, mine: Boolean, text: String, time: String, ts: Long, expiresAt: Long = 0) {
         // Never overwrite an existing non-empty text with an empty one: the WebView mirror pushes empty text for a
         // message that native (not the WebView) sent or received — the web store has no content for it — which would
         // otherwise clobber the native row and show a blank bubble. Real messages always have a non-empty label.
         db.execSQL(
-            "INSERT INTO chat_messages(chat_id, id, mine, text, time, ts) VALUES(?, ?, ?, ?, ?, ?) " +
+            "INSERT INTO chat_messages(chat_id, id, mine, text, time, ts, expires_at) VALUES(?, ?, ?, ?, ?, ?, ?) " +
                 "ON CONFLICT(chat_id, id) DO UPDATE SET mine = excluded.mine, " +
                 "text = CASE WHEN excluded.text = '' AND text <> '' THEN text ELSE excluded.text END, " +
-                "time = excluded.time, ts = excluded.ts",
-            arrayOf(chatId, id, if (mine) 1 else 0, text, time, ts),
+                "time = excluded.time, ts = excluded.ts, " +
+                // Disappearing (item 4): never downgrade a set expiry to 0 (a mirror/echo write that does not carry it);
+                // apply a provided one. This is what stops a swept disappearing message from resurrecting with no timer
+                // when the WebView mirror re-inserts it on relaunch — on the fresh INSERT it keeps its (past) expiry, so
+                // messages() filters it and sweepExpired() removes it instead of showing it forever.
+                "expires_at = CASE WHEN excluded.expires_at = 0 AND expires_at <> 0 THEN expires_at ELSE excluded.expires_at END",
+            arrayOf(chatId, id, if (mine) 1 else 0, text, time, ts, maxOf(0L, expiresAt)),
         )
     }
 

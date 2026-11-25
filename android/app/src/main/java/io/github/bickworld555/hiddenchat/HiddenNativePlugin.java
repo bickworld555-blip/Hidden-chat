@@ -1605,13 +1605,21 @@ public class HiddenNativePlugin extends Plugin {
                     org.json.JSONObject o = arr.getJSONObject(i);
                     String mid = o.optString("id", "");
                     if (mid.isEmpty()) continue;
-                    rows.add(new io.github.bickworld555.hiddenchat.core.store.MessageRecord(
-                        mid, o.optBoolean("mine", false), o.optString("text", ""), o.optString("time", ""), o.optLong("ts", 0L), ""));
+                    rows.add(mirrorMessageRecord(mid, o));
                 } catch (org.json.JSONException ignored) { /* skip a malformed row */ }
             }
         }
         store.saveMessages(chatId, rows);
         call.resolve();
+    }
+
+    /** One mirrored message row from the WebView projection (App.jsx nativeMessageProjection). Carries the disappearing
+     *  `expiresAt` (ms; 0 = never) so a swept message re-mirrored on relaunch keeps its expiry instead of resurrecting. */
+    private static io.github.bickworld555.hiddenchat.core.store.MessageRecord mirrorMessageRecord(String mid, org.json.JSONObject o) {
+        return new io.github.bickworld555.hiddenchat.core.store.MessageRecord(
+            mid, o.optBoolean("mine", false), o.optString("text", ""), o.optString("time", ""), o.optLong("ts", 0L),
+            "", "", "", java.util.Collections.<kotlin.Pair<String, String>>emptyList(), false, false, false,
+            o.optLong("expiresAt", 0L));
     }
 
     /** Step 5 read independence: mirror many chats' messages at once ({ chatId: [ {id,mine,text,time,ts} ] }). */
@@ -1634,8 +1642,7 @@ public class HiddenNativePlugin extends Plugin {
                     org.json.JSONObject o = arr.getJSONObject(i);
                     String mid = o.optString("id", "");
                     if (mid.isEmpty()) continue;
-                    rows.add(new io.github.bickworld555.hiddenchat.core.store.MessageRecord(
-                        mid, o.optBoolean("mine", false), o.optString("text", ""), o.optString("time", ""), o.optLong("ts", 0L), ""));
+                    rows.add(mirrorMessageRecord(mid, o));
                 } catch (org.json.JSONException ignored) { /* skip a malformed row */ }
             }
             store.saveMessages(chatId, rows);

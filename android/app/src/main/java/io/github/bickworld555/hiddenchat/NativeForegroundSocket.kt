@@ -208,9 +208,11 @@ object NativeForegroundSocket {
             "message:deleted" -> onDeleted(event)
             "chat:disappearing" -> {
                 // Item 4 disappearing: the peer set (or cleared) this chat's timer; record it so our next send carries `ex`.
+                // Only a standard timer (24h/7d/90d) is accepted (NativeDisappear.clean, matching the web); any other
+                // value clears the timer — native never stores a non-standard timer it would later disagree with.
                 val peer = Json.string(event["peerId"])
-                val seconds = Json.safeInteger(event["seconds"])
-                if (peer != null && seconds != null) appContext?.let { NativeStore.get(it)?.setDisappearSeconds(peer, seconds) }
+                val seconds = NativeDisappear.clean(Json.safeInteger(event["seconds"]))
+                if (peer != null) appContext?.let { NativeStore.get(it)?.setDisappearSeconds(peer, seconds) }
                 sink?.forward(text)
             }
             // Every other frame (call:*, message:ack, message:read, message:reaction, presence:update, error,
