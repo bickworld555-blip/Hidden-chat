@@ -93,7 +93,7 @@ test('a group call sends lighter video on each connection; one-to-one and a shar
 
 test('the call screen: shared capture for every engine, room size on every engine, and the call goes on while anyone is left', () => {
   const overlay = readFileSync(new URL('../src/components/CallOverlay.jsx', import.meta.url), 'utf8');
-  assert.match(overlay, /getUserMedia: \(constraints\) => mediaSource\(\)\.get\(constraints\),/);
+  assert.match(overlay, /getUserMedia: native \? native\.getUserMedia : \(constraints\) => mediaSource\(\)\.get\(constraints\),/);
   assert.ok(!/navigator\.mediaDevices\.getUserMedia\(constraints\)[\s\S]{0,40}\n\s*\},\n\s*enumerateDevices/.test(overlay), 'no engine opens the devices itself');
   assert.match(overlay, /mediaSourceRef\.current\?\.stop\(\);/, 'released when the call screen goes');
   assert.match(overlay, /engine\.setRoomSize\?\.\(roomSizeRef\.current\);/);
