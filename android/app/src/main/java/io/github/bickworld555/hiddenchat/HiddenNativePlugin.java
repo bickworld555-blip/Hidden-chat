@@ -1875,26 +1875,6 @@ public class HiddenNativePlugin extends Plugin {
     }
 
     /**
-     * Checklist item 2 (authoritative store finalization): whether this install writes ONLY the native store, retiring
-     * the legacy sqlite dual-write. DEFAULT OFF — production keeps dual-writing (sqlite stays the rollback) until a
-     * device test turns this on after extended verification. Only meaningful while the native store is authoritative
-     * (nativeUiAllowed); store.js still reads native-first with a sqlite fall-back either way.
-     */
-    @PluginMethod
-    public void nativeSoleStoreAllowed(PluginCall call) {
-        boolean on = getContext().getSharedPreferences("hm_native_ui", Context.MODE_PRIVATE).getBoolean("sole_store", false);
-        call.resolve(new JSObject().put("allowed", on));
-    }
-
-    /** Turn native-sole-store (retire sqlite writes) on/off for this install. Default off; a device test sets it. */
-    @PluginMethod
-    public void setNativeSoleStore(PluginCall call) {
-        boolean on = Boolean.TRUE.equals(call.getBoolean("on", false));
-        getContext().getSharedPreferences("hm_native_ui", Context.MODE_PRIVATE).edit().putBoolean("sole_store", on).apply();
-        call.resolve();
-    }
-
-    /**
      * Whether this install lets native own the single foreground relay socket (checklist item 1): `on` is the
      * socket_owner sub-flag, `active` also requires the native E2E core (NativeFlag). Default OFF, separate from the
      * native-UI switch. This is a crypto path (native receive/decrypt/ack) — verify on two real devices before enabling.

@@ -105,10 +105,6 @@ export const nativeSetCallsRollout = (enabled) => invoke('setNativeCallsRollout'
 // (opens the native UI only when the switch is on). Default off — the WebView UI is used until a rollout turns it on.
 export async function nativeUiAllowed() { const result = await invoke('nativeUiAllowed'); return Boolean(result?.allowed); }
 export const nativeSetUiRollout = (enabled) => invoke('setNativeUiRollout', { enabled: Boolean(enabled) });
-// Checklist item 2 (store finalization): whether this install retires the legacy sqlite dual-write (native-sole store).
-// DEFAULT OFF — production keeps dual-writing until a device test turns it on after extended verification.
-export async function nativeSoleStore() { const result = await invoke('nativeSoleStoreAllowed'); return Boolean(result?.allowed); }
-export const nativeSetSoleStore = (on) => invoke('setNativeSoleStore', { on: Boolean(on) });
 export const nativeOpenUi = () => invoke('openNativeUi');
 // Checklist item 1: whether native owns the single foreground relay socket for this install (socket_owner sub-flag AND
 // a native E2E core); a setter; the handover callback the WebView calls once it has suspended its own socket (so native

@@ -1,4 +1,4 @@
-import { nativeShell, nativeUiAllowed, nativeSoleStore } from './native.js';
+import { nativeShell, nativeUiAllowed } from './native.js';
 import { acknowledgeSaved } from './deliveryAck.js';
 import { pollSummary } from './polls.js';
 import { eventSummary } from './calendarEvents.js';
@@ -152,15 +152,7 @@ function localFirstStore(indexed) {
   // instant. sqlite writes are retired only much later, after long on-device verification. Inert unless the flag is on.
   let native = null;
   let authoritative = null; // promise<boolean>, resolved once (the native-UI flag)
-  let soleStore = null; // promise<boolean>, resolved once (the sqlite-write-retirement flag; default off)
   const nativeMigrated = new Map();
-  // Checklist item 2 (store finalization): when on AND the native store is authoritative, writes go to native ONLY
-  // (the legacy sqlite write is retired). Default off, so production keeps dual-writing. Reads are native-first with a
-  // sqlite fall-back either way, so a read never goes blank.
-  async function soleStoreOn() {
-    soleStore ??= (nativeShell() ? nativeSoleStore() : Promise.resolve(false)).catch(() => false);
-    return soleStore;
-  }
   async function pick(owner) {
     if (failed) return indexed;
     try {
@@ -214,15 +206,14 @@ function localFirstStore(indexed) {
   }
   return {
     apply: async (owner, diff) => {
+      // Store consolidation (checklist item 2): when the native store is authoritative it is the SOLE message store —
+      // the legacy sqlite dual-write is retired, so there is no mirror to keep in step. The sqlite write runs ONLY when
+      // native is unavailable (flag off, or native open/backfill failed), so a message is never dropped. A native apply
+      // failure rejects, so the caller keeps the message in memory, retries and does not acknowledge it (no half-write
+      // loss). Reads stay native-first with a sqlite fall-back (below), so a native read failure never blanks history.
       const target = await nativeStore(owner);
-      // Retirement (flag on + native authoritative): skip the sqlite write, native becomes the sole store. Otherwise
-      // dual-write. The sqlite write is skipped ONLY when native is confirmed available, so a message is never dropped.
-      const sole = target ? await soleStoreOn() : false;
-      if (!sole) await (await pick(owner)).apply(owner, diff);
-      // The native store must hold it (reads come from there). A native failure rejects apply, so the caller keeps the
-      // message in memory, retries and does not acknowledge it — never a message lost to a half-write. When `sole`, this
-      // is the only write, so the same reject-and-retry keeps it safe.
       if (target) await target.apply(owner, diff);
+      else await (await pick(owner)).apply(owner, diff);
     },
     loadRecent: async (owner, limit) => {
       const target = await nativeStore(owner);
