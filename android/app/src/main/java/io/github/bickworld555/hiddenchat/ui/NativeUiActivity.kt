@@ -265,6 +265,7 @@ class NativeUiActivity : ComponentActivity() {
                     it.edited, it.deleted, it.forwarded, it.expiresAt,
                     parseLinkPreview(it.linkPreview),
                     if (it.mediaKind.isNotEmpty()) MediaData(it.mediaKind, it.mediaPreview, it.mediaDuration, it.mediaSource) else null,
+                    it.caption, it.albumId, it.albumIndex, it.albumCount,
                 )
             }
         } ?: emptyList()

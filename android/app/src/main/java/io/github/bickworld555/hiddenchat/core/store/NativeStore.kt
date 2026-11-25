@@ -55,6 +55,13 @@ data class MessageRecord @JvmOverloads constructor(
     /** Item 5 full-res media: the raw attachment content ("emedia:<id>:<descriptor>:<name>" / "media:<id>:<name>"), so
      *  the native viewer can find the ciphertext file and its key to decrypt the full-resolution photo/video. "" = none. */
     val mediaSource: String = "",
+    /** A photo/video/document/album caption (the inner `cp`, src/e2e/client.js), shown beneath the media; "" = none. */
+    val caption: String = "",
+    /** Item 6 albums (the inner `al`): the album id this media belongs to and its position/count, so a run of
+     *  same-album media from one sender draws as one grouped bubble. "" / 0 = not part of an album. */
+    val albumId: String = "",
+    val albumIndex: Int = 0,
+    val albumCount: Int = 0,
 )
 
 /** One row of the authoritative message store (checklist item 2): a message's full JSON, keyed by (chatId, id), ts in ms.
@@ -178,7 +185,7 @@ class NativeStore private constructor(private val db: SQLiteDatabase, private va
             upsertMessage(chatId, row.id, row.mine, row.text, row.time, row.ts, row.expiresAt)
             // Item 5 media: carry the WebView projection's media preview (thumb/poster) so native bubbles render it,
             // including for our own sent media and media the WebView (not native) received.
-            if (row.mediaKind.isNotEmpty()) setMediaInternal(row.id, row.mediaKind, row.mediaPreview, row.mediaDuration, row.mediaSource)
+            if (row.mediaKind.isNotEmpty()) setMediaInternal(row.id, row.mediaKind, row.mediaPreview, row.mediaDuration, row.mediaSource, row.caption, row.albumId, row.albumIndex, row.albumCount)
         }
         bump()
     }
@@ -229,9 +236,9 @@ class NativeStore private constructor(private val db: SQLiteDatabase, private va
         val out = ArrayList<MessageRecord>()
         // Item 4 disappearing: a message past its expires_at is not shown (the sweep removes it from the DB separately).
         val now = System.currentTimeMillis()
-        db.rawQuery("SELECT id, mine, text, time, ts, status, reply_to, reactions, edited, deleted, forwarded, expires_at, link_preview, media_kind, media_preview, media_duration, media_source FROM chat_messages WHERE chat_id = ? AND (expires_at = 0 OR expires_at > $now) ORDER BY ts ASC", arrayOf(chatId)).use { cursor ->
+        db.rawQuery("SELECT id, mine, text, time, ts, status, reply_to, reactions, edited, deleted, forwarded, expires_at, link_preview, media_kind, media_preview, media_duration, media_source, caption, album_id, album_index, album_count FROM chat_messages WHERE chat_id = ? AND (expires_at = 0 OR expires_at > $now) ORDER BY ts ASC", arrayOf(chatId)).use { cursor ->
             while (cursor.moveToNext()) {
-                out.add(MessageRecord(cursor.getString(0), cursor.getInt(1) != 0, cursor.getString(2), cursor.getString(3), cursor.getLong(4), cursor.getString(5) ?: "", cursor.getString(6) ?: "", "", parseReactions(cursor.getString(7)), cursor.getInt(8) != 0, cursor.getInt(9) != 0, cursor.getInt(10) != 0, cursor.getLong(11), cursor.getString(12) ?: "", cursor.getString(13) ?: "", cursor.getString(14) ?: "", cursor.getInt(15), cursor.getString(16) ?: ""))
+                out.add(MessageRecord(cursor.getString(0), cursor.getInt(1) != 0, cursor.getString(2), cursor.getString(3), cursor.getLong(4), cursor.getString(5) ?: "", cursor.getString(6) ?: "", "", parseReactions(cursor.getString(7)), cursor.getInt(8) != 0, cursor.getInt(9) != 0, cursor.getInt(10) != 0, cursor.getLong(11), cursor.getString(12) ?: "", cursor.getString(13) ?: "", cursor.getString(14) ?: "", cursor.getInt(15), cursor.getString(16) ?: "", cursor.getString(17) ?: "", cursor.getString(18) ?: "", cursor.getInt(19), cursor.getInt(20)))
             }
         }
         // Item 4 replies: resolve each reply's quoted snippet from the message it points to (same chat), so the native UI
@@ -279,7 +286,7 @@ class NativeStore private constructor(private val db: SQLiteDatabase, private va
     /** Item 4 delete-for-everyone: replaces a message (by id) with the deleted placeholder — clears text, reactions and
      *  reply, sets deleted=1. Idempotent; no-op if not stored. */
     fun markDeleted(messageId: String) = exclusive {
-        db.execSQL("UPDATE chat_messages SET deleted = 1, text = '', reactions = '', reply_to = '', link_preview = '', media_kind = '', media_preview = '', media_duration = 0, media_source = '' WHERE id = ?", arrayOf(messageId))
+        db.execSQL("UPDATE chat_messages SET deleted = 1, text = '', reactions = '', reply_to = '', link_preview = '', media_kind = '', media_preview = '', media_duration = 0, media_source = '', caption = '', album_id = '', album_index = 0, album_count = 0 WHERE id = ?", arrayOf(messageId))
         bump()
     }
 
@@ -299,19 +306,21 @@ class NativeStore private constructor(private val db: SQLiteDatabase, private va
 
     /** Item 5 media: records a message's media kind + carried preview image (the inner th/pv) + length, so the native
      *  bubble shows the real photo/video preview. No-op for a non-media kind; never clobbers a set preview with empty. */
-    fun setMedia(messageId: String, kind: String?, preview: String?, duration: Int, source: String? = "") = exclusive {
-        if (setMediaInternal(messageId, kind, preview, duration, source)) bump()
+    fun setMedia(messageId: String, kind: String?, preview: String?, duration: Int, source: String? = "", caption: String = "", albumId: String = "", albumIndex: Int = 0, albumCount: Int = 0) = exclusive {
+        if (setMediaInternal(messageId, kind, preview, duration, source, caption, albumId, albumIndex, albumCount)) bump()
     }
 
     // The media UPDATE without a transaction/bump, so saveMessages can call it inside its own exclusive{} batch.
-    private fun setMediaInternal(messageId: String, kind: String?, preview: String?, duration: Int, source: String?): Boolean {
+    private fun setMediaInternal(messageId: String, kind: String?, preview: String?, duration: Int, source: String?, caption: String = "", albumId: String = "", albumIndex: Int = 0, albumCount: Int = 0): Boolean {
         if (kind.isNullOrEmpty()) return false
         db.execSQL(
             "UPDATE chat_messages SET media_kind = ?, " +
                 "media_preview = CASE WHEN ? = '' AND media_preview <> '' THEN media_preview ELSE ? END, " +
                 "media_duration = ?, " +
-                "media_source = CASE WHEN ? = '' AND media_source <> '' THEN media_source ELSE ? END WHERE id = ?",
-            arrayOf(kind, preview ?: "", preview ?: "", maxOf(0, duration), source ?: "", source ?: "", messageId),
+                "media_source = CASE WHEN ? = '' AND media_source <> '' THEN media_source ELSE ? END, " +
+                "caption = CASE WHEN ? = '' AND caption <> '' THEN caption ELSE ? END, " +
+                "album_id = ?, album_index = ?, album_count = ? WHERE id = ?",
+            arrayOf(kind, preview ?: "", preview ?: "", maxOf(0, duration), source ?: "", source ?: "", caption, caption, albumId, albumIndex, albumCount, messageId),
         )
         return true
     }
@@ -636,6 +645,11 @@ class NativeStore private constructor(private val db: SQLiteDatabase, private va
                 // Item 5 full-res media: the raw attachment content (emedia/media ref), so the native viewer can decrypt
                 // the full-resolution file on tap. No-op once present.
                 try { db.execSQL("ALTER TABLE chat_messages ADD COLUMN media_source TEXT NOT NULL DEFAULT ''") } catch (ignored: Throwable) { /* already present */ }
+                // Item 6: captions (inner cp) + album grouping (inner al) per message.
+                try { db.execSQL("ALTER TABLE chat_messages ADD COLUMN caption TEXT NOT NULL DEFAULT ''") } catch (ignored: Throwable) { /* already present */ }
+                try { db.execSQL("ALTER TABLE chat_messages ADD COLUMN album_id TEXT NOT NULL DEFAULT ''") } catch (ignored: Throwable) { /* already present */ }
+                try { db.execSQL("ALTER TABLE chat_messages ADD COLUMN album_index INTEGER NOT NULL DEFAULT 0") } catch (ignored: Throwable) { /* already present */ }
+                try { db.execSQL("ALTER TABLE chat_messages ADD COLUMN album_count INTEGER NOT NULL DEFAULT 0") } catch (ignored: Throwable) { /* already present */ }
                 // Checklist item 2 (authoritative store): the WebView's message history, native-owned. Each row is one
                 // message's FULL JSON, opaque to native (round-tripped, never parsed here — native stays decoupled from
                 // the WebView's evolving message shape), keyed by (chat_id, id) and ordered by ts (epoch ms). This is the

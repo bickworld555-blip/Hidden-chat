@@ -68,8 +68,15 @@ object NativeDelivery {
         if (kind.isNotEmpty()) {
             val preview = Json.string(inner?.get("pv"))?.takeIf { it.isNotEmpty() } ?: Json.string(inner?.get("th")) ?: ""
             val duration = (Json.safeInteger(inner?.get("du")) ?: 0L).toInt()
-            // `raw` is the attachment content (emedia/media ref) — carried so the native viewer can decrypt full-res.
-            store.setMedia(delivery.messageId, kind, preview, duration, raw)
+            // Item 6 caption (inner `cp`) + album (inner `al` = {id,i,n}) travel with the media; carry both so the
+            // native bubble shows the caption and groups an album run.
+            val caption = Json.string(inner?.get("cp"))?.trim().orEmpty()
+            val al = Json.map(inner?.get("al"))
+            val albumId = Json.string(al?.get("id")).orEmpty()
+            val albumIndex = (Json.safeInteger(al?.get("i")) ?: 0L).toInt()
+            val albumCount = (Json.safeInteger(al?.get("n")) ?: 0L).toInt()
+            // `raw` is the attachment content (emedia/media/voice ref) — carried so the native viewer can decrypt full-res.
+            store.setMedia(delivery.messageId, kind, preview, duration, raw, caption, albumId, albumIndex, albumCount)
         }
         if (updateChatList) store.bumpChatForIncoming(chatId, text, time)
     }

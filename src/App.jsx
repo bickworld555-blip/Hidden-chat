@@ -27,6 +27,26 @@ import { notificationNames } from './notificationNames.js';
 import { nativeClearSession, nativeWipeE2e, nativeEnableE2e, nativeRequestStartupPermissions, nativeSetSession, nativeShell, nativeStartBackground, nativeState, nativeStopBackground, nativeTakePendingCall, nativeMoveToBackground, nativeClearShare, nativeSetCallActive, nativeClearMessageNotifications, nativeClearMissedCalls, nativeTakeMessageActions, nativeTakeCallEvents, nativeSetSystemBarsTheme, nativeOpenSecret, nativePreviewKey, nativeBackgroundFetchDone, nativeScheduleUnsent, nativeE2eActive, nativeCallsAllowed, nativeSaveChats, nativeSaveContacts, nativeSaveMessages, nativeSaveMessagesBatch, nativeUiAllowed, nativeOpenUi, nativeTakeInbox, nativeWebViewSocketReleased, nativeRelaySend, nativeSocketOwnerActive, onNative } from './native.js';
 import { setNativeCallsEnabled } from './nativeRtc.js';
 
+// The media kind for the native bubble (voice|photo|video|gif|audio|doc) or '' — mirrors the native
+// MessagePreview.kindOf (android …/MessagePreview.java) so both delivery paths classify media the same way.
+function nativeMediaKind(content) {
+  if (typeof content !== 'string') return '';
+  if (content.startsWith('voice:') || content.startsWith('voice-opened:')) return 'voice';
+  if (content.startsWith('media:') || content.startsWith('emedia:')) {
+    let filename = '';
+    if (content.startsWith('emedia:')) filename = content.split(':').slice(3).join(':');
+    else { const i = content.indexOf(':', 6); filename = i < 0 ? '' : content.slice(i + 1); }
+    const dot = filename.lastIndexOf('.');
+    const ext = dot < 0 ? '' : filename.slice(dot + 1).toLowerCase();
+    if (ext === 'gif') return 'gif';
+    if (['jpg', 'jpeg', 'png', 'webp', 'bmp', 'avif', 'heic', 'heif', 'svg', 'tif', 'tiff'].includes(ext)) return 'photo';
+    if (['mp4', 'm4v', 'mov', 'webm', 'mkv', 'avi', '3gp'].includes(ext)) return 'video';
+    if (['mp3', 'm4a', 'aac', 'wav', 'ogg', 'oga', 'opus', 'flac', 'weba'].includes(ext)) return 'audio';
+    return 'doc';
+  }
+  return '';
+}
+
 // Step 5 data seam: the projection of a chat's messages the native conversation screen shows (last 60, { mine, text,
 // time }). Shared by the active-chat mirror and the native-UI send handler.
 function nativeMessageProjection(list, userId, cap = 60) {
@@ -39,10 +59,15 @@ function nativeMessageProjection(list, userId, cap = 60) {
     // Item 5 media: carry the small preview image that travels inside the message (a photo's 48px `thumb` or a video's
     // 320px `poster`, a JPEG data URL — never the ciphertext file) so the native bubble shows the real preview. A poster
     // means a video (its length is `duration`); a thumb-only means a photo. Deleted messages carry no media.
+    const content = typeof message.content === 'string' ? message.content : '';
     const poster = !message.deleted && typeof message.poster === 'string' ? message.poster : '';
     const thumb = !message.deleted && typeof message.thumb === 'string' ? message.thumb : '';
-    const mediaPreview = poster || thumb;
-    const mediaKind = mediaPreview ? (poster ? 'video' : 'photo') : '';
+    // Classify EVERY media kind (not just photo/video) so the native bubble can render a voice note, document, audio
+    // file, GIF, photo or video — mirrors the native MessagePreview.kindOf. Voice notes and documents have no preview
+    // image; the native bubble derives their details (duration/waveform, filename/size) from mediaSource (the ref).
+    const mediaKind = message.deleted ? '' : nativeMediaKind(content);
+    // Item 6 album (the inner `al` = {id,i,n}): a run of same-album media from one sender draws as one bubble natively.
+    const album = (!message.deleted && message.album && typeof message.album.id === 'string') ? message.album : null;
     return {
       id: String(message.id),
       mine: message.senderId === userId,
@@ -50,7 +75,15 @@ function nativeMessageProjection(list, userId, cap = 60) {
       time: Number.isFinite(at) ? new Date(at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true }).toLowerCase() : '',
       ts: Number.isFinite(at) ? at : 0,
       expiresAt: Number.isFinite(expiresAt) ? expiresAt : 0,
-      ...(mediaKind ? { mediaKind, mediaPreview, mediaDuration: Number.isFinite(message.duration) ? Math.round(message.duration) : 0, mediaSource: typeof message.content === 'string' ? message.content : '' } : {}),
+      ...(mediaKind ? {
+        mediaKind,
+        mediaPreview: poster || thumb,
+        mediaDuration: Number.isFinite(message.duration) ? Math.round(message.duration) : 0,
+        mediaSource: content,
+        // Item 6 caption (the inner `cp`): shown beneath the media/album/document bubble.
+        caption: (!message.deleted && typeof message.caption === 'string') ? message.caption : '',
+        ...(album ? { albumId: album.id, albumIndex: album.i | 0, albumCount: album.n | 0 } : {}),
+      } : {}),
     };
   });
 }

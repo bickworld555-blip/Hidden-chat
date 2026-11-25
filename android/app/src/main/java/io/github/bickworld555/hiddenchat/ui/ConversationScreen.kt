@@ -1,29 +1,40 @@
 package io.github.bickworld555.hiddenchat.ui
 
+import android.content.Context
 import android.content.Intent
 import android.graphics.BitmapFactory
 import android.net.Uri
 import android.util.Base64
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -49,16 +60,44 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.launch
 
 /** One message bubble the native conversation screen shows (Step 5). `status` drives the read-receipt ticks on our own
  * sent messages ('' | sent | delivered | read | waiting); it is unused for incoming messages. `replyText` (item 4
  * replies) is the quoted snippet of the message this one replies to, shown above the bubble ("" when not a reply). */
-data class MessageRowData(val id: String, val mine: Boolean, val text: String, val time: String, val status: String = "", val replyText: String = "", val reactions: List<String> = emptyList(), val myReaction: String = "", val edited: Boolean = false, val deleted: Boolean = false, val forwarded: Boolean = false, val expiresAt: Long = 0, val linkPreview: LinkPreviewData? = null, val media: MediaData? = null)
+data class MessageRowData(val id: String, val mine: Boolean, val text: String, val time: String, val status: String = "", val replyText: String = "", val reactions: List<String> = emptyList(), val myReaction: String = "", val edited: Boolean = false, val deleted: Boolean = false, val forwarded: Boolean = false, val expiresAt: Long = 0, val linkPreview: LinkPreviewData? = null, val media: MediaData? = null, val caption: String = "", val albumId: String = "", val albumIndex: Int = 0, val albumCount: Int = 0)
 
 /** Item 5 media: the carried preview of a photo/video bubble. `preview` is the small JPEG data URL that travelled inside
  * the message (a photo's thumb or a video's poster); `kind` is "photo"/"video"; `duration` is a video length in seconds;
  * `source` is the raw attachment ref (emedia/media), used to decrypt and open the full-resolution file on tap. */
 data class MediaData(val kind: String, val preview: String, val duration: Int, val source: String = "")
+
+/** Item 6 albums: a conversation row is either one message or a grouped album run (collapsed in the list). */
+private sealed interface DisplayItem {
+    data class Single(val message: MessageRowData) : DisplayItem
+    data class Album(val items: List<MessageRowData>) : DisplayItem
+}
+
+/** Collapses a run of consecutive same-album, same-sender media messages (the inner `al`, src/components/ChatWindow.jsx)
+ *  into one [DisplayItem.Album]; everything else stays a [DisplayItem.Single]. */
+private fun buildDisplayItems(messages: List<MessageRowData>): List<DisplayItem> {
+    val out = ArrayList<DisplayItem>()
+    var i = 0
+    while (i < messages.size) {
+        val m = messages[i]
+        if (m.albumId.isNotEmpty() && m.media != null && !m.deleted) {
+            val run = ArrayList<MessageRowData>().apply { add(m) }
+            var j = i + 1
+            while (j < messages.size) {
+                val n = messages[j]
+                if (n.albumId == m.albumId && n.mine == m.mine && n.media != null && !n.deleted) { run.add(n); j++ } else break
+            }
+            if (run.size >= 2) { out.add(DisplayItem.Album(run)); i = j; continue }
+        }
+        out.add(DisplayItem.Single(m)); i++
+    }
+    return out
+}
 
 /** Item 5 full-res media: the result of decrypting an attachment for the full-screen viewer. */
 private sealed interface MediaOpened {
@@ -268,9 +307,11 @@ fun ConversationScreen(
             }
         } else {
             // Open at (and follow) the newest message, like any chat app, rather than the oldest at the top.
+            // Item 6 albums: a run of same-album media from one sender collapses into one grouped display row.
+            val displayItems = remember(messages) { buildDisplayItems(messages) }
             val listState = androidx.compose.foundation.lazy.rememberLazyListState()
-            androidx.compose.runtime.LaunchedEffect(messages.size) {
-                if (messages.isNotEmpty()) listState.scrollToItem(messages.size - 1)
+            androidx.compose.runtime.LaunchedEffect(displayItems.size) {
+                if (displayItems.isNotEmpty()) listState.scrollToItem(displayItems.size - 1)
             }
             LazyColumn(
                 state = listState,
@@ -278,21 +319,27 @@ fun ConversationScreen(
                 contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 8.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                itemsIndexed(messages) { _, message ->
-                    MessageBubble(
-                        message,
-                        onReply = { replyingTo = message },
-                        onReact = { emoji -> onReact(message.id, emoji) },
-                        onEditStart = { editingMessage = message; draft = message.text; replyingTo = null },
-                        onDelete = { onDelete(message.id) },
-                        onForward = { onForward(message) },
-                        // Item 4 multi-select: tap toggles while selecting; "Select" in the menu starts it.
-                        selectionActive = selectionActive,
-                        selected = message.id in selectedIds,
-                        onToggleSelect = {
-                            selectedIds = if (message.id in selectedIds) selectedIds - message.id else selectedIds + message.id
-                        },
-                    )
+                itemsIndexed(displayItems) { _, item ->
+                    when (item) {
+                        is DisplayItem.Album -> AlbumMessageBubble(item.items)
+                        is DisplayItem.Single -> {
+                            val message = item.message
+                            MessageBubble(
+                                message,
+                                onReply = { replyingTo = message },
+                                onReact = { emoji -> onReact(message.id, emoji) },
+                                onEditStart = { editingMessage = message; draft = message.text; replyingTo = null },
+                                onDelete = { onDelete(message.id) },
+                                onForward = { onForward(message) },
+                                // Item 4 multi-select: tap toggles while selecting; "Select" in the menu starts it.
+                                selectionActive = selectionActive,
+                                selected = message.id in selectedIds,
+                                onToggleSelect = {
+                                    selectedIds = if (message.id in selectedIds) selectedIds - message.id else selectedIds + message.id
+                                },
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -355,61 +402,75 @@ private fun MediaCard(media: MediaData) {
             }
         }
     }
-    if (enlarged) {
-        // Item 5 full-resolution viewer: on open, decrypt the attachment natively (NativeMediaCrypto — the ciphertext
-        // file + its per-file key from the message's descriptor; never the E2E ratchet) OFF the main thread, showing the
-        // carried preview thumbnail + a spinner meanwhile. A photo shows its full-res bitmap; a video plays from a
-        // decrypted temp file. The temp file is deleted when the viewer closes. Tap outside to dismiss.
-        val context = LocalContext.current
-        val opened by androidx.compose.runtime.produceState<MediaOpened>(MediaOpened.Loading, media.source, media.kind) {
-            value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                try {
-                    if (media.kind == "video") {
-                        io.github.bickworld555.hiddenchat.NativeMediaCrypto.decryptedToTempFile(context, media.source, ".mp4")
-                            ?.let { MediaOpened.Video(it) } ?: MediaOpened.Failed
-                    } else {
-                        val bytes = io.github.bickworld555.hiddenchat.NativeMediaCrypto.decryptedBytes(context, media.source)
-                        bytes?.let { BitmapFactory.decodeByteArray(it, 0, it.size) }?.let { MediaOpened.Photo(it) } ?: MediaOpened.Failed
-                    }
-                } catch (failed: Throwable) {
-                    MediaOpened.Failed
+    if (enlarged) MediaViewerDialog(media) { enlarged = false }
+}
+
+/**
+ * Item 5/6 full-resolution viewer (shared by a single photo/video bubble and an album item): decrypts the attachment
+ * natively (NativeMediaCrypto — the ciphertext file + its per-file key; never the E2E ratchet) OFF the main thread,
+ * showing the carried preview thumbnail + a spinner meanwhile. A photo shows its full-res bitmap; a video plays from a
+ * decrypted temp file (deleted when the viewer closes). Tap outside to dismiss.
+ */
+@Composable
+private fun MediaViewerDialog(media: MediaData, onClose: () -> Unit) {
+    val placeholder = remember(media.preview) {
+        runCatching {
+            val base64 = media.preview.substringAfter("base64,", "")
+            if (base64.isEmpty()) return@runCatching null
+            val bytes = Base64.decode(base64, Base64.DEFAULT)
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+        }.getOrNull()
+    }
+    val context = LocalContext.current
+    val opened by androidx.compose.runtime.produceState<MediaOpened>(MediaOpened.Loading, media.source, media.kind) {
+        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                if (media.kind == "video") {
+                    io.github.bickworld555.hiddenchat.NativeMediaCrypto.decryptedToTempFile(context, media.source, ".mp4")
+                        ?.let { MediaOpened.Video(it) } ?: MediaOpened.Failed
+                } else {
+                    val bytes = io.github.bickworld555.hiddenchat.NativeMediaCrypto.decryptedBytes(context, media.source)
+                    bytes?.let { BitmapFactory.decodeByteArray(it, 0, it.size) }?.let { MediaOpened.Photo(it) } ?: MediaOpened.Failed
                 }
+            } catch (failed: Throwable) {
+                MediaOpened.Failed
             }
         }
-        // Delete a decrypted video temp file once the viewer is gone. Key the effect on the file itself and capture it
-        // by value — keying on `opened` and re-reading it in onDispose would read the *new* value during the
-        // Loading→Video transition and delete the freshly-decrypted file before the player ever opens it (ENOENT).
-        val videoFile = (opened as? MediaOpened.Video)?.file
-        androidx.compose.runtime.DisposableEffect(videoFile) {
-            onDispose { videoFile?.delete() }
-        }
-        androidx.compose.ui.window.Dialog(
-            onDismissRequest = { enlarged = false },
-            properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
+    }
+    // Delete a decrypted video temp file once the viewer is gone. Key the effect on the file itself and capture it
+    // by value — keying on `opened` and re-reading it in onDispose would read the *new* value during the
+    // Loading→Video transition and delete the freshly-decrypted file before the player ever opens it (ENOENT).
+    val videoFile = (opened as? MediaOpened.Video)?.file
+    androidx.compose.runtime.DisposableEffect(videoFile) {
+        onDispose { videoFile?.delete() }
+    }
+    val aspect = placeholder?.let { it.width.toFloat() / it.height.coerceAtLeast(1) } ?: (16f / 9f)
+    androidx.compose.ui.window.Dialog(
+        onDismissRequest = onClose,
+        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.95f))
+                .clickable { onClose() },
+            contentAlignment = Alignment.Center,
         ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.95f))
-                    .clickable { enlarged = false },
-                contentAlignment = Alignment.Center,
-            ) {
-                when (val result = opened) {
-                    is MediaOpened.Photo -> Image(
-                        bitmap = result.bitmap.asImageBitmap(),
-                        contentDescription = null,
-                        contentScale = ContentScale.Fit,
-                        modifier = Modifier.fillMaxWidth().padding(8.dp),
-                    )
-                    is MediaOpened.Video -> VideoPlayer(result.file, bitmap.width.toFloat() / bitmap.height.coerceAtLeast(1))
-                    MediaOpened.Failed -> Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                        Image(bitmap = bitmap.asImageBitmap(), contentDescription = null, contentScale = ContentScale.Fit, modifier = Modifier.widthIn(max = 240.dp).padding(8.dp))
-                        Text("Couldn't open this media.", color = androidx.compose.ui.graphics.Color.White, fontSize = 13.sp, modifier = Modifier.padding(8.dp))
-                    }
-                    MediaOpened.Loading -> Box(contentAlignment = Alignment.Center) {
-                        Image(bitmap = bitmap.asImageBitmap(), contentDescription = null, contentScale = ContentScale.Fit, modifier = Modifier.widthIn(max = 240.dp).padding(8.dp))
-                        androidx.compose.material3.CircularProgressIndicator(color = androidx.compose.ui.graphics.Color.White)
-                    }
+            when (val result = opened) {
+                is MediaOpened.Photo -> Image(
+                    bitmap = result.bitmap.asImageBitmap(),
+                    contentDescription = null,
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.fillMaxWidth().padding(8.dp),
+                )
+                is MediaOpened.Video -> VideoPlayer(result.file, aspect)
+                MediaOpened.Failed -> Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    placeholder?.let { Image(bitmap = it.asImageBitmap(), contentDescription = null, contentScale = ContentScale.Fit, modifier = Modifier.widthIn(max = 240.dp).padding(8.dp)) }
+                    Text("Couldn't open this media.", color = androidx.compose.ui.graphics.Color.White, fontSize = 13.sp, modifier = Modifier.padding(8.dp))
+                }
+                MediaOpened.Loading -> Box(contentAlignment = Alignment.Center) {
+                    placeholder?.let { Image(bitmap = it.asImageBitmap(), contentDescription = null, contentScale = ContentScale.Fit, modifier = Modifier.widthIn(max = 240.dp).padding(8.dp)) }
+                    androidx.compose.material3.CircularProgressIndicator(color = androidx.compose.ui.graphics.Color.White)
                 }
             }
         }
@@ -461,6 +522,357 @@ private fun VideoPlayer(file: java.io.File, aspect: Float) {
 }
 
 private fun mediaDurationLabel(seconds: Int): String = "%d:%02d".format(seconds / 60, seconds % 60)
+
+// --- Item 6: voice notes, documents, albums (captions are rendered in MessageBubble) ---------------------------------
+
+/** src/voice.js waveformPeaks — a deterministic 40-bar waveform from the voice id (seed), matching the web exactly. */
+private fun waveformPeaks(seed: String, count: Int = 40): IntArray {
+    var state = 0L
+    for (ch in seed) state = (state * 31L + ch.code.toLong()) and 0xFFFFFFFFL
+    return IntArray(count) {
+        state = (state * 1664525L + 1013904223L) and 0xFFFFFFFFL
+        (18 + (state % 82L)).toInt()
+    }
+}
+
+/** src/media.js formatFileSize (WhatsApp-style): "820 KB", "0.90 MB", "4.2 MB". */
+private fun formatFileSize(bytes: Long): String {
+    if (bytes < 0) return ""
+    if (bytes < 1024) return "$bytes B"
+    if (bytes in (100L * 1024L) until (1024L * 1024L)) return String.format(java.util.Locale.US, "%.2f MB", bytes / (1024.0 * 1024.0))
+    val units = arrayOf("KB", "MB", "GB", "TB")
+    var value = bytes / 1024.0
+    var unit = 0
+    while (value >= 1024 && unit < units.size - 1) { value /= 1024.0; unit++ }
+    return if (value >= 100) "${Math.round(value)} ${units[unit]}" else "${Math.round(value * 10) / 10.0} ${units[unit]}"
+}
+
+/**
+ * One active voice-note player at a time: starting one pauses any other (WhatsApp-style exclusive playback), with audio
+ * focus and leak-free cleanup (the decrypted temp file is deleted on stop/replace). State is Compose-observable so each
+ * bubble re-renders its play/pause + progress. The audio is decrypted off the main thread by the caller; ExoPlayer runs
+ * on the main thread (all calls here are main-thread). ExoPlayer (not MediaPlayer) is used because it seeks the
+ * WebView-recorded webm/opus voice notes (which carry no seek index) and manages audio focus itself.
+ */
+private object VoicePlayback {
+    data class St(val id: String = "", val playing: Boolean = false, val positionMs: Int = 0, val durationMs: Int = 0, val preparing: Boolean = false, val error: Boolean = false)
+    private val _state = mutableStateOf(St())
+    val state: androidx.compose.runtime.State<St> get() = _state
+    private var player: androidx.media3.exoplayer.ExoPlayer? = null
+    private var tempFile: java.io.File? = null
+    private var ticker: kotlinx.coroutines.Job? = null
+    private val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Main.immediate)
+
+    fun isActive(id: String): Boolean = _state.value.id == id && player != null
+
+    fun stop() {
+        stopTicker()
+        player?.let { runCatching { it.release() } }; player = null
+        tempFile?.let { runCatching { it.delete() } }; tempFile = null
+        _state.value = St()
+    }
+
+    /** Resume or pause the currently active note. */
+    fun toggle(context: Context, id: String) {
+        val p = player ?: return
+        if (_state.value.id != id) return
+        if (p.isPlaying) { p.pause(); stopTicker(); _state.value = _state.value.copy(playing = false) }
+        else { p.play(); startTicker(); _state.value = _state.value.copy(playing = true) }
+    }
+
+    /** Start a fresh note from its already-decrypted file (stops/replaces any other). [fallbackMs] is the length from
+     *  the message (src/voice.js seconds) — used when the container reports no duration (webm/opus), so seek still works. */
+    fun start(context: Context, id: String, decrypted: java.io.File, fallbackMs: Int) {
+        stop()
+        tempFile = decrypted
+        try {
+            val p = androidx.media3.exoplayer.ExoPlayer.Builder(context).build()
+            // ExoPlayer requests/abandons audio focus itself (handleAudioFocus = true).
+            p.setAudioAttributes(
+                androidx.media3.common.AudioAttributes.Builder()
+                    .setUsage(androidx.media3.common.C.USAGE_MEDIA)
+                    .setContentType(androidx.media3.common.C.AUDIO_CONTENT_TYPE_SPEECH).build(),
+                true,
+            )
+            p.addListener(object : androidx.media3.common.Player.Listener {
+                override fun onPlaybackStateChanged(playbackState: Int) {
+                    if (playbackState == androidx.media3.common.Player.STATE_READY) {
+                        val dur = if (p.duration > 0) p.duration.toInt() else fallbackMs
+                        _state.value = _state.value.copy(durationMs = dur.coerceAtLeast(0), preparing = false)
+                    } else if (playbackState == androidx.media3.common.Player.STATE_ENDED) {
+                        runCatching { p.seekTo(0); p.pause() }; stopTicker()
+                        _state.value = _state.value.copy(playing = false, positionMs = 0)
+                    }
+                }
+                override fun onIsPlayingChanged(isPlaying: Boolean) { _state.value = _state.value.copy(playing = isPlaying) }
+                override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                    android.util.Log.w("VoicePlayback", "exo error", error); _state.value = St(id = id, error = true)
+                }
+            })
+            p.setMediaItem(androidx.media3.common.MediaItem.fromUri(android.net.Uri.fromFile(decrypted)))
+            player = p
+            _state.value = St(id = id, preparing = true)
+            p.prepare()
+            p.playWhenReady = true
+            startTicker()
+        } catch (e: Throwable) {
+            android.util.Log.w("VoicePlayback", "start failed", e); _state.value = St(id = id, error = true)
+        }
+    }
+
+    fun seekFraction(id: String, fraction: Float) {
+        val p = player ?: return
+        if (_state.value.id != id) return
+        val dur = _state.value.durationMs
+        if (dur <= 0) return
+        val pos = (fraction.coerceIn(0f, 1f) * dur).toInt()
+        runCatching { p.seekTo(pos.toLong()) }
+        _state.value = _state.value.copy(positionMs = pos)
+    }
+
+    private fun startTicker() {
+        stopTicker()
+        ticker = scope.launch {
+            while (true) {
+                val p = player ?: break
+                if (p.isPlaying) _state.value = _state.value.copy(positionMs = p.currentPosition.toInt())
+                kotlinx.coroutines.delay(100)
+            }
+        }
+    }
+    private fun stopTicker() { ticker?.cancel(); ticker = null }
+}
+
+/** Item 6 voice note: waveform (ported waveformPeaks) + play/pause/seek + elapsed/total; decrypts off-main to a temp
+ *  file played through [VoicePlayback] (single active note, audio focus, temp cleaned up). */
+@Composable
+private fun VoiceNoteBubble(media: MediaData, mine: Boolean) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val info = remember(media.source) { io.github.bickworld555.hiddenchat.NativeMediaCrypto.voiceInfo(media.source) }
+    val voiceId = info?.first ?: ""
+    val totalSeconds = (info?.second ?: media.duration).coerceAtLeast(0)
+    val peaks = remember(voiceId) { waveformPeaks(voiceId) }
+    val playback by VoicePlayback.state
+    val isThis = voiceId.isNotEmpty() && playback.id == voiceId
+    val playing = isThis && playback.playing
+    val preparing = isThis && playback.preparing
+    val durationMs = if (isThis && playback.durationMs > 0) playback.durationMs else totalSeconds * 1000
+    val positionMs = if (isThis) playback.positionMs else 0
+    val progress = if (durationMs > 0) (positionMs.toFloat() / durationMs).coerceIn(0f, 1f) else 0f
+    val onColor = if (mine) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
+    val playedColor = if (mine) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.primary
+    val unplayedColor = onColor.copy(alpha = 0.3f)
+    var decrypting by remember { mutableStateOf(false) }
+
+    fun onPlayPause() {
+        if (voiceId.isEmpty()) return
+        if (VoicePlayback.isActive(voiceId)) { VoicePlayback.toggle(context, voiceId); return }
+        decrypting = true
+        scope.launch {
+            // Decrypt, then decode the webm/opus to a seekable WAV off the main thread (the recorded container has no
+            // cue points, so players can't seek it directly). Play the WAV so seek works; same audio.
+            val wav = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                val enc = io.github.bickworld555.hiddenchat.NativeMediaCrypto.decryptedToTempFile(context, media.source, ".webm") ?: return@withContext null
+                val out = java.io.File.createTempFile("hm-voice-", ".wav", context.cacheDir)
+                val ok = io.github.bickworld555.hiddenchat.AudioDecode.decodeToWav(enc, out)
+                enc.delete()
+                if (ok) out else { out.delete(); null }
+            }
+            decrypting = false
+            if (wav != null) VoicePlayback.start(context, voiceId, wav, totalSeconds * 1000)
+        }
+    }
+
+    Row(
+        modifier = Modifier.widthIn(min = 210.dp, max = 260.dp).padding(vertical = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier.size(40.dp).clip(CircleShape)
+                .background(if (mine) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.2f) else MaterialTheme.colorScheme.primary.copy(alpha = 0.15f))
+                .clickable { onPlayPause() },
+            contentAlignment = Alignment.Center,
+        ) {
+            if (preparing || decrypting) androidx.compose.material3.CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp, color = playedColor)
+            else Text(if (playing) "⏸" else "▶", color = playedColor, fontSize = 18.sp)
+        }
+        Spacer(Modifier.width(8.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            // The seek pointer input lives on the Box (not the Canvas) and gives it a taller 44dp touch target so a tap
+            // anywhere over the waveform reliably seeks; the Canvas inside only draws. seekFraction no-ops unless this
+            // note is the active player.
+            Box(
+                modifier = Modifier.fillMaxWidth().height(44.dp).pointerInput(voiceId) {
+                    detectTapGestures { offset -> VoicePlayback.seekFraction(voiceId, offset.x / size.width) }
+                },
+                contentAlignment = Alignment.Center,
+            ) {
+                Canvas(modifier = Modifier.fillMaxWidth().height(30.dp)) {
+                    val n = peaks.size
+                    val gap = 2.dp.toPx()
+                    val barW = ((size.width - gap * (n - 1)) / n).coerceAtLeast(1f)
+                    for (i in 0 until n) {
+                        val h = size.height * (peaks[i] / 100f)
+                        val x = i * (barW + gap)
+                        val played = i.toFloat() / n < progress
+                        drawRect(color = if (played) playedColor else unplayedColor, topLeft = Offset(x, (size.height - h) / 2f), size = Size(barW, h))
+                    }
+                }
+            }
+            Spacer(Modifier.height(2.dp))
+            Text(
+                if (playing || positionMs > 0) "${mediaDurationLabel(positionMs / 1000)} / ${mediaDurationLabel(totalSeconds)}" else mediaDurationLabel(totalSeconds),
+                color = onColor.copy(alpha = 0.7f), fontSize = 11.sp,
+            )
+        }
+        if (isThis && playback.error) {
+            Spacer(Modifier.width(6.dp))
+            Text("!", color = MaterialTheme.colorScheme.error, fontSize = 14.sp)
+        }
+    }
+}
+
+/** Item 6 document: a file card (type badge + name + size) that, on tap, decrypts off-main to a FileProvider-backed
+ *  cache file and opens it via an ACTION_VIEW Intent (with a clear message when no app can handle it). */
+@Composable
+private fun DocumentBubble(media: MediaData, mine: Boolean) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val info = remember(media.source) { io.github.bickworld555.hiddenchat.NativeMediaCrypto.documentInfo(media.source) }
+    val filename = info?.first ?: "attachment"
+    val sizeBytes = info?.second ?: 0L
+    val mime = info?.third ?: ""
+    val ext = filename.substringAfterLast('.', "").uppercase(java.util.Locale.US).take(5).ifEmpty { "FILE" }
+    var status by remember { mutableStateOf("") } // "" | loading | error | nohandler
+    val onColor = if (mine) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
+
+    fun open() {
+        if (status == "loading") return
+        status = "loading"
+        scope.launch {
+            val file = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                io.github.bickworld555.hiddenchat.NativeMediaCrypto.decryptedDocument(context, media.source, filename)
+            }
+            if (file == null) { status = "error"; return@launch }
+            val uri = try {
+                androidx.core.content.FileProvider.getUriForFile(context, context.packageName + ".fileprovider", file)
+            } catch (e: Throwable) { android.util.Log.w("DocumentBubble", "fileprovider", e); status = "error"; return@launch }
+            val intent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(uri, mime.ifEmpty { "application/octet-stream" })
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+            try { context.startActivity(intent); status = "" }
+            catch (e: android.content.ActivityNotFoundException) { status = "nohandler" }
+        }
+    }
+
+    Row(
+        modifier = Modifier.widthIn(max = 260.dp).clip(RoundedCornerShape(8.dp))
+            .background(if (mine) MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.12f) else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f))
+            .clickable { open() }.padding(8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier.size(40.dp).clip(RoundedCornerShape(6.dp)).background(MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)),
+            contentAlignment = Alignment.Center,
+        ) { Text("📄", fontSize = 18.sp) }
+        Spacer(Modifier.width(8.dp))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(filename, color = onColor, fontSize = 14.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            val meta = listOf(ext, formatFileSize(sizeBytes)).filter { it.isNotEmpty() }.joinToString(" • ") +
+                when (status) { "loading" -> " • Opening…"; "error" -> " • Couldn't open"; "nohandler" -> " • No app to open this"; else -> "" }
+            Text(meta, color = onColor.copy(alpha = 0.6f), fontSize = 11.sp)
+        }
+    }
+}
+
+/** Item 6 album: a run of same-album photos/videos drawn as one grouped bubble (2–3 in a row, 4+ as a 2×2 grid with a
+ *  "+N" overflow on the last tile). Tapping a tile opens it in the shared full-res [MediaViewerDialog]. */
+@Composable
+private fun AlbumBubble(items: List<MediaData>, mine: Boolean) {
+    var opened by remember { mutableStateOf<MediaData?>(null) }
+    val shown = items.take(4)
+    val overflow = items.size - shown.size
+    Column(modifier = Modifier.width(220.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        shown.chunked(2).forEachIndexed { rowIdx, rowItems ->
+            Row(horizontalArrangement = Arrangement.spacedBy(2.dp), modifier = Modifier.fillMaxWidth()) {
+                rowItems.forEachIndexed { colIdx, item ->
+                    val globalIdx = rowIdx * 2 + colIdx
+                    val isLastShown = globalIdx == shown.size - 1
+                    AlbumTile(item, if (isLastShown) overflow else 0, Modifier.weight(1f)) { opened = item }
+                }
+                if (rowItems.size == 1) Spacer(Modifier.weight(1f))
+            }
+        }
+    }
+    opened?.let { MediaViewerDialog(it) { opened = null } }
+}
+
+@Composable
+private fun AlbumTile(item: MediaData, overflow: Int, modifier: Modifier, onClick: () -> Unit) {
+    val bitmap = remember(item.preview) {
+        runCatching {
+            val b = item.preview.substringAfter("base64,", "")
+            if (b.isEmpty()) return@runCatching null
+            val bytes = Base64.decode(b, Base64.DEFAULT)
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
+        }.getOrNull()
+    }
+    Box(modifier = modifier.aspectRatio(1f).clip(RoundedCornerShape(6.dp)).clickable { onClick() }, contentAlignment = Alignment.Center) {
+        if (bitmap != null) Image(bitmap.asImageBitmap(), null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
+        else Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surfaceVariant))
+        if (item.kind == "video" && overflow <= 0) {
+            Text("▶", color = Color.White, fontSize = 20.sp, modifier = Modifier.clip(CircleShape).background(MaterialTheme.colorScheme.scrim.copy(alpha = 0.5f)).padding(horizontal = 10.dp, vertical = 3.dp))
+        }
+        if (overflow > 0) Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.5f)), contentAlignment = Alignment.Center) {
+            Text("+$overflow", color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+        }
+    }
+}
+
+/** Item 6: one album run drawn as a single conversation row (aligned mine/theirs), with the album caption and time of
+ *  its last item beneath — mirrors the web album bubble (src/components/MediaRenderer.jsx MediaAlbum). */
+@Composable
+private fun AlbumMessageBubble(items: List<MessageRowData>) {
+    val anchor = items.first()
+    val mine = anchor.mine
+    val caption = items.firstNotNullOfOrNull { it.caption.ifEmpty { null } } ?: ""
+    val time = items.last().time
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = if (mine) Arrangement.End else Arrangement.Start,
+    ) {
+        Column(horizontalAlignment = if (mine) Alignment.End else Alignment.Start) {
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(if (mine) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant)
+                    .padding(4.dp),
+            ) {
+                Column {
+                    AlbumBubble(items.mapNotNull { it.media }, mine)
+                    if (caption.isNotEmpty()) {
+                        Text(
+                            caption,
+                            color = if (mine) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
+                            fontSize = 14.sp,
+                            modifier = Modifier.padding(top = 4.dp, start = 4.dp, end = 4.dp),
+                        )
+                    }
+                    if (time.isNotEmpty()) {
+                        Text(
+                            time,
+                            color = (if (mine) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant).copy(alpha = 0.7f),
+                            fontSize = 10.sp,
+                            modifier = Modifier.align(Alignment.End).padding(top = 2.dp, end = 4.dp, bottom = 2.dp),
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
 
 /**
  * Item 4 link previews: WhatsApp's card for a link the sender shared. The card (title/description/site + an optional
@@ -636,16 +1048,31 @@ private fun MessageBubble(
                     // Item 4 link previews: the sender-made card above the text (nothing is fetched — the thumbnail,
                     // if any, came inside the encrypted message). Tapping it opens the link.
                     message.linkPreview?.let { LinkPreviewCard(it, mine) }
-                    // Item 5 media: a photo/video renders its carried preview image (thumb/poster) in place of the text
-                    // label. When there is no preview (voice note, document, or a media message without a thumb), the
-                    // text label below is shown as before.
-                    val mediaShown = message.media?.preview?.isNotEmpty() == true
-                    if (mediaShown) MediaCard(message.media!!)
-                    if (!mediaShown) {
+                    // Item 5/6 media: render the right native bubble by kind — a photo/video shows its preview (tap →
+                    // full-res viewer), a voice note shows a waveform player, a document shows a file card. Anything
+                    // else (text, or media without a native bubble) falls back to the text label.
+                    val media = message.media
+                    val showText = when {
+                        media == null -> true
+                        media.kind == "voice" -> { VoiceNoteBubble(media, mine); false }
+                        media.kind == "doc" -> { DocumentBubble(media, mine); false }
+                        media.preview.isNotEmpty() -> { MediaCard(media); false }
+                        else -> true
+                    }
+                    if (showText) {
                         Text(
                             message.text,
                             color = if (mine) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
                             fontSize = 15.sp,
+                        )
+                    }
+                    // Item 6 caption (inner cp): the photo/video/document caption, beneath the media.
+                    if (media != null && message.caption.isNotEmpty()) {
+                        Text(
+                            message.caption,
+                            color = if (mine) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface,
+                            fontSize = 14.sp,
+                            modifier = Modifier.padding(top = 3.dp).widthIn(max = 280.dp),
                         )
                     }
                     if (message.time.isNotEmpty() || message.edited || message.expiresAt > 0 || (mine && message.status.isNotEmpty())) {

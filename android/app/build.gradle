@@ -123,6 +123,9 @@ dependencies {
     implementation "androidx.media3:media3-transformer:1.8.0"
     implementation "androidx.media3:media3-effect:1.8.0"
     implementation "androidx.media3:media3-common:1.8.0"
+    // ExoPlayer for native voice-note playback: unlike MediaPlayer it seeks webm/opus voice notes (no seek index) and
+    // manages audio focus itself.
+    implementation "androidx.media3:media3-exoplayer:1.8.0"
     // WebSocket client for the background service's own connection (NativeRelay).
     implementation 'com.squareup.okhttp3:okhttp:4.12.0'
     // Native WebRTC media for calls (libwebrtc, org.webrtc API), replacing the WebView's WebRTC stack (Step 4).

@@ -38,7 +38,36 @@ object NativeMediaCrypto {
             return Ref(m.groupValues[1], descriptor, true)
         }
         MEDIA.find(content)?.let { m -> return Ref(m.groupValues[1], null, false) }
+        // A voice note ("voice:<id>:<seconds>:<flag>:<key>:<lang>", src/voice.js): the ciphertext key (an encrypted
+        // note) is the 5th field; an unencrypted note has none and plays as-is. Same per-file media key as emedia.
+        if (content.startsWith("voice:")) {
+            val p = content.split(":")
+            val id = p.getOrNull(1).orEmpty()
+            if (id.isEmpty()) return null
+            val descriptor = p.getOrNull(4)?.takeIf { it.isNotEmpty() }?.let { unpackDescriptor(it) }
+            return Ref(id, descriptor, descriptor != null)
+        }
         return null
+    }
+
+    /** A voice note's id (waveform seed, src/voice.js waveformPeaks) + its length in seconds, or null. */
+    fun voiceInfo(content: String?): Pair<String, Int>? {
+        if (content == null || !content.startsWith("voice:")) return null
+        val p = content.split(":")
+        val id = p.getOrNull(1).orEmpty()
+        if (id.isEmpty()) return null
+        return id to (p.getOrNull(2)?.toDoubleOrNull()?.toInt() ?: 0)
+    }
+
+    /** A document's (filename, byte size, mime type) parsed from an emedia/media ref — for the native file bubble. */
+    fun documentInfo(content: String?): Triple<String, Long, String>? {
+        val ref = parseRef(content) ?: return null
+        val filename = EMEDIA.find(content ?: "")?.groupValues?.getOrNull(3)
+            ?: MEDIA.find(content ?: "")?.groupValues?.getOrNull(2)
+            ?: ""
+        val size = Json.safeInteger(ref.descriptor?.get("size")) ?: 0L
+        val mime = Json.string(ref.descriptor?.get("type")).orEmpty()
+        return Triple(filename.ifEmpty { "attachment" }, size, mime)
     }
 
     private fun unpackDescriptor(packed: String): Map<String, Any?>? = runCatching {
@@ -71,6 +100,19 @@ object NativeMediaCrypto {
             File.createTempFile("hm-media-", suffix, context.cacheDir).apply { writeBytes(bytes) }
         } catch (failed: Throwable) {
             android.util.Log.w("NativeMediaCrypto", "temp write failed", failed); null
+        }
+    }
+
+    /** Decrypts a document to a FileProvider-shareable cache file named like the original (so a viewer app picks the
+     *  right handler by extension), or null. Runs off the main thread. */
+    fun decryptedDocument(context: Context, content: String?, filename: String): File? {
+        val bytes = decryptedBytes(context, content) ?: return null
+        return try {
+            val dir = File(context.cacheDir, "shared").apply { mkdirs() }
+            val safe = filename.replace(Regex("[^A-Za-z0-9._-]"), "_").ifEmpty { "file" }
+            File(dir, safe).apply { writeBytes(bytes) }
+        } catch (failed: Throwable) {
+            android.util.Log.w("NativeMediaCrypto", "doc write failed", failed); null
         }
     }
 
