@@ -1643,6 +1643,119 @@ public class HiddenNativePlugin extends Plugin {
         call.resolve();
     }
 
+    // --- checklist item 2: authoritative full-message store (the WebView's messageStore backend) ----------------------
+    // `json` crosses the bridge as an opaque string (the serialized message), never re-parsed here, so native round-trips
+    // the exact bytes and stays decoupled from the message shape. Dual-write: the WebView also writes sqliteMessageDb.
+
+    /** Applies one messageStore diff to the native authoritative store: { puts:[{chat,id,ts,json}], deletes:[id], clearChats:[chat] }. */
+    @PluginMethod
+    public void applyFullMessages(PluginCall call) {
+        io.github.bickworld555.hiddenchat.core.store.NativeStore store =
+            io.github.bickworld555.hiddenchat.core.store.NativeStore.Companion.get(getContext());
+        if (store == null) { call.reject("no-store"); return; }
+        java.util.List<io.github.bickworld555.hiddenchat.core.store.FullMessage> puts = new java.util.ArrayList<>();
+        JSArray putArr = call.getArray("puts");
+        if (putArr != null) {
+            for (int i = 0; i < putArr.length(); i++) {
+                try {
+                    org.json.JSONObject o = putArr.getJSONObject(i);
+                    String chat = o.optString("chat", "");
+                    String mid = o.optString("id", "");
+                    String json = o.optString("json", "");
+                    if (chat.isEmpty() || mid.isEmpty() || json.isEmpty()) continue;
+                    puts.add(new io.github.bickworld555.hiddenchat.core.store.FullMessage(chat, mid, o.optLong("ts", 0L), json));
+                } catch (org.json.JSONException ignored) { /* skip a malformed row */ }
+            }
+        }
+        java.util.List<String> deletes = new java.util.ArrayList<>();
+        JSArray delArr = call.getArray("deletes");
+        if (delArr != null) {
+            for (int i = 0; i < delArr.length(); i++) { String id = delArr.optString(i, ""); if (!id.isEmpty()) deletes.add(id); }
+        }
+        java.util.List<String> clears = new java.util.ArrayList<>();
+        JSArray clearArr = call.getArray("clearChats");
+        if (clearArr != null) {
+            for (int i = 0; i < clearArr.length(); i++) { String c = clearArr.optString(i, ""); if (!c.isEmpty()) clears.add(c); }
+        }
+        try {
+            store.applyFullMessages(puts, deletes, clears);
+            call.resolve();
+        } catch (Exception failed) {
+            // Reject so the WebView treats the message as not-yet-saved (it keeps it in memory, retries, does not ack).
+            call.reject("apply-failed", failed);
+        }
+    }
+
+    /** The newest `limit` messages of every chat: { messages: { chat: [json…] }, more: [chat…] } (oldest-first per chat). */
+    @PluginMethod
+    public void loadFullRecent(PluginCall call) {
+        io.github.bickworld555.hiddenchat.core.store.NativeStore store =
+            io.github.bickworld555.hiddenchat.core.store.NativeStore.Companion.get(getContext());
+        if (store == null) { call.reject("no-store"); return; }
+        int limit = call.getInt("limit", 500);
+        kotlin.Pair<java.util.Map<String, java.util.List<String>>, java.util.Set<String>> res = store.fullMessagesRecent(limit);
+        JSObject messages = new JSObject();
+        for (java.util.Map.Entry<String, java.util.List<String>> e : res.getFirst().entrySet()) {
+            JSArray arr = new JSArray();
+            for (String json : e.getValue()) arr.put(json);
+            messages.put(e.getKey(), arr);
+        }
+        JSArray more = new JSArray();
+        for (String chat : res.getSecond()) more.put(chat);
+        JSObject result = new JSObject();
+        result.put("messages", messages);
+        result.put("more", more);
+        call.resolve(result);
+    }
+
+    /** Up to `limit` of one chat's messages older than `beforeTs` (ms): { messages: [json…], more: bool } (oldest-first). */
+    @PluginMethod
+    public void loadFullOlder(PluginCall call) {
+        io.github.bickworld555.hiddenchat.core.store.NativeStore store =
+            io.github.bickworld555.hiddenchat.core.store.NativeStore.Companion.get(getContext());
+        if (store == null) { call.reject("no-store"); return; }
+        String chat = call.getString("chat", "");
+        if (chat == null || chat.isEmpty()) { call.reject("no-chat"); return; }
+        long beforeTs = call.getLong("beforeTs", Long.MAX_VALUE);
+        int limit = call.getInt("limit", 500);
+        kotlin.Pair<java.util.List<String>, Boolean> res = store.fullMessagesOlder(chat, beforeTs, limit);
+        JSArray arr = new JSArray();
+        for (String json : res.getFirst()) arr.put(json);
+        JSObject result = new JSObject();
+        result.put("messages", arr);
+        result.put("more", res.getSecond());
+        call.resolve(result);
+    }
+
+    /** Every stored message for a full backup/migration dump: { chats: { chat: [json…] } } (oldest-first per chat). */
+    @PluginMethod
+    public void loadFullAll(PluginCall call) {
+        io.github.bickworld555.hiddenchat.core.store.NativeStore store =
+            io.github.bickworld555.hiddenchat.core.store.NativeStore.Companion.get(getContext());
+        if (store == null) { call.reject("no-store"); return; }
+        java.util.Map<String, java.util.List<String>> all = store.fullMessagesAll();
+        JSObject chats = new JSObject();
+        for (java.util.Map.Entry<String, java.util.List<String>> e : all.entrySet()) {
+            JSArray arr = new JSArray();
+            for (String json : e.getValue()) arr.put(json);
+            chats.put(e.getKey(), arr);
+        }
+        JSObject result = new JSObject();
+        result.put("chats", chats);
+        call.resolve(result);
+    }
+
+    /** How many messages the native authoritative store holds. */
+    @PluginMethod
+    public void countFullMessages(PluginCall call) {
+        io.github.bickworld555.hiddenchat.core.store.NativeStore store =
+            io.github.bickworld555.hiddenchat.core.store.NativeStore.Companion.get(getContext());
+        if (store == null) { call.reject("no-store"); return; }
+        JSObject result = new JSObject();
+        result.put("count", store.fullMessageCount());
+        call.resolve(result);
+    }
+
     /**
      * The per-account rollout gate for native call media: the native path must be active for this account AND native
      * calls must be switched on for this install. Default OFF (separate from the E2E native flag), so an account on the

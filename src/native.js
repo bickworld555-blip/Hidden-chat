@@ -123,6 +123,14 @@ export const nativeSaveContacts = (contacts) => invoke('saveNativeContacts', { c
 export const nativeSaveMessages = (chatId, messages) => invoke('saveNativeMessages', { chatId: String(chatId || ''), messages: Array.isArray(messages) ? messages : [] });
 // Step 5 read independence: mirror many chats' messages in one call: { [chatId]: [{ id, mine, text, time, ts }] }.
 export const nativeSaveMessagesBatch = (batch) => invoke('saveNativeMessagesBatch', { batch: batch && typeof batch === 'object' ? batch : {} });
+// Checklist item 2: the native authoritative message store (the WebView's messageStore backend). `json` is the full
+// serialized message, opaque to native (round-tripped). Rejects (not resolves 0) on a write failure so the caller
+// treats the message as not-yet-saved. See src/nativeMessageStore.js for the messageStore-interface wrapper.
+export const nativeApplyFullMessages = ({ puts = [], deletes = [], clearChats = [] } = {}) => invoke('applyFullMessages', { puts, deletes, clearChats });
+export const nativeLoadFullRecent = (limit) => invoke('loadFullRecent', { limit: Number(limit) || 500 });
+export const nativeLoadFullOlder = (chat, beforeTs, limit) => invoke('loadFullOlder', { chat: String(chat || ''), beforeTs: Number(beforeTs) || 0, limit: Number(limit) || 500 });
+export const nativeLoadFullAll = () => invoke('loadFullAll', {});
+export const nativeCountFullMessages = async () => { const r = await invoke('countFullMessages', {}); return Number(r?.count) || 0; };
 // Uploads in progress: { count, label, progress (0-100) }; count 0 ends the "Sending…" foreground service.
 export const nativeSetUploads = (state) => invoke('setUploads', state);
 // Android Keystore sealing for the local data key (src/secureStorage.js): { sealed } / { value }, null outside the app.

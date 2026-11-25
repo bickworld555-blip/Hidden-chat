@@ -23,6 +23,9 @@ data class ContactRecord(val id: String, val name: String, val avatar: String)
  */
 data class MessageRecord(val id: String, val mine: Boolean, val text: String, val time: String, val ts: Long)
 
+/** One row of the authoritative message store (checklist item 2): a message's full JSON, keyed by (chatId, id), ts in ms. */
+data class FullMessage(val chatId: String, val id: String, val ts: Long, val json: String)
+
 /**
  * Where the native encryption core (CryptoCore) keeps its records between calls: this device's identity, prekeys,
  * sessions, pinned identities and sender keys, by name, as JSON text. A SQLCipher database of its own
@@ -84,7 +87,7 @@ class NativeStore private constructor(private val db: SQLiteDatabase) : KeyRecor
     }
 
     /** Forgets every record (sign-out): the core's identity, sessions and keys all go, and the mirrored chat list. */
-    override fun clear() { exclusive { db.execSQL("DELETE FROM records"); db.execSQL("DELETE FROM chats"); db.execSQL("DELETE FROM contacts"); db.execSQL("DELETE FROM chat_messages"); bump() } }
+    override fun clear() { exclusive { db.execSQL("DELETE FROM records"); db.execSQL("DELETE FROM chats"); db.execSQL("DELETE FROM contacts"); db.execSQL("DELETE FROM chat_messages"); db.execSQL("DELETE FROM full_messages"); bump() } }
 
     /**
      * Replaces the mirrored chat list the native UI reads (Step 5 data seam), preserving the given order. The web app
@@ -184,6 +187,66 @@ class NativeStore private constructor(private val db: SQLiteDatabase) : KeyRecor
         out
     }
 
+    // --- authoritative full-message store (checklist item 2): the WebView's messageStore backend ----------------------
+    // Native treats `json` as an opaque blob (round-tripped, never parsed), so it stays decoupled from the message shape.
+
+    /** Applies one messageStore diff atomically: clear whole chats, delete by id (any chat), then upsert full rows. */
+    fun applyFullMessages(puts: List<FullMessage>, deletes: List<String>, clearChats: List<String>) = exclusive {
+        for (chat in clearChats) db.execSQL("DELETE FROM full_messages WHERE chat_id = ?", arrayOf(chat))
+        for (id in deletes) db.execSQL("DELETE FROM full_messages WHERE id = ?", arrayOf(id))
+        for (m in puts) {
+            db.execSQL(
+                "INSERT INTO full_messages(chat_id, id, ts, json) VALUES(?, ?, ?, ?) " +
+                    "ON CONFLICT(chat_id, id) DO UPDATE SET ts = excluded.ts, json = excluded.json",
+                arrayOf(m.chatId, m.id, m.ts, m.json),
+            )
+        }
+    }
+
+    // ts/limit are internal numbers (not user text), inlined so the INTEGER column compares as a number (rawQuery binds
+    // selection args as TEXT); chat_id stays parameter-bound. Returns one chat's rows older than beforeTs, oldest-first.
+    private fun olderRows(chatId: String, beforeTs: Long, limit: Int): Pair<List<String>, Boolean> {
+        val newestFirst = ArrayList<String>()
+        db.rawQuery(
+            "SELECT json FROM full_messages WHERE chat_id = ? AND ts < $beforeTs ORDER BY ts DESC LIMIT ${limit + 1}",
+            arrayOf(chatId),
+        ).use { c -> while (c.moveToNext()) newestFirst.add(c.getString(0)) }
+        val more = newestFirst.size > limit
+        val page = if (more) newestFirst.subList(0, limit) else newestFirst
+        return page.asReversed().toList() to more // oldest-first, like messageDb.loadOlder
+    }
+
+    /** Up to [limit] of one chat's messages older than [beforeTs] (ms), oldest-first, and whether even older exist. */
+    fun fullMessagesOlder(chatId: String, beforeTs: Long, limit: Int): Pair<List<String>, Boolean> = exclusive { olderRows(chatId, beforeTs, limit) }
+
+    /** The newest [limit] messages of every chat (oldest-first per chat) and the chats that have more. */
+    fun fullMessagesRecent(limit: Int): Pair<Map<String, List<String>>, Set<String>> = exclusive {
+        val chats = ArrayList<String>()
+        db.rawQuery("SELECT DISTINCT chat_id FROM full_messages", null).use { c -> while (c.moveToNext()) chats.add(c.getString(0)) }
+        val out = LinkedHashMap<String, List<String>>()
+        val more = HashSet<String>()
+        for (chat in chats) {
+            val (page, hasMore) = olderRows(chat, Long.MAX_VALUE, limit)
+            out[chat] = page
+            if (hasMore) more.add(chat)
+        }
+        out to more
+    }
+
+    /** Every stored message, { chatId: [json…] } oldest-first per chat (a full backup/migration dump). */
+    fun fullMessagesAll(): Map<String, List<String>> = exclusive {
+        val out = LinkedHashMap<String, ArrayList<String>>()
+        db.rawQuery("SELECT chat_id, json FROM full_messages ORDER BY chat_id ASC, ts ASC", null).use { c ->
+            while (c.moveToNext()) out.getOrPut(c.getString(0)) { ArrayList() }.add(c.getString(1))
+        }
+        out
+    }
+
+    /** How many messages the authoritative store holds. */
+    fun fullMessageCount(): Int = exclusive {
+        db.rawQuery("SELECT COUNT(*) FROM full_messages", null).use { if (it.moveToNext()) it.getInt(0) else 0 }
+    }
+
     /**
      * Makes sure this store belongs to [account]. If it holds another account's data (or none yet), every record is
      * wiped first so the new owner starts from a fresh identity — the native store is never shared across accounts,
@@ -196,6 +259,7 @@ class NativeStore private constructor(private val db: SQLiteDatabase) : KeyRecor
             db.execSQL("DELETE FROM chats")
             db.execSQL("DELETE FROM contacts")
             db.execSQL("DELETE FROM chat_messages")
+            db.execSQL("DELETE FROM full_messages")
             set(OWNER, account)
             bump()
         }
@@ -270,6 +334,12 @@ class NativeStore private constructor(private val db: SQLiteDatabase) : KeyRecor
                 db.execSQL("DROP TABLE IF EXISTS messages")
                 db.execSQL("CREATE TABLE IF NOT EXISTS chat_messages (chat_id TEXT NOT NULL, id TEXT NOT NULL, mine INTEGER NOT NULL DEFAULT 0, text TEXT NOT NULL, time TEXT NOT NULL, ts INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (chat_id, id))")
                 db.execSQL("CREATE INDEX IF NOT EXISTS chat_messages_order ON chat_messages (chat_id, ts)")
+                // Checklist item 2 (authoritative store): the WebView's message history, native-owned. Each row is one
+                // message's FULL JSON, opaque to native (round-tripped, never parsed here — native stays decoupled from
+                // the WebView's evolving message shape), keyed by (chat_id, id) and ordered by ts (epoch ms). This is the
+                // messageStore backend; the chat_messages projection above stays the native-UI display seam.
+                db.execSQL("CREATE TABLE IF NOT EXISTS full_messages (chat_id TEXT NOT NULL, id TEXT NOT NULL, ts INTEGER NOT NULL DEFAULT 0, json TEXT NOT NULL, PRIMARY KEY (chat_id, id))")
+                db.execSQL("CREATE INDEX IF NOT EXISTS full_messages_order ON full_messages (chat_id, ts)")
             } catch (bad: Throwable) {
                 try { db.close() } catch (ignored: Throwable) { /* already unusable */ }
                 throw bad

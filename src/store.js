@@ -1,4 +1,4 @@
-import { nativeShell } from './native.js';
+import { nativeShell, nativeUiAllowed } from './native.js';
 import { acknowledgeSaved } from './deliveryAck.js';
 import { pollSummary } from './polls.js';
 import { eventSummary } from './calendarEvents.js';
@@ -145,6 +145,14 @@ function localFirstStore(indexed) {
   let sqlite = null;
   let failed = false;
   const migrated = new Map();
+  // Checklist item 2 (authoritative store): when the native-UI flag is on, the native Kotlin store (NativeStore
+  // .full_messages, src/nativeMessageStore.js) becomes the authoritative message history. DUAL-WRITE during the
+  // transition: every change is written to BOTH sqlite (kept as the production store and rollback) and the native
+  // store, and reads come from the native store with a sqlite fall-back, so history is never blank and rollback is
+  // instant. sqlite writes are retired only much later, after long on-device verification. Inert unless the flag is on.
+  let native = null;
+  let authoritative = null; // promise<boolean>, resolved once (the native-UI flag)
+  const nativeMigrated = new Map();
   async function pick(owner) {
     if (failed) return indexed;
     try {
@@ -168,12 +176,63 @@ function localFirstStore(indexed) {
       return indexed;
     }
   }
+  // The native authoritative store when the native-UI flag is on and it is usable, else null. One-time, it backfills
+  // the native store with the full sqlite history (full message JSON) so its reads have the whole past. A backfill or
+  // open failure disables the native path (reads/writes fall back to sqlite) rather than losing the message.
+  async function nativeStore(owner) {
+    if (!nativeShell()) return null;
+    authoritative ??= nativeUiAllowed().catch(() => false);
+    if (!(await authoritative)) return null;
+    try {
+      native ??= (await import('./nativeMessageStore.js')).createNativeMessageStore();
+    } catch (error) {
+      console.error('Native authoritative store unavailable; using sqlite:', error);
+      return null;
+    }
+    if (!nativeMigrated.has(owner)) {
+      nativeMigrated.set(owner, (async () => {
+        const store = await pick(owner);
+        if ((await native.count(owner)) > 0 || (await store.count(owner)) === 0) return;
+        const all = await store.loadAll(owner);
+        for (const [chat, list] of Object.entries(all)) {
+          for (let start = 0; start < list.length; start += 500) {
+            await native.apply(owner, { puts: list.slice(start, start + 500).map((message) => ({ chat, message })) });
+          }
+        }
+      })().catch((error) => { console.error('Native authoritative backfill failed; using sqlite:', error); native = null; }));
+    }
+    await nativeMigrated.get(owner);
+    return native;
+  }
   return {
-    apply: async (owner, diff) => (await pick(owner)).apply(owner, diff),
-    loadRecent: async (owner, limit) => (await pick(owner)).loadRecent(owner, limit),
-    loadOlder: async (owner, chat, beforeTs, limit) => (await pick(owner)).loadOlder(owner, chat, beforeTs, limit),
-    loadAll: async (owner) => (await pick(owner)).loadAll(owner),
-    count: async (owner) => (await pick(owner)).count(owner),
+    apply: async (owner, diff) => {
+      await (await pick(owner)).apply(owner, diff);
+      const target = await nativeStore(owner);
+      // Dual-write: the native store must hold it too (reads come from there). A native failure rejects apply, so the
+      // caller keeps the message in memory, retries and does not acknowledge it — never a message lost to a half-write.
+      if (target) await target.apply(owner, diff);
+    },
+    loadRecent: async (owner, limit) => {
+      const target = await nativeStore(owner);
+      if (target) { try { return await target.loadRecent(owner, limit); } catch (error) { console.error('Native loadRecent failed; using sqlite:', error); } }
+      return (await pick(owner)).loadRecent(owner, limit);
+    },
+    loadOlder: async (owner, chat, beforeTs, limit) => {
+      const target = await nativeStore(owner);
+      if (target) { try { return await target.loadOlder(owner, chat, beforeTs, limit); } catch (error) { console.error('Native loadOlder failed; using sqlite:', error); } }
+      return (await pick(owner)).loadOlder(owner, chat, beforeTs, limit);
+    },
+    loadAll: async (owner) => {
+      const target = await nativeStore(owner);
+      if (target) { try { return await target.loadAll(owner); } catch (error) { console.error('Native loadAll failed; using sqlite:', error); } }
+      return (await pick(owner)).loadAll(owner);
+    },
+    count: async (owner) => {
+      const target = await nativeStore(owner);
+      if (target) { try { return await target.count(owner); } catch (error) { console.error('Native count failed; using sqlite:', error); } }
+      return (await pick(owner)).count(owner);
+    },
+    // Search stays on sqlite: the native store has no full-text index yet (nativeMessageStore returns no search).
     search: async (owner, query, limit) => {
       const store = await pick(owner);
       return store.search ? store.search(owner, query, limit) : null;
