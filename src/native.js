@@ -105,6 +105,10 @@ export const nativeSetCallsRollout = (enabled) => invoke('setNativeCallsRollout'
 // (opens the native UI only when the switch is on). Default off — the WebView UI is used until a rollout turns it on.
 export async function nativeUiAllowed() { const result = await invoke('nativeUiAllowed'); return Boolean(result?.allowed); }
 export const nativeSetUiRollout = (enabled) => invoke('setNativeUiRollout', { enabled: Boolean(enabled) });
+// Checklist item 2 (store finalization): whether this install retires the legacy sqlite dual-write (native-sole store).
+// DEFAULT OFF — production keeps dual-writing until a device test turns it on after extended verification.
+export async function nativeSoleStore() { const result = await invoke('nativeSoleStoreAllowed'); return Boolean(result?.allowed); }
+export const nativeSetSoleStore = (on) => invoke('setNativeSoleStore', { on: Boolean(on) });
 export const nativeOpenUi = () => invoke('openNativeUi');
 // Checklist item 1: whether native owns the single foreground relay socket for this install (socket_owner sub-flag AND
 // a native E2E core); a setter; the handover callback the WebView calls once it has suspended its own socket (so native
@@ -131,6 +135,10 @@ export const nativeLoadFullRecent = (limit) => invoke('loadFullRecent', { limit:
 export const nativeLoadFullOlder = (chat, beforeTs, limit) => invoke('loadFullOlder', { chat: String(chat || ''), beforeTs: Number(beforeTs) || 0, limit: Number(limit) || 500 });
 export const nativeLoadFullAll = () => invoke('loadFullAll', {});
 export const nativeCountFullMessages = async () => { const r = await invoke('countFullMessages', {}); return Number(r?.count) || 0; };
+// Checklist item 2 (native full-text search): search the native store (returns [{ id, chat }] newest-first), and the
+// one-time index backfill for messages stored before the index existed (entries = [{ id, text }]).
+export const nativeSearchFullMessages = async (query, limit) => { const r = await invoke('searchFullMessages', { query: String(query ?? ''), limit: Number(limit) || 200 }); return Array.isArray(r?.results) ? r.results : []; };
+export const nativeReindexFullMessages = async (entries) => { const r = await invoke('reindexFullMessagesSearch', { entries: Array.isArray(entries) ? entries : [] }); return Number(r?.updated) || 0; };
 // Uploads in progress: { count, label, progress (0-100) }; count 0 ends the "Sending…" foreground service.
 export const nativeSetUploads = (state) => invoke('setUploads', state);
 // Android Keystore sealing for the local data key (src/secureStorage.js): { sealed } / { value }, null outside the app.

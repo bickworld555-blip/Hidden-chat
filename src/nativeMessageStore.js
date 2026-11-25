@@ -12,7 +12,16 @@ import {
   nativeLoadFullAll,
   nativeLoadFullOlder,
   nativeLoadFullRecent,
+  nativeReindexFullMessages,
+  nativeSearchFullMessages,
 } from './native.js';
+// The same searchable-text extraction the sqlite FTS uses, so native and sqlite search match (ciphertext/structured
+// payloads contribute only an attachment name). Native keeps `json` opaque, so JS supplies this text for the index.
+import { searchableText } from './sqliteMessageDb.js';
+import { deviceStorage } from './deviceStorage.js';
+
+// Bumped if the searchable-text rule changes, forcing a one-time reindex of already-stored rows.
+const SEARCH_INDEX_VERSION = 1;
 
 // The ordering key, identical to messageDb.timeOf: epoch ms from `timestamp`, or 0 when it has none (e.g. a group
 // message keyed by createdAt) — the same value the IndexedDB/SQLite stores index on, so paging matches.
@@ -41,6 +50,30 @@ function parseList(list) {
  * NativeStore is single-account (adoptOwner wipes on account change), so the open database is already this account's.
  */
 export function createNativeMessageStore() {
+  // The one-time index backfill for messages stored before the FTS index existed, per account (idempotent, marked in
+  // deviceStorage). Going-forward writes already carry `text`, so this only has to run once after the upgrade.
+  const indexed = new Map(); // owner -> Promise
+  function ensureIndex(owner) {
+    if (!indexed.has(owner)) {
+      indexed.set(owner, (async () => {
+        const marker = `native-search-indexed:${owner}:${SEARCH_INDEX_VERSION}`;
+        try {
+          if (deviceStorage.getItem(marker)) return;
+          const all = await nativeLoadFullAll(); // { chats: { chatId: [jsonString…] } }
+          const entries = [];
+          for (const list of Object.values(all?.chats ?? {})) {
+            for (const message of parseList(list)) if (message?.id) entries.push({ id: String(message.id), text: searchableText(message) || '' });
+          }
+          for (let start = 0; start < entries.length; start += 500) await nativeReindexFullMessages(entries.slice(start, start + 500));
+          deviceStorage.setItem(marker, String(Date.now()));
+        } catch (error) {
+          indexed.delete(owner); // a failure retries next time rather than leaving search half-indexed
+          throw error;
+        }
+      })());
+    }
+    return indexed.get(owner);
+  }
   return {
     /** Writes changed messages and removes deleted ones: puts = [{ chat, message }], deletes = [id], clearChats = [chat]. */
     async apply(owner, { puts = [], deletes = [], clearChats = [] } = {}) {
@@ -48,7 +81,8 @@ export function createNativeMessageStore() {
       const rows = [];
       for (const { chat, message } of puts) {
         if (!message?.id) continue;
-        rows.push({ chat, id: message.id, ts: timeOf(message), json: JSON.stringify(message) });
+        // `text` is the searchable words for the native FTS index ("" for ciphertext/structured payloads).
+        rows.push({ chat, id: message.id, ts: timeOf(message), json: JSON.stringify(message), text: searchableText(message) || '' });
       }
       // Rejects on a native write failure, so store.js treats the batch as not-yet-saved (kept in memory, retried, not acked).
       await nativeApplyFullMessages({ puts: rows, deletes, clearChats });
@@ -80,8 +114,14 @@ export function createNativeMessageStore() {
       return nativeCountFullMessages();
     },
 
-    // No native full-text search yet: callers fall back to null (no match) rather than a slow full scan. A later
-    // increment can add an FTS index to NativeStore.full_messages if search on the native path is needed.
+    /** Full-text search over the native store, newest-first: [{ id, chat }] (the same shape sqlite search returns).
+     *  Backfills the index once per account before the first search so pre-upgrade messages are found too. */
+    async search(owner, query, limit = 200) {
+      if (!String(query ?? '').trim()) return [];
+      await ensureIndex(owner);
+      return nativeSearchFullMessages(query, limit);
+    },
+
     close() {},
   };
 }

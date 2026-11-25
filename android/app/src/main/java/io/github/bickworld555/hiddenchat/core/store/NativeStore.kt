@@ -48,8 +48,10 @@ data class MessageRecord @JvmOverloads constructor(
     val linkPreview: String = "",
 )
 
-/** One row of the authoritative message store (checklist item 2): a message's full JSON, keyed by (chatId, id), ts in ms. */
-data class FullMessage(val chatId: String, val id: String, val ts: Long, val json: String)
+/** One row of the authoritative message store (checklist item 2): a message's full JSON, keyed by (chatId, id), ts in ms.
+ *  [text] is the readable words for the search index (provided by JS — src/sqliteMessageDb.js searchableText — since
+ *  native keeps `json` opaque and never parses it); "" for ciphertext/structured payloads that are not searchable. */
+data class FullMessage @JvmOverloads constructor(val chatId: String, val id: String, val ts: Long, val json: String, val text: String = "")
 
 /**
  * Where the native encryption core (CryptoCore) keeps its records between calls: this device's identity, prekeys,
@@ -65,7 +67,7 @@ data class FullMessage(val chatId: String, val id: String, val ts: Long, val jso
  * One operation at a time: [exclusive] holds a lock so a session is read, advanced and written back as one step,
  * matching the web protocol's serialised queue.
  */
-class NativeStore private constructor(private val db: SQLiteDatabase) : KeyRecords {
+class NativeStore private constructor(private val db: SQLiteDatabase, private val ftsAvailable: Boolean) : KeyRecords {
     private val lock = ReentrantLock()
 
     // Bumped whenever the UI-facing projections (chats / messages) change, so the native UI can observe the store as a
@@ -112,7 +114,7 @@ class NativeStore private constructor(private val db: SQLiteDatabase) : KeyRecor
     }
 
     /** Forgets every record (sign-out): the core's identity, sessions and keys all go, and the mirrored chat list. */
-    override fun clear() { exclusive { db.execSQL("DELETE FROM records"); db.execSQL("DELETE FROM chats"); db.execSQL("DELETE FROM contacts"); db.execSQL("DELETE FROM chat_messages"); db.execSQL("DELETE FROM full_messages"); bump() } }
+    override fun clear() { exclusive { db.execSQL("DELETE FROM records"); db.execSQL("DELETE FROM chats"); db.execSQL("DELETE FROM contacts"); db.execSQL("DELETE FROM chat_messages"); db.execSQL("DELETE FROM full_messages"); if (ftsAvailable) db.execSQL("DELETE FROM full_messages_fts"); bump() } }
 
     /**
      * Replaces the mirrored chat list the native UI reads (Step 5 data seam), preserving the given order. The web app
@@ -357,17 +359,83 @@ class NativeStore private constructor(private val db: SQLiteDatabase) : KeyRecor
     // --- authoritative full-message store (checklist item 2): the WebView's messageStore backend ----------------------
     // Native treats `json` as an opaque blob (round-tripped, never parsed), so it stays decoupled from the message shape.
 
-    /** Applies one messageStore diff atomically: clear whole chats, delete by id (any chat), then upsert full rows. */
+    /** Applies one messageStore diff atomically: clear whole chats, delete by id (any chat), then upsert full rows.
+     *  Keeps the search index (search_text + the FTS5 row) in step with each change. */
     fun applyFullMessages(puts: List<FullMessage>, deletes: List<String>, clearChats: List<String>) = exclusive {
-        for (chat in clearChats) db.execSQL("DELETE FROM full_messages WHERE chat_id = ?", arrayOf(chat))
-        for (id in deletes) db.execSQL("DELETE FROM full_messages WHERE id = ?", arrayOf(id))
+        for (chat in clearChats) {
+            if (ftsAvailable) db.execSQL("DELETE FROM full_messages_fts WHERE rowid IN (SELECT rowid FROM full_messages WHERE chat_id = ?)", arrayOf(chat))
+            db.execSQL("DELETE FROM full_messages WHERE chat_id = ?", arrayOf(chat))
+        }
+        for (id in deletes) {
+            if (ftsAvailable) db.execSQL("DELETE FROM full_messages_fts WHERE rowid IN (SELECT rowid FROM full_messages WHERE id = ?)", arrayOf(id))
+            db.execSQL("DELETE FROM full_messages WHERE id = ?", arrayOf(id))
+        }
         for (m in puts) {
             db.execSQL(
-                "INSERT INTO full_messages(chat_id, id, ts, json) VALUES(?, ?, ?, ?) " +
-                    "ON CONFLICT(chat_id, id) DO UPDATE SET ts = excluded.ts, json = excluded.json",
-                arrayOf(m.chatId, m.id, m.ts, m.json),
+                "INSERT INTO full_messages(chat_id, id, ts, json, search_text) VALUES(?, ?, ?, ?, ?) " +
+                    "ON CONFLICT(chat_id, id) DO UPDATE SET ts = excluded.ts, json = excluded.json, search_text = excluded.search_text",
+                arrayOf(m.chatId, m.id, m.ts, m.json, m.text),
             )
+            syncFtsRow(m.chatId, m.id, m.text)
         }
+    }
+
+    /** Re-points the FTS5 row for (chatId,id) at the row's current search_text (drop the old, add the new). No-op
+     *  without FTS5 (the LIKE fallback reads search_text directly). The full_messages row must already be written. */
+    private fun syncFtsRow(chatId: String, id: String, text: String) {
+        if (!ftsAvailable) return
+        db.execSQL("DELETE FROM full_messages_fts WHERE rowid = (SELECT rowid FROM full_messages WHERE chat_id = ? AND id = ?)", arrayOf(chatId, id))
+        if (text.isNotEmpty()) db.execSQL("INSERT INTO full_messages_fts(rowid, text) SELECT rowid, search_text FROM full_messages WHERE chat_id = ? AND id = ?", arrayOf(chatId, id))
+    }
+
+    /**
+     * Full-text search over the stored messages (checklist item 2), newest-first, as [(id, chatId)] pairs — the same
+     * shape sqlite search returns ({id, chat}). Uses the FTS5 index when the build has it, else a LIKE scan of the
+     * JS-supplied search_text (never the opaque json, so ciphertext never matches). Empty/blank query → no results.
+     */
+    fun searchFullMessages(query: String, limit: Int): List<Pair<String, String>> = exclusive {
+        val words = query.trim().split(Regex("\\s+")).filter { it.isNotEmpty() }.take(8)
+        if (words.isEmpty()) return@exclusive emptyList()
+        val cap = if (limit in 1..1000) limit else 200
+        val out = ArrayList<Pair<String, String>>()
+        if (ftsAvailable) {
+            // Prefix match per word (mirrors sqlite): each word quoted (FTS operators neutralized) then a trailing `*`.
+            val match = words.joinToString(" ") { "\"" + it.replace("\"", "\"\"") + "\"*" }
+            try {
+                db.rawQuery(
+                    "SELECT m.id, m.chat_id FROM full_messages_fts f JOIN full_messages m ON m.rowid = f.rowid " +
+                        "WHERE full_messages_fts MATCH ? ORDER BY m.ts DESC LIMIT $cap",
+                    arrayOf(match),
+                ).use { c -> while (c.moveToNext()) out.add(c.getString(0) to c.getString(1)) }
+                return@exclusive out
+            } catch (bad: Throwable) {
+                // A malformed FTS expression (should not happen after quoting) falls through to the LIKE scan.
+                android.util.Log.w("NativeStore", "FTS match failed; LIKE fallback", bad)
+                out.clear()
+            }
+        }
+        val like = "%" + words.joinToString(" ") + "%"
+        db.rawQuery(
+            "SELECT id, chat_id FROM full_messages WHERE search_text <> '' AND search_text LIKE ? ORDER BY ts DESC LIMIT $cap",
+            arrayOf(like),
+        ).use { c -> while (c.moveToNext()) out.add(c.getString(0) to c.getString(1)) }
+        out
+    }
+
+    /**
+     * Backfills the search index for messages stored before the index existed (JS supplies each id's searchable text,
+     * since native keeps `json` opaque): sets search_text and re-syncs the FTS row per id. Idempotent; ids not stored
+     * are skipped. Returns how many rows were updated. Ids are globally unique, so a message is matched by id alone.
+     */
+    fun reindexSearchText(entries: List<Pair<String, String>>): Int = exclusive {
+        var updated = 0
+        for ((id, text) in entries) {
+            val chatId = db.rawQuery("SELECT chat_id FROM full_messages WHERE id = ? LIMIT 1", arrayOf(id)).use { if (it.moveToNext()) it.getString(0) else null } ?: continue
+            db.execSQL("UPDATE full_messages SET search_text = ? WHERE chat_id = ? AND id = ?", arrayOf(text, chatId, id))
+            syncFtsRow(chatId, id, text)
+            updated++
+        }
+        updated
     }
 
     // ts/limit are internal numbers (not user text), inlined so the INTEGER column compares as a number (rawQuery binds
@@ -427,6 +495,7 @@ class NativeStore private constructor(private val db: SQLiteDatabase) : KeyRecor
             db.execSQL("DELETE FROM contacts")
             db.execSQL("DELETE FROM chat_messages")
             db.execSQL("DELETE FROM full_messages")
+            if (ftsAvailable) db.execSQL("DELETE FROM full_messages_fts")
             set(OWNER, account)
             bump()
         }
@@ -488,6 +557,7 @@ class NativeStore private constructor(private val db: SQLiteDatabase) : KeyRecor
                 file.absolutePath, key, null,
                 SQLiteDatabase.OPEN_READWRITE or SQLiteDatabase.CREATE_IF_NECESSARY, null,
             )
+            var fts = false // set once the full_messages FTS5 index is confirmed available (below)
             try {
                 // PRAGMA journal_mode returns the new mode, so net.zetetic's SQLCipher requires rawQuery, not execSQL
                 // (execSQL rejects result-returning statements). A wrong key throws here; CREATE TABLE returns nothing.
@@ -531,11 +601,24 @@ class NativeStore private constructor(private val db: SQLiteDatabase) : KeyRecor
                 // messageStore backend; the chat_messages projection above stays the native-UI display seam.
                 db.execSQL("CREATE TABLE IF NOT EXISTS full_messages (chat_id TEXT NOT NULL, id TEXT NOT NULL, ts INTEGER NOT NULL DEFAULT 0, json TEXT NOT NULL, PRIMARY KEY (chat_id, id))")
                 db.execSQL("CREATE INDEX IF NOT EXISTS full_messages_order ON full_messages (chat_id, ts)")
+                // Checklist item 2 (native full-text search): the readable words of each full_messages row, supplied by
+                // JS (searchableText — native keeps `json` opaque), so search needs no scan of ciphertext. '' when a
+                // message has nothing searchable. A no-op once present.
+                try { db.execSQL("ALTER TABLE full_messages ADD COLUMN search_text TEXT NOT NULL DEFAULT ''") } catch (ignored: Throwable) { /* already present */ }
+                // An FTS5 index over search_text, rowid-linked to full_messages (like src/sqliteMessageDb.js messages_fts).
+                // SQLCipher may be built without FTS5; if the CREATE fails, search falls back to a LIKE scan of search_text.
+                fts = try {
+                    db.execSQL("CREATE VIRTUAL TABLE IF NOT EXISTS full_messages_fts USING fts5(text)")
+                    true
+                } catch (noFts: Throwable) {
+                    android.util.Log.w("NativeStore", "FTS5 unavailable; search uses a LIKE scan", noFts)
+                    false
+                }
             } catch (bad: Throwable) {
                 try { db.close() } catch (ignored: Throwable) { /* already unusable */ }
                 throw bad
             }
-            return NativeStore(db)
+            return NativeStore(db, fts)
         }
 
         /** Removes the database (and its WAL/SHM side files) and its sealed key, so the next open starts clean. */

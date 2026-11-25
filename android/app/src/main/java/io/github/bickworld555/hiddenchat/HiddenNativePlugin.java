@@ -1670,7 +1670,8 @@ public class HiddenNativePlugin extends Plugin {
                     String mid = o.optString("id", "");
                     String json = o.optString("json", "");
                     if (chat.isEmpty() || mid.isEmpty() || json.isEmpty()) continue;
-                    puts.add(new io.github.bickworld555.hiddenchat.core.store.FullMessage(chat, mid, o.optLong("ts", 0L), json));
+                    // `text` is the JS-computed searchable words for the FTS index ("" when nothing is searchable).
+                    puts.add(new io.github.bickworld555.hiddenchat.core.store.FullMessage(chat, mid, o.optLong("ts", 0L), json, o.optString("text", "")));
                 } catch (org.json.JSONException ignored) { /* skip a malformed row */ }
             }
         }
@@ -1784,6 +1785,56 @@ public class HiddenNativePlugin extends Plugin {
         call.resolve(result);
     }
 
+    /** Full-text search over the native store: { query, limit } -> { results: [{ id, chat }] } newest-first (item 2). */
+    @PluginMethod
+    public void searchFullMessages(PluginCall call) {
+        io.github.bickworld555.hiddenchat.core.store.NativeStore store =
+            io.github.bickworld555.hiddenchat.core.store.NativeStore.Companion.get(getContext());
+        if (store == null) { call.reject("no-store"); return; }
+        String query = call.getString("query", "");
+        int limit = call.getInt("limit", 200);
+        java.util.List<kotlin.Pair<String, String>> hits = store.searchFullMessages(query, limit);
+        JSArray results = new JSArray();
+        for (kotlin.Pair<String, String> hit : hits) {
+            JSObject row = new JSObject();
+            row.put("id", hit.getFirst());
+            row.put("chat", hit.getSecond());
+            results.put(row);
+        }
+        JSObject result = new JSObject();
+        result.put("results", results);
+        call.resolve(result);
+    }
+
+    /** Backfills the native search index for already-stored messages: { entries: [{ id, text }] } -> { updated }. The
+     *  WebView supplies each id's searchable text (native keeps json opaque); run once per account before native search. */
+    @PluginMethod
+    public void reindexFullMessagesSearch(PluginCall call) {
+        io.github.bickworld555.hiddenchat.core.store.NativeStore store =
+            io.github.bickworld555.hiddenchat.core.store.NativeStore.Companion.get(getContext());
+        if (store == null) { call.reject("no-store"); return; }
+        java.util.List<kotlin.Pair<String, String>> entries = new java.util.ArrayList<>();
+        JSArray arr = call.getArray("entries");
+        if (arr != null) {
+            for (int i = 0; i < arr.length(); i++) {
+                try {
+                    org.json.JSONObject o = arr.getJSONObject(i);
+                    String id = o.optString("id", "");
+                    if (id.isEmpty()) continue;
+                    entries.add(new kotlin.Pair<>(id, o.optString("text", "")));
+                } catch (org.json.JSONException ignored) { /* skip a malformed row */ }
+            }
+        }
+        try {
+            int updated = store.reindexSearchText(entries);
+            JSObject result = new JSObject();
+            result.put("updated", updated);
+            call.resolve(result);
+        } catch (Exception failed) {
+            call.reject("reindex-failed", failed);
+        }
+    }
+
     /**
      * The per-account rollout gate for native call media: the native path must be active for this account AND native
      * calls must be switched on for this install. Default OFF (separate from the E2E native flag), so an account on the
@@ -1820,6 +1871,26 @@ public class HiddenNativePlugin extends Plugin {
     public void setNativeUiRollout(PluginCall call) {
         boolean enabled = Boolean.TRUE.equals(call.getBoolean("enabled", false));
         getContext().getSharedPreferences("hm_native_ui", Context.MODE_PRIVATE).edit().putBoolean("enabled", enabled).apply();
+        call.resolve();
+    }
+
+    /**
+     * Checklist item 2 (authoritative store finalization): whether this install writes ONLY the native store, retiring
+     * the legacy sqlite dual-write. DEFAULT OFF — production keeps dual-writing (sqlite stays the rollback) until a
+     * device test turns this on after extended verification. Only meaningful while the native store is authoritative
+     * (nativeUiAllowed); store.js still reads native-first with a sqlite fall-back either way.
+     */
+    @PluginMethod
+    public void nativeSoleStoreAllowed(PluginCall call) {
+        boolean on = getContext().getSharedPreferences("hm_native_ui", Context.MODE_PRIVATE).getBoolean("sole_store", false);
+        call.resolve(new JSObject().put("allowed", on));
+    }
+
+    /** Turn native-sole-store (retire sqlite writes) on/off for this install. Default off; a device test sets it. */
+    @PluginMethod
+    public void setNativeSoleStore(PluginCall call) {
+        boolean on = Boolean.TRUE.equals(call.getBoolean("on", false));
+        getContext().getSharedPreferences("hm_native_ui", Context.MODE_PRIVATE).edit().putBoolean("sole_store", on).apply();
         call.resolve();
     }
 
