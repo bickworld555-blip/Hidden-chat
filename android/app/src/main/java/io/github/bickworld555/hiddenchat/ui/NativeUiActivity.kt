@@ -13,6 +13,8 @@ import androidx.compose.runtime.setValue
 import io.github.bickworld555.hiddenchat.NativeForegroundSocket
 import io.github.bickworld555.hiddenchat.NativeSend
 import io.github.bickworld555.hiddenchat.NativeSendSocket
+import io.github.bickworld555.hiddenchat.NativeTyping
+import io.github.bickworld555.hiddenchat.NativeTypingSender
 import io.github.bickworld555.hiddenchat.NativeUiBridge
 import io.github.bickworld555.hiddenchat.core.store.NativeStore
 import io.github.bickworld555.hiddenchat.ui.theme.HiddenTheme
@@ -91,22 +93,35 @@ class NativeUiActivity : ComponentActivity() {
                         onOpenChat = { openChat = it },
                         onNewChat = { showNewChat = true },
                     )
-                    else -> ConversationScreen(
-                        current.name,
-                        messages,
-                        loading = loadingMessages && messages.isEmpty(),
-                        onBack = { openChat = null },
-                        // Fully-native send (native device-list trust + sealing + native socket) when possible; falls
-                        // back to the web app's E2E relay when the native socket is closed (foreground) or the native
-                        // core is unavailable. Off the main thread (it fetches device lists + encrypts).
-                        onSend = { text ->
-                            val chatId = current.id
-                            Thread({
-                                val sent = try { NativeSend.sendText(applicationContext, chatId, text) } catch (ignored: Throwable) { false }
-                                if (!sent) NativeUiBridge.requestSend(chatId, text)
-                            }, "native-send").start()
-                        },
-                    )
+                    else -> {
+                        // Checklist item 4 typing indicators: the peer's live "typing…" (receive) and announcing our own
+                        // (send). Direct chats only — groups (chat id "group:…") carry a groupId the native path does not
+                        // own yet. Both flow over the native-owned socket, so they are inert unless native owns it.
+                        val typing by NativeTyping.activity.collectAsState()
+                        val isGroup = current.id.startsWith("group:")
+                        val typingSender = remember(current.id) {
+                            NativeTypingSender(current.id) { frame -> NativeForegroundSocket.sendRawFrame(frame.toString()) }
+                        }
+                        androidx.compose.runtime.DisposableEffect(current.id) { onDispose { typingSender.stop() } }
+                        ConversationScreen(
+                            current.name,
+                            messages,
+                            loading = loadingMessages && messages.isEmpty(),
+                            onBack = { openChat = null },
+                            // Fully-native send (native device-list trust + sealing + native socket) when possible; falls
+                            // back to the web app's E2E relay when the native socket is closed (foreground) or the native
+                            // core is unavailable. Off the main thread (it fetches device lists + encrypts).
+                            onSend = { text ->
+                                val chatId = current.id
+                                Thread({
+                                    val sent = try { NativeSend.sendText(applicationContext, chatId, text) } catch (ignored: Throwable) { false }
+                                    if (!sent) NativeUiBridge.requestSend(chatId, text)
+                                }, "native-send").start()
+                            },
+                            typingLabel = if (isGroup) "" else NativeTyping.labelFor(typing[current.id]),
+                            onDraft = { text -> if (!isGroup) { if (text.isBlank()) typingSender.stop() else typingSender.typed() } },
+                        )
+                    }
                 }
             }
         }

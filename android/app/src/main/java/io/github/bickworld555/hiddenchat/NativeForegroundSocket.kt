@@ -142,6 +142,7 @@ object NativeForegroundSocket {
         wanted = false
         open = false
         pingTask?.cancel(false); pingTask = null
+        NativeTyping.clear() // the native UI is going away; drop any lingering "typing…" so it can't reappear stale
         try { socket?.close(1000, "native ui backgrounded") } catch (ignored: Throwable) { /* already gone */ }
         socket = null
     }
@@ -173,7 +174,18 @@ object NativeForegroundSocket {
         when (Json.string(event["type"])) {
             "pong", "connection:ready" -> { /* liveness / handshake — nothing to forward */ }
             "message:new", "group:message" -> onIncomingMessage(event)
-            // Every other frame (call:*, message:ack, message:read, typing:*, message:reaction, presence:*, error,
+            // Checklist item 4: a direct peer's "typing…"/"recording…" — reflect it in the native UI (NativeTyping) AND
+            // keep forwarding so the WebView's state stays consistent for when it resumes. Groups are not shown natively
+            // yet (they carry groupId); the WebView still handles those.
+            "presence:typing" -> {
+                val from = Json.string(event["userId"])
+                if (from != null && Json.string(event["groupId"]) == null) {
+                    val active = (event["active"] as? Boolean) == true
+                    NativeTyping.note(from, if (!active) null else if (Json.string(event["kind"]) == "recording") "recording" else "typing")
+                }
+                sink?.forward(text)
+            }
+            // Every other frame (call:*, message:ack, message:read, message:reaction, presence:update, error,
             // xmpp:wake, …) stays the WebView's job for now — hand it over untouched.
             else -> sink?.forward(text)
         }
@@ -190,6 +202,8 @@ object NativeForegroundSocket {
         // updateChatList=true: native owns the socket now, so it must refresh the chat-list preview/time/unread itself
         // (the WebView mirror is suspended). The conversation + unread already update via addMessage inside persist.
         if (!NativeDelivery.persist(context, event, delivery, updateChatList = true)) { android.util.Log.w("NFS", "incoming: persist failed"); return }
+        // A message arriving clears the sender's "typing…" in the native UI (store.js does the same on message:new).
+        if (delivery.groupId == null) NativeTyping.note(delivery.senderId, null)
         sendRawFrame(Json.stringify(Json.obj("type" to "message:delivered", "messageIds" to listOf(delivery.messageId))))
         sendRawFrame(Json.stringify(Json.obj("type" to "queue:ack", "messageIds" to listOf(delivery.messageId), "eventIds" to emptyList<String>())))
     }

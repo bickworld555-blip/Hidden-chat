@@ -44,13 +44,30 @@ data class MessageRowData(val mine: Boolean, val text: String, val time: String)
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ConversationScreen(title: String, messages: List<MessageRowData>, onBack: () -> Unit, onSend: (String) -> Unit = {}, loading: Boolean = false) {
+fun ConversationScreen(
+    title: String,
+    messages: List<MessageRowData>,
+    onBack: () -> Unit,
+    onSend: (String) -> Unit = {},
+    loading: Boolean = false,
+    // Checklist item 4: the peer's live activity ("typing…"/"recording audio…") shown under the name, and a callback on
+    // every edit of the message box so the native-owned socket can announce our own "typing…". Both default off/no-op.
+    typingLabel: String = "",
+    onDraft: (String) -> Unit = {},
+) {
     var draft by remember { mutableStateOf("") }
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
-                title = { Text(title, fontWeight = FontWeight.SemiBold, maxLines = 1) },
+                title = {
+                    Column {
+                        Text(title, fontWeight = FontWeight.SemiBold, maxLines = 1)
+                        if (typingLabel.isNotEmpty()) {
+                            Text(typingLabel, color = MaterialTheme.colorScheme.primary, fontSize = 12.sp, maxLines = 1)
+                        }
+                    }
+                },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Text("←", color = MaterialTheme.colorScheme.onSurface, fontSize = 22.sp)
@@ -69,18 +86,18 @@ fun ConversationScreen(title: String, messages: List<MessageRowData>, onBack: ()
             ) {
                 OutlinedTextField(
                     value = draft,
-                    onValueChange = { draft = it },
+                    // Each edit announces "typing…" to the peer (onDraft → the native-owned socket), item 4.
+                    onValueChange = { draft = it; onDraft(it) },
                     modifier = Modifier.weight(1f),
                     placeholder = { Text("Message") },
                     maxLines = 4,
-                    // Sending is not wired to the native send path yet (Step 5 follow-up); the field is display-only.
                     keyboardActions = KeyboardActions(onSend = {}),
                 )
                 IconButton(
-                    // Interim: the web app's audited E2E path seals + relays; the sent message returns via the mirror.
+                    // The native E2E path seals + relays; sending also stops our "typing…" (onDraft("")).
                     onClick = {
                         val text = draft.trim()
-                        if (text.isNotEmpty()) { onSend(text); draft = "" }
+                        if (text.isNotEmpty()) { onSend(text); draft = ""; onDraft("") }
                     },
                     enabled = draft.isNotBlank(),
                 ) {
