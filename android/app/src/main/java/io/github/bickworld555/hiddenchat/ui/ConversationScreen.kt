@@ -1163,13 +1163,12 @@ private fun MessageBubble(
                     // full-res viewer), a voice note shows a waveform player, a document shows a file card. Anything
                     // else (text, or media without a native bubble) falls back to the text label.
                     val media = message.media
-                    // Phase 5 stickers: a "sticker:<pack>/<id>" message renders as its big emoji + caption, not as text.
-                    val sticker = if (media == null) NativeStickers.parse(message.text) else null
-                    // Phase 5 view-once: the "viewonce:…" ref may arrive as the message text (received) or in the media
-                    // source (our own echo). Either renders the "① view once" bubble; a received one opens on tap.
+                    // Phase 5: stickers and view-once carry their raw ref in media.source (the projection classifies them
+                    // as "sticker"/"viewonce"). A sticker renders as its emoji; a view-once as the "① view once" bubble.
+                    val sticker = media?.source?.let { NativeStickers.parse(it) }
                     val viewOnceContent = when {
-                        io.github.bickworld555.hiddenchat.NativeViewOnce.isViewOnce(message.text) -> message.text
                         media != null && io.github.bickworld555.hiddenchat.NativeViewOnce.isViewOnce(media.source) -> media.source
+                        io.github.bickworld555.hiddenchat.NativeViewOnce.isViewOnce(message.text) -> message.text
                         else -> null
                     }
                     val showText = when {

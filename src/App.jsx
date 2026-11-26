@@ -26,26 +26,7 @@ import { applyGroupCall, withRunningCall } from './groupCalls.js';
 import { notificationNames } from './notificationNames.js';
 import { nativeClearSession, nativeWipeE2e, nativeEnableE2e, nativeRequestStartupPermissions, nativeSetSession, nativeShell, nativeStartBackground, nativeState, nativeStopBackground, nativeTakePendingCall, nativeMoveToBackground, nativeClearShare, nativeSetCallActive, nativeClearMessageNotifications, nativeClearMissedCalls, nativeTakeMessageActions, nativeTakeCallEvents, nativeSetSystemBarsTheme, nativeOpenSecret, nativePreviewKey, nativeBackgroundFetchDone, nativeScheduleUnsent, nativeE2eActive, nativeCallsAllowed, nativeSaveChats, nativeSaveContacts, nativeSaveMessages, nativeSaveMessagesBatch, nativeUiAllowed, nativeOpenUi, nativeTakeInbox, nativeWebViewSocketReleased, nativeRelaySend, nativeSocketOwnerActive, onNative } from './native.js';
 import { setNativeCallsEnabled } from './nativeRtc.js';
-
-// The media kind for the native bubble (voice|photo|video|gif|audio|doc) or '' — mirrors the native
-// MessagePreview.kindOf (android …/MessagePreview.java) so both delivery paths classify media the same way.
-function nativeMediaKind(content) {
-  if (typeof content !== 'string') return '';
-  if (content.startsWith('voice:') || content.startsWith('voice-opened:')) return 'voice';
-  if (content.startsWith('media:') || content.startsWith('emedia:')) {
-    let filename = '';
-    if (content.startsWith('emedia:')) filename = content.split(':').slice(3).join(':');
-    else { const i = content.indexOf(':', 6); filename = i < 0 ? '' : content.slice(i + 1); }
-    const dot = filename.lastIndexOf('.');
-    const ext = dot < 0 ? '' : filename.slice(dot + 1).toLowerCase();
-    if (ext === 'gif') return 'gif';
-    if (['jpg', 'jpeg', 'png', 'webp', 'bmp', 'avif', 'heic', 'heif', 'svg', 'tif', 'tiff'].includes(ext)) return 'photo';
-    if (['mp4', 'm4v', 'mov', 'webm', 'mkv', 'avi', '3gp'].includes(ext)) return 'video';
-    if (['mp3', 'm4a', 'aac', 'wav', 'ogg', 'oga', 'opus', 'flac', 'weba'].includes(ext)) return 'audio';
-    return 'doc';
-  }
-  return '';
-}
+import { nativeMediaKind } from './nativeMediaKind.js';
 
 // Step 5 data seam: the projection of a chat's messages the native conversation screen shows (last 60, { mine, text,
 // time }). Shared by the active-chat mirror and the native-UI send handler.
