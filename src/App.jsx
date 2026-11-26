@@ -396,9 +396,18 @@ export default function App() {
   // path seals + relays it, then that chat's messages are mirrored back so the native conversation updates.
   useEffect(() => {
     if (!nativeShell()) return undefined;
-    return onNative('nativeUiSend', async ({ chatId, text }) => {
-      if (!chatId || typeof text !== 'string' || !text.trim()) return;
-      try { await useChatStore.getState().sendMessage(chatId, text.trim()); } catch { /* send failed; nothing to mirror */ }
+    return onNative('nativeUiSend', async ({ chatId, text, content, thumb }) => {
+      if (!chatId) return;
+      try {
+        if (typeof content === 'string' && content) {
+          // Phase 5 native media: the native side already encrypted + uploaded the file; seal the "emedia:" ref and
+          // relay it (with its preview thumbnail), with no re-upload, through the same audited E2E send as text.
+          await useChatStore.getState().sendMessage(chatId, content, thumb ? { thumb } : {});
+        } else {
+          if (typeof text !== 'string' || !text.trim()) return;
+          await useChatStore.getState().sendMessage(chatId, text.trim());
+        }
+      } catch { /* send failed; nothing to mirror */ }
       const store = useChatStore.getState();
       nativeSaveMessages(chatId, nativeMessageProjection(store.messages[chatId], store.userId)).catch(() => {});
     });

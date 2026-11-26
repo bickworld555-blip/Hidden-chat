@@ -3,7 +3,10 @@ package io.github.bickworld555.hiddenchat.ui
 import android.os.Bundle
 import androidx.fragment.app.FragmentActivity
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -11,6 +14,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import io.github.bickworld555.hiddenchat.NativeForegroundSocket
+import io.github.bickworld555.hiddenchat.NativeMediaSend
 import io.github.bickworld555.hiddenchat.NativeSecurity
 import io.github.bickworld555.hiddenchat.NativeSend
 import io.github.bickworld555.hiddenchat.NativeSendSocket
@@ -64,6 +68,14 @@ class NativeUiActivity : FragmentActivity() {
                 var accountId by remember { mutableStateOf("") }
                 var secureScreen by remember { mutableStateOf(NativeSecurity.secureScreenOn(applicationContext)) }
                 var appLock by remember { mutableStateOf(NativeSecurity.appLockOn(applicationContext)) }
+                // Phase 5: the system photo picker (no runtime permission). The picked photo is encrypted, uploaded and
+                // sent to the open chat off the main thread (NativeMediaSend).
+                val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { picked ->
+                    val chatId = openChat?.id
+                    if (picked != null && chatId != null) {
+                        Thread({ NativeMediaSend.sendPhoto(applicationContext, chatId, picked) }, "native-photo").start()
+                    }
+                }
 
                 LaunchedEffect(Unit) {
                     accountId = withContext(Dispatchers.IO) { runCatching { store?.owner() }.getOrNull() ?: "" }
@@ -206,6 +218,8 @@ class NativeUiActivity : FragmentActivity() {
                                     if (!sent) NativeUiBridge.requestSend(chatId, text) // WebView fallback (no reply target)
                                 }, "native-send").start()
                             },
+                            // Phase 5: pick + send a photo. Direct chats only (the native media path does not own groups yet).
+                            onAttach = { if (!isGroup) photoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
                             typingLabel = if (isGroup) "" else NativeTyping.labelFor(typing[current.id]),
                             onDraft = { text ->
                                 if (!isGroup) { if (text.isBlank()) typingSender.stop() else typingSender.typed() }

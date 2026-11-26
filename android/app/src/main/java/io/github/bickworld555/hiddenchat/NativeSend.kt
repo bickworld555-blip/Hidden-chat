@@ -69,6 +69,34 @@ object NativeSend {
     }
 
     /**
+     * Phase 5 media: sends an already-uploaded, encrypted attachment (its "emedia:" ref) to [peerId], sealed exactly
+     * like a text message (same device-list trust + ratchet). [thumb] is a small JPEG data URL shown in the bubble at
+     * once (inner `th`, as the web does). Requires the native crypto core (sealTo) and an open send socket; returns
+     * false otherwise, so the caller falls back to the WebView send path. Echoes the sent photo locally.
+     */
+    fun sendMedia(context: Context, peerId: String, content: String, thumb: String?, replyToId: String? = null): Boolean {
+        if (!NativeForegroundSocket.isOnline() && !NativeSendSocket.canSend() && !NativeRelay.canSend()) return false
+        val inner = linkedMapOf<String, Any?>()
+        if (!thumb.isNullOrEmpty()) inner["th"] = thumb // item 5: the carried preview thumbnail, same inner field as the web
+        inner["c"] = content
+        if (!replyToId.isNullOrEmpty()) inner["r"] = replyToId
+        val envelope = sealTo(context, peerId, inner) ?: return false
+        val messageId = UUID.randomUUID().toString()
+        val message = org.json.JSONObject().put("id", messageId).put("receiverId", peerId).put("content", envelope)
+        if (!NativeForegroundSocket.sendMessage(message) && !NativeSendSocket.sendMessage(message) && !NativeRelay.sendMessage(message)) return false
+        val store = NativeStore.get(context)
+        val ts = System.currentTimeMillis()
+        val time = java.text.SimpleDateFormat("h:mm a", java.util.Locale.US).format(java.util.Date(ts)).lowercase(java.util.Locale.US)
+        try {
+            store?.addMessage(peerId, messageId, true, "", time, ts)
+            store?.setMedia(messageId, "photo", thumb ?: "", 0, content)
+            store?.raiseStatusById(messageId, "sent")
+            if (!replyToId.isNullOrEmpty()) store?.setReplyTo(peerId, messageId, replyToId)
+        } catch (ignored: Throwable) { /* echo only */ }
+        return true
+    }
+
+    /**
      * Item 4 reactions (SEND): seals "reaction:<emoji>" to [peerId] with the SAME trusted device list + ratchet as a
      * message (web src/e2e: transmitReaction → sealDirect), and sends it as `message:reaction { messageId, emoji }` over
      * the native-owned online socket. [emoji] null removes the reaction (sent unsealed, as the web/server expect).

@@ -59,6 +59,30 @@ class NativeServer private constructor(private val origin: String, private val t
         }
     }
 
+    /**
+     * Uploads an already-encrypted attachment in one request (mirrors upload.js singleAttempt, encrypted path): POST
+     * the ciphertext to /api/v1/media for one direct chat, under the neutral name "encrypted.bin". Returns the server's
+     * media id, or null on failure. Photos fit a single request; chunked/direct-bucket uploads are not needed here.
+     */
+    fun uploadMedia(receiverId: String, ciphertext: ByteArray): String? {
+        val octet = "application/octet-stream".toMediaType()
+        val url = origin + "/api/v1/media?receiverId=" + java.net.URLEncoder.encode(receiverId, "UTF-8")
+        val request = Request.Builder().url(url)
+            .post(ciphertext.toRequestBody(octet))
+            .header("Authorization", "Bearer $token")
+            .header(ClientVersion.HEADER, ClientVersion.PROTOCOL.toString())
+            .header("X-File-Name", java.net.URLEncoder.encode("encrypted.bin", "UTF-8"))
+            .build()
+        return try {
+            client.newCall(request).execute().use { response ->
+                val body = response.body
+                if (!response.isSuccessful || body == null) null else Json.string(Json.map(Json.parse(body.string()))?.get("id"))
+            }
+        } catch (failed: Exception) {
+            null
+        }
+    }
+
     private fun request(builder: Request.Builder): Map<String, Any?>? {
         val request = builder
             .header("Authorization", "Bearer $token")

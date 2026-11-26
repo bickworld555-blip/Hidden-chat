@@ -157,6 +157,55 @@ object NativeMediaCrypto {
         return plain
     }
 
+    /** What [encrypt] produced: the ciphertext to upload and the descriptor that travels inside the message. */
+    class Sealed(val ciphertext: ByteArray, val descriptor: LinkedHashMap<String, Any?>)
+
+    /**
+     * AES-256-GCM chunked encrypt — the exact inverse of [decrypt] and a faithful port of mediaCrypto.js encryptMedia
+     * (v1: HKDF-SHA256 of a fresh 32-byte media key → AES key + 12-byte base nonce; 1 MiB chunks; the last chunk is
+     * flagged so a truncation fails). Reuses the same derivation and [chunkNonce] the proven decrypt uses, so a native
+     * encrypt round-trips through decrypt (and through the web). [type] is the original MIME type.
+     */
+    fun encrypt(plain: ByteArray, type: String): Sealed {
+        val mediaKey = ByteArray(32).also { java.security.SecureRandom().nextBytes(it) }
+        val derived = Primitives.hkdfRaw(mediaKey, ByteArray(32), INFO, 44)
+        val aesKey = SecretKeySpec(derived.copyOfRange(0, 32), "AES")
+        val baseNonce = derived.copyOfRange(32, 44)
+        val chunk = 1024 * 1024
+        val chunks = maxOf(1, (plain.size + chunk - 1) / chunk)
+        val out = ByteArrayOutputStream(plain.size + chunks * TAG_BYTES)
+        for (index in 0 until chunks) {
+            val start = index * chunk
+            val part = plain.copyOfRange(start, minOf(start + chunk, plain.size))
+            val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+            cipher.init(Cipher.ENCRYPT_MODE, aesKey, GCMParameterSpec(TAG_BYTES * 8, chunkNonce(baseNonce, index)))
+            cipher.updateAAD(byteArrayOf(if (index == chunks - 1) 1 else 0))
+            out.write(cipher.doFinal(part))
+        }
+        val ciphertext = out.toByteArray()
+        val descriptor = linkedMapOf<String, Any?>(
+            "v" to VERSION,
+            "key" to Base64.encodeToString(mediaKey, Base64.NO_WRAP),
+            "size" to plain.size,
+            "chunk" to chunk,
+            "sha256" to sha256Hex(plain),
+            "encSha256" to sha256Hex(ciphertext),
+            "type" to type,
+        )
+        return Sealed(ciphertext, descriptor)
+    }
+
+    private fun sha256Hex(bytes: ByteArray): String =
+        java.security.MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
+
+    /** base64url(JSON) with no padding — matches mediaCrypto.js packDescriptor (so unpackDescriptor round-trips). */
+    fun packDescriptor(descriptor: Map<String, Any?>): String =
+        Base64.encodeToString(Json.stringify(descriptor).toByteArray(Charsets.UTF_8), Base64.NO_WRAP or Base64.URL_SAFE or Base64.NO_PADDING)
+
+    /** "emedia:<mediaId>:<packed descriptor>:<filename>" — matches mediaCrypto.js encodeEncryptedMediaRef. */
+    fun encodeRef(mediaId: String, descriptor: Map<String, Any?>, filename: String): String =
+        "emedia:$mediaId:${packDescriptor(descriptor)}:$filename"
+
     // base nonce with the chunk index XORed into its last 4 bytes (big-endian), matching mediaCrypto.js chunkNonce.
     private fun chunkNonce(base: ByteArray, index: Int): ByteArray {
         val nonce = base.copyOf()

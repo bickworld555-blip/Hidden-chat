@@ -25,6 +25,17 @@ object NativeUiBridge {
         emitter?.emit("nativeUiSend", mapOf("chatId" to chatId, "text" to text))
     }
 
+    /**
+     * Phase 5 media: ask the web app to send an already-uploaded, encrypted attachment (its "emedia:" ref) to `chatId`
+     * through the same audited end-to-end send path, carrying the preview thumbnail (inner `th`). The native side did
+     * the encryption + upload; the web app only seals the ref + relays it (no re-upload). Used when the native seal
+     * path (NativeSend.sendMedia) is unavailable because the native crypto core is off (the default today).
+     */
+    fun requestSendMedia(chatId: String, content: String, thumb: String?) {
+        if (chatId.isEmpty() || content.isEmpty()) return
+        emitter?.emit("nativeUiSend", mapOf("chatId" to chatId, "content" to content, "thumb" to (thumb ?: "")))
+    }
+
     /** Ask the web app to load `chatId`'s message window (if not loaded) and mirror it, so the native conversation
      *  shows messages even for a chat the start-up window did not reach. */
     fun requestMessages(chatId: String) {

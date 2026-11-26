@@ -125,6 +125,8 @@ fun ConversationScreen(
     onBack: () -> Unit,
     // Item 4 replies: the second argument is the id of the message being replied to, or null for a normal send.
     onSend: (String, String?) -> Unit = { _, _ -> },
+    // Phase 5 media: tapping the attach button asks the host to pick + send a photo (encrypt + upload + send). No-op default.
+    onAttach: () -> Unit = {},
     loading: Boolean = false,
     // Checklist item 4: the peer's live activity ("typing…"/"recording audio…") shown under the name, and a callback on
     // every edit of the message box so the native-owned socket can announce our own "typing…". Both default off/no-op.
@@ -266,6 +268,12 @@ fun ConversationScreen(
                     modifier = Modifier.fillMaxWidth().padding(8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
+                    // Phase 5: attach + send a photo (native encrypt + upload). Hidden while editing an existing message.
+                    if (editingMessage == null) {
+                        IconButton(onClick = onAttach) {
+                            Text("📎", fontSize = 20.sp)
+                        }
+                    }
                     OutlinedTextField(
                         value = draft,
                         // Each edit announces "typing…" to the peer (onDraft → the native-owned socket), item 4.
