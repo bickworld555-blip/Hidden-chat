@@ -125,8 +125,9 @@ fun ConversationScreen(
     onBack: () -> Unit,
     // Item 4 replies: the second argument is the id of the message being replied to, or null for a normal send.
     onSend: (String, String?) -> Unit = { _, _ -> },
-    // Phase 5 media: tapping the attach button asks the host to pick + send a photo (encrypt + upload + send). No-op default.
-    onAttach: () -> Unit = {},
+    // Phase 5 media: tap the attach button to pick + send a photo; long-press to send it as a view-once photo. The
+    // boolean is viewOnce. No-op default.
+    onAttach: (Boolean) -> Unit = {},
     // Phase 5 scheduled messages: long-pressing Send asks the host to pick a time and schedule the drafted text. No-op default.
     onSchedule: (String) -> Unit = {},
     loading: Boolean = false,
@@ -162,6 +163,8 @@ fun ConversationScreen(
     var replyingTo by remember { mutableStateOf<MessageRowData?>(null) }
     // Item 4 edit: the message currently being edited (its text is loaded into the composer); send saves the edit.
     var editingMessage by remember { mutableStateOf<MessageRowData?>(null) }
+    // Phase 5 stickers: the sticker picker panel's open state.
+    var stickersOpen by remember { mutableStateOf(false) }
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
@@ -266,14 +269,39 @@ fun ConversationScreen(
                         }
                     }
                 }
+                // Phase 5 stickers: a horizontally-scrollable picker over the shipped packs; tapping one sends it.
+                if (stickersOpen && editingMessage == null) {
+                    val allStickers = remember { NativeStickers.packs.flatMap { it.items } }
+                    androidx.compose.foundation.lazy.LazyRow(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 8.dp),
+                    ) {
+                        items(allStickers.size) { idx ->
+                            val s = allStickers[idx]
+                            Box(
+                                modifier = Modifier.padding(4.dp).size(52.dp).clip(RoundedCornerShape(12.dp))
+                                    .background(MaterialTheme.colorScheme.surfaceVariant)
+                                    .clickable { onSend(NativeStickers.contentFor(s.key), null); stickersOpen = false },
+                                contentAlignment = Alignment.Center,
+                            ) { Text(s.emoji, fontSize = 26.sp) }
+                        }
+                    }
+                }
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    // Phase 5: attach + send a photo (native encrypt + upload). Hidden while editing an existing message.
+                    // Phase 5: attach + send a photo (native encrypt + upload), and the sticker picker. Hidden while editing.
                     if (editingMessage == null) {
-                        IconButton(onClick = onAttach) {
-                            Text("📎", fontSize = 20.sp)
+                        // Tap = photo; long-press = view-once photo.
+                        Box(
+                            modifier = Modifier
+                                .combinedClickable(onClick = { onAttach(false) }, onLongClick = { onAttach(true) })
+                                .padding(12.dp),
+                            contentAlignment = Alignment.Center,
+                        ) { Text("📎", fontSize = 20.sp) }
+                        IconButton(onClick = { stickersOpen = !stickersOpen }) {
+                            Text("😀", fontSize = 20.sp)
                         }
                     }
                     OutlinedTextField(
@@ -973,6 +1001,21 @@ private fun disappearLabel(seconds: Long): String = when (seconds) {
     86400L -> "24h"; 604800L -> "7d"; 7776000L -> "90d"; else -> "Off"
 }
 
+/** Phase 5 stickers: a received/sent sticker shown as its big emoji with an optional caption. */
+@Composable
+private fun StickerBubble(sticker: StickerItem, mine: Boolean) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(vertical = 2.dp)) {
+        Text(sticker.emoji, fontSize = 48.sp)
+        if (sticker.caption.isNotEmpty()) {
+            Text(
+                sticker.caption,
+                color = (if (mine) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface).copy(alpha = 0.8f),
+                fontSize = 12.sp,
+            )
+        }
+    }
+}
+
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun MessageBubble(
@@ -1075,7 +1118,10 @@ private fun MessageBubble(
                     // full-res viewer), a voice note shows a waveform player, a document shows a file card. Anything
                     // else (text, or media without a native bubble) falls back to the text label.
                     val media = message.media
+                    // Phase 5 stickers: a "sticker:<pack>/<id>" message renders as its big emoji + caption, not as text.
+                    val sticker = if (media == null) NativeStickers.parse(message.text) else null
                     val showText = when {
+                        sticker != null -> { StickerBubble(sticker, mine); false }
                         media == null -> true
                         media.kind == "voice" -> { VoiceNoteBubble(media, mine); false }
                         media.kind == "doc" -> { DocumentBubble(media, mine); false }

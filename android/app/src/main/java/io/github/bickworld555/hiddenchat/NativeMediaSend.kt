@@ -26,7 +26,11 @@ object NativeMediaSend {
      * Encrypts, uploads and sends the photo at [uri] to [peerId]. Blocking — call off the main thread. Returns true
      * when the ciphertext was uploaded and a send was dispatched (native seal, or the WebView fallback).
      */
-    fun sendPhoto(context: Context, peerId: String, uri: Uri, replyToId: String? = null): Boolean {
+    /** The "view once" wrapper prefix (src/mediaExtras.js VIEW_ONCE_PREFIX): a one-time photo whose ref is wrapped so
+     *  the recipient's app shows it once and then removes it. */
+    private const val VIEW_ONCE_PREFIX = "viewonce:"
+
+    fun sendPhoto(context: Context, peerId: String, uri: Uri, replyToId: String? = null, viewOnce: Boolean = false): Boolean {
         val resolver = context.contentResolver
         val bytes = try { resolver.openInputStream(uri)?.use { it.readBytes() } } catch (t: Throwable) { null } ?: return false
         if (bytes.isEmpty()) return false
@@ -39,8 +43,11 @@ object NativeMediaSend {
             android.util.Log.w("NativeMediaSend", "encrypt failed", t); return false
         }
         val mediaId = server.uploadMedia(peerId, sealed.ciphertext) ?: return false
-        val content = NativeMediaCrypto.encodeRef(mediaId, sealed.descriptor, filename)
-        val thumb = makeThumb(bytes)
+        val ref = NativeMediaCrypto.encodeRef(mediaId, sealed.descriptor, filename)
+        // View-once wraps the attachment ref; a normal photo sends it as-is.
+        val content = if (viewOnce) VIEW_ONCE_PREFIX + ref else ref
+        // View-once photos carry no preview thumbnail (the recipient must open to view once).
+        val thumb = if (viewOnce) null else makeThumb(bytes)
         // Native seal path first (needs the native crypto core); otherwise the audited WebView send seals + relays it.
         if (NativeSend.sendMedia(context, peerId, content, thumb, replyToId)) return true
         NativeUiBridge.requestSendMedia(peerId, content, thumb)

@@ -70,10 +70,12 @@ class NativeUiActivity : FragmentActivity() {
                 var appLock by remember { mutableStateOf(NativeSecurity.appLockOn(applicationContext)) }
                 // Phase 5: the system photo picker (no runtime permission). The picked photo is encrypted, uploaded and
                 // sent to the open chat off the main thread (NativeMediaSend).
+                var pendingViewOnce by remember { mutableStateOf(false) }
                 val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { picked ->
                     val chatId = openChat?.id
+                    val viewOnce = pendingViewOnce
                     if (picked != null && chatId != null) {
-                        Thread({ NativeMediaSend.sendPhoto(applicationContext, chatId, picked) }, "native-photo").start()
+                        Thread({ NativeMediaSend.sendPhoto(applicationContext, chatId, picked, viewOnce = viewOnce) }, "native-photo").start()
                     }
                 }
 
@@ -218,8 +220,13 @@ class NativeUiActivity : FragmentActivity() {
                                     if (!sent) NativeUiBridge.requestSend(chatId, text, replyToId) // WebView fallback now carries the reply target
                                 }, "native-send").start()
                             },
-                            // Phase 5: pick + send a photo. Direct chats only (the native media path does not own groups yet).
-                            onAttach = { if (!isGroup) photoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                            // Phase 5: pick + send a photo (tap) or a view-once photo (long-press). Direct chats only.
+                            onAttach = { viewOnce ->
+                                if (!isGroup) {
+                                    pendingViewOnce = viewOnce
+                                    photoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
+                                }
+                            },
                             // Phase 5 scheduled messages: long-press Send → pick a date + time → the web app seals it now and
                             // the server delivers it then (POST /api/v1/scheduled). Direct chats only.
                             onSchedule = { text ->
