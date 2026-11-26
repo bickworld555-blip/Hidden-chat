@@ -1918,7 +1918,8 @@ public class HiddenNativePlugin extends Plugin {
     /** Open the native (Compose) UI, only when the native-UI switch is on (so it can never appear unless enabled). */
     @PluginMethod
     public void openNativeUi(PluginCall call) {
-        boolean on = getContext().getSharedPreferences("hm_native_ui", Context.MODE_PRIVATE).getBoolean("enabled", false);
+        // Native-first build: default ON, matching nativeUiAllowed(). A rollout driver or device test can set it false.
+        boolean on = getContext().getSharedPreferences("hm_native_ui", Context.MODE_PRIVATE).getBoolean("enabled", true);
         if (!on) { call.resolve(new JSObject().put("opened", false)); return; }
         Intent intent = new Intent(getContext(), io.github.bickworld555.hiddenchat.ui.NativeUiActivity.class);
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);

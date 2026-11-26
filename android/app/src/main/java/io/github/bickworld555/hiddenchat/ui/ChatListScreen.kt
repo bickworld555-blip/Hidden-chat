@@ -44,12 +44,17 @@ data class ChatRowData(val id: String, val name: String, val lastMessage: String
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ChatListScreen(chats: List<ChatRowData> = emptyList(), onOpenChat: (ChatRowData) -> Unit = {}, onNewChat: () -> Unit = {}) {
+fun ChatListScreen(chats: List<ChatRowData> = emptyList(), onOpenChat: (ChatRowData) -> Unit = {}, onNewChat: () -> Unit = {}, onOpenSettings: () -> Unit = {}) {
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
                 title = { Text("Hidden Messenger", fontWeight = FontWeight.SemiBold) },
+                actions = {
+                    androidx.compose.material3.IconButton(onClick = onOpenSettings) {
+                        Text("⚙", color = MaterialTheme.colorScheme.onSurface, fontSize = 20.sp)
+                    }
+                },
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = MaterialTheme.colorScheme.surface,
                     titleContentColor = MaterialTheme.colorScheme.onSurface,

@@ -1,7 +1,7 @@
 package io.github.bickworld555.hiddenchat.ui
 
 import android.os.Bundle
-import androidx.activity.ComponentActivity
+import androidx.fragment.app.FragmentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.runtime.LaunchedEffect
@@ -11,6 +11,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import io.github.bickworld555.hiddenchat.NativeForegroundSocket
+import io.github.bickworld555.hiddenchat.NativeSecurity
 import io.github.bickworld555.hiddenchat.NativeSend
 import io.github.bickworld555.hiddenchat.NativeSendSocket
 import io.github.bickworld555.hiddenchat.NativeTyping
@@ -29,7 +30,7 @@ import kotlinx.coroutines.withContext
  * database read done off the main thread. Registered in the manifest exported=false with no launcher intent, so the app
  * still launches straight into the WebView; reachable only for a device test or behind the native-UI flag.
  */
-class NativeUiActivity : ComponentActivity() {
+class NativeUiActivity : FragmentActivity() {
     private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
     // Starting the native-owned socket is deferred ~600ms after the UI becomes visible, so the WebView (which suspends
     // its own socket on the same visibility change) closes first and the two never both decrypt the same message.
@@ -55,6 +56,18 @@ class NativeUiActivity : ComponentActivity() {
                 var forwardingMessages by remember { mutableStateOf<List<MessageRowData>>(emptyList()) }
                 // Item 4 disappearing: the open chat's timer in seconds (0 = off), read in the effect below.
                 var disappear by remember { mutableStateOf(0L) }
+                // Phase 1 native shell: the top-level native screen ("chats"/"settings"/"profile"/"contacts"), the
+                // native-UI app-lock gate, and the signed-in account id. None of this touches the crypto core,
+                // the socket owner, or the launcher — it only adds native screens reachable from the chat list.
+                var screen by remember { mutableStateOf("chats") }
+                var locked by remember { mutableStateOf(NativeSecurity.appLockOn(applicationContext)) }
+                var accountId by remember { mutableStateOf("") }
+                var secureScreen by remember { mutableStateOf(NativeSecurity.secureScreenOn(applicationContext)) }
+                var appLock by remember { mutableStateOf(NativeSecurity.appLockOn(applicationContext)) }
+
+                LaunchedEffect(Unit) {
+                    accountId = withContext(Dispatchers.IO) { runCatching { store?.owner() }.getOrNull() ?: "" }
+                }
 
                 LaunchedEffect(version) {
                     chats = withContext(Dispatchers.IO) { readChats(store) }
@@ -105,9 +118,39 @@ class NativeUiActivity : ComponentActivity() {
                 BackHandler(enabled = openChat != null) { openChat = null }
                 BackHandler(enabled = showNewChat) { showNewChat = false }
                 BackHandler(enabled = forwardingMessages.isNotEmpty()) { forwardingMessages = emptyList() }
+                // Native shell: a sub-screen returns to Settings; Settings returns to the chat list.
+                BackHandler(enabled = !locked && (screen == "profile" || screen == "contacts")) { screen = "settings" }
+                BackHandler(enabled = !locked && screen == "settings") { screen = "chats" }
 
                 val current = openChat
                 when {
+                    // Native app-lock gate (Phase 1): nothing shows until the phone's biometrics / device credential
+                    // confirm. Prompts AppSecurity through NativeSecurity; a success clears the lock for this session.
+                    locked -> UnlockScreen(onPrompt = {
+                        NativeSecurity.authenticate(this@NativeUiActivity, "Unlock Hidden Messenger", "") { ok, _ ->
+                            if (ok) locked = false
+                        }
+                    })
+                    screen == "profile" -> ProfileScreen(accountId, onBack = { screen = "settings" })
+                    screen == "contacts" -> ContactsScreen(
+                        contacts,
+                        onOpen = { contact ->
+                            screen = "chats"
+                            openChat = ChatRowData(contact.id, contact.name, "", "", 0, contact.avatar)
+                        },
+                        onBack = { screen = "settings" },
+                    )
+                    screen == "settings" -> SettingsScreen(
+                        accountId = accountId,
+                        secureScreen = secureScreen,
+                        onToggleSecureScreen = { on -> NativeSecurity.setSecureScreen(this@NativeUiActivity, on); secureScreen = on },
+                        appLock = appLock,
+                        onToggleAppLock = { on -> NativeSecurity.setAppLock(applicationContext, on); appLock = on },
+                        unlockAvailable = NativeSecurity.unlockStatus(applicationContext) == "available",
+                        onOpenProfile = { screen = "profile" },
+                        onOpenContacts = { screen = "contacts" },
+                        onBack = { screen = "chats" },
+                    )
                     // Item 4 forwarding + multi-select: pick a target chat, then send each chosen message there with the
                     // forwarded flag, oldest-first (the list is already in chat order).
                     forwardingMessages.isNotEmpty() -> NewChatScreen(
@@ -135,6 +178,7 @@ class NativeUiActivity : ComponentActivity() {
                         chats,
                         onOpenChat = { openChat = it },
                         onNewChat = { showNewChat = true },
+                        onOpenSettings = { screen = "settings" },
                     )
                     else -> {
                         // Checklist item 4 typing indicators: the peer's live "typing…" (receive) and announcing our own
