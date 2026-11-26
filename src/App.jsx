@@ -396,22 +396,34 @@ export default function App() {
   // path seals + relays it, then that chat's messages are mirrored back so the native conversation updates.
   useEffect(() => {
     if (!nativeShell()) return undefined;
-    return onNative('nativeUiSend', async ({ chatId, text, content, thumb }) => {
+    const offSend = onNative('nativeUiSend', async ({ chatId, text, content, thumb, replyToId }) => {
       if (!chatId) return;
+      // Phase 5: a reply carries `replyToId` (inner `r`); native media carries a pre-built `content` ref + `thumb`.
+      const extras = { ...(thumb ? { thumb } : {}), ...(replyToId ? { replyToId } : {}) };
       try {
         if (typeof content === 'string' && content) {
-          // Phase 5 native media: the native side already encrypted + uploaded the file; seal the "emedia:" ref and
-          // relay it (with its preview thumbnail), with no re-upload, through the same audited E2E send as text.
-          await useChatStore.getState().sendMessage(chatId, content, thumb ? { thumb } : {});
+          // Native media: the native side already encrypted + uploaded the file; seal the "emedia:" ref and relay it
+          // (with its preview thumbnail and any reply target), with no re-upload, through the same audited E2E send.
+          await useChatStore.getState().sendMessage(chatId, content, extras);
         } else {
           if (typeof text !== 'string' || !text.trim()) return;
-          await useChatStore.getState().sendMessage(chatId, text.trim());
+          await useChatStore.getState().sendMessage(chatId, text.trim(), replyToId ? { replyToId } : {});
         }
       } catch { /* send failed; nothing to mirror */ }
       const store = useChatStore.getState();
       nativeSaveMessages(chatId, nativeMessageProjection(store.messages[chatId], store.userId)).catch(() => {});
     });
-  }, []);
+    // Phase 5 scheduled messages: seal now for the contact's current devices and store it on the server for delivery
+    // at sendAt (POST /api/v1/scheduled), the same path the WebView's Scheduled messages panel uses.
+    const offSchedule = onNative('nativeUiSchedule', async ({ chatId, text, sendAt }) => {
+      if (!chatId || typeof text !== 'string' || !text.trim() || !Number.isFinite(sendAt) || !sessionToken) return;
+      try {
+        const sealed = await sealDirect(chatId, text.trim());
+        await apiFetch('/api/v1/scheduled', { method: 'POST', headers: { Authorization: 'Bearer ' + sessionToken }, body: JSON.stringify({ receiverId: chatId, content: sealed, sendAt }) });
+      } catch { /* scheduling failed; surfaced on the next list fetch */ }
+    });
+    return () => { offSend?.(); offSchedule?.(); };
+  }, [sessionToken]);
   // Step 5 data seam: the native UI opened a chat — load its message window from this device's store (if the start-up
   // window did not reach it) and mirror it, so the native conversation shows messages instead of "No messages".
   useEffect(() => {

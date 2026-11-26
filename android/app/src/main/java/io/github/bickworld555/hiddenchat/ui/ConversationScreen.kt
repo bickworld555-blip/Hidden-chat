@@ -127,6 +127,8 @@ fun ConversationScreen(
     onSend: (String, String?) -> Unit = { _, _ -> },
     // Phase 5 media: tapping the attach button asks the host to pick + send a photo (encrypt + upload + send). No-op default.
     onAttach: () -> Unit = {},
+    // Phase 5 scheduled messages: long-pressing Send asks the host to pick a time and schedule the drafted text. No-op default.
+    onSchedule: (String) -> Unit = {},
     loading: Boolean = false,
     // Checklist item 4: the peer's live activity ("typing…"/"recording audio…") shown under the name, and a callback on
     // every edit of the message box so the native-owned socket can announce our own "typing…". Both default off/no-op.
@@ -283,17 +285,30 @@ fun ConversationScreen(
                         maxLines = 4,
                         keyboardActions = KeyboardActions(onSend = {}),
                     )
-                    IconButton(
-                        // Editing a message saves the edit; otherwise the native E2E path seals + relays a new message.
-                        onClick = {
-                            val text = draft.trim()
-                            if (text.isNotEmpty()) {
-                                val editing = editingMessage
-                                if (editing != null) { onEdit(editing.id, text); editingMessage = null } else { onSend(text, replyingTo?.id); replyingTo = null }
-                                draft = ""; onDraft("")
-                            }
-                        },
-                        enabled = draft.isNotBlank(),
+                    // Tap sends (or saves an edit); long-press schedules the drafted text for later (Phase 5). The edit
+                    // flow has no scheduling.
+                    Box(
+                        modifier = Modifier
+                            .combinedClickable(
+                                enabled = draft.isNotBlank(),
+                                onClick = {
+                                    val text = draft.trim()
+                                    if (text.isNotEmpty()) {
+                                        val editing = editingMessage
+                                        if (editing != null) { onEdit(editing.id, text); editingMessage = null } else { onSend(text, replyingTo?.id); replyingTo = null }
+                                        draft = ""; onDraft("")
+                                    }
+                                },
+                                onLongClick = {
+                                    val text = draft.trim()
+                                    if (text.isNotEmpty() && editingMessage == null) {
+                                        onSchedule(text)
+                                        draft = ""; onDraft(""); replyingTo = null
+                                    }
+                                },
+                            )
+                            .padding(12.dp),
+                        contentAlignment = Alignment.Center,
                     ) {
                         Text(
                             "➤",

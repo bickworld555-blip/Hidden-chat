@@ -215,11 +215,34 @@ class NativeUiActivity : FragmentActivity() {
                                 Thread({
                                     // Item 4 replies: replyToId (or null) rides in the inner `r` field via NativeSend.
                                     val sent = try { NativeSend.sendText(applicationContext, chatId, text, replyToId) } catch (ignored: Throwable) { false }
-                                    if (!sent) NativeUiBridge.requestSend(chatId, text) // WebView fallback (no reply target)
+                                    if (!sent) NativeUiBridge.requestSend(chatId, text, replyToId) // WebView fallback now carries the reply target
                                 }, "native-send").start()
                             },
                             // Phase 5: pick + send a photo. Direct chats only (the native media path does not own groups yet).
                             onAttach = { if (!isGroup) photoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                            // Phase 5 scheduled messages: long-press Send → pick a date + time → the web app seals it now and
+                            // the server delivers it then (POST /api/v1/scheduled). Direct chats only.
+                            onSchedule = { text ->
+                                if (!isGroup) {
+                                    val chatId = current.id
+                                    val cal = java.util.Calendar.getInstance()
+                                    android.app.DatePickerDialog(this@NativeUiActivity, { _, y, m, d ->
+                                        android.app.TimePickerDialog(this@NativeUiActivity, { _, h, min ->
+                                            val c = java.util.Calendar.getInstance()
+                                            c.set(y, m, d, h, min, 0); c.set(java.util.Calendar.MILLISECOND, 0)
+                                            val sendAt = c.timeInMillis
+                                            if (sendAt > System.currentTimeMillis() + 30_000) {
+                                                NativeUiBridge.requestSchedule(chatId, text, sendAt)
+                                                android.widget.Toast.makeText(applicationContext, "Scheduled", android.widget.Toast.LENGTH_SHORT).show()
+                                            } else {
+                                                android.widget.Toast.makeText(applicationContext, "Pick a future time", android.widget.Toast.LENGTH_SHORT).show()
+                                            }
+                                        }, cal.get(java.util.Calendar.HOUR_OF_DAY), cal.get(java.util.Calendar.MINUTE), false).show()
+                                    }, cal.get(java.util.Calendar.YEAR), cal.get(java.util.Calendar.MONTH), cal.get(java.util.Calendar.DAY_OF_MONTH)).apply {
+                                        datePicker.minDate = System.currentTimeMillis()
+                                    }.show()
+                                }
+                            },
                             typingLabel = if (isGroup) "" else NativeTyping.labelFor(typing[current.id]),
                             onDraft = { text ->
                                 if (!isGroup) { if (text.isBlank()) typingSender.stop() else typingSender.typed() }

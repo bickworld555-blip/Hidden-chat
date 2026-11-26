@@ -19,10 +19,28 @@ object NativeUiBridge {
     @Volatile
     var emitter: Emitter? = null
 
-    /** Ask the web app to send `text` to `chatId` through its end-to-end send path. */
-    fun requestSend(chatId: String, text: String) {
+    /**
+     * Ask the web app to send `text` to `chatId` through its end-to-end send path, carrying the reply target
+     * (`replyToId`, inner `r`) when this is a reply. The native seal path (NativeSend.sendText) already carries the
+     * reply; this fallback now carries it too, so a reply is never downgraded to a plain message.
+     */
+    fun requestSend(chatId: String, text: String, replyToId: String? = null) {
         if (chatId.isEmpty() || text.isEmpty()) return
-        emitter?.emit("nativeUiSend", mapOf("chatId" to chatId, "text" to text))
+        val data = HashMap<String, Any?>()
+        data["chatId"] = chatId
+        data["text"] = text
+        if (!replyToId.isNullOrEmpty()) data["replyToId"] = replyToId
+        emitter?.emit("nativeUiSend", data)
+    }
+
+    /**
+     * Phase 5 scheduled messages: ask the web app to seal `text` for `chatId` and store it on the server to be
+     * delivered at `sendAt` (epoch ms) — `POST /api/v1/scheduled`, the same path the WebView uses. Sealed now for the
+     * contact's current devices. The native UI has no crypto core, so the web app does the seal + the API call.
+     */
+    fun requestSchedule(chatId: String, text: String, sendAt: Long) {
+        if (chatId.isEmpty() || text.isEmpty() || sendAt <= 0L) return
+        emitter?.emit("nativeUiSchedule", mapOf("chatId" to chatId, "text" to text, "sendAt" to sendAt))
     }
 
     /**
