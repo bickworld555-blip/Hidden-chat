@@ -130,6 +130,9 @@ fun ConversationScreen(
     onAttach: (Boolean) -> Unit = {},
     // Phase 5 scheduled messages: long-pressing Send asks the host to pick a time and schedule the drafted text. No-op default.
     onSchedule: (String) -> Unit = {},
+    // Phase 5 view-once: tapping a received view-once bubble asks the host to consume it (POST /messages/:id/view-once)
+    // and decrypt it; the host calls back with the plaintext image bytes (null on failure) to show full-screen once.
+    onViewOnce: (String, String, (ByteArray?) -> Unit) -> Unit = { _, _, cb -> cb(null) },
     loading: Boolean = false,
     // Checklist item 4: the peer's live activity ("typing…"/"recording audio…") shown under the name, and a callback on
     // every edit of the message box so the native-owned socket can announce our own "typing…". Both default off/no-op.
@@ -165,6 +168,8 @@ fun ConversationScreen(
     var editingMessage by remember { mutableStateOf<MessageRowData?>(null) }
     // Phase 5 stickers: the sticker picker panel's open state.
     var stickersOpen by remember { mutableStateOf(false) }
+    // Phase 5 view-once: the decrypted bytes of a just-opened view-once photo, shown full-screen until dismissed.
+    var viewOnceImage by remember { mutableStateOf<ByteArray?>(null) }
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
@@ -388,9 +393,28 @@ fun ConversationScreen(
                                 onToggleSelect = {
                                     selectedIds = if (message.id in selectedIds) selectedIds - message.id else selectedIds + message.id
                                 },
+                                // Phase 5 view-once: consume on the server + decrypt (host), then show the photo full-screen once.
+                                onOpenViewOnce = { id, content -> onViewOnce(id, content) { bytes -> viewOnceImage = bytes } },
                             )
                         }
                     }
+                }
+            }
+        }
+    }
+
+    // Phase 5 view-once: the decrypted photo shown full-screen after opening, until dismissed.
+    viewOnceImage?.let { bytes ->
+        val bmp = remember(bytes) { runCatching { android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size) }.getOrNull() }
+        androidx.compose.ui.window.Dialog(onDismissRequest = { viewOnceImage = null }) {
+            Box(
+                modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.95f)).clickable { viewOnceImage = null },
+                contentAlignment = Alignment.Center,
+            ) {
+                if (bmp != null) {
+                    Image(bitmap = bmp.asImageBitmap(), contentDescription = "View once photo", modifier = Modifier.fillMaxWidth())
+                } else {
+                    Text("Could not open", color = Color.White)
                 }
             }
         }
@@ -1001,6 +1025,25 @@ private fun disappearLabel(seconds: Long): String = when (seconds) {
     86400L -> "24h"; 604800L -> "7d"; 7776000L -> "90d"; else -> "Off"
 }
 
+/** Phase 5 view-once: the "① …" bubble for a one-time photo. Tapping a received one consumes it; the sender's own
+ *  copy and an already-opened one are inert. */
+@Composable
+private fun ViewOnceBubble(mine: Boolean, opened: Boolean, onOpen: () -> Unit) {
+    val ink = if (mine) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurface
+    val label = when { opened -> "Opened"; mine -> "Photo · view once"; else -> "Tap to view once" }
+    androidx.compose.foundation.layout.Row(
+        modifier = Modifier.clickable(enabled = !mine && !opened) { onOpen() }.padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            modifier = Modifier.size(26.dp).clip(CircleShape).background(ink.copy(alpha = 0.22f)),
+            contentAlignment = Alignment.Center,
+        ) { Text("1", color = ink, fontSize = 13.sp, fontWeight = FontWeight.Bold) }
+        Spacer(Modifier.width(8.dp))
+        Text(label, color = ink, fontSize = 14.sp, fontStyle = if (opened) androidx.compose.ui.text.font.FontStyle.Italic else androidx.compose.ui.text.font.FontStyle.Normal)
+    }
+}
+
 /** Phase 5 stickers: a received/sent sticker shown as its big emoji with an optional caption. */
 @Composable
 private fun StickerBubble(sticker: StickerItem, mine: Boolean) {
@@ -1029,6 +1072,8 @@ private fun MessageBubble(
     selectionActive: Boolean = false,
     selected: Boolean = false,
     onToggleSelect: () -> Unit = {},
+    // Phase 5 view-once: open a received view-once bubble (messageId, content). No-op default.
+    onOpenViewOnce: (String, String) -> Unit = { _, _ -> },
 ) {
     val mine = message.mine
     // A faint band behind the whole row marks a selected message (and the row the selection menu can act on).
@@ -1120,7 +1165,19 @@ private fun MessageBubble(
                     val media = message.media
                     // Phase 5 stickers: a "sticker:<pack>/<id>" message renders as its big emoji + caption, not as text.
                     val sticker = if (media == null) NativeStickers.parse(message.text) else null
+                    // Phase 5 view-once: the "viewonce:…" ref may arrive as the message text (received) or in the media
+                    // source (our own echo). Either renders the "① view once" bubble; a received one opens on tap.
+                    val viewOnceContent = when {
+                        io.github.bickworld555.hiddenchat.NativeViewOnce.isViewOnce(message.text) -> message.text
+                        media != null && io.github.bickworld555.hiddenchat.NativeViewOnce.isViewOnce(media.source) -> media.source
+                        else -> null
+                    }
                     val showText = when {
+                        // "media-opened:" is a spent view-once.
+                        media == null && io.github.bickworld555.hiddenchat.NativeViewOnce.isOpened(message.text) -> { ViewOnceBubble(mine, opened = true, onOpen = {}); false }
+                        viewOnceContent != null -> {
+                            ViewOnceBubble(mine, opened = false, onOpen = { if (!mine) onOpenViewOnce(message.id, viewOnceContent) }); false
+                        }
                         sticker != null -> { StickerBubble(sticker, mine); false }
                         media == null -> true
                         media.kind == "voice" -> { VoiceNoteBubble(media, mine); false }

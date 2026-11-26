@@ -227,6 +227,14 @@ class NativeUiActivity : FragmentActivity() {
                                     photoPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
                                 }
                             },
+                            // Phase 5 view-once: consume a received view-once on the server + decrypt it off the main thread,
+                            // then hand the plaintext bytes back to show it full-screen once.
+                            onViewOnce = { messageId, content, cb ->
+                                Thread({
+                                    val bytes = try { io.github.bickworld555.hiddenchat.NativeViewOnce.open(applicationContext, messageId, content) } catch (ignored: Throwable) { null }
+                                    runOnUiThread { cb(bytes) }
+                                }, "native-viewonce").start()
+                            },
                             // Phase 5 scheduled messages: long-press Send → pick a date + time → the web app seals it now and
                             // the server delivers it then (POST /api/v1/scheduled). Direct chats only.
                             onSchedule = { text ->

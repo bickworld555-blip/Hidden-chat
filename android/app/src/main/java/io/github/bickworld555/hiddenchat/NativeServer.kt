@@ -43,6 +43,24 @@ class NativeServer private constructor(private val origin: String, private val t
         }
     }
 
+    /** A POST with an empty body whose RESPONSE is raw bytes (the view-once consume: POST /messages/:id/view-once
+     *  returns the media once, then the server removes it). Null on any failure (incl. 410 already-consumed). */
+    fun postForBytes(path: String): ByteArray? {
+        val request = Request.Builder().url(origin + path)
+            .post(ByteArray(0).toRequestBody(null))
+            .header("Authorization", "Bearer $token")
+            .header(ClientVersion.HEADER, ClientVersion.PROTOCOL.toString())
+            .build()
+        return try {
+            client.newCall(request).execute().use { response ->
+                val body = response.body
+                if (!response.isSuccessful || body == null) null else body.bytes()
+            }
+        } catch (failed: Exception) {
+            null
+        }
+    }
+
     /** A GET whose body is a JSON array (e.g. a group's message history), not an object. */
     fun getArray(path: String): List<Any?>? {
         val request = Request.Builder().url(origin + path).get()

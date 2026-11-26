@@ -157,6 +157,21 @@ object NativeMediaCrypto {
         return plain
     }
 
+    /**
+     * Decrypts already-fetched ciphertext for a view-once consume (the bytes come from POST /messages/:id/view-once,
+     * not the normal media GET). [content] is the message content ("viewonce:emedia:…" or a plain "emedia:…"); the
+     * descriptor is parsed from it. Returns the plaintext, or null on a bad ref / tag.
+     */
+    fun decryptFetched(content: String?, bytes: ByteArray): ByteArray? {
+        val inner = if (content != null && content.startsWith("viewonce:")) content.substring("viewonce:".length) else content
+        val ref = parseRef(inner) ?: return null
+        return try {
+            if (!ref.encrypted) bytes else decrypt(bytes, ref.descriptor!!)
+        } catch (failed: Throwable) {
+            android.util.Log.w("NativeMediaCrypto", "view-once decrypt failed", failed); null
+        }
+    }
+
     /** What [encrypt] produced: the ciphertext to upload and the descriptor that travels inside the message. */
     class Sealed(val ciphertext: ByteArray, val descriptor: LinkedHashMap<String, Any?>)
 
